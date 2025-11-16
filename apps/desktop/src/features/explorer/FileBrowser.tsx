@@ -30,9 +30,9 @@ export const FileBrowser: React.FC<{
     setLoading(true);
     setError(null);
     try {
-    const data = await listEntries(sourceId, path);
-    setAllEntries(data);
-    setEntries(data);
+      const data = await listEntries(sourceId, path);
+      setAllEntries(data);
+      setEntries(data);
     } catch (err) {
       if (err instanceof TauriApiError) {
         setError(err.message);
@@ -54,6 +54,11 @@ export const FileBrowser: React.FC<{
     }
   };
 
+  const handleSelect = (entry: Entry) => {
+    setSelectedPath(entry.path);
+    onSelectEntry?.(entry);
+  };
+
   const getBreadcrumbs = () => {
     const parts = currentPath.split("/").filter(Boolean);
     const items: { name: string; path: string }[] = [{ name: sourceName, path: "/" }];
@@ -66,38 +71,51 @@ export const FileBrowser: React.FC<{
   };
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col h-full">
       {/* Toolbar */}
-      <div className="flex flex-col gap-2 rounded-t-xl border-b border-border/60 bg-card px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-center justify-between px-4 py-3 border-b bg-background">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-foreground">{sourceName}</h2>
-          <nav className="ml-2 text-xs text-muted-foreground">
+          <nav className="ml-3 text-xs text-muted-foreground flex items-center">
             {getBreadcrumbs().map((b, i) => (
-              <button
-                key={b.path}
-                className="underline-offset-2 hover:underline text-muted-foreground mr-1"
-                onClick={() => handleNavigate(b.path)}
-              >
-                {i === 0 ? "root" : b.name}
-                {i < getBreadcrumbs().length - 1 && " / "}
-              </button>
+              <React.Fragment key={b.path}>
+                <button
+                  className="hover:underline text-foreground"
+                  onClick={() => handleNavigate(b.path)}
+                >
+                  {i === 0 ? "root" : b.name}
+                </button>
+                {i < getBreadcrumbs().length - 1 && (
+                  <span className="mx-1 text-muted-foreground">/</span>
+                )}
+              </React.Fragment>
             ))}
           </nav>
         </div>
-            <div className="flex gap-2">
-          <input
-            type="text"
-            placeholder="Search files..."
-            className="rounded-md border border-input bg-input px-3 py-1 text-sm text-foreground placeholder:text-muted-foreground"
-            onChange={(e) => {
-              const q = e.target.value.toLowerCase();
-              if (!q) {
-                setEntries(allEntries);
-                return;
-              }
-              setEntries(allEntries.filter((x) => x.name.toLowerCase().includes(q)));
-            }}
-          />
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Search files..."
+              className="h-8 w-[200px] rounded-lg border bg-background pl-8 pr-4 text-sm text-foreground placeholder:text-muted-foreground shadow-sm"
+              onChange={(e) => {
+                const q = e.target.value.toLowerCase();
+                if (!q) {
+                  setEntries(allEntries);
+                  return;
+                }
+                setEntries(allEntries.filter((x) => x.name.toLowerCase().includes(q)));
+              }}
+            />
+            <svg
+              className="absolute left-2.5 top-2 h-3 w-3 text-muted-foreground"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </div>
           {onBack && (
             <Button variant="outline" size="sm" onClick={onBack}>
               ← Back
@@ -106,7 +124,6 @@ export const FileBrowser: React.FC<{
           <Button
             variant="outline"
             size="sm"
-            className="border-border/40 bg-background/60"
             onClick={() => loadEntries(currentPath)}
           >
             ↻ Refresh
@@ -116,33 +133,45 @@ export const FileBrowser: React.FC<{
 
       {/* Error */}
       {error && (
-        <div className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive">
+        <div className="rounded-lg bg-destructive/10 p-4 text-sm text-destructive m-4">
           {error}
         </div>
       )}
 
       {/* Loading */}
       {loading && (
-        <div className="flex items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 p-8">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          <span className="text-muted-foreground">Loading...</span>
+        <div className="flex flex-1 items-center justify-center">
+          <div className="flex flex-col items-center gap-2">
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            <span className="text-muted-foreground">Loading files...</span>
+          </div>
         </div>
       )}
 
       {/* Entries Grid */}
       {!loading && (
-        <div className="rounded-b-xl border border-border/50 bg-card shadow-sm p-4">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden">
           {entries.length === 0 ? (
-            <div className="p-8 text-center text-sm text-muted-foreground">No entries found</div>
+            <div className="flex flex-1 items-center justify-center p-8">
+              <div className="text-center text-muted-foreground">
+                <div className="mx-auto mb-3 text-2xl">📂</div>
+                <p className="text-sm">No files or folders found</p>
+              </div>
+            </div>
           ) : (
-            <div>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border/40 bg-card/80">
-                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Name</th>
-                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Type</th>
-                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Size</th>
-                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Modified</th>
+            <div className="p-4">
+              <table className="w-full table-fixed text-sm">
+                <thead className="sticky top-0 z-20 bg-background shadow-sm">
+                  <tr className="border-b border-border/60">
+                    <th className="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Name
+                    </th>
+                    <th className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Size
+                    </th>
+                    <th className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Modified
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -150,35 +179,37 @@ export const FileBrowser: React.FC<{
                     <tr
                       key={entry.path}
                       className={clsx(
-                        "border-b border-border/20 transition-colors last:border-b-0",
-                        entry.is_dir ? "cursor-pointer hover:bg-muted/20" : "hover:bg-muted/10",
-                        selectedPath === entry.path ? "bg-muted/10" : ""
+                        "border-b border-border/50 transition-colors hover:bg-accent/40",
+                        entry.is_dir ? "cursor-pointer" : "",
+                        selectedPath === entry.path ? "bg-accent/60 text-accent-foreground" : ""
                       )}
                       onDoubleClick={() => handleDoubleClick(entry)}
-                      onClick={() => {
-                        setSelectedPath(entry.path);
-                        onSelectEntry?.(entry);
-                      }}
+                      onClick={() => handleSelect(entry)}
                     >
-                      <td className="px-3 py-2">
-                        <div className="flex items-center gap-2">
-                          <span className="text-lg">{entry.is_dir ? "📁" : "📄"}</span>
+                      <td className="px-3 py-3 text-center">
+                        <div className="mx-auto flex max-w-[220px] flex-col items-center gap-2 text-center">
+                          <span className="text-2xl">{entry.is_dir ? "📁" : "📄"}</span>
                           <button
-                            className="font-medium text-left hover:underline"
+                            type="button"
+                            className="w-full text-sm font-medium leading-tight text-foreground/90 hover:text-foreground focus:outline-none"
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (entry.is_dir) handleNavigate(entry.path);
-                              else setSelectedPath(entry.path);
-                              onSelectEntry?.(entry);
+                              handleSelect(entry);
+                              if (entry.is_dir) {
+                                handleNavigate(entry.path);
+                              }
                             }}
                           >
-                            {entry.name}
+                            <span className="block w-full truncate">{entry.name}</span>
                           </button>
                         </div>
                       </td>
-                      <td className="px-3 py-2 text-muted-foreground">{entry.is_dir ? "Folder" : "File"}</td>
-                      <td className="px-3 py-2 text-muted-foreground">{entry.is_dir ? "-" : formatBytes(entry.size)}</td>
-                      <td className="px-3 py-2 text-[11px] text-muted-foreground">{entry.modified_at || "-"}</td>
+                      <td className="px-3 py-3 text-right text-muted-foreground">
+                        {entry.is_dir ? "-" : formatBytes(entry.size)}
+                      </td>
+                      <td className="px-3 py-3 text-right text-[11px] text-muted-foreground">
+                        {entry.modified_at || "-"}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

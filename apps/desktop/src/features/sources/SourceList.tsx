@@ -94,18 +94,13 @@ export const SourceList: React.FC<{
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col gap-2">
-        <div>
-          <h2 className="text-xs font-semibold tracking-[0.18em] uppercase text-muted-foreground">
-            Locations
-          </h2>
-        </div>
+    <>
+      <div className="mb-3">
         {!showForm && (
           <Button
             onClick={() => setShowForm(true)}
+            className="w-full justify-center"
             size="sm"
-            className="mt-2 w-full justify-center"
           >
             + Add Source
           </Button>
@@ -113,39 +108,51 @@ export const SourceList: React.FC<{
       </div>
 
       {showForm && (
-        <div className="space-y-3 rounded-lg border border-border/40 bg-background/60 p-3">
+        <div className="mb-3 rounded-lg border bg-background p-3 shadow-sm">
           <SourceForm
             onSubmit={editingSource ? handleUpdateSource : handleAddSource}
             initialData={editingSource || undefined}
             isEditing={Boolean(editingSource)}
           />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setShowForm(false);
-              setEditingSource(null);
-            }}
-            className="w-full"
-          >
-            Cancel
-          </Button>
+          <div className="flex gap-2 mt-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              className="flex-1"
+              onClick={() => {
+                setShowForm(false);
+                setEditingSource(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="flex-1"
+              form="source-form"
+              type="submit"
+            >
+              {editingSource ? "Update" : "Add"}
+            </Button>
+          </div>
         </div>
       )}
 
       {sources.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border/40 bg-background/40 p-6 text-center text-xs">
-          <p className="text-muted-foreground">No sources configured. Add one to get started!</p>
+        <div className="text-center py-8">
+          <p className="text-sm text-muted-foreground">
+            No sources added yet
+          </p>
         </div>
       ) : (
         <div className="space-y-1">
           {sources.map((source) => (
             <div
               key={source.id}
-              className={`relative flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors ${
+              className={`group relative flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors ${
                 selectedSourceId === source.id
-                  ? "bg-background/80 text-foreground"
-                  : "text-foreground hover:bg-background/60"
+                  ? "bg-primary/10 text-primary"
+                  : "text-foreground hover:bg-accent"
               }`}
             >
               <button
@@ -153,28 +160,28 @@ export const SourceList: React.FC<{
                 onClick={() => handleBrowse(source)}
                 className="flex flex-1 items-center gap-2 truncate text-left"
               >
-                <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-card text-base">
+                <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md bg-primary/10 text-base">
                   {getSourceIcon(source)}
                 </span>
-                <span className="truncate">{source.name}</span>
+                <span className="truncate font-medium">{source.name}</span>
               </button>
-              <div className="relative ml-1">
+              <div className="opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     toggleMenu(source.id);
                   }}
-                  className="flex h-7 w-7 items-center justify-center rounded-md text-xl leading-none text-muted-foreground hover:bg-background/80"
+                  className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
                   aria-label="Source actions"
                 >
-                  ⋮
+                  ⋯
                 </button>
                 {openMenuId === source.id && (
-                  <div className="absolute right-0 z-10 mt-1 w-32 rounded-md border border-border/40 bg-card py-1 text-xs shadow-lg">
+                  <div className="absolute right-0 z-10 mt-1 w-32 rounded-lg border bg-popover p-1 text-sm shadow-md">
                     <button
                       type="button"
-                      className="flex w-full items-center px-3 py-1.5 text-left text-foreground hover:bg-background/80"
+                      className="flex w-full items-center px-3 py-1.5 text-left text-foreground hover:bg-accent rounded-md"
                       onClick={(e) => {
                         e.stopPropagation();
                         handleEdit(source);
@@ -184,7 +191,7 @@ export const SourceList: React.FC<{
                     </button>
                     <button
                       type="button"
-                      className="flex w-full items-center px-3 py-1.5 text-left text-foreground hover:bg-background/80"
+                      className="flex w-full items-center px-3 py-1.5 text-left text-foreground hover:bg-accent rounded-md"
                       onClick={(e) => {
                         e.stopPropagation();
                         reloadSources();
@@ -195,7 +202,7 @@ export const SourceList: React.FC<{
                     </button>
                     <button
                       type="button"
-                      className="flex w-full items-center px-3 py-1.5 text-left text-destructive hover:bg-background/80"
+                      className="flex w-full items-center px-3 py-1.5 text-left text-destructive hover:bg-destructive/10 rounded-md"
                       onClick={(e) => {
                         e.stopPropagation();
                         setOpenMenuId(null);
@@ -211,6 +218,6 @@ export const SourceList: React.FC<{
           ))}
         </div>
       )}
-    </div>
+    </>
   );
 };

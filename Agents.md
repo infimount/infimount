@@ -12,6 +12,7 @@ OpenHSB is a **cross-platform storage browser**:
 
 - Desktop app (Windows, macOS, Linux) using **Tauri + React**.
 - Storage abstraction via **Apache OpenDAL** (Rust).
+- Currently only the **local filesystem** backend is wired up; other SourceKind variants are placeholders until their OpenDAL builders land.
 - **Core principle:** *Do not re-implement filesystem/storage logic; always delegate to OpenDAL.*
 
 The backend should mainly:
@@ -33,7 +34,7 @@ openhsb/
 │   │   │   ├── registry.rs          # Operator registry (source_id → Operator)
 │   │   │   ├── models.rs            # Source, Entry, SourceKind, error types
 │   │   │   ├── operations.rs        # Thin wrappers around OpenDAL APIs
-│   │   │   ├── config.rs            # Read/write openhsb config (JSON/TOML/SQLite)
+│   │   │   ├── config.rs            # Read/write openhsb config (openhsb.json + env override)
 │   │   │   └── util.rs              # Helpers (path utils, conversions)
 │   │   └── Cargo.toml
 │   │
@@ -44,16 +45,14 @@ openhsb/
 ├── apps/
 │   ├── desktop/                     # Tauri desktop app
 │   │   ├── src/                     # React/TypeScript frontend
-│   │   │   ├── app/                 # App shell, layout, routing
-│   │   │   ├── components/          # Generic UI components
+│   │   │   ├── components/          # Generic UI components (buttons, toast, preview/editor)
 │   │   │   ├── features/            # Feature-level modules
-│   │   │   │   ├── sources/         # Source list, add/edit dialogs
-│   │   │   │   ├── explorer/        # File/dir listing, breadcrumbs
-│   │   │   │   ├── preview/         # File preview pane
-│   │   │   │   └── operations/      # Long-running operations (copy/move)
+│   │   │   │   ├── sources/         # Source list + add/edit form
+│   │   │   │   └── explorer/        # File/dir listing, breadcrumbs, search
 │   │   │   ├── lib/                 # API client, shared hooks, utilities
 │   │   │   ├── types/               # TS types mirrored from Rust models
-│   │   │   └── main.tsx
+│   │   │   ├── App.tsx              # Root layout integrating sources + explorer
+│   │   │   └── main.tsx             # Entry + theme bootstrap
 │   │   └── src-tauri/
 │   │       ├── src/
 │   │       │   ├── main.rs          # Tauri setup & app bootstrap
@@ -101,6 +100,7 @@ When generating or modifying code, agents MUST follow these rules:
     - `write_bytes(source_id, path, data)`
     - `delete_entry(source_id, path)`
   - Managing config (load/save source list + preferences).
+    - Config is stored as `openhsb.json` at the workspace root (override with `OPENHSB_CONFIG`); keep it JSON-only until we add other stores.
   - Defining shared models (`Source`, `Entry`, `SourceKind`, error types).
 - Should be **portable**: usable by CLI, desktop, mobile, or any future app.
 
@@ -132,7 +132,8 @@ When generating or modifying code, agents MUST follow these rules:
 
 ### 4.1 Adding a New Storage Backend (SourceKind)
 
-**Goal:** Support a new backend (e.g., `SourceKind::S3`, `SourceKind::Webdav`, etc.)
+**Goal:** Support a new backend (e.g., `SourceKind::S3`, `SourceKind::Webdav`, etc.)  
+_Today only `SourceKind::Local` is functional; the UI hard-limits browsing to local sources until matching registry builders exist._
 
 1. **Update models**  
    - Add new variant to `SourceKind`.
@@ -155,6 +156,7 @@ When generating or modifying code, agents MUST follow these rules:
 - Keep logic in hooks.
 - Keep UI dumb when possible.
 - Use centralized `lib/api.ts` for all backend calls.
+- `SourceList` currently restricts browsing to `"local"` kinds—only relax this once the Rust operator registry supports the backend.
 
 ---
 

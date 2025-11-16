@@ -31,10 +31,10 @@ export const SourceForm: React.FC<{
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form id="source-form" onSubmit={handleSubmit} className="space-y-4">
       {/* Name Field */}
       <div className="space-y-2">
-        <label htmlFor="name" className="block text-sm font-medium text-foreground">
+        <label htmlFor="name" className="block text-xs font-semibold text-foreground uppercase tracking-wide">
           Source Name
         </label>
         <input
@@ -44,20 +44,20 @@ export const SourceForm: React.FC<{
           value={formData.name}
           onChange={handleChange}
           placeholder="e.g., My Documents"
-          className="w-full rounded-md border border-input bg-input px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring shadow-sm"
         />
       </div>
 
       {/* Type Field */}
       <div className="space-y-2">
-        <label htmlFor="kind" className="block text-sm font-medium text-foreground">
+        <label htmlFor="kind" className="block text-xs font-semibold text-foreground uppercase tracking-wide">
           Storage Type
         </label>
         <select
           name="kind"
           value={formData.kind}
           onChange={handleChange}
-          className="w-full rounded-md border border-input bg-input px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring shadow-sm"
         >
           <option value="local">Local Filesystem</option>
           <option value="s3">S3</option>
@@ -69,7 +69,7 @@ export const SourceForm: React.FC<{
 
       {/* Path Field */}
       <div className="space-y-2">
-        <label htmlFor="root" className="block text-sm font-medium text-foreground">
+        <label htmlFor="root" className="block text-xs font-semibold text-foreground uppercase tracking-wide">
           Path / Root
         </label>
         <input
@@ -79,14 +79,9 @@ export const SourceForm: React.FC<{
           value={formData.root}
           onChange={handleChange}
           placeholder={formData.kind === "local" ? "/path/to/folder" : "bucket-name or root path"}
-          className="w-full rounded-md border border-input bg-input px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring shadow-sm"
         />
       </div>
-
-      {/* Submit Button */}
-      <Button type="submit" className="w-full">
-        {isEditing ? "Update Source" : "Add Source"}
-      </Button>
     </form>
   );
 };
