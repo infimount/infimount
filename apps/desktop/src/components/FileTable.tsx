@@ -1,5 +1,5 @@
 import { FileItem } from "@/types/storage";
-import { File, Folder, FileText, FileImage, FileVideo, FileArchive, MoreVertical, Edit, Eye, Download, Trash2 } from "lucide-react";
+import { File, Folder, FileText, FileImage, FileVideo, FileArchive, MoreVertical, Eye, Download, Trash2 } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -183,19 +183,22 @@ export function FileTable({
                         <MoreVertical className="h-4 w-4" />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => onOpenFile?.(file)}>
-                        <Eye className="mr-2 h-4 w-4" />
-                        Preview
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => console.log('Edit', file.id)}>
-                        <Edit className="mr-2 h-4 w-4" />
-                        Edit
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => onDownloadFile?.(file)}>
-                        <Download className="mr-2 h-4 w-4" />
-                        Download
-                      </DropdownMenuItem>
+                    <DropdownMenuContent
+                      align="end"
+                      className="bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] border border-border shadow-md"
+                    >
+                      {file.type === "file" && (
+                        <>
+                          <DropdownMenuItem onClick={() => onOpenFile?.(file)}>
+                            <Eye className="mr-2 h-4 w-4" />
+                            Preview
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => onDownloadFile?.(file)}>
+                            <Download className="mr-2 h-4 w-4" />
+                            Download
+                          </DropdownMenuItem>
+                        </>
+                      )}
                       <DropdownMenuItem 
                         onClick={() => onDeleteFile?.(file)}
                         className="text-destructive"

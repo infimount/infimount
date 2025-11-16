@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -16,12 +16,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { StorageType } from "@/types/storage";
+import { StorageType, type StorageConfig } from "@/types/storage";
 
 interface AddStorageDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onAdd: (config: { name: string; type: StorageType; config: Record<string, string> }) => void;
+  onAdd?: (config: { name: string; type: StorageType; config: Record<string, string> }) => void;
+  onUpdate?: (id: string, config: { name: string; type: StorageType; config: Record<string, string> }) => void;
+  initialStorage?: StorageConfig;
 }
 
 const storageFields: Record<StorageType, { label: string; key: string; type?: string }[]> = {
@@ -47,16 +49,43 @@ const storageFields: Record<StorageType, { label: string; key: string; type?: st
   ],
 };
 
-export function AddStorageDialog({ open, onOpenChange, onAdd }: AddStorageDialogProps) {
-  const [name, setName] = useState('');
-  const [type, setType] = useState<StorageType>('aws-s3');
-  const [config, setConfig] = useState<Record<string, string>>({});
+export function AddStorageDialog({
+  open,
+  onOpenChange,
+  onAdd,
+  onUpdate,
+  initialStorage,
+}: AddStorageDialogProps) {
+  const isEditing = Boolean(initialStorage);
+  const [name, setName] = useState(initialStorage?.name ?? "");
+  const [type, setType] = useState<StorageType>(initialStorage?.type ?? "aws-s3");
+  const [config, setConfig] = useState<Record<string, string>>(initialStorage?.config ?? {});
+
+  useEffect(() => {
+    if (initialStorage && open) {
+      setName(initialStorage.name);
+      setType(initialStorage.type);
+      setConfig(initialStorage.config ?? {});
+    }
+    if (!open && !initialStorage) {
+      setName("");
+      setType("aws-s3");
+      setConfig({});
+    }
+  }, [initialStorage, open]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onAdd({ name, type, config });
-    setName('');
-    setConfig({});
+    if (isEditing && initialStorage && onUpdate) {
+      onUpdate(initialStorage.id, { name, type, config });
+    } else if (onAdd) {
+      onAdd({ name, type, config });
+    }
+    if (!isEditing) {
+      setName("");
+      setType("aws-s3");
+      setConfig({});
+    }
     onOpenChange(false);
   };
 
@@ -66,9 +95,11 @@ export function AddStorageDialog({ open, onOpenChange, onAdd }: AddStorageDialog
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[500px] rounded-2xl border border-border bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] shadow-2xl">
         <DialogHeader>
-          <DialogTitle>Add New Storage</DialogTitle>
+          <DialogTitle>{isEditing ? "Edit Storage" : "Add New Storage"}</DialogTitle>
           <DialogDescription>
-            Configure a new storage connection. Choose the storage type and fill in the required credentials.
+            {isEditing
+              ? "Update the storage configuration and save your changes."
+              : "Configure a new storage connection. Choose the storage type and fill in the required credentials."}
           </DialogDescription>
         </DialogHeader>
 
@@ -122,7 +153,7 @@ export function AddStorageDialog({ open, onOpenChange, onAdd }: AddStorageDialog
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit">Add Storage</Button>
+            <Button type="submit">{isEditing ? "Save Changes" : "Add Storage"}</Button>
           </div>
         </form>
       </DialogContent>

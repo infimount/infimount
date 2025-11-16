@@ -9,6 +9,7 @@ import {
   listSources,
   addSource as apiAddSource,
   removeSource as apiRemoveSource,
+  updateSource as apiUpdateSource,
 } from "@/lib/api";
 
 const mapSourceKindToStorageType = (kind: SourceKind): StorageType => {
@@ -59,18 +60,41 @@ const deriveRootFromConfig = (type: StorageType, config: Record<string, string>)
   return "";
 };
 
-const mapSourceToStorageConfig = (source: Source): StorageConfig => ({
-  id: source.id,
-  name: source.name,
-  type: mapSourceKindToStorageType(source.kind),
-  config: {},
-  connected: true,
-});
+const buildConfigFromSource = (source: Source): Record<string, string> => {
+  const type = mapSourceKindToStorageType(source.kind);
+  if (type === "local-fs") {
+    return { rootPath: source.root };
+  }
+  if (type === "aws-s3") {
+    const [bucketName = "", region = ""] = source.root.split("@");
+    return { bucketName, region };
+  }
+  if (type === "azure-blob") {
+    const [accountName = "", containerName = ""] = source.root.split("/");
+    return { accountName, containerName };
+  }
+  if (type === "webdav") {
+    return { serverUrl: source.root };
+  }
+  return {};
+};
+
+const mapSourceToStorageConfig = (source: Source): StorageConfig => {
+  const type = mapSourceKindToStorageType(source.kind);
+  return {
+    id: source.id,
+    name: source.name,
+    type,
+    config: buildConfigFromSource(source),
+    connected: true,
+  };
+};
 
 const Index = () => {
   const [storages, setStorages] = useState<StorageConfig[]>([]);
   const [selectedStorage, setSelectedStorage] = useState<string | null>(null);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [editingStorage, setEditingStorage] = useState<StorageConfig | null>(null);
 
   const reloadStorages = async () => {
     try {
@@ -127,12 +151,42 @@ const Index = () => {
   };
 
   const handleEditStorage = (id: string) => {
-    const storage = storages.find(s => s.id === id);
-    toast({
-      title: "Edit storage",
-      description: `Editing ${storage?.name}...`,
-    });
-    // Open edit dialog or navigate to edit page
+    const storage = storages.find((s) => s.id === id) || null;
+    if (!storage) return;
+    setEditingStorage(storage);
+    setIsAddDialogOpen(true);
+  };
+
+  const handleUpdateStorage = (id: string, cfg: {
+    name: string;
+    type: StorageType;
+    config: Record<string, string>;
+  }) => {
+    const source: Source = {
+      id,
+      name: cfg.name,
+      kind: mapStorageTypeToSourceKind(cfg.type),
+      root: deriveRootFromConfig(cfg.type, cfg.config),
+    };
+
+    void (async () => {
+      try {
+        await apiUpdateSource(source);
+        await reloadStorages();
+        toast({
+          title: "Storage updated",
+          description: `${cfg.name} has been updated successfully.`,
+        });
+      } catch (error: any) {
+        toast({
+          title: "Failed to update storage",
+          description: error?.message || String(error),
+          variant: "destructive",
+        });
+      } finally {
+        setEditingStorage(null);
+      }
+    })();
   };
 
   const handleDeleteStorage = (id: string) => {
@@ -198,8 +252,13 @@ const Index = () => {
 
       <AddStorageDialog
         open={isAddDialogOpen}
-        onOpenChange={setIsAddDialogOpen}
+        onOpenChange={(open) => {
+          setIsAddDialogOpen(open);
+          if (!open) setEditingStorage(null);
+        }}
         onAdd={handleAddStorage}
+        onUpdate={handleUpdateStorage}
+        initialStorage={editingStorage ?? undefined}
       />
     </div>
   );

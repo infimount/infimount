@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FileGrid } from "./FileGrid";
 import { FileTable } from "./FileTable";
+import { FilePreviewDialog } from "./FilePreviewDialog";
 import { FileItem } from "@/types/storage";
 import { Entry, listEntries, readFile, deletePath, TauriApiError } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
@@ -27,6 +28,8 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
 
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const filteredFiles = allFiles.filter((file) =>
     file.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -171,6 +174,9 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
   const handleOpenFile = (file: FileItem) => {
     if (file.type === "folder") {
       handleNavigate(file.id);
+    } else {
+      setPreviewFile(file);
+      setPreviewOpen(true);
     }
   };
 
@@ -350,6 +356,15 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
           />
         )}
       </div>
+      <FilePreviewDialog
+        open={previewOpen}
+        onOpenChange={(open) => {
+          setPreviewOpen(open);
+          if (!open) setPreviewFile(null);
+        }}
+        file={previewFile}
+        sourceId={sourceId}
+      />
     </div>
   );
 }
