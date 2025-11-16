@@ -1,0 +1,90 @@
+@tailwind base;
+
+/* CSS Custom Properties - Theme Variables */
+:root {
+  --background: 210, 40%, 96%;
+  --foreground: 222, 22%, 25%;
+  --card: 0, 0%, 100%;
+  --card-foreground: 222, 22%, 25%;
+  --primary: 213, 90%, 58%;
+  --primary-foreground: 0, 0%, 100%;
+  --secondary: 210, 40%, 96%;
+  --secondary-foreground: 222, 22%, 25%;
+  --muted: 210, 24%, 90%;
+  --muted-foreground: 215, 16%, 47%;
+  --accent: 213, 90%, 58%;
+  --accent-foreground: 0, 0%, 100%;
+  --destructive: 0, 84%, 60%;
+  --destructive-foreground: 0, 0%, 100%;
+  --border: 210, 24%, 88%;
+  --input: 0, 0%, 100%;
+  --ring: 213, 90%, 58%;
+  --radius: 0.75rem;
+}
+
+@tailwind components;
+
+body {
+  @apply bg-background text-foreground;
+  font-feature-settings: "rlig" 1, "calt" 1;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--muted));
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--muted-foreground));
+}
+
+/* Component utilities */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@tailwind utilities;
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-in-out;
+}
+
+.animate-slide-in-up {
+  animation: slideInUp 0.2s ease-in-out;
+}
