@@ -1,12 +1,11 @@
 import React, { useState } from "react";
 import type { Source } from "../../types/source";
-import { Button } from "../../components/Button";
 
 export const SourceForm: React.FC<{
   onSubmit: (source: Source) => void;
   initialData?: Source;
   isEditing?: boolean;
-}> = ({ onSubmit, initialData, isEditing = false }) => {
+}> = ({ onSubmit, initialData }) => {
   const [formData, setFormData] = useState<Source>(
     initialData || {
       id: Math.random().toString(36).substring(7),

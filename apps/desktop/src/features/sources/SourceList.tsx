@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import type { Source } from "../../types/source";
+import type { Source, SourceKind } from "../../types/source";
 import { useSourceStore } from "./store";
 import {
   listSources,
@@ -10,6 +10,8 @@ import {
 import { useToastStore } from "../../lib/toast";
 import { SourceForm } from "./SourceForm";
 import { Button } from "../../components/Button";
+import { AddStorageDialog } from "../../components/AddStorageDialog";
+import type { StorageType } from "../../types/storage";
 
 export const SourceList: React.FC<{
   onSelectSource?: (source: Source) => void;
@@ -17,6 +19,7 @@ export const SourceList: React.FC<{
 }> = ({ onSelectSource, selectedSourceId }) => {
   const { sources, setSources } = useSourceStore();
   const [showForm, setShowForm] = useState(false);
+  const [showAddDialog, setShowAddDialog] = useState(false);
   const [editingSource, setEditingSource] = useState<Source | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const addToast = useToastStore((s) => s.addToast);
@@ -56,6 +59,55 @@ export const SourceList: React.FC<{
     } catch (err: any) {
       addToast(err?.message || String(err), "error");
     }
+  };
+
+  const mapStorageTypeToSourceKind = (type: StorageType): SourceKind => {
+    switch (type) {
+      case "aws-s3":
+        return "s3";
+      case "azure-blob":
+        return "azure_blob";
+      case "webdav":
+        return "webdav";
+      case "local-fs":
+      default:
+        return "local";
+    }
+  };
+
+  const deriveRootFromConfig = (type: StorageType, config: Record<string, string>): string => {
+    if (type === "local-fs") {
+      return config.rootPath || "";
+    }
+    if (type === "aws-s3") {
+      const bucket = config.bucketName || "";
+      const region = config.region || "";
+      return [bucket, region].filter(Boolean).join("@");
+    }
+    if (type === "azure-blob") {
+      const account = config.accountName || "";
+      const container = config.containerName || "";
+      return [account, container].filter(Boolean).join("/");
+    }
+    if (type === "webdav") {
+      return config.rootPath || config.serverUrl || "";
+    }
+    return "";
+  };
+
+  const handleAddFromDialog = async (cfg: {
+    name: string;
+    type: StorageType;
+    config: Record<string, string>;
+  }) => {
+    const source: Source = {
+      id: Math.random().toString(36).substring(2, 10),
+      name: cfg.name,
+      kind: mapStorageTypeToSourceKind(cfg.type),
+      root: deriveRootFromConfig(cfg.type, cfg.config),
+    };
+    await handleAddSource(source);
+    setShowAddDialog(false);
   };
 
   const handleBrowse = (source: Source) => {
@@ -98,7 +150,7 @@ export const SourceList: React.FC<{
       <div className="mb-3">
         {!showForm && (
           <Button
-            onClick={() => setShowForm(true)}
+            onClick={() => setShowAddDialog(true)}
             className="w-full justify-center"
             size="sm"
           >
@@ -106,6 +158,12 @@ export const SourceList: React.FC<{
           </Button>
         )}
       </div>
+
+      <AddStorageDialog
+        open={showAddDialog}
+        onOpenChange={setShowAddDialog}
+        onAdd={handleAddFromDialog}
+      />
 
       {showForm && (
         <div className="mb-3 rounded-lg border bg-background p-3 shadow-sm">
