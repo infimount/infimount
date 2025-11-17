@@ -8,7 +8,7 @@ export interface Entry {
   modified_at: string | null;
 }
 
-import type { Source } from "../types/source";
+import type { Source, SourceKind } from "../types/source";
 
 export interface ApiError {
   message: string;
@@ -19,6 +19,21 @@ export class TauriApiError extends Error {
     super(message);
     this.name = "TauriApiError";
   }
+}
+
+export interface StorageFieldSchema {
+  name: string;
+  label: string;
+  input_type?: string;
+  required?: boolean;
+  secret?: boolean;
+}
+
+export interface StorageKindSchema {
+  id: string;
+  label: string;
+  kind: SourceKind;
+  fields: StorageFieldSchema[];
 }
 
 async function handleError(error: any): Promise<never> {
@@ -107,6 +122,14 @@ export async function updateSource(source: Source): Promise<void> {
 export async function replaceSources(sources: Source[]): Promise<void> {
   try {
     return await tauriInvoke("replace_sources", { sources });
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function listStorageSchemas(): Promise<StorageKindSchema[]> {
+  try {
+    return await tauriInvoke<StorageKindSchema[]>("list_storage_schemas");
   } catch (error) {
     return handleError(error);
   }

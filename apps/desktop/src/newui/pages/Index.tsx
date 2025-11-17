@@ -10,6 +10,7 @@ import {
   addSource as apiAddSource,
   removeSource as apiRemoveSource,
   updateSource as apiUpdateSource,
+  replaceSources as apiReplaceSources,
 } from "@/lib/api";
 
 const mapSourceKindToStorageType = (kind: SourceKind): StorageType => {
@@ -89,6 +90,13 @@ const mapSourceToStorageConfig = (source: Source): StorageConfig => {
     connected: true,
   };
 };
+
+const storageToSource = (storage: StorageConfig): Source => ({
+  id: storage.id,
+  name: storage.name,
+  kind: mapStorageTypeToSourceKind(storage.type),
+  root: deriveRootFromConfig(storage.type, storage.config),
+});
 
 const Index = () => {
   const [storages, setStorages] = useState<StorageConfig[]>([]);
@@ -221,11 +229,161 @@ const Index = () => {
     })();
   };
 
+  const handleReorderStorages = (startIndex: number, endIndex: number) => {
+    if (startIndex === endIndex) return;
+    setStorages((current) => {
+      if (
+        startIndex < 0 ||
+        endIndex < 0 ||
+        startIndex >= current.length ||
+        endIndex >= current.length
+      ) {
+        return current;
+      }
+      const updated = [...current];
+      const [moved] = updated.splice(startIndex, 1);
+      updated.splice(endIndex, 0, moved);
+
+      void (async () => {
+        try {
+          await apiReplaceSources(updated.map(storageToSource));
+        } catch (error: any) {
+          toast({
+            title: "Failed to reorder storages",
+            description: error?.message || String(error),
+            variant: "destructive",
+          });
+          await reloadStorages();
+        }
+      })();
+
+      return updated;
+    });
+  };
+
+  const handleImportStorages = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json,application/json";
+    input.onchange = (event) => {
+      const file = (event.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (loadEvent) => {
+        try {
+          const text = (loadEvent.target?.result as string) ?? "";
+          const parsed = JSON.parse(text);
+          if (!Array.isArray(parsed)) {
+            throw new Error("Expected a JSON array of storage configurations.");
+          }
+
+          const sources: Source[] = parsed.map((item, index) => {
+            if (!item || typeof item !== "object") {
+              throw new Error(`Invalid item at index ${index}.`);
+            }
+
+            // If it already looks like a Source
+            if ("kind" in item && "root" in item) {
+              const sourceItem = item as Partial<Source>;
+              const id =
+                typeof sourceItem.id === "string" && sourceItem.id.length > 0
+                  ? sourceItem.id
+                  : Math.random().toString(36).substring(2, 10);
+              const name =
+                typeof sourceItem.name === "string" && sourceItem.name.length > 0
+                  ? sourceItem.name
+                  : `Storage ${index + 1}`;
+              const kind = (sourceItem.kind ?? "local") as SourceKind;
+              const root = String(sourceItem.root ?? "");
+              return { id, name, kind, root };
+            }
+
+            // Fallback: treat it like a StorageConfig shape
+            if ("type" in item && "config" in item) {
+              const storageItem = item as {
+                id?: string;
+                name?: string;
+                type: StorageType;
+                config: Record<string, string>;
+              };
+              const id =
+                typeof storageItem.id === "string" && storageItem.id.length > 0
+                  ? storageItem.id
+                  : Math.random().toString(36).substring(2, 10);
+              const name =
+                typeof storageItem.name === "string" && storageItem.name.length > 0
+                  ? storageItem.name
+                  : `Storage ${index + 1}`;
+              const type = storageItem.type ?? "local-fs";
+              const config = storageItem.config ?? {};
+              return {
+                id,
+                name,
+                kind: mapStorageTypeToSourceKind(type),
+                root: deriveRootFromConfig(type, config),
+              };
+            }
+
+            throw new Error(`Unsupported storage format at index ${index}.`);
+          });
+
+          void (async () => {
+            try {
+              await apiReplaceSources(sources);
+              await reloadStorages();
+              toast({
+                title: "Import successful",
+                description: `Imported ${sources.length} storage configuration(s).`,
+              });
+            } catch (error: any) {
+              toast({
+                title: "Import failed",
+                description: error?.message || String(error),
+                variant: "destructive",
+              });
+            }
+          })();
+        } catch (error: any) {
+          toast({
+            title: "Import failed",
+            description: error?.message || String(error),
+            variant: "destructive",
+          });
+        }
+      };
+
+      reader.readAsText(file);
+    };
+
+    input.click();
+  };
+
+  const handleExportStorages = () => {
+    const sources = storages.map(storageToSource);
+    const dataStr = JSON.stringify(sources, null, 2);
+    const blob = new Blob([dataStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "openhsb-storages.json";
+    link.click();
+    URL.revokeObjectURL(url);
+
+    toast({
+      title: "Export successful",
+      description: `Exported ${sources.length} storage configuration(s).`,
+    });
+  };
+
   const currentStorage = storages.find((s) => s.id === selectedStorage);
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
-      <div className="hidden md:block md:w-64 md:shrink-0">
+      <div
+        className="hidden md:block md:w-64 md:shrink-0 md:resize-x overflow-hidden"
+        style={{ minWidth: "200px", maxWidth: "400px" }}
+      >
         <StorageSidebar
           storages={storages}
           selectedStorage={selectedStorage}
@@ -234,6 +392,9 @@ const Index = () => {
           onEditStorage={handleEditStorage}
           onDeleteStorage={handleDeleteStorage}
           onRefreshStorage={handleRefreshStorage}
+          onReorderStorages={handleReorderStorages}
+          onImportStorages={handleImportStorages}
+          onExportStorages={handleExportStorages}
         />
       </div>
 

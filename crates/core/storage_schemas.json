@@ -1,0 +1,129 @@
+[
+  {
+    "id": "local-fs",
+    "label": "Local File System",
+    "kind": "local",
+    "fields": [
+      {
+        "name": "rootPath",
+        "label": "Root Folder Path",
+        "input_type": "text",
+        "required": true,
+        "secret": false
+      }
+    ]
+  },
+  {
+    "id": "aws-s3",
+    "label": "AWS S3",
+    "kind": "s3",
+    "fields": [
+      {
+        "name": "bucketName",
+        "label": "Bucket Name",
+        "input_type": "text",
+        "required": true,
+        "secret": false
+      },
+      {
+        "name": "region",
+        "label": "Region",
+        "input_type": "text",
+        "required": true,
+        "secret": false
+      },
+      {
+        "name": "accessKeyId",
+        "label": "Access Key ID",
+        "input_type": "text",
+        "required": false,
+        "secret": true
+      },
+      {
+        "name": "secretAccessKey",
+        "label": "Secret Access Key",
+        "input_type": "password",
+        "required": false,
+        "secret": true
+      }
+    ]
+  },
+  {
+    "id": "azure-blob",
+    "label": "Azure Blob Storage",
+    "kind": "azure_blob",
+    "fields": [
+      {
+        "name": "accountName",
+        "label": "Account Name",
+        "input_type": "text",
+        "required": true,
+        "secret": false
+      },
+      {
+        "name": "containerName",
+        "label": "Container Name",
+        "input_type": "text",
+        "required": true,
+        "secret": false
+      },
+      {
+        "name": "accountKey",
+        "label": "Account Key",
+        "input_type": "password",
+        "required": false,
+        "secret": true
+      }
+    ]
+  },
+  {
+    "id": "webdav",
+    "label": "WebDAV",
+    "kind": "webdav",
+    "fields": [
+      {
+        "name": "serverUrl",
+        "label": "Server URL",
+        "input_type": "text",
+        "required": true,
+        "secret": false
+      },
+      {
+        "name": "username",
+        "label": "Username",
+        "input_type": "text",
+        "required": false,
+        "secret": false
+      },
+      {
+        "name": "password",
+        "label": "Password",
+        "input_type": "password",
+        "required": false,
+        "secret": true
+      },
+      {
+        "name": "rootPath",
+        "label": "Root Path",
+        "input_type": "text",
+        "required": false,
+        "secret": false
+      }
+    ]
+  },
+  {
+    "id": "gcs",
+    "label": "Google Cloud Storage",
+    "kind": "gcs",
+    "fields": [
+      {
+        "name": "bucket",
+        "label": "Bucket",
+        "input_type": "text",
+        "required": true,
+        "secret": false
+      }
+    ]
+  }
+]
+

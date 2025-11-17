@@ -23,6 +23,7 @@ fn main() {
             commands::remove_source,
             commands::update_source,
             commands::replace_sources,
+            commands::list_storage_schemas,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

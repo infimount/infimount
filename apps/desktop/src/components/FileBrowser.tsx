@@ -1,12 +1,29 @@
 import { useEffect, useState } from "react";
-import { Search, Grid3x3, List, ChevronRight, Home, Download, Trash2 } from "lucide-react";
+import {
+  Search,
+  Grid3x3,
+  List,
+  ChevronLeft,
+  ChevronRight,
+  Upload,
+  Download,
+  Trash2,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FileGrid } from "./FileGrid";
 import { FileTable } from "./FileTable";
-import { FilePreviewDialog } from "./FilePreviewDialog";
+import { UploadZone } from "./UploadZone";
+import { FilePreviewPanel } from "./FilePreviewPanel";
 import { FileItem } from "@/types/storage";
-import { Entry, listEntries, readFile, deletePath, TauriApiError } from "@/lib/api";
+import {
+  Entry,
+  listEntries,
+  readFile,
+  writeFile,
+  deletePath,
+  TauriApiError,
+} from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
 
 interface FileBrowserProps {
@@ -20,6 +37,8 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
   const [currentPath, setCurrentPath] = useState<string>("/");
   const [allFiles, setAllFiles] = useState<FileItem[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [history, setHistory] = useState<string[]>(["/"]);
+  const [historyIndex, setHistoryIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,7 +48,6 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
 
   const filteredFiles = allFiles.filter((file) =>
     file.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -69,6 +87,8 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
   useEffect(() => {
     setCurrentPath("/");
     setSelectedFiles(new Set());
+    setHistory(["/"]);
+    setHistoryIndex(0);
   }, [sourceId]);
 
   useEffect(() => {
@@ -76,10 +96,44 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPath, sourceId]);
 
-  const handleNavigate = (path: string) => {
+  const handleNavigate = (path: string, options?: { fromHistory?: boolean }) => {
+    const normalized = path || "/";
     setSearchQuery("");
     setSelectedFiles(new Set());
-    setCurrentPath(path || "/");
+    if (options?.fromHistory) {
+      setCurrentPath(normalized);
+      return;
+    }
+
+    setHistory((previous) => {
+      const trimmed = previous.slice(0, historyIndex + 1);
+      if (trimmed[trimmed.length - 1] === normalized) {
+        return trimmed;
+      }
+      const next = [...trimmed, normalized];
+      setHistoryIndex(next.length - 1);
+      return next;
+    });
+    setCurrentPath(normalized);
+  };
+
+  const canGoBack = historyIndex > 0;
+  const canGoForward = historyIndex < history.length - 1;
+
+  const goBack = () => {
+    if (!canGoBack) return;
+    const newIndex = historyIndex - 1;
+    setHistoryIndex(newIndex);
+    const target = history[newIndex] || "/";
+    handleNavigate(target, { fromHistory: true });
+  };
+
+  const goForward = () => {
+    if (!canGoForward) return;
+    const newIndex = historyIndex + 1;
+    setHistoryIndex(newIndex);
+    const target = history[newIndex] || "/";
+    handleNavigate(target, { fromHistory: true });
   };
 
   const handleSelectFile = (fileId: string) => {
@@ -176,12 +230,53 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
       handleNavigate(file.id);
     } else {
       setPreviewFile(file);
-      setPreviewOpen(true);
     }
   };
 
   const handleDownloadFile = (file: FileItem) => {
     void downloadOne(file);
+  };
+
+  const handleUpload = (files: File[]) => {
+    void (async () => {
+      if (!files.length) return;
+      let successCount = 0;
+      for (const file of files) {
+        try {
+          const buffer = await file.arrayBuffer();
+          const basePath = currentPath === "/" ? "" : currentPath.replace(/\/$/, "");
+          const targetPath = `${basePath}/${file.name}`;
+          await writeFile(sourceId, targetPath, new Uint8Array(buffer));
+          successCount += 1;
+        } catch (error: any) {
+          toast({
+            title: "Upload failed",
+            description: error?.message || String(error),
+            variant: "destructive",
+          });
+        }
+      }
+      await loadFiles(currentPath);
+      if (successCount > 0) {
+        toast({
+          title: "Upload complete",
+          description: `${successCount} file${successCount > 1 ? "s" : ""} uploaded successfully.`,
+        });
+      }
+    })();
+  };
+
+  const handlePreviewEdit = () => {
+    if (!previewFile) return;
+    toast({
+      title: "Open in editor",
+      description: "Opening files in an external editor is not implemented yet.",
+    });
+  };
+
+  const handlePreviewDownload = () => {
+    if (!previewFile) return;
+    void downloadOne(previewFile);
   };
 
   const toggleSort = (field: SortField) => {
@@ -235,136 +330,189 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
     return items;
   };
 
+  const breadcrumbs = getBreadcrumbs();
+  const fullPath = breadcrumbs.map((crumb) => crumb.name).join(" / ");
+  const currentLabel =
+    breadcrumbs[breadcrumbs.length - 1]?.name ?? storageName;
+
   return (
-    <div className="flex h-full flex-col bg-background">
-      {/* Header */}
-      <div className="border-b bg-card">
-        <div className="flex items-center gap-4 px-6 py-4">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Search files and folders..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              size="icon"
-              variant={viewMode === 'grid' ? 'default' : 'ghost'}
-              onClick={() => setViewMode('grid')}
-            >
-              <Grid3x3 className="h-4 w-4" />
-            </Button>
-            <Button
-              size="icon"
-              variant={viewMode === 'table' ? 'default' : 'ghost'}
-              onClick={() => setViewMode('table')}
-            >
-              <List className="h-4 w-4" />
-            </Button>
+    <div className="flex h-full bg-background relative">
+      <div className="flex flex-1 flex-col">
+        {/* Header with navigation */}
+        <div className="border-b bg-card">
+          <div className="flex items-center gap-2 px-4 py-3">
+            <div className="flex items-center gap-1">
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8"
+                onClick={goBack}
+                disabled={!canGoBack}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8"
+                onClick={goForward}
+                disabled={!canGoForward}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <span className="truncate text-sm font-medium">
+                {currentLabel}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="relative w-64">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Search files and folders..."
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  className="h-9 pl-9"
+                />
+              </div>
+
+              <label htmlFor="file-upload">
+                <Button
+                  size="icon"
+                  variant="outline"
+                  className="h-9 w-9"
+                  asChild
+                >
+                  <span>
+                    <Upload className="h-4 w-4" />
+                  </span>
+                </Button>
+              </label>
+
+              <div className="flex items-center gap-1 rounded-md border">
+                <Button
+                  size="icon"
+                  variant={viewMode === "grid" ? "default" : "ghost"}
+                  onClick={() => setViewMode("grid")}
+                  className="h-9 w-9"
+                >
+                  <Grid3x3 className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant={viewMode === "table" ? "default" : "ghost"}
+                  onClick={() => setViewMode("table")}
+                  className="h-9 w-9"
+                >
+                  <List className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Breadcrumbs */}
-        <div className="flex items-center gap-2 border-t px-6 py-3 text-sm">
-          <Home className="h-4 w-4 text-muted-foreground" />
-          {getBreadcrumbs().map((crumb, index) => (
-            <div key={crumb.path} className="flex items-center gap-2">
-              {index === 0 ? null : (
-                <ChevronRight className="h-4 w-4 text-muted-foreground" />
-              )}
-              <button
-                className="hover:text-primary transition-colors"
-                onClick={() => handleNavigate(crumb.path)}
-              >
-                {index === 0 ? storageName : crumb.name}
-              </button>
+        {/* Error */}
+        {error && (
+          <div className="border-b bg-destructive/10 px-6 py-2 text-sm text-destructive">
+            {error}
+          </div>
+        )}
+
+        {/* Bulk Actions Bar – fixed height so the scroller doesn’t jump */}
+        {(() => {
+          const hasSelection = selectedFiles.size > 0;
+          return (
+            <div
+              className={`flex h-11 items-center justify-between border-b px-6 py-3 ${
+                hasSelection ? "bg-muted" : "bg-card"
+              }`}
+            >
+              {hasSelection ? (
+                <>
+                  <span className="text-sm font-medium">
+                    {selectedFiles.size} item
+                    {selectedFiles.size > 1 ? "s" : ""} selected
+                  </span>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleBulkDownload}
+                    >
+                      <Download className="mr-2 h-4 w-4" />
+                      Download
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={handleBulkDelete}
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Delete
+                    </Button>
+                  </div>
+                </>
+              ) : null}
             </div>
-          ))}
+          );
+        })()}
+
+        {/* Content */}
+        <div className="flex-1 overflow-auto p-6">
+          {loading ? (
+            <div className="flex h-full items-center justify-center">
+              <div className="flex flex-col items-center gap-2">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                <span className="text-muted-foreground">Loading files...</span>
+              </div>
+            </div>
+          ) : viewMode === "grid" ? (
+            <FileGrid
+              files={sortedFiles}
+              selectedFiles={selectedFiles}
+              onSelectFile={handleSelectFile}
+              onOpenFile={handleOpenFile}
+              onDownloadFile={handleDownloadFile}
+              onDeleteFile={(file) => void deleteOne(file)}
+            />
+          ) : (
+            <FileTable
+              files={sortedFiles}
+              selectedFiles={selectedFiles}
+              onSelectFile={handleSelectFile}
+              onSelectAll={handleSelectAll}
+              onOpenFile={handleOpenFile}
+              onDownloadFile={handleDownloadFile}
+              onDeleteFile={(file) => void deleteOne(file)}
+              sortField={sortField}
+              sortDirection={sortDirection}
+              onSortChange={toggleSort}
+            />
+          )}
         </div>
+
+        {/* Footer path */}
+        <div className="border-t bg-card px-6 py-2">
+          <p className="truncate text-xs text-muted-foreground">{fullPath}</p>
+        </div>
+
+        <UploadZone onUpload={handleUpload} />
       </div>
 
-      {/* Error */}
-      {error && (
-        <div className="border-b bg-destructive/10 px-6 py-2 text-sm text-destructive">
-          {error}
+      {previewFile && (
+        <div className="w-80">
+          <FilePreviewPanel
+            file={previewFile}
+            onClose={() => setPreviewFile(null)}
+            sourceId={sourceId}
+            onEdit={handlePreviewEdit}
+            onDownload={handlePreviewDownload}
+          />
         </div>
       )}
-
-      {/* Bulk Actions Bar – fixed height so the scroller doesn’t jump */}
-      {(() => {
-        const hasSelection = selectedFiles.size > 0;
-        return (
-          <div
-            className={`border-b px-6 py-3 flex items-center justify-between h-11 ${
-              hasSelection ? "bg-muted" : "bg-card"
-            }`}
-          >
-            {hasSelection ? (
-              <>
-                <span className="text-sm font-medium">
-                  {selectedFiles.size} item{selectedFiles.size > 1 ? "s" : ""} selected
-                </span>
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={handleBulkDownload}>
-                    <Download className="mr-2 h-4 w-4" />
-                    Download
-                  </Button>
-                  <Button size="sm" variant="destructive" onClick={handleBulkDelete}>
-                    <Trash2 className="mr-2 h-4 w-4" />
-                    Delete
-                  </Button>
-                </div>
-              </>
-            ) : null}
-          </div>
-        );
-      })()}
-
-      {/* Content */}
-      <div className="flex-1 overflow-auto p-6">
-        {loading ? (
-          <div className="flex h-full items-center justify-center">
-            <div className="flex flex-col items-center gap-2">
-              <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-              <span className="text-muted-foreground">Loading files...</span>
-            </div>
-          </div>
-        ) : viewMode === "grid" ? (
-          <FileGrid
-            files={sortedFiles}
-            selectedFiles={selectedFiles}
-            onSelectFile={handleSelectFile}
-            onOpenFile={handleOpenFile}
-            onDownloadFile={handleDownloadFile}
-            onDeleteFile={(file) => void deleteOne(file)}
-          />
-        ) : (
-          <FileTable
-            files={sortedFiles}
-            selectedFiles={selectedFiles}
-            onSelectFile={handleSelectFile}
-            onSelectAll={handleSelectAll}
-            onOpenFile={handleOpenFile}
-            onDownloadFile={handleDownloadFile}
-            onDeleteFile={(file) => void deleteOne(file)}
-            sortField={sortField}
-            sortDirection={sortDirection}
-            onSortChange={toggleSort}
-          />
-        )}
-      </div>
-      <FilePreviewDialog
-        open={previewOpen}
-        onOpenChange={(open) => {
-          setPreviewOpen(open);
-          if (!open) setPreviewFile(null);
-        }}
-        file={previewFile}
-        sourceId={sourceId}
-      />
     </div>
   );
 }

@@ -1,7 +1,7 @@
 use tauri::State;
 
 use crate::state::AppState;
-use openhsb_core::{operations, Entry, Source};
+use openhsb_core::{operations, schema::StorageKindSchema, Entry, Source};
 
 #[tauri::command]
 pub async fn list_entries(
@@ -135,4 +135,9 @@ pub async fn update_source(state: State<'_, AppState>, source: Source) -> Result
         .update_source(source)
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_storage_schemas() -> Result<Vec<StorageKindSchema>, String> {
+    openhsb_core::schema::list_storage_schemas().map_err(|e| e.to_string())
 }

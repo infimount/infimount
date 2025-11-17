@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { StorageType, type StorageConfig } from "@/types/storage";
+import { listStorageSchemas, type StorageKindSchema } from "@/lib/api";
 
 interface AddStorageDialogProps {
   open: boolean;
@@ -25,29 +26,6 @@ interface AddStorageDialogProps {
   onUpdate?: (id: string, config: { name: string; type: StorageType; config: Record<string, string> }) => void;
   initialStorage?: StorageConfig;
 }
-
-const storageFields: Record<StorageType, { label: string; key: string; type?: string }[]> = {
-  'aws-s3': [
-    { label: 'Bucket Name', key: 'bucketName' },
-    { label: 'Region', key: 'region' },
-    { label: 'Access Key ID', key: 'accessKeyId' },
-    { label: 'Secret Access Key', key: 'secretAccessKey', type: 'password' },
-  ],
-  'azure-blob': [
-    { label: 'Account Name', key: 'accountName' },
-    { label: 'Container Name', key: 'containerName' },
-    { label: 'Account Key', key: 'accountKey', type: 'password' },
-  ],
-  'webdav': [
-    { label: 'Server URL', key: 'serverUrl' },
-    { label: 'Username', key: 'username' },
-    { label: 'Password', key: 'password', type: 'password' },
-    { label: 'Root Path', key: 'rootPath' },
-  ],
-  'local-fs': [
-    { label: 'Root Folder Path', key: 'rootPath' },
-  ],
-};
 
 export function AddStorageDialog({
   open,
@@ -60,6 +38,7 @@ export function AddStorageDialog({
   const [name, setName] = useState(initialStorage?.name ?? "");
   const [type, setType] = useState<StorageType>(initialStorage?.type ?? "aws-s3");
   const [config, setConfig] = useState<Record<string, string>>(initialStorage?.config ?? {});
+  const [schemas, setSchemas] = useState<StorageKindSchema[]>([]);
 
   useEffect(() => {
     if (initialStorage && open) {
@@ -73,6 +52,25 @@ export function AddStorageDialog({
       setConfig({});
     }
   }, [initialStorage, open]);
+
+  useEffect(() => {
+    let mounted = true;
+    listStorageSchemas()
+      .then((items) => {
+        if (!mounted) return;
+        setSchemas(items);
+        if (!isEditing && !initialStorage && items.length > 0) {
+          setType(items[0].id as StorageType);
+        }
+      })
+      // eslint-disable-next-line no-console
+      .catch((err) => console.error("Failed to load storage schemas", err));
+    return () => {
+      mounted = false;
+    };
+    // We only want this once on mount/edit-load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -89,7 +87,8 @@ export function AddStorageDialog({
     onOpenChange(false);
   };
 
-  const fields = storageFields[type];
+  const currentSchema = schemas.find((s) => s.id === type);
+  const fields = currentSchema?.fields ?? [];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -125,26 +124,27 @@ export function AddStorageDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] border border-border shadow-md">
-                <SelectItem value="aws-s3">AWS S3</SelectItem>
-                <SelectItem value="azure-blob">Azure Blob Storage</SelectItem>
-                <SelectItem value="webdav">WebDAV</SelectItem>
-                <SelectItem value="local-fs">Local File System</SelectItem>
+                {schemas.map((schema) => (
+                  <SelectItem key={schema.id} value={schema.id}>
+                    {schema.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
 
           {fields.map((field) => (
-            <div key={field.key} className="space-y-2">
-              <Label htmlFor={field.key}>{field.label}</Label>
+            <div key={field.name} className="space-y-2">
+              <Label htmlFor={field.name}>{field.label}</Label>
               <Input
-                id={field.key}
-                type={field.type || 'text'}
-                value={config[field.key] || ''}
+                id={field.name}
+                type={field.input_type === "password" || field.secret ? "password" : "text"}
+                value={config[field.name] || ""}
                 onChange={(e) =>
-                  setConfig({ ...config, [field.key]: e.target.value })
+                  setConfig({ ...config, [field.name]: e.target.value })
                 }
                 placeholder={field.label}
-                required
+                required={field.required}
               />
             </div>
           ))}

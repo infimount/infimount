@@ -10,9 +10,11 @@ pub async fn list_entries(op: &Operator, path: &str) -> Result<Vec<Entry>> {
     let mut out = Vec::new();
 
     while let Some(obj) = lister.try_next().await? {
-        let meta = obj.metadata();
         let full_path = obj.path().to_string();
         let name = extract_filename(&full_path);
+        // Use op.stat on the full path to ensure we get full metadata,
+        // including last_modified where the backend supports it.
+        let meta = op.stat(&full_path).await?;
 
         let entry = Entry {
             path: full_path,

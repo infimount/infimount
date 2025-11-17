@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use opendal::services::Fs;
+use opendal::services::{Azblob, Fs, Gcs, S3, Webdav};
 use opendal::Operator;
 use tokio::sync::RwLock;
 
@@ -145,13 +145,86 @@ impl OperatorRegistry {
 fn build_operator(source: &Source) -> Result<Operator> {
     match source.kind {
         SourceKind::Local => build_local_operator(&source.root),
-        // Other backends will be added incrementally.
-        _ => Err(CoreError::UnsupportedSourceKind(source.kind.clone())),
+        SourceKind::S3 => build_s3_operator(&source.root),
+        SourceKind::WebDav => build_webdav_operator(&source.root),
+        SourceKind::AzureBlob => build_azure_blob_operator(&source.root),
+        SourceKind::Gcs => build_gcs_operator(&source.root),
     }
 }
 
 fn build_local_operator(root: &str) -> Result<Operator> {
     let builder = Fs::default().root(root);
+    let op = Operator::new(builder)
+        .map_err(CoreError::Storage)?
+        .finish();
+    Ok(op)
+}
+
+fn build_s3_operator(root: &str) -> Result<Operator> {
+    let mut builder = S3::default();
+
+    // root format: "bucket@region" or just "bucket"
+    let mut parts = root.split('@');
+    if let Some(bucket) = parts.next() {
+        if !bucket.is_empty() {
+            builder = builder.bucket(bucket);
+        }
+    }
+    if let Some(region) = parts.next() {
+        if !region.is_empty() {
+            builder = builder.region(region);
+        }
+    }
+
+    let op = Operator::new(builder)
+        .map_err(CoreError::Storage)?
+        .finish();
+    Ok(op)
+}
+
+fn build_webdav_operator(root: &str) -> Result<Operator> {
+    let mut builder = Webdav::default();
+
+    if !root.is_empty() {
+        builder = builder.endpoint(root);
+    }
+
+    let op = Operator::new(builder)
+        .map_err(CoreError::Storage)?
+        .finish();
+    Ok(op)
+}
+
+fn build_azure_blob_operator(root: &str) -> Result<Operator> {
+    let mut builder = Azblob::default();
+
+    // root format: "account/container"
+    let mut parts = root.split('/');
+    if let Some(account) = parts.next() {
+        if !account.is_empty() {
+            builder = builder.account_name(account);
+        }
+    }
+    if let Some(container) = parts.next() {
+        if !container.is_empty() {
+            builder = builder.container(container);
+        }
+    }
+
+    let op = Operator::new(builder)
+        .map_err(CoreError::Storage)?
+        .finish();
+    Ok(op)
+}
+
+fn build_gcs_operator(root: &str) -> Result<Operator> {
+    let mut builder = Gcs::default();
+
+    // root format: "bucket"
+    if !root.is_empty() {
+        builder = builder.bucket(root);
+    }
+
     let op = Operator::new(builder)
         .map_err(CoreError::Storage)?
         .finish();

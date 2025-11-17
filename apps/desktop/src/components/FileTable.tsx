@@ -1,5 +1,5 @@
 import { FileItem } from "@/types/storage";
-import { File, Folder, FileText, FileImage, FileVideo, FileArchive, MoreVertical, Eye, Download, Trash2 } from "lucide-react";
+import { MoreVertical, Eye, Download, Trash2 } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -16,34 +16,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-
-const getFileIcon = (item: FileItem) => {
-  if (item.type === 'folder') return Folder;
-  
-  const ext = item.extension?.toLowerCase();
-  if (!ext) return File;
-  
-  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext)) return FileImage;
-  if (['mp4', 'avi', 'mov', 'mkv'].includes(ext)) return FileVideo;
-  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return FileArchive;
-  if (['txt', 'md', 'doc', 'docx', 'pdf'].includes(ext)) return FileText;
-  
-  return File;
-};
-
-const getFileColor = (item: FileItem) => {
-  if (item.type === 'folder') return 'text-amber-500';
-  
-  const ext = item.extension?.toLowerCase();
-  if (!ext) return 'text-muted-foreground';
-  
-  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext)) return 'text-pink-500';
-  if (['mp4', 'avi', 'mov', 'mkv'].includes(ext)) return 'text-purple-500';
-  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return 'text-orange-500';
-  if (['txt', 'md', 'doc', 'docx', 'pdf'].includes(ext)) return 'text-blue-500';
-  
-  return 'text-muted-foreground';
-};
+import { getFileIcon, getFileColor } from "./FileIcon";
 
 const formatFileSize = (bytes?: number) => {
   if (!bytes) return '-';
