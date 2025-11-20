@@ -381,8 +381,8 @@ const Index = () => {
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
       <div
-        className="hidden md:block md:w-64 md:shrink-0 md:resize-x overflow-hidden"
-        style={{ minWidth: "200px", maxWidth: "400px" }}
+        className="hidden md:block md:w-56 md:resize-x overflow-hidden"
+        style={{ minWidth: "180px", maxWidth: "360px" }}
       >
         <StorageSidebar
           storages={storages}

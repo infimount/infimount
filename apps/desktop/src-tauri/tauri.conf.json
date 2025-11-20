@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "",
     "beforeBuildCommand": "",
-    "frontendDist": "../dist",
+    "frontendDist": "../../dist",
     "devUrl": "http://localhost:5173"
   },
   "app": {
@@ -16,7 +16,9 @@
         "title": "OpenHSB",
         "width": 1200,
         "height": 800,
-        "resizable": true
+        "resizable": true,
+        "minWidth": 480,
+        "minHeight": 480
       }
     ],
     "security": {

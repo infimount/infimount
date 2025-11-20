@@ -3,6 +3,16 @@
 version = 4
 
 [[package]]
+name = "OpenHSB"
+version = "0.1.0"
+dependencies = [
+ "openhsb_core",
+ "serde",
+ "tauri",
+ "tauri-build",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2427,16 +2437,6 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
-]
-
-[[package]]
-name = "openhsb_desktop"
-version = "0.1.0"
-dependencies = [
- "openhsb_core",
- "serde",
- "tauri",
- "tauri-build",
 ]
 
 [[package]]

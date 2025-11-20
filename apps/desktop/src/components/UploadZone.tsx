@@ -45,7 +45,7 @@ export function UploadZone({ onUpload }: UploadZoneProps) {
     const progressData = files.map((file) => ({ name: file.name, progress: 0 }));
     setUploadProgress(progressData);
 
-    files.forEach((file, index) => {
+    files.forEach((_, index) => {
       const interval = setInterval(() => {
         setUploadProgress((previous) => {
           const updated = [...previous];

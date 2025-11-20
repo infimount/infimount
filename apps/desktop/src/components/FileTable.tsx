@@ -1,5 +1,5 @@
 import { FileItem } from "@/types/storage";
-import { MoreVertical, Eye, Download, Trash2 } from "lucide-react";
+import { MoreVertical, Edit, Eye, Download, Trash2 } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -19,7 +19,7 @@ import {
 import { getFileIcon, getFileColor } from "./FileIcon";
 
 const formatFileSize = (bytes?: number) => {
-  if (!bytes) return '-';
+  if (!bytes) return "-";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -31,16 +31,21 @@ const formatDate = (date: Date | null) => {
   const now = new Date();
   const diff = now.getTime() - date.getTime();
   const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-  
+
   if (days === 0) {
-    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-  } else if (days === 1) {
-    return 'Yesterday';
-  } else if (days < 7) {
-    return `${days} days ago`;
-  } else {
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
   }
+  if (days === 1) {
+    return "Yesterday";
+  }
+  if (days < 7) {
+    return `${days} days ago`;
+  }
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 };
 
 interface FileTableProps {
@@ -74,40 +79,37 @@ export function FileTable({
 
   return (
     <div className="rounded-md border bg-card">
-      <Table>
+      <Table className="table-fixed">
         <TableHeader>
           <TableRow>
             <TableHead className="w-12">
-              <Checkbox 
-                checked={allSelected}
-                onCheckedChange={onSelectAll}
-              />
+              <Checkbox checked={allSelected} onCheckedChange={onSelectAll} />
             </TableHead>
             <TableHead
-              className="cursor-pointer select-none"
+              className="w-[32%] min-w-[5ch] cursor-pointer select-none whitespace-nowrap"
               onClick={() => onSortChange?.("name")}
             >
               Name{sortIndicator("name")}
             </TableHead>
             <TableHead
-              className="cursor-pointer select-none"
+              className="w-[14%] min-w-[34ch] cursor-pointer select-none whitespace-nowrap"
               onClick={() => onSortChange?.("type")}
             >
               Type{sortIndicator("type")}
             </TableHead>
             <TableHead
-              className="cursor-pointer select-none"
+              className="min-w-[34ch] cursor-pointer select-none whitespace-nowrap"
               onClick={() => onSortChange?.("modified")}
             >
               Modified{sortIndicator("modified")}
             </TableHead>
             <TableHead
-              className="w-24 text-right cursor-pointer select-none"
+              className="min-w-[34ch] cursor-pointer select-none text-right whitespace-nowrap"
               onClick={() => onSortChange?.("size")}
             >
               Size{sortIndicator("size")}
             </TableHead>
-            <TableHead className="w-12"></TableHead>
+            <TableHead className="w-12" />
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -115,42 +117,44 @@ export function FileTable({
             const Icon = getFileIcon(file);
             const color = getFileColor(file);
             const isSelected = selectedFiles.has(file.id);
-            
+
             return (
               <TableRow
                 key={file.id}
-                className={`group cursor-pointer ${isSelected ? 'bg-muted/50' : 'hover:bg-muted/50'}`}
+                className={`group cursor-pointer ${
+                  isSelected ? "bg-muted/50" : "hover:bg-muted/50"
+                }`}
                 onDoubleClick={() => onOpenFile?.(file)}
               >
                 <TableCell>
-                  <Checkbox 
+                  <Checkbox
                     checked={isSelected}
                     onCheckedChange={() => onSelectFile(file.id)}
                   />
                 </TableCell>
-                <TableCell className="max-w-[50vw]">
-                  <div className="flex items-center gap-3">
+                <TableCell className="w-[32%] min-w-[5ch] align-top">
+                  <div className="flex items-start gap-3">
                     <Icon className={`h-5 w-5 shrink-0 ${color}`} />
-                    <span className="font-medium truncate" title={file.name}>
+                    <span className="block truncate text-sm font-medium" title={file.name}>
                       {file.name}
                     </span>
                   </div>
                 </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {file.type === 'folder' ? 'Folder' : file.extension?.toUpperCase() || '-'}
+                <TableCell className="w-[14%] min-w-[34ch] truncate text-xs text-muted-foreground align-top">
+                  {file.type === "folder" ? "Folder" : file.extension?.toUpperCase() || "-"}
                 </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {file.modified ? formatDate(file.modified) : '-'}
+                <TableCell className="min-w-[34ch] truncate text-muted-foreground">
+                  {formatDate(file.modified || null)}
                 </TableCell>
-                <TableCell className="text-right text-muted-foreground">
+                <TableCell className="min-w-[34ch] truncate text-right text-muted-foreground">
                   {formatFileSize(file.size)}
                 </TableCell>
                 <TableCell>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         className="h-8 w-8 opacity-0 group-hover:opacity-100"
                       >
                         <MoreVertical className="h-4 w-4" />
@@ -158,7 +162,7 @@ export function FileTable({
                     </DropdownMenuTrigger>
                     <DropdownMenuContent
                       align="end"
-                      className="bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] border border-border shadow-md"
+                      className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md"
                     >
                       {file.type === "file" && (
                         <>
@@ -170,9 +174,13 @@ export function FileTable({
                             <Download className="mr-2 h-4 w-4" />
                             Download
                           </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => console.log("Edit", file.id)}>
+                            <Edit className="mr-2 h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
                         </>
                       )}
-                      <DropdownMenuItem 
+                      <DropdownMenuItem
                         onClick={() => onDeleteFile?.(file)}
                         className="text-destructive"
                       >

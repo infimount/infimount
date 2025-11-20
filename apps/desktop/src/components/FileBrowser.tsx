@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Search,
-  Grid3x3,
-  List,
+  LayoutGrid,
   ChevronLeft,
   ChevronRight,
   Upload,
@@ -89,6 +88,7 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
     setSelectedFiles(new Set());
     setHistory(["/"]);
     setHistoryIndex(0);
+    setPreviewFile(null);
   }, [sourceId]);
 
   useEffect(() => {
@@ -266,19 +266,6 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
     })();
   };
 
-  const handlePreviewEdit = () => {
-    if (!previewFile) return;
-    toast({
-      title: "Open in editor",
-      description: "Opening files in an external editor is not implemented yet.",
-    });
-  };
-
-  const handlePreviewDownload = () => {
-    if (!previewFile) return;
-    void downloadOne(previewFile);
-  };
-
   const toggleSort = (field: SortField) => {
     if (sortField === field) {
       if (sortDirection === "asc") {
@@ -336,10 +323,10 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
     breadcrumbs[breadcrumbs.length - 1]?.name ?? storageName;
 
   return (
-    <div className="flex h-full bg-background relative">
+    <div className="relative flex h-full bg-background">
       <div className="flex flex-1 flex-col">
         {/* Header with navigation */}
-        <div className="border-b bg-card">
+        <div className="border-b bg-muted/30">
           <div className="flex items-center gap-2 px-4 py-3">
             <div className="flex items-center gap-1">
               <Button
@@ -369,13 +356,13 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
             </div>
 
             <div className="flex items-center gap-2">
-              <div className="relative w-64">
+              <div className="relative w-48">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
-                  placeholder="Search files and folders..."
+                  placeholder="Search..."
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
-                  className="h-9 pl-9"
+                  className="h-8 bg-background pl-9"
                 />
               </div>
 
@@ -383,7 +370,7 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
                 <Button
                   size="icon"
                   variant="outline"
-                  className="h-9 w-9"
+                  className="h-8 w-8"
                   asChild
                 >
                   <span>
@@ -391,25 +378,17 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
                   </span>
                 </Button>
               </label>
-
-              <div className="flex items-center gap-1 rounded-md border">
-                <Button
-                  size="icon"
-                  variant={viewMode === "grid" ? "default" : "ghost"}
-                  onClick={() => setViewMode("grid")}
-                  className="h-9 w-9"
-                >
-                  <Grid3x3 className="h-4 w-4" />
-                </Button>
-                <Button
-                  size="icon"
-                  variant={viewMode === "table" ? "default" : "ghost"}
-                  onClick={() => setViewMode("table")}
-                  className="h-9 w-9"
-                >
-                  <List className="h-4 w-4" />
-                </Button>
-              </div>
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() =>
+                  setViewMode((current) => (current === "grid" ? "table" : "grid"))
+                }
+                className="h-8 w-8"
+                title={viewMode === "grid" ? "Switch to list view" : "Switch to grid view"}
+              >
+                <LayoutGrid className="h-4 w-4" />
+              </Button>
             </div>
           </div>
         </div>
@@ -421,44 +400,24 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
           </div>
         )}
 
-        {/* Bulk Actions Bar – fixed height so the scroller doesn’t jump */}
-        {(() => {
-          const hasSelection = selectedFiles.size > 0;
-          return (
-            <div
-              className={`flex h-11 items-center justify-between border-b px-6 py-3 ${
-                hasSelection ? "bg-muted" : "bg-card"
-              }`}
-            >
-              {hasSelection ? (
-                <>
-                  <span className="text-sm font-medium">
-                    {selectedFiles.size} item
-                    {selectedFiles.size > 1 ? "s" : ""} selected
-                  </span>
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={handleBulkDownload}
-                    >
-                      <Download className="mr-2 h-4 w-4" />
-                      Download
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      onClick={handleBulkDelete}
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" />
-                      Delete
-                    </Button>
-                  </div>
-                </>
-              ) : null}
+        {/* Bulk Actions Bar */}
+        {selectedFiles.size > 0 && (
+          <div className="flex h-11 items-center justify-between border-b border-border bg-accent/20 px-6 py-3">
+            <span className="text-sm font-medium">
+              {selectedFiles.size} item{selectedFiles.size > 1 ? "s" : ""} selected
+            </span>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={handleBulkDownload}>
+                <Download className="mr-2 h-4 w-4" />
+                Download
+              </Button>
+              <Button size="sm" variant="outline" onClick={handleBulkDelete}>
+                <Trash2 className="mr-2 h-4 w-4" />
+                Delete
+              </Button>
             </div>
-          );
-        })()}
+          </div>
+        )}
 
         {/* Content */}
         <div className="flex-1 overflow-auto p-6">
@@ -495,7 +454,7 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
         </div>
 
         {/* Footer path */}
-        <div className="border-t bg-card px-6 py-2">
+        <div className="border-t bg-muted/30 px-6 py-2">
           <p className="truncate text-xs text-muted-foreground">{fullPath}</p>
         </div>
 
@@ -503,13 +462,24 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
       </div>
 
       {previewFile && (
-        <div className="w-80">
+        <div
+          className="hidden h-full resize-x overflow-auto border-l-2 border-border/60 bg-card xl:block"
+          style={{ width: "320px", minWidth: "280px", maxWidth: "600px" }}
+        >
           <FilePreviewPanel
             file={previewFile}
             onClose={() => setPreviewFile(null)}
-            sourceId={sourceId}
-            onEdit={handlePreviewEdit}
-            onDownload={handlePreviewDownload}
+            onEdit={() => {
+              toast({
+                title: "Open in editor",
+                description:
+                  "Opening files in an external editor is not implemented yet.",
+              });
+            }}
+            onDownload={() => {
+              if (!previewFile) return;
+              void downloadOne(previewFile);
+            }}
           />
         </div>
       )}

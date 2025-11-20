@@ -104,7 +104,7 @@ export function StorageSidebar({
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align="end"
-            className="bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] border border-border shadow-md"
+            className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md"
           >
             <DropdownMenuItem onClick={onAddStorage}>
               <Plus className="mr-2 h-4 w-4" />
@@ -179,7 +179,7 @@ export function StorageSidebar({
                   </DropdownMenuTrigger>
                   <DropdownMenuContent
                     align="end"
-                    className="bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] border border-border shadow-md"
+                    className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md"
                   >
                     <DropdownMenuItem onClick={() => onRefreshStorage(storage.id)}>
                       <RefreshCw className="mr-2 h-4 w-4" />

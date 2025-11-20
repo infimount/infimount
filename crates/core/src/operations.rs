@@ -1,5 +1,5 @@
 use futures::TryStreamExt;
-use opendal::Operator;
+use opendal::{ErrorKind, Operator};
 
 use crate::models::{Entry, Result};
 use crate::util::extract_filename;
@@ -12,18 +12,26 @@ pub async fn list_entries(op: &Operator, path: &str) -> Result<Vec<Entry>> {
     while let Some(obj) = lister.try_next().await? {
         let full_path = obj.path().to_string();
         let name = extract_filename(&full_path);
-        // Use op.stat on the full path to ensure we get full metadata,
-        // including last_modified where the backend supports it.
-        let meta = op.stat(&full_path).await?;
+
+        // Use op.stat on the full path to ensure we get full metadata.
+        // If the entry no longer exists (e.g., broken symlink), keep the
+        // entry but leave size/modified blank instead of failing or skipping.
+        let (is_dir, size, modified_at) = match op.stat(&full_path).await {
+            Ok(meta) => (
+                meta.is_dir(),
+                meta.content_length(),
+                meta.last_modified().map(|dt| dt.to_rfc3339()),
+            ),
+            Err(e) if e.kind() == ErrorKind::NotFound => (false, 0, None),
+            Err(e) => return Err(e.into()),
+        };
 
         let entry = Entry {
             path: full_path,
             name,
-            is_dir: meta.is_dir(),
-            size: meta.content_length(),
-            modified_at: meta
-                .last_modified()
-                .map(|dt| dt.to_rfc3339()),
+            is_dir,
+            size,
+            modified_at,
         };
 
         out.push(entry);

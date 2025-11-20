@@ -92,38 +92,34 @@ export function AddStorageDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px] rounded-2xl border border-border bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] shadow-2xl">
+      <DialogContent className="sm:max-w-[500px] max-h-[80vh] overflow-y-auto rounded-2xl border border-border bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] shadow-2xl">
         <DialogHeader>
-          <DialogTitle>{isEditing ? "Edit Storage" : "Add New Storage"}</DialogTitle>
-          <DialogDescription>
+          <DialogTitle className="text-left text-base font-normal text-[hsl(var(--card-foreground))]">
+            {isEditing ? "Edit Storage" : "Add New Storage"}
+          </DialogTitle>
+          <DialogDescription className="text-left text-xs text-muted-foreground">
             {isEditing
               ? "Update the storage configuration and save your changes."
               : "Configure a new storage connection. Choose the storage type and fill in the required credentials."}
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="mt-2 space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="name">Storage Name</Label>
-            <Input
-              id="name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="My Storage"
-              required
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="type">Storage Type</Label>
+            <Label
+              htmlFor="type"
+              className="text-xs font-normal text-muted-foreground"
+            >
+              Storage Type
+            </Label>
             <Select value={type} onValueChange={(v) => setType(v as StorageType)}>
               <SelectTrigger
                 id="type"
-                className="bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] border border-border"
+                className="border border-border bg-[hsl(var(--card))] text-sm text-[hsl(var(--card-foreground))] focus:border-[hsl(265_85%_65%)] focus:ring-[hsl(265_85%_65%)]"
               >
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent className="bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] border border-border shadow-md">
+              <SelectContent className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md">
                 {schemas.map((schema) => (
                   <SelectItem key={schema.id} value={schema.id}>
                     {schema.label}
@@ -133,9 +129,31 @@ export function AddStorageDialog({
             </Select>
           </div>
 
+          <div className="space-y-2">
+            <Label
+              htmlFor="name"
+              className="text-xs font-normal text-muted-foreground"
+            >
+              Storage Name
+            </Label>
+            <Input
+              id="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="My Storage"
+              required
+              className="border border-border focus-visible:border-[hsl(265_85%_65%)] focus-visible:ring-[hsl(265_85%_65%)]"
+            />
+          </div>
+
           {fields.map((field) => (
             <div key={field.name} className="space-y-2">
-              <Label htmlFor={field.name}>{field.label}</Label>
+              <Label
+                htmlFor={field.name}
+                className="text-xs font-normal text-muted-foreground"
+              >
+                {field.label}
+              </Label>
               <Input
                 id={field.name}
                 type={field.input_type === "password" || field.secret ? "password" : "text"}
@@ -145,15 +163,26 @@ export function AddStorageDialog({
                 }
                 placeholder={field.label}
                 required={field.required}
+                className="border border-border focus-visible:border-[hsl(265_85%_65%)] focus-visible:ring-[hsl(265_85%_65%)]"
               />
             </div>
           ))}
 
           <div className="flex justify-end gap-3 pt-4">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              className="border border-border"
+              onClick={() => onOpenChange(false)}
+            >
               Cancel
             </Button>
-            <Button type="submit">{isEditing ? "Save Changes" : "Add Storage"}</Button>
+            <Button
+              type="submit"
+              className="bg-[hsl(265_85%_65%)] hover:bg-[hsl(265_85%_60%)] text-white"
+            >
+              {isEditing ? "Save Changes" : "Add Storage"}
+            </Button>
           </div>
         </form>
       </DialogContent>
