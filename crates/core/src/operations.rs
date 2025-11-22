@@ -71,7 +71,7 @@ pub async fn write_full(op: &Operator, path: &str, data: &[u8]) -> Result<()> {
 
 /// Delete a path (file or directory).
 pub async fn delete(op: &Operator, path: &str) -> Result<()> {
-    op.delete(path).await?;
+    op.remove_all(path).await?;
     Ok(())
 }
 
