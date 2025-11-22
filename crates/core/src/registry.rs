@@ -145,10 +145,10 @@ impl OperatorRegistry {
 fn build_operator(source: &Source) -> Result<Operator> {
     match source.kind {
         SourceKind::Local => build_local_operator(&source.root),
-        SourceKind::S3 => build_s3_operator(&source.root),
-        SourceKind::WebDav => build_webdav_operator(&source.root),
-        SourceKind::AzureBlob => build_azure_blob_operator(&source.root),
-        SourceKind::Gcs => build_gcs_operator(&source.root),
+        SourceKind::S3 => build_s3_operator(source),
+        SourceKind::WebDav => build_webdav_operator(source),
+        SourceKind::AzureBlob => build_azure_blob_operator(source),
+        SourceKind::Gcs => build_gcs_operator(source),
     }
 }
 
@@ -160,11 +160,12 @@ fn build_local_operator(root: &str) -> Result<Operator> {
     Ok(op)
 }
 
-fn build_s3_operator(root: &str) -> Result<Operator> {
+fn build_s3_operator(source: &Source) -> Result<Operator> {
     let mut builder = S3::default();
 
     // root format: "bucket@region" or just "bucket"
-    let mut parts = root.split('@');
+    // Legacy support for root string
+    let mut parts = source.root.split('@');
     if let Some(bucket) = parts.next() {
         if !bucket.is_empty() {
             builder = builder.bucket(bucket);
@@ -176,17 +177,23 @@ fn build_s3_operator(root: &str) -> Result<Operator> {
         }
     }
 
-    let op = Operator::new(builder)
-        .map_err(CoreError::Storage)?
-        .finish();
-    Ok(op)
-}
-
-fn build_webdav_operator(root: &str) -> Result<Operator> {
-    let mut builder = Webdav::default();
-
-    if !root.is_empty() {
-        builder = builder.endpoint(root);
+    // Config overrides
+    if let Some(config) = &source.config {
+        if let Some(bucket) = config.get("bucketName") {
+            builder = builder.bucket(bucket);
+        }
+        if let Some(region) = config.get("region") {
+            builder = builder.region(region);
+        }
+        if let Some(access_key_id) = config.get("accessKeyId") {
+            builder = builder.access_key_id(access_key_id);
+        }
+        if let Some(secret_access_key) = config.get("secretAccessKey") {
+            builder = builder.secret_access_key(secret_access_key);
+        }
+        if let Some(endpoint) = config.get("endpoint") {
+            builder = builder.endpoint(endpoint);
+        }
     }
 
     let op = Operator::new(builder)
@@ -195,11 +202,39 @@ fn build_webdav_operator(root: &str) -> Result<Operator> {
     Ok(op)
 }
 
-fn build_azure_blob_operator(root: &str) -> Result<Operator> {
+fn build_webdav_operator(source: &Source) -> Result<Operator> {
+    let mut builder = Webdav::default();
+
+    if !source.root.is_empty() {
+        builder = builder.endpoint(&source.root);
+    }
+
+    if let Some(config) = &source.config {
+        if let Some(server_url) = config.get("serverUrl") {
+            builder = builder.endpoint(server_url);
+        }
+        if let Some(username) = config.get("username") {
+            builder = builder.username(username);
+        }
+        if let Some(password) = config.get("password") {
+            builder = builder.password(password);
+        }
+        if let Some(root_path) = config.get("rootPath") {
+            builder = builder.root(root_path);
+        }
+    }
+
+    let op = Operator::new(builder)
+        .map_err(CoreError::Storage)?
+        .finish();
+    Ok(op)
+}
+
+fn build_azure_blob_operator(source: &Source) -> Result<Operator> {
     let mut builder = Azblob::default();
 
     // root format: "account/container"
-    let mut parts = root.split('/');
+    let mut parts = source.root.split('/');
     if let Some(account) = parts.next() {
         if !account.is_empty() {
             builder = builder.account_name(account);
@@ -211,18 +246,64 @@ fn build_azure_blob_operator(root: &str) -> Result<Operator> {
         }
     }
 
+    if let Some(config) = &source.config {
+        if let Some(account_name) = config.get("accountName") {
+            builder = builder.account_name(account_name);
+        }
+        if let Some(container_name) = config.get("containerName") {
+            builder = builder.container(container_name);
+        }
+        if let Some(account_key) = config.get("accountKey") {
+            builder = builder.account_key(account_key);
+        }
+        if let Some(endpoint) = config.get("endpoint") {
+            builder = builder.endpoint(endpoint);
+        }
+    }
+
     let op = Operator::new(builder)
         .map_err(CoreError::Storage)?
         .finish();
     Ok(op)
 }
 
-fn build_gcs_operator(root: &str) -> Result<Operator> {
+fn build_gcs_operator(source: &Source) -> Result<Operator> {
     let mut builder = Gcs::default();
 
     // root format: "bucket"
-    if !root.is_empty() {
-        builder = builder.bucket(root);
+    if !source.root.is_empty() {
+        builder = builder.bucket(&source.root);
+    }
+
+    if let Some(config) = &source.config {
+        if let Some(bucket) = config.get("bucket") {
+            builder = builder.bucket(bucket);
+        }
+
+        let credential = config.get("credential").filter(|s| !s.is_empty());
+        if let Some(cred) = credential {
+            builder = builder.credential(cred);
+        }
+
+        let credential_path = config.get("credentialPath").filter(|s| !s.is_empty());
+        if let Some(cp) = credential_path {
+            builder = builder.credential_path(cp);
+        }
+
+        if let Some(endpoint) = config.get("endpoint") {
+            builder = builder.endpoint(endpoint);
+        }
+
+        // If endpoint is set (emulator) and no credentials provided,
+        // treat this as an anonymous/emulator connection:
+        // - don't try to load credentials from env or VM metadata
+        // - allow unsigned requests.
+        if config.get("endpoint").is_some() && credential.is_none() && credential_path.is_none() {
+            builder = builder
+                .allow_anonymous()
+                .disable_vm_metadata()
+                .disable_config_load();
+        }
     }
 
     let op = Operator::new(builder)
@@ -262,6 +343,7 @@ mod tests {
             name: "Test1".to_string(),
             kind: crate::models::SourceKind::Local,
             root: "/tmp".to_string(),
+            config: None,
         };
 
         registry.add_source(s.clone()).await.unwrap();

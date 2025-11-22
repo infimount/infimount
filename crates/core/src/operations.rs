@@ -74,3 +74,55 @@ pub async fn delete(op: &Operator, path: &str) -> Result<()> {
     op.delete(path).await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use opendal::services::Memory;
+
+    async fn create_test_operator() -> Operator {
+        let builder = Memory::default();
+        Operator::new(builder).unwrap().finish()
+    }
+
+    #[tokio::test]
+    async fn test_list_entries() {
+        let op = create_test_operator().await;
+        op.write("file1.txt", "content1".as_bytes()).await.unwrap();
+        op.write("dir1/file2.txt", "content2".as_bytes()).await.unwrap();
+
+        let entries = list_entries(&op, "/").await.unwrap();
+        assert_eq!(entries.len(), 2); // file1.txt and dir1
+
+        let file1 = entries.iter().find(|e| e.name == "file1.txt").unwrap();
+        assert!(!file1.is_dir);
+        assert_eq!(file1.size, 8);
+
+        let dir1 = entries.iter().find(|e| e.name == "dir1").unwrap();
+        assert!(dir1.is_dir);
+    }
+
+    #[tokio::test]
+    async fn test_read_write_file() {
+        let op = create_test_operator().await;
+        let path = "test.txt";
+        let content = b"hello world";
+
+        write_full(&op, path, content).await.unwrap();
+
+        let read_content = read_full(&op, path).await.unwrap();
+        assert_eq!(read_content, content);
+    }
+
+    #[tokio::test]
+    async fn test_delete_file() {
+        let op = create_test_operator().await;
+        let path = "todelete.txt";
+        op.write(path, "bye".as_bytes()).await.unwrap();
+
+        delete(&op, path).await.unwrap();
+
+        let exists = op.exists(path).await.unwrap();
+        assert!(!exists);
+    }
+}

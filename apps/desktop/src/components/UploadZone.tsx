@@ -14,34 +14,7 @@ export function UploadZone({ onUpload }: UploadZoneProps) {
     { name: string; progress: number }[]
   >([]);
 
-  const handleDragOver = useCallback((event: React.DragEvent) => {
-    event.preventDefault();
-    setIsDragging(true);
-  }, []);
-
-  const handleDragLeave = useCallback((event: React.DragEvent) => {
-    event.preventDefault();
-    setIsDragging(false);
-  }, []);
-
-  const handleDrop = useCallback((event: React.DragEvent) => {
-    event.preventDefault();
-    setIsDragging(false);
-
-    const files = Array.from(event.dataTransfer.files);
-    if (files.length > 0) {
-      handleFiles(files);
-    }
-  }, []);
-
-  const handleFileSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files ? Array.from(event.target.files) : [];
-    if (files.length > 0) {
-      handleFiles(files);
-    }
-  }, []);
-
-  const handleFiles = (files: File[]) => {
+  const handleFiles = useCallback((files: File[]) => {
     const progressData = files.map((file) => ({ name: file.name, progress: 0 }));
     setUploadProgress(progressData);
 
@@ -67,7 +40,36 @@ export function UploadZone({ onUpload }: UploadZoneProps) {
       onUpload(files);
       setUploadProgress([]);
     }, 2500);
-  };
+  }, [onUpload]);
+
+  const handleDragOver = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    setIsDragging(false);
+
+    const files = Array.from(event.dataTransfer.files);
+    if (files.length > 0) {
+      handleFiles(files);
+    }
+  }, [handleFiles]);
+
+  const handleFileSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files ? Array.from(event.target.files) : [];
+    if (files.length > 0) {
+      handleFiles(files);
+    }
+  }, [handleFiles]);
+
+
 
   const cancelUpload = (index: number) => {
     setUploadProgress((previous) => previous.filter((_, i) => i !== index));
@@ -104,9 +106,8 @@ export function UploadZone({ onUpload }: UploadZoneProps) {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className={`pointer-events-none absolute inset-0 z-30 transition-all ${
-        isDragging ? "bg-primary/10 backdrop-blur-sm" : ""
-      }`}
+      className={`pointer-events-none absolute inset-0 z-30 transition-all ${isDragging ? "bg-primary/10 backdrop-blur-sm" : ""
+        }`}
     >
       {isDragging && (
         <div className="flex h-full items-center justify-center">

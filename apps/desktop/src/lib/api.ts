@@ -11,13 +11,17 @@ export interface Entry {
 import type { Source, SourceKind } from "../types/source";
 
 export interface ApiError {
+  code: string;
   message: string;
 }
 
 export class TauriApiError extends Error {
-  constructor(message: string) {
+  code: string;
+
+  constructor(message: string, code: string = "UNKNOWN") {
     super(message);
     this.name = "TauriApiError";
+    this.code = code;
   }
 }
 
@@ -37,9 +41,14 @@ export interface StorageKindSchema {
 }
 
 async function handleError(error: any): Promise<never> {
+  console.error("API Error:", error);
+  if (typeof error === "object" && error !== null && "code" in error && "message" in error) {
+    throw new TauriApiError(error.message, error.code);
+  }
   const message = typeof error === "string" ? error : error.message || String(error);
   throw new TauriApiError(message);
 }
+
 
 export async function listEntries(sourceId: string, path: string): Promise<Entry[]> {
   try {

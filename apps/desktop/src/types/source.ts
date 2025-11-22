@@ -10,5 +10,6 @@ export interface Source {
   name: string;
   kind: SourceKind;
   root: string;
+  config?: Record<string, string>;
 }
 

@@ -7,6 +7,8 @@ import {
   Upload,
   Download,
   Trash2,
+  PanelLeft,
+  PanelRight,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -28,9 +30,11 @@ import { toast } from "@/hooks/use-toast";
 interface FileBrowserProps {
   sourceId: string;
   storageName: string;
+  onPreviewVisibilityChange?: (visible: boolean) => void;
+  onToggleSidebar?: () => void;
 }
 
-export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
+export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, onToggleSidebar }: FileBrowserProps) {
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPath, setCurrentPath] = useState<string>("/");
@@ -47,6 +51,10 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
+
+  useEffect(() => {
+    onPreviewVisibilityChange?.(!!previewFile);
+  }, [previewFile, onPreviewVisibilityChange]);
 
   const filteredFiles = allFiles.filter((file) =>
     file.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -74,17 +82,33 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
       setSelectedFiles(new Set());
     } catch (err) {
       if (err instanceof TauriApiError) {
-        setError(err.message);
+
+        switch (err.code) {
+          case "NOT_FOUND":
+            setError("The requested folder does not exist.");
+            break;
+          case "PERMISSION_DENIED":
+            setError("Access denied. You do not have permission to view this folder.");
+            break;
+          case "TIMEOUT":
+            setError("The operation timed out. Please check your connection.");
+            break;
+          default:
+            setError(err.message);
+        }
       } else {
         setError("Failed to load files");
       }
+      setAllFiles([]); // Clear files on error to prevent showing stale data
     } finally {
+
       setLoading(false);
     }
   };
 
   useEffect(() => {
     setCurrentPath("/");
+    setAllFiles([]); // Clear files when switching sources
     setSelectedFiles(new Set());
     setHistory(["/"]);
     setHistoryIndex(0);
@@ -332,6 +356,15 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
               <Button
                 size="icon"
                 variant="ghost"
+                className="h-8 w-8 mr-1"
+                onClick={onToggleSidebar}
+                title="Toggle Storage Sidebar"
+              >
+                <PanelLeft className="h-4 w-4" />
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
                 className="h-8 w-8"
                 onClick={goBack}
                 disabled={!canGoBack}
@@ -389,6 +422,17 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
               >
                 <LayoutGrid className="h-4 w-4" />
               </Button>
+              {previewFile && (
+                <Button
+                  size="icon"
+                  variant="secondary"
+                  onClick={() => setPreviewFile(null)}
+                  className="h-8 w-8"
+                  title="Close Preview"
+                >
+                  <PanelRight className="h-4 w-4" />
+                </Button>
+              )}
             </div>
           </div>
         </div>
@@ -420,7 +464,7 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
         )}
 
         {/* Content */}
-        <div className="flex-1 overflow-auto p-6">
+        <div className="flex-1 overflow-hidden p-6">
           {loading ? (
             <div className="flex h-full items-center justify-center">
               <div className="flex flex-col items-center gap-2">
@@ -463,8 +507,8 @@ export function FileBrowser({ sourceId, storageName }: FileBrowserProps) {
 
       {previewFile && (
         <div
-          className="hidden h-full resize-x overflow-auto border-l-2 border-border/60 bg-card xl:block"
-          style={{ width: "320px", minWidth: "280px", maxWidth: "600px" }}
+          className="hidden h-full resize-x overflow-auto border-l-2 border-border/60 bg-card md:block"
+          style={{ width: "30%", minWidth: "250px", maxWidth: "600px" }}
         >
           <FilePreviewPanel
             file={previewFile}

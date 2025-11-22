@@ -61,6 +61,9 @@ interface FileTableProps {
   onSortChange?: (field: "name" | "type" | "modified" | "size") => void;
 }
 
+import { useRef } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+
 export function FileTable({
   files,
   selectedFiles,
@@ -77,10 +80,30 @@ export function FileTable({
   const sortIndicator = (field: "name" | "type" | "modified" | "size") =>
     sortField === field ? (sortDirection === "asc" ? " ▲" : " ▼") : "";
 
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  const rowVirtualizer = useVirtualizer({
+    count: files.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 53, // Approximate height of a table row
+    overscan: 10,
+  });
+
+  const { getVirtualItems, getTotalSize } = rowVirtualizer;
+  const virtualItems = getVirtualItems();
+  const paddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
+  const paddingBottom =
+    virtualItems.length > 0
+      ? getTotalSize() - virtualItems[virtualItems.length - 1].end
+      : 0;
+
   return (
-    <div className="rounded-md border bg-card">
+    <div
+      ref={parentRef}
+      className="h-full w-full overflow-auto rounded-md border bg-card"
+    >
       <Table className="table-fixed">
-        <TableHeader>
+        <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
           <TableRow>
             <TableHead className="w-12">
               <Checkbox checked={allSelected} onCheckedChange={onSelectAll} />
@@ -98,13 +121,13 @@ export function FileTable({
               Type{sortIndicator("type")}
             </TableHead>
             <TableHead
-              className="min-w-[34ch] cursor-pointer select-none whitespace-nowrap"
+              className="w-[15%] min-w-[18ch] cursor-pointer select-none whitespace-nowrap"
               onClick={() => onSortChange?.("modified")}
             >
               Modified{sortIndicator("modified")}
             </TableHead>
             <TableHead
-              className="min-w-[34ch] cursor-pointer select-none text-right whitespace-nowrap"
+              className="w-[10%] min-w-[12ch] cursor-pointer select-none text-right whitespace-nowrap"
               onClick={() => onSortChange?.("size")}
             >
               Size{sortIndicator("size")}
@@ -113,7 +136,13 @@ export function FileTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {files.map((file) => {
+          {paddingTop > 0 && (
+            <TableRow>
+              <TableCell colSpan={6} style={{ height: `${paddingTop}px`, padding: 0 }} />
+            </TableRow>
+          )}
+          {virtualItems.map((virtualRow) => {
+            const file = files[virtualRow.index];
             const Icon = getFileIcon(file);
             const color = getFileColor(file);
             const isSelected = selectedFiles.has(file.id);
@@ -121,9 +150,8 @@ export function FileTable({
             return (
               <TableRow
                 key={file.id}
-                className={`group cursor-pointer ${
-                  isSelected ? "bg-muted/50" : "hover:bg-muted/50"
-                }`}
+                className={`group cursor-pointer ${isSelected ? "bg-muted/50" : "hover:bg-muted/50"
+                  }`}
                 onDoubleClick={() => onOpenFile?.(file)}
               >
                 <TableCell>
@@ -143,10 +171,10 @@ export function FileTable({
                 <TableCell className="w-[14%] min-w-[34ch] truncate text-xs text-muted-foreground align-top">
                   {file.type === "folder" ? "Folder" : file.extension?.toUpperCase() || "-"}
                 </TableCell>
-                <TableCell className="min-w-[34ch] truncate text-muted-foreground">
+                <TableCell className="w-[15%] min-w-[18ch] truncate text-muted-foreground">
                   {formatDate(file.modified || null)}
                 </TableCell>
-                <TableCell className="min-w-[34ch] truncate text-right text-muted-foreground">
+                <TableCell className="w-[10%] min-w-[12ch] truncate text-right text-muted-foreground">
                   {formatFileSize(file.size)}
                 </TableCell>
                 <TableCell>
@@ -193,6 +221,11 @@ export function FileTable({
               </TableRow>
             );
           })}
+          {paddingBottom > 0 && (
+            <TableRow>
+              <TableCell colSpan={6} style={{ height: `${paddingBottom}px`, padding: 0 }} />
+            </TableRow>
+          )}
         </TableBody>
       </Table>
     </div>

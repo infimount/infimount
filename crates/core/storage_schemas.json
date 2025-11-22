@@ -45,6 +45,13 @@
         "input_type": "password",
         "required": false,
         "secret": true
+      },
+      {
+        "name": "endpoint",
+        "label": "Endpoint URL",
+        "input_type": "text",
+        "required": false,
+        "secret": false
       }
     ]
   },
@@ -73,6 +80,13 @@
         "input_type": "password",
         "required": false,
         "secret": true
+      },
+      {
+        "name": "endpoint",
+        "label": "Endpoint URL",
+        "input_type": "text",
+        "required": false,
+        "secret": false
       }
     ]
   },
@@ -122,8 +136,21 @@
         "input_type": "text",
         "required": true,
         "secret": false
+      },
+      {
+        "name": "endpoint",
+        "label": "Endpoint URL",
+        "input_type": "text",
+        "required": false,
+        "secret": false
+      },
+      {
+        "name": "credential",
+        "label": "Credential (JSON/Token)",
+        "input_type": "password",
+        "required": false,
+        "secret": true
       }
     ]
   }
 ]
-

@@ -1,4 +1,4 @@
-export type StorageType = 'aws-s3' | 'azure-blob' | 'webdav' | 'local-fs';
+export type StorageType = 'aws-s3' | 'azure-blob' | 'webdav' | 'gcs' | 'local-fs';
 
 export interface StorageConfig {
   id: string;

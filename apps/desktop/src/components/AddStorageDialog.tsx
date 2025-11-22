@@ -142,7 +142,7 @@ export function AddStorageDialog({
               onChange={(e) => setName(e.target.value)}
               placeholder="My Storage"
               required
-              className="border border-border focus-visible:border-[hsl(265_85%_65%)] focus-visible:ring-[hsl(265_85%_65%)]"
+              className="border border-border bg-[hsl(var(--card))] text-sm text-[hsl(var(--card-foreground))] focus-visible:border-[hsl(265_85%_65%)] focus-visible:ring-[hsl(265_85%_65%)]"
             />
           </div>
 
@@ -163,7 +163,7 @@ export function AddStorageDialog({
                 }
                 placeholder={field.label}
                 required={field.required}
-                className="border border-border focus-visible:border-[hsl(265_85%_65%)] focus-visible:ring-[hsl(265_85%_65%)]"
+                className="border border-border bg-[hsl(var(--card))] text-sm text-[hsl(var(--card-foreground))] focus-visible:border-[hsl(265_85%_65%)] focus-visible:ring-[hsl(265_85%_65%)]"
               />
             </div>
           ))}

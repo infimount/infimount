@@ -21,6 +21,8 @@ const mapSourceKindToStorageType = (kind: SourceKind): StorageType => {
       return "azure-blob";
     case "webdav":
       return "webdav";
+    case "gcs":
+      return "gcs";
     case "local":
     default:
       return "local-fs";
@@ -35,6 +37,8 @@ const mapStorageTypeToSourceKind = (type: StorageType): SourceKind => {
       return "azure_blob";
     case "webdav":
       return "webdav";
+    case "gcs":
+      return "gcs";
     case "local-fs":
     default:
       return "local";
@@ -58,44 +62,26 @@ const deriveRootFromConfig = (type: StorageType, config: Record<string, string>)
   if (type === "webdav") {
     return config.rootPath || config.serverUrl || "";
   }
+  if (type === "gcs") {
+    return config.bucket || "";
+  }
   return "";
 };
 
-const buildConfigFromSource = (source: Source): Record<string, string> => {
-  const type = mapSourceKindToStorageType(source.kind);
-  if (type === "local-fs") {
-    return { rootPath: source.root };
-  }
-  if (type === "aws-s3") {
-    const [bucketName = "", region = ""] = source.root.split("@");
-    return { bucketName, region };
-  }
-  if (type === "azure-blob") {
-    const [accountName = "", containerName = ""] = source.root.split("/");
-    return { accountName, containerName };
-  }
-  if (type === "webdav") {
-    return { serverUrl: source.root };
-  }
-  return {};
-};
-
-const mapSourceToStorageConfig = (source: Source): StorageConfig => {
-  const type = mapSourceKindToStorageType(source.kind);
-  return {
-    id: source.id,
-    name: source.name,
-    type,
-    config: buildConfigFromSource(source),
-    connected: true,
-  };
-};
+const sourceToStorage = (source: Source): StorageConfig => ({
+  id: source.id,
+  name: source.name,
+  type: mapSourceKindToStorageType(source.kind),
+  config: source.config ?? {},
+  connected: true,
+});
 
 const storageToSource = (storage: StorageConfig): Source => ({
   id: storage.id,
   name: storage.name,
   kind: mapStorageTypeToSourceKind(storage.type),
-  root: deriveRootFromConfig(storage.type, storage.config),
+  root: deriveRootFromConfig(storage.type, storage.config ?? {}),
+  config: storage.config,
 });
 
 const Index = () => {
@@ -107,7 +93,7 @@ const Index = () => {
   const reloadStorages = async () => {
     try {
       const sources = await listSources();
-      const mapped = sources.map(mapSourceToStorageConfig);
+      const mapped = sources.map(sourceToStorage);
       setStorages(mapped);
       if (!selectedStorage && mapped.length > 0) {
         setSelectedStorage(mapped[0].id);
@@ -128,34 +114,33 @@ const Index = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleAddStorage = (config: {
+  const handleAddStorage = async (data: {
     name: string;
     type: StorageType;
     config: Record<string, string>;
   }) => {
-    const source: Source = {
-      id: Math.random().toString(36).substring(2, 10),
-      name: config.name,
-      kind: mapStorageTypeToSourceKind(config.type),
-      root: deriveRootFromConfig(config.type, config.config),
-    };
-
-    void (async () => {
-      try {
-        await apiAddSource(source);
-        await reloadStorages();
-        toast({
-          title: "Storage added",
-          description: `${config.name} has been added successfully.`,
-        });
-      } catch (error: any) {
-        toast({
-          title: "Failed to add storage",
-          description: error?.message || String(error),
-          variant: "destructive",
-        });
-      }
-    })();
+    try {
+      const newSource: Source = {
+        id: Math.random().toString(36).substring(2, 10),
+        name: data.name,
+        kind: mapStorageTypeToSourceKind(data.type),
+        root: deriveRootFromConfig(data.type, data.config),
+        config: data.config,
+      };
+      await apiAddSource(newSource);
+      await reloadStorages();
+      setSelectedStorage(newSource.id);
+      toast({
+        title: "Storage added",
+        description: `Successfully added "${data.name}".`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Failed to add storage",
+        description: error?.message || String(error),
+        variant: "destructive",
+      });
+    }
   };
 
   const handleEditStorage = (id: string) => {
@@ -165,36 +150,33 @@ const Index = () => {
     setIsAddDialogOpen(true);
   };
 
-  const handleUpdateStorage = (id: string, cfg: {
-    name: string;
-    type: StorageType;
-    config: Record<string, string>;
-  }) => {
-    const source: Source = {
-      id,
-      name: cfg.name,
-      kind: mapStorageTypeToSourceKind(cfg.type),
-      root: deriveRootFromConfig(cfg.type, cfg.config),
-    };
-
-    void (async () => {
-      try {
-        await apiUpdateSource(source);
-        await reloadStorages();
-        toast({
-          title: "Storage updated",
-          description: `${cfg.name} has been updated successfully.`,
-        });
-      } catch (error: any) {
-        toast({
-          title: "Failed to update storage",
-          description: error?.message || String(error),
-          variant: "destructive",
-        });
-      } finally {
-        setEditingStorage(null);
-      }
-    })();
+  const handleUpdateStorage = async (
+    id: string,
+    data: { name: string; type: StorageType; config: Record<string, string> },
+  ) => {
+    try {
+      const updatedSource: Source = {
+        id,
+        name: data.name,
+        kind: mapStorageTypeToSourceKind(data.type),
+        root: deriveRootFromConfig(data.type, data.config),
+        config: data.config,
+      };
+      await apiUpdateSource(updatedSource);
+      await reloadStorages();
+      toast({
+        title: "Storage updated",
+        description: `Successfully updated "${data.name}".`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Failed to update storage",
+        description: error?.message || String(error),
+        variant: "destructive",
+      });
+    } finally {
+      setEditingStorage(null);
+    }
   };
 
   const handleDeleteStorage = (id: string) => {
@@ -322,6 +304,7 @@ const Index = () => {
                 name,
                 kind: mapStorageTypeToSourceKind(type),
                 root: deriveRootFromConfig(type, config),
+                config: config,
               };
             }
 
@@ -378,10 +361,28 @@ const Index = () => {
 
   const currentStorage = storages.find((s) => s.id === selectedStorage);
 
+  const [isPreviewVisible, setIsPreviewVisible] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  useEffect(() => {
+    if (isPreviewVisible && window.matchMedia("(max-width: 1024px)").matches) {
+      setIsSidebarOpen(false);
+    } else if (!isPreviewVisible) {
+      // Optional: Auto-open when preview closes? 
+      // The user didn't explicitly ask for this, but it's good UX.
+      // Let's stick to the requested behavior: "visible in L also".
+      // If we are on L, it never closed.
+      // If we are on M, it closed. When preview closes, we probably want it back.
+      setIsSidebarOpen(true);
+    }
+  }, [isPreviewVisible]);
+
+  const toggleSidebar = () => setIsSidebarOpen((prev) => !prev);
+
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
       <div
-        className="hidden md:block md:w-56 md:resize-x overflow-hidden"
+        className={`hidden md:resize-x overflow-hidden ${isSidebarOpen ? "md:block" : "md:hidden"}`}
         style={{ minWidth: "180px", maxWidth: "360px" }}
       >
         <StorageSidebar
@@ -401,8 +402,11 @@ const Index = () => {
       <div className="flex-1 overflow-hidden">
         {currentStorage ? (
           <FileBrowser
+            key={currentStorage.id}
             sourceId={currentStorage.id}
             storageName={currentStorage.name}
+            onPreviewVisibilityChange={setIsPreviewVisible}
+            onToggleSidebar={toggleSidebar}
           />
         ) : (
           <div className="flex h-full items-center justify-center">

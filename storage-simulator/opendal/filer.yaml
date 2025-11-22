@@ -1,0 +1,5 @@
+type: webdav
+endpoint: "http://localhost:7333"
+username: "admin"
+password: "password123"
+root: "/"
