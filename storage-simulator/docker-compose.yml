@@ -40,7 +40,7 @@ services:
   seaweed-s3:
     image: chrislusf/seaweedfs:latest
     container_name: seaweed-s3
-    command: "s3 -port=8333 -filer=seaweed-filer:8888"
+    command: "s3 -port=8333 -filer=seaweed-filer:8888 -ip.bind=0.0.0.0"
     environment:
       S3_ACCESS_KEY: admin
       S3_SECRET_KEY: password123

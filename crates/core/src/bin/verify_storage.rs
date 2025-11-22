@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("\n--- Verifying S3 ---");
     let s3 = S3::default()
         .bucket("test-bucket")
-        .endpoint("http://127.0.0.1:8333")
+        .endpoint("http://localhost:8333")
         .region("us-east-1")
         .access_key_id("admin")
         .secret_access_key("password123");

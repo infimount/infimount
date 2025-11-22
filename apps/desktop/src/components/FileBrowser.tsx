@@ -507,8 +507,7 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
 
       {previewFile && (
         <div
-          className="hidden h-full resize-x overflow-auto border-l-2 border-border/60 bg-card md:block"
-          style={{ width: "30%", minWidth: "250px", maxWidth: "600px" }}
+          className="absolute inset-y-0 right-0 z-50 w-full border-l-2 border-border/60 bg-card md:relative md:block md:w-[30%] md:min-w-[250px] md:max-w-[600px]"
         >
           <FilePreviewPanel
             file={previewFile}
