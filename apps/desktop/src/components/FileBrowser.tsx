@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
   Search,
   LayoutGrid,
@@ -23,6 +24,7 @@ import {
   readFile,
   writeFile,
   deletePath,
+  uploadDroppedFiles,
   TauriApiError,
 } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
@@ -346,8 +348,32 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
   const currentLabel =
     breadcrumbs[breadcrumbs.length - 1]?.name ?? storageName;
 
+  const [isDragging, setIsDragging] = useState(false);
+  const uploadZoneRef = useRef<{ handleFiles: (files: File[]) => void }>(null);
+
   return (
-    <div className="relative flex h-full bg-background">
+    <div
+      className="relative flex h-full bg-background"
+      onDragOver={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setIsDragging(true);
+      }}
+      onDragLeave={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setIsDragging(false);
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setIsDragging(false);
+        const files = Array.from(event.dataTransfer?.files ?? []);
+        if (files.length && uploadZoneRef.current) {
+          uploadZoneRef.current.handleFiles(files);
+        }
+      }}
+    >
       <div className="flex flex-1 flex-col">
         {/* Header with navigation */}
         <div className="border-b bg-muted/30">
@@ -502,7 +528,11 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
           <p className="truncate text-xs text-muted-foreground">{fullPath}</p>
         </div>
 
-        <UploadZone onUpload={handleUpload} />
+        <UploadZone
+          ref={uploadZoneRef}
+          onUpload={handleUpload}
+          isDragging={isDragging}
+        />
       </div>
 
       {previewFile && (

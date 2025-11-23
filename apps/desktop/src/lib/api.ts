@@ -88,6 +88,18 @@ export async function writeFile(
   }
 }
 
+export async function uploadDroppedFiles(
+  sourceId: string,
+  paths: string[],
+  targetDir: string
+): Promise<void> {
+  try {
+    return await tauriInvoke("upload_dropped_files", { sourceId, paths, targetDir });
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
 export async function deletePath(sourceId: string, path: string): Promise<void> {
   try {
     return await tauriInvoke("delete_path", { sourceId, path });

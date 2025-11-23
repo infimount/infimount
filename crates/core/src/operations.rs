@@ -75,6 +75,34 @@ pub async fn delete(op: &Operator, path: &str) -> Result<()> {
     Ok(())
 }
 
+/// Upload files from local paths to the target directory.
+pub async fn upload_files_from_paths(op: &Operator, paths: Vec<String>, target_dir: String) -> Result<()> {
+    for path_str in paths {
+        let path = std::path::Path::new(&path_str);
+        let filename = path.file_name()
+            .ok_or_else(|| opendal::Error::new(ErrorKind::Unexpected, "Invalid file path"))?
+            .to_string_lossy();
+        
+        let target_path = if target_dir.is_empty() || target_dir == "/" {
+            filename.to_string()
+        } else {
+            let dir = if target_dir.ends_with('/') {
+                target_dir.clone()
+            } else {
+                format!("{}/", target_dir)
+            };
+            format!("{}{}", dir, filename)
+        };
+
+        let data = tokio::fs::read(&path).await.map_err(|e| {
+            opendal::Error::new(ErrorKind::Unexpected, &format!("Failed to read local file: {}", e))
+        })?;
+
+        op.write(&target_path, data).await?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

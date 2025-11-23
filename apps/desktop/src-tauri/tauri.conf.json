@@ -18,7 +18,8 @@
         "height": 800,
         "resizable": true,
         "minWidth": 500,
-        "minHeight": 480
+        "minHeight": 480,
+        "dragDropEnabled": false
       }
     ],
     "security": {

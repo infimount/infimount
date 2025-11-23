@@ -138,6 +138,24 @@ pub async fn update_source(state: State<'_, AppState>, source: Source) -> Result
 }
 
 #[tauri::command]
+pub async fn upload_dropped_files(
+    state: State<'_, AppState>,
+    sourceId: String,
+    paths: Vec<String>,
+    targetDir: String,
+) -> Result<(), String> {
+    let op = state
+        .registry
+        .get_operator(&sourceId)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    operations::upload_files_from_paths(&op, paths, targetDir)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn list_storage_schemas() -> Result<Vec<StorageKindSchema>, String> {
     openhsb_core::schema::list_storage_schemas().map_err(|e| e.to_string())
 }
