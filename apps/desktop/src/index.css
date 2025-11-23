@@ -1,0 +1,282 @@
+@tailwind base;
+
+/* CSS Custom Properties - Theme Variables */
+:root {
+  --background: 0, 0%, 98%;             /* Clean light background */
+  --foreground: 224, 8%, 18%;           /* Softer dark text */
+  --card: 0, 0%, 96%;                   /* Slightly off-white cards */
+  --card-foreground: 224, 8%, 18%;
+  --popover: 0, 0%, 100%;
+  --popover-foreground: 224, 8%, 18%;
+  --primary: 217, 91%, 60%;             /* Spacedrive-like vibrant blue */
+  --primary-foreground: 0, 0%, 100%;
+  --secondary: 210, 20%, 90%;           /* Light secondary background */
+  --secondary-foreground: 224, 5%, 8%;
+  --muted: 210, 15%, 92%;               /* Light muted color */
+  --muted-foreground: 215, 10%, 40%;
+  --accent: 217, 91%, 60%;              /* Same as primary */
+  --accent-foreground: 0, 0%, 100%;
+  --destructive: 0, 70%, 50%;           /* Red */
+  --destructive-foreground: 0, 0%, 100%;
+  --border: 265 30% 90%;                /* Purple-tinted borders */
+  --input: 0, 0%, 98%;                  /* Input fields */
+  --ring: 217, 91%, 60%;                /* Focus ring */
+  --radius: 0.5rem;                      /* More modern rounded corners */
+  --sidebar-background: 0, 0%, 98%;
+  --sidebar-foreground: 224, 8%, 18%;
+  --sidebar-primary: 217, 91%, 60%;
+  --sidebar-primary-foreground: 0, 0%, 100%;
+  --sidebar-accent: 210, 40%, 96%;
+  --sidebar-accent-foreground: 224, 5%, 8%;
+  --sidebar-border: 208, 18%, 88%;
+  --sidebar-ring: 217, 91%, 60%;
+}
+
+.dark {
+  --background: 224, 5%, 8%;            /* Deep dark background reminiscent of Spacedrive */
+  --foreground: 220, 8%, 92%;           /* Slightly dimmed light text */
+  --card: 224, 6%, 13%;                 /* Slightly lighter than bg for depth */
+  --card-foreground: 220, 7%, 88%;
+  --popover: 224, 6%, 11%;
+  --popover-foreground: 220, 7%, 88%;
+  --primary: 217, 91%, 60%;             /* Spacedrive-like vibrant blue */
+  --primary-foreground: 0, 0%, 100%;
+  --secondary: 215, 14%, 20%;           /* Muted secondary elements */
+  --secondary-foreground: 220, 6%, 82%;
+  --muted: 215, 12%, 27%;               /* More subtle muted color */
+  --muted-foreground: 215, 10%, 62%;
+  --accent: 217, 91%, 60%;              /* Same as primary */
+  --accent-foreground: 0, 0%, 100%;
+  --destructive: 0, 70%, 50%;           /* Red */
+  --destructive-foreground: 0, 0%, 100%;
+  --border: 215, 11%, 26%;              /* Subtle border */
+  --input: 224, 6%, 12%;                /* Input field matching card */
+  --ring: 217, 91%, 60%;                /* Focus ring */
+  --sidebar-background: 224, 6%, 10%;
+  --sidebar-foreground: 220, 7%, 88%;
+  --sidebar-primary: 217, 91%, 60%;
+  --sidebar-primary-foreground: 0, 0%, 100%;
+  --sidebar-accent: 217, 33%, 18%;
+  --sidebar-accent-foreground: 210, 40%, 98%;
+  --sidebar-border: 215, 11%, 26%;
+  --sidebar-ring: 217, 91%, 60%;
+}
+
+@tailwind components;
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+}
+
+.draft-ui {
+  --background: 0 0% 100%;
+  --foreground: 260 60% 15%;
+
+  --card: 0 0% 100%;
+  --card-foreground: 260 60% 15%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 260 60% 15%;
+
+  --primary: 265 85% 65%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 265 50% 96%;
+  --secondary-foreground: 260 60% 15%;
+
+  --muted: 265 40% 96%;
+  --muted-foreground: 260 20% 50%;
+
+  --accent: 270 75% 60%;
+  --accent-foreground: 0 0% 100%;
+
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+
+  --border: 265 30% 90%;
+  --input: 265 30% 90%;
+  --ring: 265 85% 65%;
+
+  --radius: 0.5rem;
+
+  --sidebar-background: 265 25% 95%;
+  --sidebar-foreground: 260 60% 20%;
+  --sidebar-primary: 265 85% 65%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 265 40% 88%;
+  --sidebar-accent-foreground: 260 60% 20%;
+  --sidebar-border: 265 20% 85%;
+  --sidebar-ring: 265 85% 65%;
+}
+
+.dark .draft-ui {
+  --background: 260 60% 12%;
+  --foreground: 0 0% 98%;
+
+  --card: 260 50% 15%;
+  --card-foreground: 0 0% 98%;
+
+  --popover: 260 60% 12%;
+  --popover-foreground: 0 0% 98%;
+
+  --primary: 265 85% 65%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 260 40% 20%;
+  --secondary-foreground: 0 0% 98%;
+
+  --muted: 260 40% 20%;
+  --muted-foreground: 265 20% 70%;
+
+  --accent: 270 75% 60%;
+  --accent-foreground: 0 0% 100%;
+
+  --destructive: 0 63% 31%;
+  --destructive-foreground: 0 0% 98%;
+
+  --border: 260 40% 20%;
+  --input: 260 40% 20%;
+  --ring: 265 85% 65%;
+  
+  --sidebar-background: 260 50% 16%;
+  --sidebar-foreground: 0 0% 98%;
+  --sidebar-primary: 265 85% 65%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 260 40% 22%;
+  --sidebar-accent-foreground: 0 0% 98%;
+  --sidebar-border: 260 30% 20%;
+  --sidebar-ring: 265 85% 65%;
+}
+
+body {
+  @apply bg-background text-foreground;
+}
+
+/* Typography enhancements similar to Spacedrive */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+h1 {
+  font-size: 2rem;
+  font-weight: 700;
+}
+
+h2 {
+  font-size: 1.5rem;
+}
+
+h3 {
+  font-size: 1.25rem;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--muted));
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--muted-foreground));
+}
+
+/* Component utilities */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@tailwind utilities;
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-in-out;
+}
+
+.animate-slide-in-up {
+  animation: slideInUp 0.2s ease-in-out;
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.2s ease-out;
+}
+
+/* Visual styling improvements */
+.shadow-xs {
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.02);
+}
+
+.shadow-sm {
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.03), 0 1px 3px 0 rgb(0 0 0 / 0.05);
+}
+
+.shadow-md {
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.03);
+}
+
+.shadow-lg {
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.05), 0 4px 6px -2px rgb(0 0 0 / 0.03);
+}
+
+.shadow-xl {
+  box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.08), 0 10px 10px -6px rgb(0 0 0 / 0.02);
+}
+
+/* Better focus styles for accessibility */
+.focus-within\:ring-2:focus-within {
+  box-shadow: 0 0 0 2px hsl(var(--ring));
+}
+
+.focus-within\:ring-offset-2:focus-within {
+  box-shadow: 0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--ring));
+}

@@ -1,0 +1,12 @@
+[package]
+name = "OpenHSB"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1.0", features = ["derive"] }
+openhsb_core = { path = "../../../crates/core" }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

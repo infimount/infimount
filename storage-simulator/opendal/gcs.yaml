@@ -1,0 +1,4 @@
+type: gcs
+endpoint: "http://localhost:4443"
+bucket: "test-bucket"
+credential: null

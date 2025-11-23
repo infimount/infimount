@@ -1,0 +1,6 @@
+type: s3
+endpoint: "http://localhost:8333"
+bucket: "test-bucket"
+access_key_id: "admin"
+secret_access_key: "password123"
+region: "us-east-1"
