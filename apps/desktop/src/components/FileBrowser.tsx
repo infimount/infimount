@@ -1,5 +1,4 @@
 import { useEffect, useState, useRef } from "react";
-import { listen } from "@tauri-apps/api/event";
 import {
   Search,
   LayoutGrid,
@@ -15,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FileGrid } from "./FileGrid";
 import { FileTable } from "./FileTable";
-import { UploadZone } from "./UploadZone";
+import { UploadZone, type UploadFileLike, type UploadZoneRef } from "./UploadZone";
 import { FilePreviewPanel } from "./FilePreviewPanel";
 import { FileItem } from "@/types/storage";
 import {
@@ -24,10 +23,133 @@ import {
   readFile,
   writeFile,
   deletePath,
-  uploadDroppedFiles,
   TauriApiError,
 } from "@/lib/api";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "@/hooks/use-toast";
+
+// Helper to extract file-like objects (including from dropped folders, where supported)
+async function collectFilesFromDataTransfer(
+  dt: DataTransfer
+): Promise<UploadFileLike[]> {
+  const items = dt.items;
+  const files: UploadFileLike[] = [];
+
+  if (!items || items.length === 0) {
+    const fallback = Array.from(dt.files ?? []);
+    return fallback.map((f) => ({
+      name: f.name,
+      arrayBuffer: () => f.arrayBuffer(),
+    }));
+  }
+
+  // Non-standard folder support via webkitGetAsEntry (where available).
+  const walkEntry = async (
+    entry: any,
+    parentPath: string,
+  ): Promise<UploadFileLike[]> => {
+    if (!entry) return [];
+
+    if (entry.isFile) {
+      const file: File = await new Promise((resolve, reject) => {
+        entry.file(
+          (f: File) => resolve(f),
+          (err: unknown) => reject(err)
+        );
+      });
+      const relativeName = parentPath ? `${parentPath}/${file.name}` : file.name;
+      return [
+        {
+          name: relativeName,
+          arrayBuffer: () => file.arrayBuffer(),
+        },
+      ];
+    }
+
+    if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const entries: any[] = [];
+
+      await new Promise<void>((resolve, reject) => {
+        const readBatch = () => {
+          reader.readEntries(
+            (batch: any[]) => {
+              if (!batch.length) {
+                resolve();
+                return;
+              }
+              entries.push(...batch);
+              readBatch();
+            },
+            (err: unknown) => reject(err)
+          );
+        };
+        readBatch();
+      });
+
+      const nestedFiles: UploadFileLike[] = [];
+      for (const child of entries) {
+        const childDirPath = parentPath
+          ? `${parentPath}/${entry.name}`
+          : entry.name;
+        const childFiles = await walkEntry(child, childDirPath);
+        nestedFiles.push(...childFiles);
+      }
+      return nestedFiles;
+    }
+
+    return [];
+  };
+
+  const entryPromises: Promise<UploadFileLike[]>[] = [];
+
+  for (let i = 0; i < items.length; i += 1) {
+    const item = items[i];
+    if (item.kind !== "file") continue;
+
+    const anyItem = item as any;
+    if (typeof anyItem.webkitGetAsEntry === "function") {
+      const entry = anyItem.webkitGetAsEntry();
+      if (entry) {
+        entryPromises.push(walkEntry(entry, ""));
+        continue;
+      }
+    }
+
+    const file = item.getAsFile();
+    if (file) {
+      files.push({
+        name: file.name,
+        arrayBuffer: () => file.arrayBuffer(),
+      });
+    }
+  }
+
+  if (entryPromises.length > 0) {
+    const nested = await Promise.all(entryPromises);
+    nested.forEach((group) => files.push(...group));
+  }
+
+  // Fallback if nothing collected via items.
+  if (files.length === 0) {
+    const fallback = Array.from(dt.files ?? []);
+    return fallback.map((f) => ({
+      name: f.name,
+      arrayBuffer: () => f.arrayBuffer(),
+    }));
+  }
+
+  return files;
+}
 
 interface FileBrowserProps {
   sourceId: string;
@@ -53,6 +175,7 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
     onPreviewVisibilityChange?.(!!previewFile);
@@ -237,7 +360,6 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
   };
 
   const handleBulkDelete = async () => {
-    if (!confirm("Delete selected items? This cannot be undone.")) return;
     const toDelete = filteredFiles.filter((f) => selectedFiles.has(f.id));
     for (const file of toDelete) {
       // eslint-disable-next-line no-await-in-loop
@@ -263,7 +385,7 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
     void downloadOne(file);
   };
 
-  const handleUpload = (files: File[]) => {
+  const handleUpload = (files: UploadFileLike[]) => {
     void (async () => {
       if (!files.length) return;
       let successCount = 0;
@@ -349,32 +471,48 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
     breadcrumbs[breadcrumbs.length - 1]?.name ?? storageName;
 
   const [isDragging, setIsDragging] = useState(false);
-  const uploadZoneRef = useRef<{ handleFiles: (files: File[]) => void }>(null);
+  const uploadZoneRef = useRef<UploadZoneRef | null>(null);
 
   return (
-    <div
-      className="relative flex h-full bg-background"
-      onDragOver={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        setIsDragging(true);
-      }}
-      onDragLeave={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        setIsDragging(false);
-      }}
-      onDrop={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        setIsDragging(false);
-        const files = Array.from(event.dataTransfer?.files ?? []);
-        if (files.length && uploadZoneRef.current) {
-          uploadZoneRef.current.handleFiles(files);
-        }
-      }}
-    >
-      <div className="flex flex-1 flex-col">
+    <>
+      <div
+        className="relative flex h-full bg-background"
+        onDragOver={(event: React.DragEvent<HTMLDivElement>) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setIsDragging(true);
+        }}
+        onDragLeave={(event: React.DragEvent<HTMLDivElement>) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setIsDragging(false);
+        }}
+        onDrop={(event: React.DragEvent<HTMLDivElement>) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setIsDragging(false);
+          if (!event.dataTransfer || !uploadZoneRef.current) return;
+
+          void (async () => {
+            try {
+              const files = await collectFilesFromDataTransfer(event.dataTransfer);
+              if (files.length) {
+                uploadZoneRef.current?.handleFiles(files);
+              }
+            } catch (err) {
+              // If folder support is not available, fall back gracefully.
+              toast({
+                title: "Upload failed",
+                description:
+                  (err as any)?.message ||
+                  "Could not read some dropped items. Try dropping files only or use the file picker.",
+                variant: "destructive",
+              });
+            }
+          })();
+        }}
+      >
+        <div className="flex flex-1 flex-col">
         {/* Header with navigation */}
         <div className="border-b bg-muted/30">
           <div className="flex items-center gap-2 px-4 py-3">
@@ -477,11 +615,14 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
               {selectedFiles.size} item{selectedFiles.size > 1 ? "s" : ""} selected
             </span>
             <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={handleSelectAll}>
+                Select all
+              </Button>
               <Button size="sm" variant="outline" onClick={handleBulkDownload}>
                 <Download className="mr-2 h-4 w-4" />
                 Download
               </Button>
-              <Button size="sm" variant="outline" onClick={handleBulkDelete}>
+              <Button size="sm" variant="outline" onClick={() => setShowDeleteConfirm(true)}>
                 <Trash2 className="mr-2 h-4 w-4" />
                 Delete
               </Button>
@@ -528,34 +669,61 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
           <p className="truncate text-xs text-muted-foreground">{fullPath}</p>
         </div>
 
-        <UploadZone
-          ref={uploadZoneRef}
-          onUpload={handleUpload}
-          isDragging={isDragging}
-        />
-      </div>
-
-      {previewFile && (
-        <div
-          className="absolute inset-y-0 right-0 z-50 w-full border-l-2 border-border/60 bg-card md:relative md:block md:w-[30%] md:min-w-[250px] md:max-w-[600px]"
-        >
-          <FilePreviewPanel
-            file={previewFile}
-            onClose={() => setPreviewFile(null)}
-            onEdit={() => {
-              toast({
-                title: "Open in editor",
-                description:
-                  "Opening files in an external editor is not implemented yet.",
-              });
-            }}
-            onDownload={() => {
-              if (!previewFile) return;
-              void downloadOne(previewFile);
-            }}
+          <UploadZone
+            ref={uploadZoneRef}
+            onUpload={handleUpload}
+            isDragging={isDragging}
           />
         </div>
-      )}
-    </div>
+
+        {previewFile && (
+          <div
+            className="absolute inset-y-0 right-0 z-50 w-full border-l-2 border-border/60 bg-card md:relative md:block md:w-[30%] md:min-w-[250px] md:max-w-[600px]"
+          >
+            <FilePreviewPanel
+              file={previewFile}
+              onClose={() => setPreviewFile(null)}
+              onEdit={() => {
+                toast({
+                  title: "Open in editor",
+                  description:
+                    "Opening files in an external editor is not implemented yet.",
+                });
+              }}
+              onDownload={() => {
+                if (!previewFile) return;
+                void downloadOne(previewFile);
+              }}
+            />
+          </div>
+        )}
+      </div>
+
+      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialogContent className="max-w-md rounded-2xl border border-border bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] shadow-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete selected items?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete the selected files and folders from{" "}
+              <span className="font-medium">{storageName}</span>. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                void (async () => {
+                  await handleBulkDelete();
+                  setShowDeleteConfirm(false);
+                })();
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

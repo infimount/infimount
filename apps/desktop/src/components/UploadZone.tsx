@@ -4,12 +4,18 @@ import { Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 
+// Minimal interface we need for uploads.
+export interface UploadFileLike {
+  name: string;
+  arrayBuffer: () => Promise<ArrayBuffer>;
+}
+
 export interface UploadZoneRef {
-  handleFiles: (files: File[]) => void;
+  handleFiles: (files: UploadFileLike[]) => void;
 }
 
 interface UploadZoneProps {
-  onUpload: (files: File[]) => void;
+  onUpload: (files: UploadFileLike[]) => void;
   isDragging?: boolean;
 }
 
@@ -19,7 +25,7 @@ export const UploadZone = forwardRef<UploadZoneRef, UploadZoneProps>(
       { name: string; progress: number }[]
     >([]);
 
-    const handleFiles = useCallback((files: File[]) => {
+    const handleFiles = useCallback((files: UploadFileLike[]) => {
       const progressData = files.map((file) => ({ name: file.name, progress: 0 }));
       setUploadProgress(progressData);
 
@@ -51,12 +57,28 @@ export const UploadZone = forwardRef<UploadZoneRef, UploadZoneProps>(
       handleFiles,
     }));
 
-    const handleFileSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-      const files = event.target.files ? Array.from(event.target.files) : [];
-      if (files.length > 0) {
-        handleFiles(files);
-      }
-    }, [handleFiles]);
+    const handleFileSelect = useCallback(
+      (event: React.ChangeEvent<HTMLInputElement>) => {
+        const rawFiles = event.target.files ? Array.from(event.target.files) : [];
+        if (!rawFiles.length) return;
+
+        const fileLikes: UploadFileLike[] = rawFiles.map((file) => {
+          const anyFile = file as any;
+          const relPath: string =
+            typeof anyFile.webkitRelativePath === "string" && anyFile.webkitRelativePath.length > 0
+              ? anyFile.webkitRelativePath
+              : file.name;
+
+          return {
+            name: relPath,
+            arrayBuffer: () => file.arrayBuffer(),
+          };
+        });
+
+        handleFiles(fileLikes);
+      },
+      [handleFiles],
+    );
 
     const cancelUpload = (index: number) => {
       setUploadProgress((previous) => previous.filter((_, i) => i !== index));
@@ -103,10 +125,13 @@ export const UploadZone = forwardRef<UploadZoneRef, UploadZoneProps>(
             </div>
           </div>
         )}
+        {/* Allow selecting directories in supporting webviews/browsers */}
         <input
           id="file-upload"
           type="file"
           multiple
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          {...({ webkitdirectory: "", directory: "" } as any)}
           onChange={handleFileSelect}
           className="hidden"
         />

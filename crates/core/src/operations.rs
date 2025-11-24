@@ -1,5 +1,7 @@
 use futures::TryStreamExt;
 use opendal::{ErrorKind, Operator};
+use std::path::Path;
+use tokio::fs;
 
 use crate::models::{Entry, Result};
 use crate::util::extract_filename;
@@ -78,28 +80,105 @@ pub async fn delete(op: &Operator, path: &str) -> Result<()> {
 /// Upload files from local paths to the target directory.
 pub async fn upload_files_from_paths(op: &Operator, paths: Vec<String>, target_dir: String) -> Result<()> {
     for path_str in paths {
-        let path = std::path::Path::new(&path_str);
-        let filename = path.file_name()
-            .ok_or_else(|| opendal::Error::new(ErrorKind::Unexpected, "Invalid file path"))?
-            .to_string_lossy();
-        
-        let target_path = if target_dir.is_empty() || target_dir == "/" {
-            filename.to_string()
-        } else {
-            let dir = if target_dir.ends_with('/') {
-                target_dir.clone()
-            } else {
-                format!("{}/", target_dir)
-            };
-            format!("{}{}", dir, filename)
-        };
+        let path = Path::new(&path_str);
+        upload_path_recursive(op, path, &target_dir).await?;
+    }
+    Ok(())
+}
 
-        let data = tokio::fs::read(&path).await.map_err(|e| {
-            opendal::Error::new(ErrorKind::Unexpected, &format!("Failed to read local file: {}", e))
+fn join_target_dir(base: &str, name: &str) -> String {
+    if base.is_empty() || base == "/" {
+        name.to_string()
+    } else if base.ends_with('/') {
+        format!("{}{}", base, name)
+    } else {
+        format!("{}/{}", base, name)
+    }
+}
+
+async fn upload_path_recursive(op: &Operator, src: &Path, target_dir: &str) -> Result<()> {
+    let meta = fs::metadata(src).await.map_err(|e| {
+        opendal::Error::new(
+            ErrorKind::Unexpected,
+            &format!("Failed to stat local path {}: {}", src.display(), e),
+        )
+    })?;
+
+    if meta.is_file() {
+        let filename = src
+            .file_name()
+            .ok_or_else(|| {
+                opendal::Error::new(ErrorKind::Unexpected, "Invalid file path (no filename)")
+            })?
+            .to_string_lossy();
+
+        let target_path = join_target_dir(target_dir, &filename);
+
+        let data = fs::read(src).await.map_err(|e| {
+            opendal::Error::new(
+                ErrorKind::Unexpected,
+                &format!("Failed to read local file {}: {}", src.display(), e),
+            )
         })?;
 
         op.write(&target_path, data).await?;
+    } else if meta.is_dir() {
+        let mut stack: Vec<(std::path::PathBuf, String)> =
+            vec![(src.to_path_buf(), target_dir.to_string())];
+
+        while let Some((dir_path, dir_target)) = stack.pop() {
+            let mut entries = fs::read_dir(&dir_path).await.map_err(|e| {
+                opendal::Error::new(
+                    ErrorKind::Unexpected,
+                    &format!("Failed to read directory {}: {}", dir_path.display(), e),
+                )
+            })?;
+
+            while let Some(entry) = entries.next_entry().await.map_err(|e| {
+                opendal::Error::new(
+                    ErrorKind::Unexpected,
+                    &format!(
+                        "Failed to iterate directory {}: {}",
+                        dir_path.display(),
+                        e
+                    ),
+                )
+            })? {
+                let child_path = entry.path();
+                let child_meta = fs::metadata(&child_path).await.map_err(|e| {
+                    opendal::Error::new(
+                        ErrorKind::Unexpected,
+                        &format!(
+                            "Failed to stat local path {}: {}",
+                            child_path.display(),
+                            e
+                        ),
+                    )
+                })?;
+
+                if child_meta.is_file() {
+                    let filename = entry.file_name().to_string_lossy().to_string();
+                    let target_path = join_target_dir(&dir_target, &filename);
+                    let data = fs::read(&child_path).await.map_err(|e| {
+                        opendal::Error::new(
+                            ErrorKind::Unexpected,
+                            &format!(
+                                "Failed to read local file {}: {}",
+                                child_path.display(),
+                                e
+                            ),
+                        )
+                    })?;
+                    op.write(&target_path, data).await?;
+                } else if child_meta.is_dir() {
+                    let dirname = entry.file_name().to_string_lossy().to_string();
+                    let new_target = join_target_dir(&dir_target, &dirname);
+                    stack.push((child_path, new_target));
+                }
+            }
+        }
     }
+
     Ok(())
 }
 
