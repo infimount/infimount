@@ -1,6 +1,6 @@
 import { FileItem } from "@/types/storage";
-import { MoreVertical, Edit, Eye, Download, Trash2 } from "lucide-react";
-import { getFileIcon, getFileColor } from "./FileIcon";
+import { MoreVertical, Eye, Download, Trash2, Edit3 } from "lucide-react";
+import { FileTypeIcon } from "./FileIcon";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -24,6 +24,7 @@ interface FileGridProps {
   selectedFiles: Set<string>;
   onSelectFile: (fileId: string) => void;
   onOpenFile?: (file: FileItem) => void;
+  onEditFile?: (file: FileItem) => void;
   onDownloadFile?: (file: FileItem) => void;
   onDeleteFile?: (file: FileItem) => void;
 }
@@ -36,6 +37,7 @@ export function FileGrid({
   selectedFiles,
   onSelectFile,
   onOpenFile,
+  onEditFile,
   onDownloadFile,
   onDeleteFile,
 }: FileGridProps) {
@@ -107,8 +109,6 @@ export function FileGrid({
               }}
             >
               {rowFiles.map((file) => {
-                const Icon = getFileIcon(file);
-                const color = getFileColor(file);
                 const isSelected = selectedFiles.has(file.id);
 
                 return (
@@ -127,7 +127,7 @@ export function FileGrid({
 
                     <div className="flex flex-col items-center gap-1 p-2 pb-1">
                       <div className="relative w-full flex justify-center">
-                        <Icon className={`h-8 w-8 ${color}`} />
+                        <FileTypeIcon item={file} className="h-8 w-8" />
                       </div>
 
                       <div className="w-full text-center">
@@ -167,10 +167,12 @@ export function FileGrid({
                               <Download className="mr-2 h-4 w-4" />
                               Download
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => console.log("Edit", file.id)}>
-                              <Edit className="mr-2 h-4 w-4" />
-                              Edit
-                            </DropdownMenuItem>
+                            {onEditFile && (
+                              <DropdownMenuItem onClick={() => onEditFile(file)}>
+                                <Edit3 className="mr-2 h-4 w-4" />
+                                Edit
+                              </DropdownMenuItem>
+                            )}
                           </>
                         )}
                         <DropdownMenuItem
@@ -192,4 +194,3 @@ export function FileGrid({
     </div>
   );
 }
-

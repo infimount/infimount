@@ -1,16 +1,162 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FileItem } from "@/types/storage";
-import { X, Edit, Download } from "lucide-react";
+import { X, Download, Edit3, Save, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { getFileIcon, getFileColor } from "./FileIcon";
-import { readFile } from "@/lib/api";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { FileTypeIcon } from "./FileIcon";
+import { readFile, statEntry, writeFile } from "@/lib/api";
+import { toast } from "@/hooks/use-toast";
+
+const MAX_PREVIEW_BYTES = 20 * 1024 * 1024;
+
+const TEXT_EXTENSIONS = new Set([
+  "txt",
+  "md",
+  "mdx",
+  "rst",
+  "rtf",
+  "json",
+  "jsonl",
+  "ndjson",
+  "xml",
+  "html",
+  "css",
+  "js",
+  "ts",
+  "tsx",
+  "jsx",
+  "mjs",
+  "cjs",
+  "vue",
+  "svelte",
+  "log",
+  "csv",
+  "tsv",
+  "toml",
+  "yaml",
+  "yml",
+  "env",
+  "ini",
+  "conf",
+  "cfg",
+  "properties",
+  "gradle",
+  "groovy",
+  "rs",
+  "go",
+  "py",
+  "rb",
+  "pl",
+  "pm",
+  "lua",
+  "php",
+  "java",
+  "kt",
+  "kts",
+  "scala",
+  "cs",
+  "fs",
+  "fsx",
+  "swift",
+  "c",
+  "h",
+  "cpp",
+  "hpp",
+  "sql",
+  "proto",
+  "graphql",
+  "gql",
+  "eml",
+  "ics",
+  "vcf",
+  "srt",
+  "vtt",
+  "ass",
+  "sh",
+  "bash",
+  "zsh",
+  "ps1",
+  "bat",
+  "cmd",
+  "diff",
+  "patch",
+]);
+
+const TEXT_FILENAMES = new Set([
+  "dockerfile",
+  "makefile",
+  "cmakelists.txt",
+  "readme",
+  "readme.md",
+  "readme.txt",
+  "license",
+  "license.txt",
+  "license.md",
+  ".gitignore",
+  ".gitattributes",
+  ".gitmodules",
+  ".editorconfig",
+]);
+
+const BINARY_EXTENSIONS = new Set([
+  "zip",
+  "rar",
+  "7z",
+  "tar",
+  "gz",
+  "tgz",
+  "bz2",
+  "xz",
+  "exe",
+  "dll",
+  "bin",
+  "iso",
+  "dmg",
+  "pkg",
+  "deb",
+  "rpm",
+  "msi",
+  "msg",
+  "safetensors",
+  "pt",
+  "pth",
+  "ckpt",
+  "onnx",
+  "npy",
+  "npz",
+  "pkl",
+  "pickle",
+]);
+
+const isLikelyText = (data: Uint8Array): boolean => {
+  const sample = data.subarray(0, 4096);
+  if (sample.length === 0) return true;
+  let nonPrintable = 0;
+  for (const byte of sample) {
+    if (byte === 0) return false;
+    if (byte < 9 || (byte > 13 && byte < 32)) {
+      nonPrintable += 1;
+    }
+  }
+  return nonPrintable / sample.length < 0.08;
+};
 
 interface FilePreviewPanelProps {
   file: FileItem | null;
   sourceId: string;
   onClose: () => void;
-  onEdit: () => void;
+  startInEditMode?: boolean;
+  onEditModeChange?: (editing: boolean) => void;
   onDownload: () => void;
 }
 
@@ -18,24 +164,40 @@ export function FilePreviewPanel({
   file,
   sourceId,
   onClose,
-  onEdit,
+  startInEditMode,
+  onEditModeChange,
   onDownload,
 }: FilePreviewPanelProps) {
   if (!file) return null;
 
-  const Icon = getFileIcon(file);
-  const color = getFileColor(file);
 
   const [content, setContent] = useState<string>("");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [mode, setMode] = useState<"text" | "image" | "pdf" | "unsupported" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftContent, setDraftContent] = useState("");
+  const [originalContent, setOriginalContent] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
+  const [editBaselineMs, setEditBaselineMs] = useState<number | null>(null);
+  const [editBaselineRaw, setEditBaselineRaw] = useState<string | null>(null);
+  const [remoteModifiedAtLabel, setRemoteModifiedAtLabel] = useState<string | null>(null);
+  const editorRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     setContent("");
     setError(null);
     setMode(null);
+    setPreviewUrl(null);
+    setLoading(false);
+    setIsEditing(false);
+    setDraftContent("");
+    setOriginalContent("");
+    setEditBaselineMs(null);
+    setEditBaselineRaw(null);
+    setRemoteModifiedAtLabel(null);
 
     if (!file || file.type !== "file") {
       // Directories or missing file: no preview, just show icon/info block.
@@ -46,42 +208,23 @@ export function FilePreviewPanel({
       (file.extension || file.name.split(".").pop() || "").toLowerCase();
     const isImage = ["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext);
     const isPdf = ext === "pdf";
-    const isTextExt = [
-      "txt",
-      "md",
-      "json",
-      "xml",
-      "html",
-      "css",
-      "js",
-      "ts",
-      "tsx",
-      "jsx",
-      "log",
-      "csv",
-    ].includes(ext);
-    const isKnownBinary = [
-      "zip",
-      "rar",
-      "7z",
-      "tar",
-      "gz",
-      "tgz",
-      "bz2",
-      "xz",
-      "exe",
-      "dll",
-      "bin",
-      "iso",
-      "dmg",
-      "pkg",
-      "deb",
-      "rpm",
-      "msi",
-    ].includes(ext);
+    const lowerName = file.name.toLowerCase();
+    const isTextExt =
+      TEXT_EXTENSIONS.has(ext) ||
+      TEXT_FILENAMES.has(lowerName) ||
+      lowerName.startsWith(".env") ||
+      lowerName.startsWith("dockerfile") ||
+      lowerName.startsWith("makefile");
+    const isKnownBinary = BINARY_EXTENSIONS.has(ext);
 
-    // Short-circuit for binary/unsupported types: don't even read the file.
-    if (isKnownBinary || (!isImage && !isPdf && !isTextExt)) {
+    if (file.size && file.size > MAX_PREVIEW_BYTES) {
+      setMode("unsupported");
+      setError(`File is too large to preview (${formatFileSize(file.size)}).`);
+      return;
+    }
+
+    // Short-circuit for known binary types.
+    if (isKnownBinary) {
       setMode("unsupported");
       setError("Preview not available for this file type.");
       return;
@@ -112,9 +255,17 @@ export function FilePreviewPanel({
           return;
         }
 
-        // Text preview
+        const dataIsText = isTextExt || isLikelyText(data);
+        if (!dataIsText) {
+          setMode("unsupported");
+          setError("Preview not available for this file type.");
+          return;
+        }
+
         const text = new TextDecoder().decode(data);
         setContent(text);
+        setDraftContent(text);
+        setOriginalContent(text);
         setMode("text");
       })
       .catch((e: any) => {
@@ -128,8 +279,143 @@ export function FilePreviewPanel({
 
     return () => {
       cancelled = true;
+      setLoading(false);
     };
   }, [file, sourceId]);
+
+  const beginEdit = async () => {
+    if (isEditing || loading || error || mode !== "text" || !file || file.type !== "file") {
+      return;
+    }
+    setIsEditing(true);
+    onEditModeChange?.(true);
+
+    let baselineMs: number | null = null;
+    let baselineRaw: string | null = null;
+    try {
+      const latest = await statEntry(sourceId, file.id);
+      baselineRaw = latest.modified_at ?? null;
+      if (latest.modified_at) {
+        const parsed = Date.parse(latest.modified_at);
+        baselineMs = Number.isNaN(parsed) ? null : parsed;
+      }
+    } catch {
+      baselineMs = file.modified?.getTime() ?? null;
+      baselineRaw = file.modified ? file.modified.toISOString() : null;
+    }
+
+    setEditBaselineMs(baselineMs);
+    setEditBaselineRaw(baselineRaw);
+  };
+
+  useEffect(() => {
+    if (!startInEditMode || isEditing || loading || error || mode !== "text") {
+      return;
+    }
+    void beginEdit();
+  }, [startInEditMode, isEditing, loading, error, mode]);
+
+  useEffect(() => {
+    if (isEditing) {
+      editorRef.current?.focus();
+    }
+  }, [isEditing]);
+
+  const isDirty = isEditing && draftContent !== originalContent;
+  const canEdit = mode === "text" && !loading && !error;
+
+  useEffect(() => {
+    if (startInEditMode && !loading && !canEdit) {
+      onEditModeChange?.(false);
+    }
+  }, [startInEditMode, loading, canEdit, onEditModeChange]);
+
+  const lineNumbers = useMemo(() => {
+    if (!isEditing) return "";
+    let count = 1;
+    for (let i = 0; i < draftContent.length; i += 1) {
+      if (draftContent[i] === "\n") count += 1;
+    }
+    return Array.from({ length: count }, (_, i) => i + 1).join("\n");
+  }, [draftContent, isEditing]);
+
+  const attemptSave = async (force: boolean) => {
+    if (!file || file.type !== "file") return;
+    if (!isDirty || isSaving) return;
+    setIsSaving(true);
+
+    let latestModifiedMs: number | null = null;
+    let latestModifiedLabel: string | null = null;
+    let latestModifiedRaw: string | null = null;
+    try {
+      const latest = await statEntry(sourceId, file.id);
+      if (latest.modified_at) {
+        latestModifiedRaw = latest.modified_at;
+        const parsed = Date.parse(latest.modified_at);
+        if (!Number.isNaN(parsed)) {
+          latestModifiedMs = parsed;
+          latestModifiedLabel = new Date(parsed).toLocaleString();
+        } else {
+          latestModifiedLabel = latest.modified_at;
+        }
+      }
+    } catch {
+      latestModifiedMs = null;
+    }
+
+    const hasRawConflict =
+      editBaselineRaw && latestModifiedRaw && latestModifiedRaw !== editBaselineRaw;
+    const hasMsConflict =
+      !hasRawConflict &&
+      editBaselineMs !== null &&
+      latestModifiedMs !== null &&
+      latestModifiedMs !== editBaselineMs;
+
+    if (!force && (hasRawConflict || hasMsConflict)) {
+      setRemoteModifiedAtLabel(latestModifiedLabel ?? latestModifiedRaw);
+      setShowOverwriteConfirm(true);
+      setIsSaving(false);
+      return;
+    }
+
+    try {
+      const data = new TextEncoder().encode(draftContent);
+      await writeFile(sourceId, file.id, data);
+      setContent(draftContent);
+      setOriginalContent(draftContent);
+      setIsEditing(false);
+      setEditBaselineMs(null);
+      setEditBaselineRaw(null);
+      onEditModeChange?.(false);
+
+      try {
+        const updated = await statEntry(sourceId, file.id);
+        if (updated.modified_at) {
+          const parsed = Date.parse(updated.modified_at);
+          setEditBaselineMs(Number.isNaN(parsed) ? null : parsed);
+          setEditBaselineRaw(updated.modified_at);
+        }
+      } catch {
+        setEditBaselineMs(null);
+        setEditBaselineRaw(null);
+      }
+
+      toast({
+        title: "Saved",
+        description: `${file.name} updated successfully.`,
+        variant: "success",
+        duration: 2000,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Save failed",
+        description: err?.message || String(err),
+        variant: "destructive",
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   useEffect(() => {
     return () => {
@@ -140,7 +426,8 @@ export function FilePreviewPanel({
   }, [previewUrl]);
 
   return (
-    <div className="flex h-full flex-col bg-card">
+    <>
+      <div className="flex h-full flex-col bg-card">
       {/* Header */}
       <div className="flex items-center justify-between bg-muted/30 p-3">
         <h3 className="flex-1 truncate text-sm font-semibold">{file.name}</h3>
@@ -181,14 +468,36 @@ export function FilePreviewPanel({
               />
             </div>
           )}
-          {!loading && !error && mode === "text" && content && (
+          {!loading && !error && mode === "text" && !isEditing && (
             <div className="w-full rounded-lg border bg-muted/20 p-3 font-mono text-xs">
               <pre className="whitespace-pre-wrap break-words">{content}</pre>
             </div>
           )}
+          {!loading && !error && mode === "text" && isEditing && (
+            <div className="w-full rounded-lg border bg-muted/20">
+              <div className="flex h-[360px] w-full overflow-hidden text-xs font-mono">
+                <pre className="select-none border-r bg-muted/30 px-2 py-3 text-muted-foreground">
+                  {lineNumbers}
+                </pre>
+                <textarea
+                  ref={editorRef}
+                  value={draftContent}
+                  onChange={(event) => setDraftContent(event.target.value)}
+                  onKeyDown={(event) => {
+                    if ((event.metaKey || event.ctrlKey) && event.key === "s") {
+                      event.preventDefault();
+                      void attemptSave(false);
+                    }
+                  }}
+                  className="h-full w-full resize-none bg-transparent px-3 py-3 outline-none"
+                  spellCheck={false}
+                />
+              </div>
+            </div>
+          )}
           {!loading && !error && (!mode || mode === "unsupported") && (
             <div className="flex flex-col items-center gap-4 py-8">
-              <Icon className={`h-24 w-24 ${color}`} />
+              <FileTypeIcon item={file} className="h-24 w-24" />
               <p className="text-sm text-muted-foreground">Preview not available</p>
               <p className="max-w-xs text-center text-xs text-muted-foreground">
                 This file type cannot be previewed in the browser. Use the download
@@ -200,7 +509,7 @@ export function FilePreviewPanel({
       </ScrollArea>
 
       {/* File Info */}
-      <div className="space-y-3 bg-muted/30 p-4">
+      <div className="space-y-3 border-t border-border/60 bg-card/95 p-4 shadow-[0_-8px_16px_-12px_rgba(0,0,0,0.35)]">
         <div className="text-sm">
           <div className="mb-2 font-medium">File Information</div>
           <div className="space-y-1 text-muted-foreground">
@@ -229,17 +538,91 @@ export function FilePreviewPanel({
 
         {/* Action Buttons */}
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={onEdit} className="flex-1">
-            <Edit className="mr-2 h-4 w-4" />
-            Edit
-          </Button>
-          <Button size="sm" variant="outline" onClick={onDownload} className="flex-1">
-            <Download className="mr-2 h-4 w-4" />
-            Download
-          </Button>
+          {canEdit && !isEditing && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void beginEdit()}
+              className="flex-1"
+            >
+              <Edit3 className="mr-2 h-4 w-4" />
+              Edit
+            </Button>
+          )}
+          {canEdit && isEditing && (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                className="flex-1"
+                onClick={() => {
+                  setDraftContent(originalContent);
+                  setIsEditing(false);
+                  setEditBaselineMs(null);
+                  setEditBaselineRaw(null);
+                  onEditModeChange?.(false);
+                }}
+                disabled={isSaving}
+              >
+                <Undo2 className="mr-2 h-4 w-4" />
+                Discard
+              </Button>
+              <Button
+                size="sm"
+                className="flex-1"
+                onClick={() => void attemptSave(false)}
+                disabled={!isDirty || isSaving}
+              >
+                <Save className="mr-2 h-4 w-4" />
+                {isSaving ? "Saving..." : "Save"}
+              </Button>
+            </>
+          )}
+          {!isEditing && (
+            <Button size="sm" variant="outline" onClick={onDownload} className="flex-1">
+              <Download className="mr-2 h-4 w-4" />
+              Download
+            </Button>
+          )}
         </div>
       </div>
-    </div>
+      </div>
+
+      <AlertDialog open={showOverwriteConfirm} onOpenChange={setShowOverwriteConfirm}>
+      <AlertDialogContent className="max-w-md rounded-2xl border border-border bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] shadow-2xl">
+        <AlertDialogHeader>
+          <AlertDialogTitle>File changed on disk</AlertDialogTitle>
+          <AlertDialogDescription>
+            This file was modified after you opened it.
+            {remoteModifiedAtLabel && (
+              <>
+                {" "}
+                Latest change: {remoteModifiedAtLabel}.
+              </>
+            )}{" "}
+            Do you want to overwrite it with your changes?
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel
+            onClick={() => setShowOverwriteConfirm(false)}
+            disabled={isSaving}
+          >
+            Cancel
+          </AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={() => {
+              setShowOverwriteConfirm(false);
+              void attemptSave(true);
+            }}
+          >
+            Overwrite
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 

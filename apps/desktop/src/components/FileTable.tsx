@@ -1,5 +1,5 @@
 import { FileItem } from "@/types/storage";
-import { MoreVertical, Edit, Eye, Download, Trash2 } from "lucide-react";
+import { MoreVertical, Eye, Download, Trash2, Edit3 } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -16,7 +16,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { getFileIcon, getFileColor } from "./FileIcon";
+import { FileTypeIcon } from "./FileIcon";
 
 const formatFileSize = (bytes?: number) => {
   if (!bytes) return "-";
@@ -54,6 +54,7 @@ interface FileTableProps {
   onSelectFile: (fileId: string) => void;
   onSelectAll: () => void;
   onOpenFile?: (file: FileItem) => void;
+  onEditFile?: (file: FileItem) => void;
   onDownloadFile?: (file: FileItem) => void;
   onDeleteFile?: (file: FileItem) => void;
   sortField?: "name" | "type" | "modified" | "size";
@@ -70,6 +71,7 @@ export function FileTable({
   onSelectFile,
   onSelectAll,
   onOpenFile,
+  onEditFile,
   onDownloadFile,
   onDeleteFile,
   sortField = "name",
@@ -143,8 +145,6 @@ export function FileTable({
           )}
           {virtualItems.map((virtualRow) => {
             const file = files[virtualRow.index];
-            const Icon = getFileIcon(file);
-            const color = getFileColor(file);
             const isSelected = selectedFiles.has(file.id);
 
             return (
@@ -162,7 +162,7 @@ export function FileTable({
                 </TableCell>
                 <TableCell className="w-[32%] min-w-[5ch] align-top">
                   <div className="flex items-start gap-3">
-                    <Icon className={`h-5 w-5 shrink-0 ${color}`} />
+                    <FileTypeIcon item={file} className="h-5 w-5 shrink-0" />
                     <span className="block truncate text-sm font-medium" title={file.name}>
                       {file.name}
                     </span>
@@ -202,10 +202,12 @@ export function FileTable({
                             <Download className="mr-2 h-4 w-4" />
                             Download
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => console.log("Edit", file.id)}>
-                            <Edit className="mr-2 h-4 w-4" />
-                            Edit
-                          </DropdownMenuItem>
+                          {onEditFile && (
+                            <DropdownMenuItem onClick={() => onEditFile(file)}>
+                              <Edit3 className="mr-2 h-4 w-4" />
+                              Edit
+                            </DropdownMenuItem>
+                          )}
                         </>
                       )}
                       <DropdownMenuItem

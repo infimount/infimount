@@ -2,10 +2,6 @@ import { useState } from "react";
 import type React from "react";
 import {
   Plus,
-  HardDrive,
-  Cloud,
-  Server,
-  Folder,
   MoreVertical,
   Edit,
   Trash2,
@@ -15,6 +11,12 @@ import {
   Download,
 } from "lucide-react";
 import logo from "@/assets/openhsb-logo.png";
+import s3Icon from "@/assets/amazon-s3.svg";
+import azureIcon from "@/assets/azure-storage-blob.svg";
+import gcsIcon from "@/assets/icons8-google-cloud.svg";
+import webdavIcon from "@/assets/webdav.svg";
+import folderIcon from "@/assets/folder.svg";
+import folderNetworkIcon from "@/assets/folder-network.svg";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
@@ -43,15 +45,17 @@ interface StorageSidebarProps {
 const getStorageIcon = (type: string) => {
   switch (type) {
     case 'aws-s3':
-      return Cloud;
+      return s3Icon;
     case 'azure-blob':
-      return Cloud;
+      return azureIcon;
+    case 'gcs':
+      return gcsIcon;
     case 'webdav':
-      return Server;
+      return webdavIcon;
     case 'local-fs':
-      return HardDrive;
+      return folderNetworkIcon;
     default:
-      return Folder;
+      return folderIcon;
   }
 };
 
@@ -130,7 +134,7 @@ export function StorageSidebar({
       <ScrollArea className="flex-1 p-2">
         <div className="space-y-1">
           {storages.map((storage, index) => {
-            const Icon = getStorageIcon(storage.type);
+            const iconSrc = getStorageIcon(storage.type);
             return (
               <div
                 key={storage.id}
@@ -154,16 +158,18 @@ export function StorageSidebar({
                   onClick={() => onSelectStorage(storage.id)}
                   className="flex flex-1 items-center gap-3 text-left text-sm min-w-0"
                 >
-                  <Icon className="h-4 w-4 shrink-0" />
+                  <img
+                    src={iconSrc}
+                    alt=""
+                    aria-hidden="true"
+                    className="h-5 w-5 shrink-0"
+                  />
                   <div className="flex-1 min-w-0">
-                    <div className="truncate font-medium">{storage.name}</div>
+                    <div className="truncate font-normal">{storage.name}</div>
                     <div className="text-xs text-muted-foreground truncate">
                       {storage.type.toUpperCase()}
                     </div>
                   </div>
-                  {storage.connected && (
-                    <div className="h-2 w-2 rounded-full bg-green-500 shrink-0" />
-                  )}
                 </button>
                 
                 <DropdownMenu>

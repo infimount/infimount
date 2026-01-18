@@ -9,6 +9,140 @@ import {
 import type { FileItem } from "@/types/storage";
 import { readFile } from "@/lib/api";
 
+const MAX_PREVIEW_BYTES = 20 * 1024 * 1024;
+
+const TEXT_EXTENSIONS = new Set([
+  "txt",
+  "md",
+  "mdx",
+  "rst",
+  "rtf",
+  "json",
+  "jsonl",
+  "ndjson",
+  "xml",
+  "html",
+  "css",
+  "js",
+  "ts",
+  "tsx",
+  "jsx",
+  "mjs",
+  "cjs",
+  "vue",
+  "svelte",
+  "log",
+  "csv",
+  "tsv",
+  "toml",
+  "yaml",
+  "yml",
+  "env",
+  "ini",
+  "conf",
+  "cfg",
+  "properties",
+  "gradle",
+  "groovy",
+  "rs",
+  "go",
+  "py",
+  "rb",
+  "pl",
+  "pm",
+  "lua",
+  "php",
+  "java",
+  "kt",
+  "kts",
+  "scala",
+  "cs",
+  "fs",
+  "fsx",
+  "swift",
+  "c",
+  "h",
+  "cpp",
+  "hpp",
+  "sql",
+  "proto",
+  "graphql",
+  "gql",
+  "eml",
+  "ics",
+  "vcf",
+  "srt",
+  "vtt",
+  "ass",
+  "sh",
+  "bash",
+  "zsh",
+  "ps1",
+  "bat",
+  "cmd",
+  "diff",
+  "patch",
+]);
+
+const TEXT_FILENAMES = new Set([
+  "dockerfile",
+  "makefile",
+  "cmakelists.txt",
+  "readme",
+  "readme.md",
+  "readme.txt",
+  "license",
+  "license.txt",
+  "license.md",
+  ".gitignore",
+  ".gitattributes",
+  ".gitmodules",
+  ".editorconfig",
+]);
+
+const BINARY_EXTENSIONS = new Set([
+  "zip",
+  "rar",
+  "7z",
+  "tar",
+  "gz",
+  "tgz",
+  "bz2",
+  "xz",
+  "exe",
+  "dll",
+  "bin",
+  "iso",
+  "dmg",
+  "pkg",
+  "deb",
+  "rpm",
+  "msi",
+  "msg",
+  "safetensors",
+  "pt",
+  "pth",
+  "ckpt",
+  "onnx",
+  "npy",
+  "npz",
+  "pkl",
+  "pickle",
+]);
+
+const isLikelyText = (data: Uint8Array): boolean => {
+  const sample = data.subarray(0, 4096);
+  if (sample.length === 0) return true;
+  let nonPrintable = 0;
+  for (const byte of sample) {
+    if (byte === 0) return false;
+    if (byte < 9 || (byte > 13 && byte < 32)) {
+      nonPrintable += 1;
+    }
+  }
+  return nonPrintable / sample.length < 0.08;
+};
+
 interface FilePreviewDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -32,6 +166,8 @@ export const FilePreviewDialog: React.FC<FilePreviewDialogProps> = ({
     setContent("");
     setError(null);
     setMode(null);
+    setPreviewUrl(null);
+    setLoading(false);
 
     if (!open || !file || file.type !== "file") return;
 
@@ -39,41 +175,22 @@ export const FilePreviewDialog: React.FC<FilePreviewDialogProps> = ({
       (file.extension || file.name.split(".").pop() || "").toLowerCase();
     const isImage = ["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext);
     const isPdf = ext === "pdf";
-    const isTextExt = [
-      "txt",
-      "md",
-      "json",
-      "xml",
-      "html",
-      "css",
-      "js",
-      "ts",
-      "tsx",
-      "jsx",
-      "log",
-      "csv",
-    ].includes(ext);
-    const isKnownBinary = [
-      "zip",
-      "rar",
-      "7z",
-      "tar",
-      "gz",
-      "tgz",
-      "bz2",
-      "xz",
-      "exe",
-      "dll",
-      "bin",
-      "iso",
-      "dmg",
-      "pkg",
-      "deb",
-      "rpm",
-      "msi",
-    ].includes(ext);
+    const lowerName = file.name.toLowerCase();
+    const isTextExt =
+      TEXT_EXTENSIONS.has(ext) ||
+      TEXT_FILENAMES.has(lowerName) ||
+      lowerName.startsWith(".env") ||
+      lowerName.startsWith("dockerfile") ||
+      lowerName.startsWith("makefile");
+    const isKnownBinary = BINARY_EXTENSIONS.has(ext);
 
-    if (isKnownBinary || (!isImage && !isPdf && !isTextExt)) {
+    if (file.size && file.size > MAX_PREVIEW_BYTES) {
+      setMode("unsupported");
+      setError(`File is too large to preview (${formatFileSize(file.size)}).`);
+      return;
+    }
+
+    if (isKnownBinary) {
       setMode("unsupported");
       setError("Preview not available for this file type.");
       return;
@@ -104,7 +221,13 @@ export const FilePreviewDialog: React.FC<FilePreviewDialogProps> = ({
           return;
         }
 
-        // Text preview
+        const dataIsText = isTextExt || isLikelyText(data);
+        if (!dataIsText) {
+          setMode("unsupported");
+          setError("Preview not available for this file type.");
+          return;
+        }
+
         const text = new TextDecoder().decode(data);
         setContent(text);
         setMode("text");
@@ -120,6 +243,7 @@ export const FilePreviewDialog: React.FC<FilePreviewDialogProps> = ({
 
     return () => {
       cancelled = true;
+      setLoading(false);
     };
   }, [open, file, sourceId]);
 
@@ -176,7 +300,7 @@ export const FilePreviewDialog: React.FC<FilePreviewDialogProps> = ({
               className="h-full w-full border-0"
             />
           )}
-          {!loading && !error && mode === "text" && content && (
+          {!loading && !error && mode === "text" && (
             <div className="h-full w-full overflow-auto p-3 text-xs font-mono whitespace-pre-wrap break-words">
               <pre>{content}</pre>
             </div>
@@ -195,4 +319,13 @@ export const FilePreviewDialog: React.FC<FilePreviewDialogProps> = ({
       </DialogContent>
     </Dialog>
   );
+};
+
+const formatFileSize = (bytes: number) => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 };

@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import {
   Search,
   LayoutGrid,
+  LayoutList,
   ChevronLeft,
   ChevronRight,
   Upload,
@@ -181,6 +182,7 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [editTargetId, setEditTargetId] = useState<string | null>(null);
 
   const describeLoadError = (err: TauriApiError): LoadError => {
     const shortMessage = (err.message || "")
@@ -280,6 +282,7 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
     setHistory(["/"]);
     setHistoryIndex(0);
     setPreviewFile(null);
+    setEditTargetId(null);
   }, [sourceId]);
 
   useEffect(() => {
@@ -419,8 +422,15 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
     if (file.type === "folder") {
       handleNavigate(file.id);
     } else {
+      setEditTargetId(null);
       setPreviewFile(file);
     }
+  };
+
+  const handleEditFile = (file: FileItem) => {
+    if (file.type === "folder") return;
+    setPreviewFile(file);
+    setEditTargetId(file.id);
   };
 
   const handleDownloadFile = (file: FileItem) => {
@@ -626,7 +636,11 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
                 className="h-8 w-8"
                 title={viewMode === "grid" ? "Switch to list view" : "Switch to grid view"}
               >
-                <LayoutGrid className="h-4 w-4" />
+                {viewMode === "grid" ? (
+                  <LayoutList className="h-4 w-4" />
+                ) : (
+                  <LayoutGrid className="h-4 w-4" />
+                )}
               </Button>
               {previewFile && (
                 <Button
@@ -711,6 +725,7 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
               selectedFiles={selectedFiles}
               onSelectFile={handleSelectFile}
               onOpenFile={handleOpenFile}
+              onEditFile={handleEditFile}
               onDownloadFile={handleDownloadFile}
               onDeleteFile={(file) => void deleteOne(file)}
             />
@@ -721,6 +736,7 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
               onSelectFile={handleSelectFile}
               onSelectAll={handleSelectAll}
               onOpenFile={handleOpenFile}
+              onEditFile={handleEditFile}
               onDownloadFile={handleDownloadFile}
               onDeleteFile={(file) => void deleteOne(file)}
               sortField={sortField}
@@ -749,13 +765,13 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
           <FilePreviewPanel
             file={previewFile}
             sourceId={sourceId}
-            onClose={() => setPreviewFile(null)}
-            onEdit={() => {
-              toast({
-                title: "Open in editor",
-                description:
-                  "Opening files in an external editor is not implemented yet.",
-              });
+            onClose={() => {
+              setPreviewFile(null);
+              setEditTargetId(null);
+            }}
+            startInEditMode={editTargetId === previewFile.id}
+            onEditModeChange={(editing) => {
+              setEditTargetId(editing ? previewFile.id : null);
             }}
             onDownload={() => {
               if (!previewFile) return;
