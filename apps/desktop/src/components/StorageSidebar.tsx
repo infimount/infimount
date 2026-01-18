@@ -93,8 +93,8 @@ export function StorageSidebar({
       <div className="flex items-center gap-3 border-b p-4">
         <img src={logo} alt="OpenHSB" className="h-10 w-10" />
         <div className="flex-1">
-          <h2 className="text-lg font-semibold text-sidebar-foreground">OpenHSB</h2>
-          <p className="text-xs text-sidebar-foreground/70">Storage Browser</p>
+          <h2 className="text-lg text-sidebar-foreground">OpenHSB</h2>
+          <p className="text-xs text-sidebar-foreground/70">Files Browser</p>
         </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

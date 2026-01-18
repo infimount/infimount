@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>openHSB – Universal Storage Browser</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description"
+        content="openHSB is a universal storage browser built on OpenDAL. Browse local folders, S3, WebDAV, and other OpenDAL backends from a single desktop app." />
+    <style>
+        :root {
+            --bg: #050816;
+            --bg-elevated: #090c1a;
+            --card: #0f172a;
+            --accent: #6366f1;
+            /* indigo-ish, close to your UI */
+            --accent-soft: rgba(99, 102, 241, 0.1);
+            --accent-2: #3b82f6;
+            /* OpenDAL-ish blue */
+            --border-subtle: rgba(148, 163, 184, 0.3);
+            --text: #e5e7eb;
+            --muted: #9ca3af;
+            --radius-lg: 18px;
+            --shadow-soft: 0 18px 40px rgba(15, 23, 42, 0.75);
+            --max-width: 1120px;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            background: radial-gradient(circle at top left, #1d2540 0, #050816 40%, #020617 100%);
+            color: var(--text);
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+                "Inter", "Segoe UI", sans-serif;
+            scroll-behavior: smooth;
+        }
+
+        a {
+            color: inherit;
+            text-decoration: none;
+        }
+
+        body {
+            display: flex;
+            justify-content: center;
+        }
+
+        .page {
+            width: 100%;
+            max-width: var(--max-width);
+            padding: 24px 16px 64px;
+        }
+
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 32px;
+        }
+
+        .logo-wrap {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .logo-mark {
+            width: 32px;
+            height: 32px;
+            border-radius: 12px;
+            background: radial-gradient(circle at 30% 20%, #a855f7, #4f46e5 50%, #1f2937 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 10px 25px rgba(79, 70, 229, 0.5);
+            font-size: 18px;
+            font-weight: 700;
+        }
+
+        .logo-text {
+            font-weight: 550;
+            letter-spacing: 0.02em;
+            font-size: 18px;
+        }
+
+        nav {
+            display: flex;
+            gap: 18px;
+            font-size: 14px;
+            color: var(--muted);
+        }
+
+        nav a {
+            position: relative;
+            padding-bottom: 3px;
+        }
+
+        nav a::after {
+            content: "";
+            position: absolute;
+            left: 0;
+            bottom: 0;
+            width: 0%;
+            height: 2px;
+            background: linear-gradient(to right, var(--accent), var(--accent-2));
+            transition: width 0.18s ease-out;
+            border-radius: 999px;
+        }
+
+        nav a:hover::after {
+            width: 100%;
+        }
+
+        .hero {
+            display: grid;
+            grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.2fr);
+            gap: 32px;
+            margin-bottom: 54px;
+            align-items: center;
+        }
+
+        @media (max-width: 860px) {
+            .hero {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+        }
+
+        .hero-kicker {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid rgba(148, 163, 184, 0.4);
+            background: rgba(15, 23, 42, 0.72);
+            font-size: 11px;
+            color: var(--muted);
+            margin-bottom: 14px;
+        }
+
+        .hero-kicker span {
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: rgba(129, 140, 248, 0.25);
+            color: #e0e7ff;
+            font-weight: 500;
+        }
+
+        .hero h1 {
+            font-size: clamp(32px, 4vw, 40px);
+            line-height: 1.1;
+            margin: 0 0 12px;
+        }
+
+        .hero h1 span {
+            background: linear-gradient(120deg, #a855f7, #6366f1, #22d3ee);
+            -webkit-background-clip: text;
+            color: transparent;
+        }
+
+        .hero-subtitle {
+            font-size: 14px;
+            color: var(--muted);
+            max-width: 480px;
+            line-height: 1.6;
+            margin-bottom: 20px;
+        }
+
+        .hero-cta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+
+        .btn {
+            border-radius: 999px;
+            padding: 9px 18px;
+            font-size: 13px;
+            border: 1px solid transparent;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            white-space: nowrap;
+            background: none;
+            color: inherit;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent), var(--accent-2));
+            border-color: rgba(191, 219, 254, 0.2);
+            color: #e5e7eb;
+            box-shadow: 0 12px 30px rgba(37, 99, 235, 0.45);
+        }
+
+        .btn-ghost {
+            background: rgba(15, 23, 42, 0.8);
+            border-color: rgba(148, 163, 184, 0.5);
+            color: var(--muted);
+        }
+
+        .btn span.platform {
+            font-size: 11px;
+            opacity: 0.85;
+        }
+
+        .hero-note {
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .hero-note code {
+            font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+                Consolas, "Liberation Mono", "Courier New", monospace;
+            font-size: 11px;
+            background: rgba(15, 23, 42, 0.9);
+            padding: 2px 6px;
+            border-radius: 6px;
+            border: 1px solid rgba(148, 163, 184, 0.5);
+        }
+
+        .hero-visual {
+            border-radius: 22px;
+            background: radial-gradient(circle at top left, rgba(129, 140, 248, 0.35), transparent 55%),
+                radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.4), transparent 55%);
+            padding: 12px;
+            box-shadow: var(--shadow-soft);
+            border: 1px solid rgba(148, 163, 184, 0.3);
+        }
+
+        .hero-visual-inner {
+            border-radius: 18px;
+            overflow: hidden;
+            background: #020617;
+        }
+
+        .hero-visual-inner img {
+            display: block;
+            width: 100%;
+            height: auto;
+        }
+
+        section {
+            margin-bottom: 52px;
+        }
+
+        .section-heading {
+            font-size: 18px;
+            margin-bottom: 6px;
+        }
+
+        .section-subtitle {
+            font-size: 13px;
+            color: var(--muted);
+            margin-bottom: 20px;
+        }
+
+        .pill-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .pill {
+            font-size: 11px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: rgba(15, 23, 42, 0.9);
+            border: 1px solid rgba(148, 163, 184, 0.4);
+            color: var(--muted);
+        }
+
+        .grid-features {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 14px;
+        }
+
+        @media (max-width: 900px) {
+            .grid-features {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (max-width: 600px) {
+            .grid-features {
+                grid-template-columns: minmax(0, 1fr);
+            }
+        }
+
+        .card {
+            background: rgba(15, 23, 42, 0.95);
+            border-radius: var(--radius-lg);
+            padding: 14px 14px 16px;
+            border: 1px solid var(--border-subtle);
+        }
+
+        .card strong {
+            font-size: 13px;
+            display: block;
+            margin-bottom: 6px;
+        }
+
+        .card p {
+            font-size: 12px;
+            color: var(--muted);
+            margin: 0;
+        }
+
+        .card-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--muted);
+            margin-bottom: 12px;
+        }
+
+        .card-backends {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+            margin-top: 12px;
+        }
+
+        @media (max-width: 720px) {
+            .card-backends {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        .backend-pill {
+            font-size: 11px;
+            padding: 6px 8px;
+            border-radius: 12px;
+            border: 1px solid rgba(148, 163, 184, 0.5);
+            background: rgba(15, 23, 42, 0.95);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 6px;
+            color: var(--muted);
+        }
+
+        .backend-pill span.name {
+            font-size: 11px;
+        }
+
+        .backend-pill span.type {
+            font-size: 10px;
+            opacity: 0.75;
+        }
+
+        .backend-pill span.dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 999px;
+            background: #22c55e;
+        }
+
+        .powered {
+            display: grid;
+            grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.2fr);
+            gap: 20px;
+            align-items: center;
+        }
+
+        @media (max-width: 880px) {
+            .powered {
+                grid-template-columns: minmax(0, 1fr);
+            }
+        }
+
+        .powered-diagram {
+            background: rgba(15, 23, 42, 0.95);
+            border-radius: 18px;
+            padding: 10px;
+            border: 1px solid rgba(148, 163, 184, 0.4);
+        }
+
+        .powered-diagram-inner {
+            border-radius: 12px;
+            overflow: hidden;
+            background: #e5f0ff;
+        }
+
+        .powered-diagram-inner img {
+            display: block;
+            width: 100%;
+            height: auto;
+        }
+
+        .steps {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+            margin-top: 12px;
+        }
+
+        @media (max-width: 780px) {
+            .steps {
+                grid-template-columns: minmax(0, 1fr);
+            }
+        }
+
+        .step {
+            background: rgba(15, 23, 42, 0.96);
+            border-radius: 14px;
+            padding: 10px 12px 13px;
+            border: 1px solid rgba(148, 163, 184, 0.4);
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .step-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 4px;
+            color: var(--text);
+            font-size: 12px;
+        }
+
+        .step-num {
+            width: 18px;
+            height: 18px;
+            border-radius: 999px;
+            background: var(--accent-soft);
+            border: 1px solid rgba(129, 140, 248, 0.9);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+        }
+
+        .docs-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.1fr);
+            gap: 18px;
+        }
+
+        @media (max-width: 860px) {
+            .docs-grid {
+                grid-template-columns: minmax(0, 1fr);
+            }
+        }
+
+        .code-block {
+            background: #020617;
+            border-radius: 14px;
+            border: 1px solid rgba(148, 163, 184, 0.5);
+            padding: 10px 12px;
+            font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+                Consolas, "Liberation Mono", "Courier New", monospace;
+            font-size: 11px;
+            color: #e5e7eb;
+            overflow-x: auto;
+        }
+
+        .code-block .code-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .code-header-dots {
+            display: flex;
+            gap: 4px;
+        }
+
+        .code-header-dots span {
+            width: 7px;
+            height: 7px;
+            border-radius: 999px;
+            background: #f97316;
+        }
+
+        .code-header-dots span:nth-child(2) {
+            background: #fbbf24;
+        }
+
+        .code-header-dots span:nth-child(3) {
+            background: #22c55e;
+        }
+
+        .code-block pre {
+            margin: 0;
+            white-space: pre;
+        }
+
+        footer {
+            margin-top: 40px;
+            padding-top: 18px;
+            border-top: 1px solid rgba(30, 64, 175, 0.6);
+            font-size: 12px;
+            color: var(--muted);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        footer a {
+            color: var(--muted);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="page">
+        <header>
+            <div class="logo-wrap">
+                <div class="logo-mark">H</div>
+                <div class="logo-text">openHSB</div>
+            </div>
+            <nav>
+                <a href="#features">Features</a>
+                <a href="#backends">Backends</a>
+                <a href="#powered">Powered by OpenDAL</a>
+                <a href="#docs">Docs</a>
+                <a href="https://github.com/your-org/openhsb" target="_blank" rel="noreferrer">GitHub</a>
+            </nav>
+        </header>
+
+        <main>
+            <!-- HERO -->
+            <section class="hero">
+                <div>
+                    <div class="hero-kicker">
+                        <span>Desktop app</span>
+                        Universal storage browser for developers
+                    </div>
+                    <h1>
+                        One window for <span>all your storage.</span>
+                    </h1>
+                    <p class="hero-subtitle">
+                        openHSB is a desktop storage browser built on OpenDAL. Browse local files,
+                        S3, WebDAV, GCS, Azure Blob, and other OpenDAL backends from a single, elegant UI.
+                    </p>
+
+                    <div class="hero-cta">
+                        <a href="#" class="btn btn-primary">
+                            Download
+                            <span class="platform">Linux · Windows · macOS</span>
+                        </a>
+                        <a href="https://github.com/your-org/openhsb" target="_blank" rel="noreferrer"
+                            class="btn btn-ghost">
+                            View on GitHub
+                        </a>
+                    </div>
+                    <div class="hero-note">
+                        Built with Rust + React on top of <code>opendal</code>. No telemetry. Config lives on your
+                        machine.
+                    </div>
+                </div>
+
+                <div class="hero-visual">
+                    <div class="hero-visual-inner">
+                        <img src="assets/openhsb-ui.png" alt="openHSB application screenshot" />
+                    </div>
+                </div>
+            </section>
+
+            <!-- FEATURES -->
+            <section id="features">
+                <h2 class="section-heading">What openHSB does</h2>
+                <p class="section-subtitle">
+                    A focused tool for moving, inspecting, and managing data across multiple storage backends.
+                </p>
+
+                <div class="grid-features">
+                    <div class="card">
+                        <strong>Unified storage browser</strong>
+                        <p>
+                            Switch between local folders, object storage, and remote endpoints without changing tools
+                            or mental model.
+                        </p>
+                    </div>
+                    <div class="card">
+                        <strong>Upload, download, move</strong>
+                        <p>
+                            Core file operations, folders, drag-and-drop and keyboard-friendly navigation. No extra
+                            magic.
+                        </p>
+                    </div>
+                    <div class="card">
+                        <strong>Configurable storage profiles</strong>
+                        <p>
+                            Save multiple endpoints – dev, staging, prod, personal, client – and switch with a click.
+                        </p>
+                    </div>
+                    <div class="card">
+                        <strong>Local-first & secure</strong>
+                        <p>
+                            Configuration is stored locally. No external control plane, no always-on agents, no surprise
+                            calls.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="pill-row">
+                    <div class="pill">Desktop only · no SaaS</div>
+                    <div class="pill">Uses OpenDAL for backend compatibility</div>
+                    <div class="pill">MIT / Apache-style open source (update to your license)</div>
+                </div>
+            </section>
+
+            <!-- BACKENDS -->
+            <section id="backends">
+                <h2 class="section-heading">Backends via OpenDAL</h2>
+                <p class="section-subtitle">
+                    If OpenDAL supports it, openHSB can browse it. Start with the common ones and grow with your stack.
+                </p>
+
+                <div class="card">
+                    <div class="card-label">Categories</div>
+
+                    <div class="card-backends">
+                        <div class="backend-pill">
+                            <span class="name">S3 · GCS · OSS</span>
+                            <span class="type">Object storage</span>
+                            <span class="dot"></span>
+                        </div>
+                        <div class="backend-pill">
+                            <span class="name">Azure Blob</span>
+                            <span class="type">Object storage</span>
+                            <span class="dot"></span>
+                        </div>
+                        <div class="backend-pill">
+                            <span class="name">Filesystem</span>
+                            <span class="type">Local / remote FS</span>
+                            <span class="dot"></span>
+                        </div>
+                        <div class="backend-pill">
+                            <span class="name">WebDAV · HTTP</span>
+                            <span class="type">Standard protocol</span>
+                            <span class="dot"></span>
+                        </div>
+                        <div class="backend-pill">
+                            <span class="name">Redis · RocksDB</span>
+                            <span class="type">Key–value storage*</span>
+                            <span class="dot"></span>
+                        </div>
+                        <div class="backend-pill">
+                            <span class="name">Dropbox · GDrive</span>
+                            <span class="type">Consumer cloud*</span>
+                            <span class="dot"></span>
+                        </div>
+                    </div>
+
+                    <p style="font-size:11px;margin-top:10px;color:var(--muted);">
+                        *Support depends on the underlying OpenDAL version and features you ship with openHSB.
+                    </p>
+                </div>
+            </section>
+
+            <!-- POWERED BY OPENDAL -->
+            <section id="powered">
+                <div class="powered">
+                    <div>
+                        <h2 class="section-heading">Powered by OpenDAL</h2>
+                        <p class="section-subtitle">
+                            openHSB focuses on UX and workflows. OpenDAL handles the hard part – a unified API over
+                            dozens
+                            of storage backends.
+                        </p>
+
+                        <div class="steps">
+                            <div class="step">
+                                <div class="step-title">
+                                    <span class="step-num">1</span>
+                                    Configure storage in openHSB
+                                </div>
+                                <div>
+                                    Fill in endpoints, credentials, and paths. Profiles are stored locally and can be
+                                    versioned along with your dotfiles.
+                                </div>
+                            </div>
+                            <div class="step">
+                                <div class="step-title">
+                                    <span class="step-num">2</span>
+                                    openHSB talks to OpenDAL
+                                </div>
+                                <div>
+                                    The Rust core uses OpenDAL to abstract away provider-specific APIs, signatures, and
+                                    quirks.
+                                </div>
+                            </div>
+                            <div class="step">
+                                <div class="step-title">
+                                    <span class="step-num">3</span>
+                                    You browse everything uniformly
+                                </div>
+                                <div>
+                                    Same UI for local files, object storage, key–value stores, and more. No need to
+                                    re-learn each cloud console.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="powered-diagram">
+                        <div class="powered-diagram-inner">
+                            <img src="assets/opendal-architecture.png" alt="OpenDAL architecture diagram" />
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- DOCS / QUICKSTART -->
+            <section id="docs">
+                <h2 class="section-heading">Getting started</h2>
+                <p class="section-subtitle">
+                    The basics fit on a single screen. For anything more advanced, read the README and open an issue or
+                    PR.
+                </p>
+
+                <div class="docs-grid">
+                    <div class="card">
+                        <strong>Installation</strong>
+                        <p style="margin-top:6px;margin-bottom:8px;">
+                            1. Download the latest release for your platform.<br />
+                            2. On Linux, mark the AppImage / binary as executable.<br />
+                            3. On macOS, approve the app in Security &amp; Privacy if needed.<br />
+                            4. On Windows, run the installer and pin openHSB to your taskbar.
+                        </p>
+
+                        <strong>First connection</strong>
+                        <p style="margin-top:6px;margin-bottom:8px;">
+                            1. Click “+” next to the storage list.<br />
+                            2. Pick a backend (S3, WebDAV, local filesystem, etc.).<br />
+                            3. Enter credentials, region / endpoint, and root path.<br />
+                            4. Save. Your new storage appears in the sidebar.
+                        </p>
+
+                        <strong>Day-to-day use</strong>
+                        <p style="margin-top:6px;">
+                            Use the left sidebar to switch storages, the main panel to browse objects,
+                            and the right panel to inspect metadata and content previews.
+                        </p>
+                    </div>
+
+                    <div class="code-block">
+                        <div class="code-header">
+                            <div class="code-header-dots">
+                                <span></span><span></span><span></span>
+                            </div>
+                            <div>openhsb.json · example config</div>
+                        </div>
+                        <pre>{
+  "profiles": [
+    {
+      "name": "work-s3",
+      "backend": "s3",
+      "endpoint": "https://s3.amazonaws.com",
+      "region": "us-east-1",
+      "bucket": "example-bucket",
+      "access_key": "…",
+      "secret_key": "…"
+    },
+    {
+      "name": "local-dev",
+      "backend": "fs",
+      "root": "/home/you/dev"
+    }
+  ]
+}</pre>
+                    </div>
+                </div>
+            </section>
+
+            <!-- OSS -->
+            <section>
+                <div class="card">
+                    <strong>Open source & contributions</strong>
+                    <p style="margin-top:4px;">
+                        openHSB is built in the open. If you want a new backend, workflow, or shortcut, open an issue
+                        or send a pull request on GitHub.
+                    </p>
+                    <p style="margin-top:8px;font-size:12px;">
+                        · Star the repo to support the project.<br />
+                        · File issues with concrete repro steps and backend details.<br />
+                        · If you’re using openHSB at work, consider adding a note in your README/infra docs.
+                    </p>
+                    <p style="margin-top:10px;">
+                        <a class="btn btn-ghost" href="https://github.com/your-org/openhsb" target="_blank"
+                            rel="noreferrer">
+                            Go to GitHub →
+                        </a>
+                    </p>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <div>© <span id="year"></span> openHSB. Built on OpenDAL.</div>
+            <div>
+                <a href="#top">Back to top</a>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        document.getElementById("year").textContent = new Date().getFullYear();
+    </script>
+</body>
+
+</html>

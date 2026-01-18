@@ -1,11 +1,14 @@
+import { useEffect, useState } from "react";
 import { FileItem } from "@/types/storage";
 import { X, Edit, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { getFileIcon, getFileColor } from "./FileIcon";
+import { readFile } from "@/lib/api";
 
 interface FilePreviewPanelProps {
   file: FileItem | null;
+  sourceId: string;
   onClose: () => void;
   onEdit: () => void;
   onDownload: () => void;
@@ -13,6 +16,7 @@ interface FilePreviewPanelProps {
 
 export function FilePreviewPanel({
   file,
+  sourceId,
   onClose,
   onEdit,
   onDownload,
@@ -21,16 +25,119 @@ export function FilePreviewPanel({
 
   const Icon = getFileIcon(file);
   const color = getFileColor(file);
-  const isImage =
-    file.extension &&
-    ["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(
-      file.extension.toLowerCase(),
-    );
-  const isText =
-    file.extension &&
-    ["txt", "md", "json", "xml", "html", "css", "js", "ts"].includes(
-      file.extension.toLowerCase(),
-    );
+
+  const [content, setContent] = useState<string>("");
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [mode, setMode] = useState<"text" | "image" | "pdf" | "unsupported" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setContent("");
+    setError(null);
+    setMode(null);
+
+    if (!file || file.type !== "file") {
+      // Directories or missing file: no preview, just show icon/info block.
+      return;
+    }
+
+    const ext =
+      (file.extension || file.name.split(".").pop() || "").toLowerCase();
+    const isImage = ["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext);
+    const isPdf = ext === "pdf";
+    const isTextExt = [
+      "txt",
+      "md",
+      "json",
+      "xml",
+      "html",
+      "css",
+      "js",
+      "ts",
+      "tsx",
+      "jsx",
+      "log",
+      "csv",
+    ].includes(ext);
+    const isKnownBinary = [
+      "zip",
+      "rar",
+      "7z",
+      "tar",
+      "gz",
+      "tgz",
+      "bz2",
+      "xz",
+      "exe",
+      "dll",
+      "bin",
+      "iso",
+      "dmg",
+      "pkg",
+      "deb",
+      "rpm",
+      "msi",
+    ].includes(ext);
+
+    // Short-circuit for binary/unsupported types: don't even read the file.
+    if (isKnownBinary || (!isImage && !isPdf && !isTextExt)) {
+      setMode("unsupported");
+      setError("Preview not available for this file type.");
+      return;
+    }
+
+    let cancelled = false;
+
+    setLoading(true);
+    readFile(sourceId, file.id)
+      .then((data) => {
+        if (cancelled) return;
+
+        if (isImage || isPdf) {
+          const buffer = data.buffer.slice(
+            data.byteOffset,
+            data.byteOffset + data.byteLength,
+          ) as ArrayBuffer;
+          const mime =
+            isImage && ext !== "svg"
+              ? `image/${ext === "jpg" ? "jpeg" : ext}`
+              : isImage
+              ? "image/svg+xml"
+              : "application/pdf";
+          const blob = new Blob([buffer], { type: mime });
+          const url = URL.createObjectURL(blob);
+          setPreviewUrl(url);
+          setMode(isImage ? "image" : "pdf");
+          return;
+        }
+
+        // Text preview
+        const text = new TextDecoder().decode(data);
+        setContent(text);
+        setMode("text");
+      })
+      .catch((e: any) => {
+        if (cancelled) return;
+        setMode("unsupported");
+        setError(e?.message || String(e));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [file, sourceId]);
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
 
   return (
     <div className="flex h-full flex-col bg-card">
@@ -45,46 +152,41 @@ export function FilePreviewPanel({
       {/* Preview Area */}
       <ScrollArea className="flex-1">
         <div className="p-4">
-          {isImage ? (
-            <div className="w-full rounded-lg border bg-muted/20 p-4">
+          {loading && (
+            <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-muted-foreground">
+              <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              <span>Loading preview…</span>
+            </div>
+          )}
+          {!loading && error && (
+            <div className="flex h-full items-center justify-center px-4 text-xs text-destructive">
+              {error}
+            </div>
+          )}
+          {!loading && !error && mode === "image" && previewUrl && (
+            <div className="flex w-full items-center justify-center rounded-lg border bg-muted/20 p-2">
               <img
-                src={`https://via.placeholder.com/400x300?text=${file.name}`}
+                src={previewUrl}
                 alt={file.name}
-                className="h-auto w-full rounded"
+                className="max-h-[360px] w-auto max-w-full rounded"
               />
-              <div className="mt-4 space-y-1 rounded bg-background/50 p-3 text-xs">
-                <p>
-                  This is a sample image preview. In production, the actual image content
-                  would be displayed here with full resolution and zoom capabilities.
-                </p>
-                <p className="text-muted-foreground">Image dimensions: 400x300px</p>
-              </div>
             </div>
-          ) : isText ? (
-            <div className="w-full rounded-lg border bg-muted/20 p-4 font-mono text-sm">
-              <pre className="whitespace-pre-wrap">
-{`// Preview of ${file.name}
-// This is a mock preview demonstrating text file display
-
-function exampleCode() {
-  console.log("Hello, World!");
-  return {
-    status: "success",
-    message: "This is sample content"
-  };
-}
-
-// In production, actual file content would be loaded here
-// with syntax highlighting for code files and proper
-// formatting for markdown, JSON, and other text formats.
-
-const data = {
-  features: ["Syntax highlighting", "Line numbers", "Code folding"],
-  supported: ["JavaScript", "TypeScript", "Python", "JSON", "Markdown"]
-};`}
-              </pre>
+          )}
+          {!loading && !error && mode === "pdf" && previewUrl && (
+            <div className="w-full overflow-hidden rounded-lg border bg-muted/20">
+              <iframe
+                src={previewUrl}
+                title={file.name}
+                className="h-[360px] w-full border-0"
+              />
             </div>
-          ) : (
+          )}
+          {!loading && !error && mode === "text" && content && (
+            <div className="w-full rounded-lg border bg-muted/20 p-3 font-mono text-xs">
+              <pre className="whitespace-pre-wrap break-words">{content}</pre>
+            </div>
+          )}
+          {!loading && !error && (!mode || mode === "unsupported") && (
             <div className="flex flex-col items-center gap-4 py-8">
               <Icon className={`h-24 w-24 ${color}`} />
               <p className="text-sm text-muted-foreground">Preview not available</p>

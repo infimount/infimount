@@ -158,6 +158,11 @@ interface FileBrowserProps {
   onToggleSidebar?: () => void;
 }
 
+interface LoadError {
+  title: string;
+  detail?: string;
+}
+
 export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, onToggleSidebar }: FileBrowserProps) {
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
   const [searchQuery, setSearchQuery] = useState('');
@@ -167,7 +172,7 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
   const [history, setHistory] = useState<string[]>(["/"]);
   const [historyIndex, setHistoryIndex] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<LoadError | null>(null);
 
   type SortField = "name" | "type" | "modified" | "size";
   type SortDirection = "asc" | "desc";
@@ -176,6 +181,46 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  const describeLoadError = (err: TauriApiError): LoadError => {
+    const shortMessage = (err.message || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)[0];
+
+    switch (err.code) {
+      case "NOT_FOUND":
+        return {
+          title: "Folder not found",
+          detail: "The requested path does not exist on this storage.",
+        };
+      case "PERMISSION_DENIED":
+        return {
+          title: "Access denied",
+          detail: "You don't have permission to view this location.",
+        };
+      case "CONFIG_ERROR":
+        return {
+          title: "Can't connect to this storage",
+          detail: "Check the credentials, endpoint URL, or bucket/container settings.",
+        };
+      case "IO_ERROR":
+        return {
+          title: "Network issue",
+          detail: "Unable to reach the storage service. Verify network/VPN settings.",
+        };
+      case "TIMEOUT":
+        return {
+          title: "Timed out",
+          detail: "The request took too long. Please check your connection and retry.",
+        };
+      default:
+        return {
+          title: "Could not connect to this storage",
+          detail: shortMessage || err.message,
+        };
+    }
+  };
 
   useEffect(() => {
     onPreviewVisibilityChange?.(!!previewFile);
@@ -207,26 +252,23 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
       setSelectedFiles(new Set());
     } catch (err) {
       if (err instanceof TauriApiError) {
-
-        switch (err.code) {
-          case "NOT_FOUND":
-            setError("The requested folder does not exist.");
-            break;
-          case "PERMISSION_DENIED":
-            setError("Access denied. You do not have permission to view this folder.");
-            break;
-          case "TIMEOUT":
-            setError("The operation timed out. Please check your connection.");
-            break;
-          default:
-            setError(err.message);
+        // If the root path is empty/not found, treat it as an empty folder instead of an error.
+        if (err.code === "NOT_FOUND" && (path === "/" || path === "")) {
+          setAllFiles([]);
+          setError(null);
+          setSelectedFiles(new Set());
+          setLoading(false);
+          return;
         }
+        setError(describeLoadError(err));
       } else {
-        setError("Failed to load files");
+        setError({
+          title: "Failed to load files",
+          detail: err instanceof Error ? err.message : String(err),
+        });
       }
       setAllFiles([]); // Clear files on error to prevent showing stale data
     } finally {
-
       setLoading(false);
     }
   };
@@ -603,8 +645,32 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
 
         {/* Error */}
         {error && (
-          <div className="border-b bg-destructive/10 px-6 py-2 text-sm text-destructive">
-            {error}
+          <div className="border-b bg-gradient-to-r from-destructive/10 via-destructive/5 to-transparent px-6 py-3 text-sm text-destructive">
+            <div className="flex items-start gap-3">
+              <div className="mt-1 flex h-6 w-6 items-center justify-center rounded-full bg-destructive/20 text-destructive">
+                !
+              </div>
+              <div className="space-y-1">
+                <p className="font-semibold leading-tight">{error.title}</p>
+                {error.detail && (
+                  <p className="text-xs leading-relaxed text-destructive/80">
+                    {error.detail}
+                  </p>
+                )}
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 border-destructive/40 text-destructive hover:bg-destructive/10"
+                    onClick={() => {
+                      void loadFiles(currentPath);
+                    }}
+                  >
+                    Try again
+                  </Button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -669,35 +735,36 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
           <p className="truncate text-xs text-muted-foreground">{fullPath}</p>
         </div>
 
-          <UploadZone
-            ref={uploadZoneRef}
-            onUpload={handleUpload}
-            isDragging={isDragging}
+        <UploadZone
+          ref={uploadZoneRef}
+          onUpload={handleUpload}
+          isDragging={isDragging}
+        />
+      </div>
+
+      {previewFile && (
+        <div
+          className="absolute inset-y-0 right-0 z-50 w-full border-l-2 border-border/60 bg-card md:relative md:block md:w-[30%] md:min-w-[250px] md:max-w-[600px]"
+        >
+          <FilePreviewPanel
+            file={previewFile}
+            sourceId={sourceId}
+            onClose={() => setPreviewFile(null)}
+            onEdit={() => {
+              toast({
+                title: "Open in editor",
+                description:
+                  "Opening files in an external editor is not implemented yet.",
+              });
+            }}
+            onDownload={() => {
+              if (!previewFile) return;
+              void downloadOne(previewFile);
+            }}
           />
         </div>
-
-        {previewFile && (
-          <div
-            className="absolute inset-y-0 right-0 z-50 w-full border-l-2 border-border/60 bg-card md:relative md:block md:w-[30%] md:min-w-[250px] md:max-w-[600px]"
-          >
-            <FilePreviewPanel
-              file={previewFile}
-              onClose={() => setPreviewFile(null)}
-              onEdit={() => {
-                toast({
-                  title: "Open in editor",
-                  description:
-                    "Opening files in an external editor is not implemented yet.",
-                });
-              }}
-              onDownload={() => {
-                if (!previewFile) return;
-                void downloadOne(previewFile);
-              }}
-            />
-          </div>
-        )}
-      </div>
+      )}
+    </div>
 
       <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
         <AlertDialogContent className="max-w-md rounded-2xl border border-border bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] shadow-2xl">

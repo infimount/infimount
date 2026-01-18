@@ -39,6 +39,45 @@ export const FilePreviewDialog: React.FC<FilePreviewDialogProps> = ({
       (file.extension || file.name.split(".").pop() || "").toLowerCase();
     const isImage = ["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext);
     const isPdf = ext === "pdf";
+    const isTextExt = [
+      "txt",
+      "md",
+      "json",
+      "xml",
+      "html",
+      "css",
+      "js",
+      "ts",
+      "tsx",
+      "jsx",
+      "log",
+      "csv",
+    ].includes(ext);
+    const isKnownBinary = [
+      "zip",
+      "rar",
+      "7z",
+      "tar",
+      "gz",
+      "tgz",
+      "bz2",
+      "xz",
+      "exe",
+      "dll",
+      "bin",
+      "iso",
+      "dmg",
+      "pkg",
+      "deb",
+      "rpm",
+      "msi",
+    ].includes(ext);
+
+    if (isKnownBinary || (!isImage && !isPdf && !isTextExt)) {
+      setMode("unsupported");
+      setError("Preview not available for this file type.");
+      return;
+    }
 
     let cancelled = false;
 
@@ -65,15 +104,10 @@ export const FilePreviewDialog: React.FC<FilePreviewDialogProps> = ({
           return;
         }
 
-        // Fallback: try to treat as text
-        try {
-          const text = new TextDecoder().decode(data);
-          setContent(text);
-          setMode("text");
-        } catch {
-          setMode("unsupported");
-          setError("Preview not available for this file type.");
-        }
+        // Text preview
+        const text = new TextDecoder().decode(data);
+        setContent(text);
+        setMode("text");
       })
       .catch((e: any) => {
         if (cancelled) return;
