@@ -18,6 +18,19 @@ import {
 } from "@/components/ui/select";
 import { StorageType, type StorageConfig } from "@/types/storage";
 import { listStorageSchemas, type StorageKindSchema } from "@/lib/api";
+import s3Icon from "@/assets/amazon-s3.svg";
+import azureIcon from "@/assets/azure-storage-blob.svg";
+import gcsIcon from "@/assets/icons8-google-cloud.svg";
+import webdavIcon from "@/assets/webdav.svg";
+import folderNetworkIcon from "@/assets/folder-network.svg";
+
+const STORAGE_TYPE_ICONS: Record<string, string> = {
+  "aws-s3": s3Icon,
+  "azure-blob": azureIcon,
+  gcs: gcsIcon,
+  webdav: webdavIcon,
+  "local-fs": folderNetworkIcon,
+};
 
 interface AddStorageDialogProps {
   open: boolean;
@@ -117,12 +130,41 @@ export function AddStorageDialog({
                 id="type"
                 className="border border-border bg-[hsl(var(--card))] text-sm text-[hsl(var(--card-foreground))] focus:border-[hsl(265_85%_65%)] focus:ring-[hsl(265_85%_65%)]"
               >
-                <SelectValue />
+                <SelectValue>
+                  {(() => {
+                    const current = schemas.find((schema) => schema.id === type);
+                    const icon = STORAGE_TYPE_ICONS[type];
+                    if (!current) return null;
+                    return (
+                      <span className="flex items-center gap-2">
+                        {icon && (
+                          <img
+                            src={icon}
+                            alt=""
+                            aria-hidden="true"
+                            className="h-4 w-4"
+                          />
+                        )}
+                        <span>{current.label}</span>
+                      </span>
+                    );
+                  })()}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md">
                 {schemas.map((schema) => (
                   <SelectItem key={schema.id} value={schema.id}>
-                    {schema.label}
+                    <div className="flex items-center gap-2">
+                      {STORAGE_TYPE_ICONS[schema.id] && (
+                        <img
+                          src={STORAGE_TYPE_ICONS[schema.id]}
+                          alt=""
+                          aria-hidden="true"
+                          className="h-4 w-4"
+                        />
+                      )}
+                      <span>{schema.label}</span>
+                    </div>
                   </SelectItem>
                 ))}
               </SelectContent>

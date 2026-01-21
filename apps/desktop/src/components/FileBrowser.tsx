@@ -6,8 +6,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Upload,
-  Download,
-  Trash2,
   PanelLeft,
   PanelRight,
 } from "lucide-react";
@@ -157,6 +155,7 @@ interface FileBrowserProps {
   storageName: string;
   onPreviewVisibilityChange?: (visible: boolean) => void;
   onToggleSidebar?: () => void;
+  isSidebarOpen?: boolean;
 }
 
 interface LoadError {
@@ -164,7 +163,13 @@ interface LoadError {
   detail?: string;
 }
 
-export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, onToggleSidebar }: FileBrowserProps) {
+export function FileBrowser({
+  sourceId,
+  storageName,
+  onPreviewVisibilityChange,
+  onToggleSidebar,
+  isSidebarOpen,
+}: FileBrowserProps) {
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPath, setCurrentPath] = useState<string>("/");
@@ -330,25 +335,68 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
     handleNavigate(target, { fromHistory: true });
   };
 
-  const handleSelectFile = (fileId: string) => {
-    setSelectedFiles(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(fileId)) {
-        newSet.delete(fileId);
-      } else {
-        newSet.add(fileId);
-      }
-      return newSet;
-    });
+  const handleSelectFile = (fileId: string, options?: { toggle?: boolean }) => {
+    if (options?.toggle) {
+      setSelectedFiles((prev) => {
+        const newSet = new Set(prev);
+        if (newSet.has(fileId)) {
+          newSet.delete(fileId);
+        } else {
+          newSet.add(fileId);
+        }
+        return newSet;
+      });
+      return;
+    }
+    setSelectedFiles(new Set([fileId]));
   };
 
-  const handleSelectAll = () => {
-    if (selectedFiles.size === filteredFiles.length) {
-      setSelectedFiles(new Set());
-    } else {
-      setSelectedFiles(new Set(filteredFiles.map(f => f.id)));
-    }
-  };
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "a") {
+        return;
+      }
+      const active = document.activeElement as HTMLElement | null;
+      if (
+        active &&
+        (active.tagName === "INPUT" ||
+          active.tagName === "TEXTAREA" ||
+          active.isContentEditable)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      setSelectedFiles(new Set(filteredFiles.map((file) => file.id)));
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [filteredFiles]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (
+        (event.key !== "Delete" && event.key !== "Backspace") ||
+        selectedFiles.size === 0
+      ) {
+        return;
+      }
+      const active = document.activeElement as HTMLElement | null;
+      if (
+        active &&
+        (active.tagName === "INPUT" ||
+          active.tagName === "TEXTAREA" ||
+          active.isContentEditable)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      setShowDeleteConfirm(true);
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [selectedFiles]);
 
   const downloadOne = async (file: FileItem) => {
     if (file.type !== "file") return;
@@ -379,16 +427,6 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
         description: error?.message || String(error),
         variant: "destructive",
       });
-    }
-  };
-
-  const handleBulkDownload = async () => {
-    const filesToDownload = filteredFiles.filter(
-      (f) => selectedFiles.has(f.id) && f.type === "file",
-    );
-    for (const file of filesToDownload) {
-      // eslint-disable-next-line no-await-in-loop
-      await downloadOne(file);
     }
   };
 
@@ -574,9 +612,13 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
                 variant="ghost"
                 className="h-8 w-8 mr-1"
                 onClick={onToggleSidebar}
-                title="Toggle Storage Sidebar"
+                title={isSidebarOpen ? "Hide Storage Sidebar" : "Show Storage Sidebar"}
               >
-                <PanelLeft className="h-4 w-4" />
+                {isSidebarOpen ? (
+                  <PanelRight className="h-4 w-4" />
+                ) : (
+                  <PanelLeft className="h-4 w-4" />
+                )}
               </Button>
               <Button
                 size="icon"
@@ -688,28 +730,6 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
           </div>
         )}
 
-        {/* Bulk Actions Bar */}
-        {selectedFiles.size > 0 && (
-          <div className="flex h-11 items-center justify-between border-b border-border bg-accent/20 px-6 py-3">
-            <span className="text-sm font-medium">
-              {selectedFiles.size} item{selectedFiles.size > 1 ? "s" : ""} selected
-            </span>
-            <div className="flex gap-2">
-              <Button size="sm" variant="outline" onClick={handleSelectAll}>
-                Select all
-              </Button>
-              <Button size="sm" variant="outline" onClick={handleBulkDownload}>
-                <Download className="mr-2 h-4 w-4" />
-                Download
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => setShowDeleteConfirm(true)}>
-                <Trash2 className="mr-2 h-4 w-4" />
-                Delete
-              </Button>
-            </div>
-          </div>
-        )}
-
         {/* Content */}
         <div className="flex-1 overflow-hidden p-6">
           {loading ? (
@@ -734,7 +754,6 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
               files={sortedFiles}
               selectedFiles={selectedFiles}
               onSelectFile={handleSelectFile}
-              onSelectAll={handleSelectAll}
               onOpenFile={handleOpenFile}
               onEditFile={handleEditFile}
               onDownloadFile={handleDownloadFile}

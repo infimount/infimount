@@ -39,7 +39,6 @@ describe("FileTable", () => {
                 files={mockFiles}
                 selectedFiles={new Set()}
                 onSelectFile={() => { }}
-                onSelectAll={() => { }}
                 onOpenFile={() => { }}
                 onDownloadFile={() => { }}
                 onDeleteFile={() => { }}
@@ -57,16 +56,13 @@ describe("FileTable", () => {
                 files={mockFiles}
                 selectedFiles={new Set()}
                 onSelectFile={onSelectFile}
-                onSelectAll={() => { }}
                 onOpenFile={() => { }}
                 onDownloadFile={() => { }}
                 onDeleteFile={() => { }}
             />
         );
 
-        // Find checkboxes. Index 0 is header, 1 is folder1, 2 is file1.txt
-        const checkboxes = screen.getAllByRole("checkbox");
-        fireEvent.click(checkboxes[2]);
+        fireEvent.click(screen.getByText("file1.txt"));
         expect(onSelectFile).toHaveBeenCalledWith("/file1.txt");
     });
 
@@ -77,7 +73,6 @@ describe("FileTable", () => {
                 files={mockFiles}
                 selectedFiles={new Set()}
                 onSelectFile={() => { }}
-                onSelectAll={() => { }}
                 onOpenFile={onOpenFile}
                 onDownloadFile={() => { }}
                 onDeleteFile={() => { }}

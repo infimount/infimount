@@ -5,6 +5,7 @@ import { FileBrowser } from "@/components/FileBrowser";
 import { StorageConfig, StorageType } from "@/types/storage";
 import type { Source, SourceKind } from "@/types/source";
 import { toast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import {
   listSources,
   addSource as apiAddSource,
@@ -365,9 +366,22 @@ const Index = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   useEffect(() => {
-    if (isPreviewVisible && window.matchMedia("(max-width: 1024px)").matches) {
+    const mql = window.matchMedia("(max-width: 767px)");
+    const handle = () => {
+      if (mql.matches) {
+        setIsSidebarOpen(false);
+      }
+    };
+    handle();
+    mql.addEventListener("change", handle);
+    return () => mql.removeEventListener("change", handle);
+  }, []);
+
+  useEffect(() => {
+    const isCompact = window.matchMedia("(max-width: 1024px)").matches;
+    if (isPreviewVisible && isCompact) {
       setIsSidebarOpen(false);
-    } else if (!isPreviewVisible) {
+    } else if (!isPreviewVisible && !isCompact) {
       // Optional: Auto-open when preview closes? 
       // The user didn't explicitly ask for this, but it's good UX.
       // Let's stick to the requested behavior: "visible in L also".
@@ -378,6 +392,13 @@ const Index = () => {
   }, [isPreviewVisible]);
 
   const toggleSidebar = () => setIsSidebarOpen((prev) => !prev);
+  const closeSidebar = () => setIsSidebarOpen(false);
+  const handleSelectStorage = (id: string) => {
+    setSelectedStorage(id);
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      setIsSidebarOpen(false);
+    }
+  };
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
@@ -388,7 +409,33 @@ const Index = () => {
         <StorageSidebar
           storages={storages}
           selectedStorage={selectedStorage}
-          onSelectStorage={setSelectedStorage}
+          onSelectStorage={handleSelectStorage}
+          onAddStorage={() => setIsAddDialogOpen(true)}
+          onEditStorage={handleEditStorage}
+          onDeleteStorage={handleDeleteStorage}
+          onRefreshStorage={handleRefreshStorage}
+          onReorderStorages={handleReorderStorages}
+          onImportStorages={handleImportStorages}
+          onExportStorages={handleExportStorages}
+        />
+      </div>
+      <div
+        className={cn(
+          "fixed inset-0 z-40 bg-black/40 transition-opacity md:hidden",
+          isSidebarOpen ? "opacity-100" : "pointer-events-none opacity-0",
+        )}
+        onClick={closeSidebar}
+      />
+      <div
+        className={cn(
+          "fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-sidebar shadow-xl transition-transform md:hidden",
+          isSidebarOpen ? "translate-x-0" : "-translate-x-full",
+        )}
+      >
+        <StorageSidebar
+          storages={storages}
+          selectedStorage={selectedStorage}
+          onSelectStorage={handleSelectStorage}
           onAddStorage={() => setIsAddDialogOpen(true)}
           onEditStorage={handleEditStorage}
           onDeleteStorage={handleDeleteStorage}
@@ -407,6 +454,7 @@ const Index = () => {
             storageName={currentStorage.name}
             onPreviewVisibilityChange={setIsPreviewVisible}
             onToggleSidebar={toggleSidebar}
+            isSidebarOpen={isSidebarOpen}
           />
         ) : (
           <div className="flex h-full items-center justify-center">

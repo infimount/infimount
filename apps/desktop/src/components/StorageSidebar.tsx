@@ -2,7 +2,6 @@ import { useState } from "react";
 import type React from "react";
 import {
   Plus,
-  MoreVertical,
   Edit,
   Trash2,
   RefreshCw,
@@ -28,6 +27,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 
 interface StorageSidebarProps {
   storages: StorageConfig[];
@@ -136,75 +141,62 @@ export function StorageSidebar({
           {storages.map((storage, index) => {
             const iconSrc = getStorageIcon(storage.type);
             return (
-              <div
-                key={storage.id}
-                className={cn(
-                  "w-full flex items-center gap-2 rounded-lg px-3 py-2.5 transition-colors group",
-                  selectedStorage === storage.id
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent/50",
-                  onReorderStorages && "cursor-move",
-                  draggedIndex === index && "opacity-50",
-                )}
-                draggable={Boolean(onReorderStorages)}
-                onDragStart={(event) => handleDragStart(event, index)}
-                onDragOver={(e) => handleDragOver(e, index)}
-                onDragEnd={handleDragEnd}
-              >
-                {onReorderStorages && (
-                  <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-                )}
-                <button
-                  onClick={() => onSelectStorage(storage.id)}
-                  className="flex flex-1 items-center gap-3 text-left text-sm min-w-0"
-                >
-                  <img
-                    src={iconSrc}
-                    alt=""
-                    aria-hidden="true"
-                    className="h-5 w-5 shrink-0"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="truncate font-normal">{storage.name}</div>
-                    <div className="text-xs text-muted-foreground truncate">
-                      {storage.type.toUpperCase()}
-                    </div>
-                  </div>
-                </button>
-                
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <MoreVertical className="h-4 w-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="end"
-                    className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md"
+              <ContextMenu key={storage.id}>
+                <ContextMenuTrigger asChild>
+                  <div
+                    className={cn(
+                      "w-full flex items-center gap-2 rounded-lg px-3 py-2.5 transition-colors group",
+                      selectedStorage === storage.id
+                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                        : "text-sidebar-foreground hover:bg-sidebar-accent/50",
+                      onReorderStorages && "cursor-move",
+                      draggedIndex === index && "opacity-50",
+                    )}
+                    draggable={Boolean(onReorderStorages)}
+                    onDragStart={(event) => handleDragStart(event, index)}
+                    onDragOver={(e) => handleDragOver(e, index)}
+                    onDragEnd={handleDragEnd}
+                    onContextMenu={() => onSelectStorage(storage.id)}
                   >
-                    <DropdownMenuItem onClick={() => onRefreshStorage(storage.id)}>
-                      <RefreshCw className="mr-2 h-4 w-4" />
-                      Refresh
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => onEditStorage(storage.id)}>
-                      <Edit className="mr-2 h-4 w-4" />
-                      Edit
-                    </DropdownMenuItem>
-                    <DropdownMenuItem 
-                      onClick={() => onDeleteStorage(storage.id)}
-                      className="text-destructive"
+                    {onReorderStorages && (
+                      <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+                    )}
+                    <button
+                      onClick={() => onSelectStorage(storage.id)}
+                      className="flex flex-1 items-center gap-3 text-left text-sm font-normal min-w-0"
                     >
-                      <Trash2 className="mr-2 h-4 w-4" />
-                      Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
+                      <img
+                        src={iconSrc}
+                        alt=""
+                        aria-hidden="true"
+                        className="h-5 w-5 shrink-0"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="truncate text-[13px] font-normal leading-snug">
+                          {storage.name}
+                        </div>
+                      </div>
+                    </button>
+                  </div>
+                </ContextMenuTrigger>
+                <ContextMenuContent className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md">
+                  <ContextMenuItem onClick={() => onRefreshStorage(storage.id)}>
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                    Refresh
+                  </ContextMenuItem>
+                  <ContextMenuItem onClick={() => onEditStorage(storage.id)}>
+                    <Edit className="mr-2 h-4 w-4" />
+                    Edit
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    onClick={() => onDeleteStorage(storage.id)}
+                    className="text-destructive"
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
             );
           })}
         </div>
