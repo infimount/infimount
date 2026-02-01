@@ -67,24 +67,26 @@ export function FileGrid({
 }: FileGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [columns, setColumns] = useState(3);
+  const [columnWidth, setColumnWidth] = useState(GRID_MIN_COLUMN_WIDTH);
   const [nameMaxChars, setNameMaxChars] = useState(24);
 
   // Calculate columns based on container width
   useEffect(() => {
     const updateColumns = () => {
       if (parentRef.current) {
-        const width = parentRef.current.offsetWidth;
+        const width = Math.floor(parentRef.current.clientWidth);
+        const usableWidth = Math.max(0, width - GRID_PADDING * 2);
         const calculatedColumns = Math.max(
           1,
-          Math.floor((width + GRID_GAP) / (GRID_MIN_COLUMN_WIDTH + GRID_GAP)),
+          Math.floor((usableWidth + GRID_GAP) / (GRID_MIN_COLUMN_WIDTH + GRID_GAP)),
         );
-        setColumns(calculatedColumns);
-
         const totalGaps = GRID_GAP * Math.max(0, calculatedColumns - 1);
-        const availableWidth = Math.max(0, width - GRID_PADDING * 2 - totalGaps);
-        const estimatedColumnWidth = availableWidth / calculatedColumns;
-        const columnWidth = Math.min(estimatedColumnWidth, GRID_MIN_COLUMN_WIDTH);
-        const approxCharsPerLine = Math.max(8, Math.floor(columnWidth / 7));
+        const availableWidth = Math.max(0, usableWidth - totalGaps);
+        const computedColumnWidth = Math.max(1, Math.floor(availableWidth / calculatedColumns));
+        const approxCharsPerLine = Math.max(8, Math.floor(computedColumnWidth / 7));
+
+        setColumns(calculatedColumns);
+        setColumnWidth(computedColumnWidth);
         setNameMaxChars(Math.max(12, approxCharsPerLine * 2));
       }
     };
@@ -111,7 +113,7 @@ export function FileGrid({
   return (
     <div
       ref={parentRef}
-      className="h-full w-full overflow-auto"
+      className="h-full w-full overflow-y-auto overflow-x-hidden"
     >
       <div
         style={{
@@ -124,6 +126,8 @@ export function FileGrid({
           const startIndex = virtualRow.index * columns;
           const rowFiles = files.slice(startIndex, startIndex + columns);
 
+          const rowTop = Math.round(virtualRow.start);
+
           return (
             <div
               key={virtualRow.index}
@@ -131,13 +135,15 @@ export function FileGrid({
               ref={rowVirtualizer.measureElement}
               style={{
                 position: "absolute",
-                top: 0,
+                top: `${rowTop}px`,
                 left: 0,
-                transform: `translateY(${virtualRow.start}px)`,
+                width: "100%",
+                boxSizing: "border-box",
                 display: "grid",
-                gridTemplateColumns: `repeat(${columns}, minmax(${GRID_MIN_COLUMN_WIDTH}px, 1fr))`,
+                gridTemplateColumns: `repeat(${columns}, ${columnWidth}px)`,
                 gap: `${GRID_GAP}px`,
                 padding: `${GRID_PADDING}px`,
+                justifyContent: "start",
               }}
             >
               {rowFiles.map((file) => {
@@ -148,9 +154,10 @@ export function FileGrid({
                   <ContextMenu key={file.id}>
                     <ContextMenuTrigger asChild>
                       <Card
-                        className={`group relative cursor-pointer overflow-hidden border-transparent font-normal text-foreground shadow-none transition-colors ${
-                          isSelected ? "bg-sidebar-accent" : "bg-transparent hover:bg-sidebar-accent/50"
-                        }`}
+                        className={`group relative cursor-pointer border-transparent font-normal text-foreground shadow-none antialiased transition-all duration-200 ${isSelected
+                          ? "bg-primary/15 ring-1 ring-primary/20"
+                          : "bg-transparent hover:bg-black/5 dark:hover:bg-white/5"
+                          }`}
                         onDoubleClick={() => onOpenFile?.(file)}
                         onClick={(event) => {
                           const toggle = event.metaKey || event.ctrlKey;
@@ -167,7 +174,7 @@ export function FileGrid({
                         }}
                       >
                         <div className="flex flex-col items-center gap-1 p-2 pb-1">
-                          <div className="relative w-full flex justify-center">
+                          <div className="flex h-9 w-9 items-center justify-center">
                             <FileTypeIcon item={file} className="h-8 w-8" />
                           </div>
 
@@ -208,7 +215,7 @@ export function FileGrid({
                       )}
                       <ContextMenuItem
                         onClick={() => onDeleteFile?.(file)}
-                        className="text-destructive"
+                        className="text-foreground focus:text-foreground"
                       >
                         <Trash2 className="mr-2 h-4 w-4" />
                         Delete

@@ -76,7 +76,6 @@ export function AddStorageDialog({
           setType(items[0].id as StorageType);
         }
       })
-      // eslint-disable-next-line no-console
       .catch((err) => console.error("Failed to load storage schemas", err));
     return () => {
       mounted = false;
@@ -105,7 +104,7 @@ export function AddStorageDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px] max-h-[80vh] overflow-y-auto rounded-2xl border border-border bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] shadow-2xl">
+      <DialogContent className="sm:max-w-[500px] max-h-[80vh] overflow-y-auto rounded-2xl border border-border bg-background text-foreground shadow-2xl">
         <DialogHeader>
           <DialogTitle className="text-left text-base font-normal text-[hsl(var(--card-foreground))]">
             {isEditing ? "Edit Storage" : "Add New Storage"}
@@ -128,7 +127,7 @@ export function AddStorageDialog({
             <Select value={type} onValueChange={(v) => setType(v as StorageType)}>
               <SelectTrigger
                 id="type"
-                className="border border-border bg-[hsl(var(--card))] text-sm text-[hsl(var(--card-foreground))] focus:border-[hsl(265_85%_65%)] focus:ring-[hsl(265_85%_65%)]"
+                className="border border-border bg-[hsl(var(--card))] text-sm text-[hsl(var(--card-foreground))] focus:border-border focus:ring-0 focus:ring-offset-0 focus-visible:border-border focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=open]:border-border"
               >
                 <SelectValue>
                   {(() => {
@@ -153,7 +152,11 @@ export function AddStorageDialog({
               </SelectTrigger>
               <SelectContent className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md">
                 {schemas.map((schema) => (
-                  <SelectItem key={schema.id} value={schema.id}>
+                  <SelectItem
+                    key={schema.id}
+                    value={schema.id}
+                    className="focus:bg-sidebar-accent/40 focus:text-sidebar-foreground"
+                  >
                     <div className="flex items-center gap-2">
                       {STORAGE_TYPE_ICONS[schema.id] && (
                         <img
@@ -184,7 +187,7 @@ export function AddStorageDialog({
               onChange={(e) => setName(e.target.value)}
               placeholder="My Storage"
               required
-              className="border border-border bg-[hsl(var(--card))] text-sm text-[hsl(var(--card-foreground))] focus-visible:border-[hsl(265_85%_65%)] focus-visible:ring-[hsl(265_85%_65%)]"
+              className="border border-border bg-[hsl(var(--card))] text-sm text-[hsl(var(--card-foreground))] focus-visible:border-border/60 focus-visible:ring-0 focus-visible:ring-offset-0"
             />
           </div>
 
@@ -205,7 +208,7 @@ export function AddStorageDialog({
                 }
                 placeholder={field.label}
                 required={field.required}
-                className="border border-border bg-[hsl(var(--card))] text-sm text-[hsl(var(--card-foreground))] focus-visible:border-[hsl(265_85%_65%)] focus-visible:ring-[hsl(265_85%_65%)]"
+                className="border border-border bg-[hsl(var(--card))] text-sm text-[hsl(var(--card-foreground))] focus-visible:border-border/60 focus-visible:ring-0 focus-visible:ring-offset-0"
               />
             </div>
           ))}
@@ -214,14 +217,14 @@ export function AddStorageDialog({
             <Button
               type="button"
               variant="outline"
-              className="border border-border"
+              className="border border-border hover:bg-sidebar-accent/30 hover:text-foreground"
               onClick={() => onOpenChange(false)}
             >
               Cancel
             </Button>
             <Button
               type="submit"
-              className="bg-[hsl(265_85%_65%)] hover:bg-[hsl(265_85%_60%)] text-white"
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
               {isEditing ? "Save Changes" : "Add Storage"}
             </Button>

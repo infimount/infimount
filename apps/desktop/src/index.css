@@ -1,65 +1,98 @@
 @tailwind base;
 
+html,
+body {
+  background: transparent !important;
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
 /* CSS Custom Properties - Theme Variables */
 :root {
-  --background: 0, 0%, 98%;             /* Clean light background */
-  --foreground: 224, 8%, 18%;           /* Softer dark text */
-  --card: 0, 0%, 96%;                   /* Slightly off-white cards */
-  --card-foreground: 224, 8%, 18%;
-  --popover: 0, 0%, 100%;
-  --popover-foreground: 224, 8%, 18%;
-  --primary: 217, 91%, 60%;             /* Spacedrive-like vibrant blue */
-  --primary-foreground: 0, 0%, 100%;
-  --secondary: 210, 20%, 90%;           /* Light secondary background */
-  --secondary-foreground: 224, 5%, 8%;
-  --muted: 210, 15%, 92%;               /* Light muted color */
-  --muted-foreground: 215, 10%, 40%;
-  --accent: 217, 91%, 60%;              /* Same as primary */
-  --accent-foreground: 0, 0%, 100%;
-  --destructive: 0, 70%, 50%;           /* Red */
-  --destructive-foreground: 0, 0%, 100%;
-  --border: 265 30% 90%;                /* Purple-tinted borders */
-  --input: 0, 0%, 98%;                  /* Input fields */
-  --ring: 217, 91%, 60%;                /* Focus ring */
-  --radius: 0.5rem;                      /* More modern rounded corners */
-  --sidebar-background: 0, 0%, 98%;
-  --sidebar-foreground: 224, 8%, 18%;
-  --sidebar-primary: 217, 91%, 60%;
-  --sidebar-primary-foreground: 0, 0%, 100%;
-  --sidebar-accent: 210, 40%, 96%;
-  --sidebar-accent-foreground: 224, 5%, 8%;
-  --sidebar-border: 208, 18%, 88%;
-  --sidebar-ring: 217, 91%, 60%;
+  /* Ubuntu Yaru Light Theme - Monochromatic Grey */
+  --background: 0 0% 97%;
+  /* #F7F7F7 Warm light background */
+  --foreground: 0 0% 24%;
+  /* #3D3D3D Soft dark grey text */
+  --card: 0 0% 100%;
+  /* White cards */
+  --card-foreground: 0 0% 24%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 24%;
+  --primary: 0 0% 25%;
+  /* Dark Grey Primary (Was Orange) */
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 96%;
+  /* Very light grey */
+  --secondary-foreground: 0 0% 24%;
+  --muted: 0 0% 94%;
+  /* Muted background */
+  --muted-foreground: 0 0% 45%;
+  --accent: 0 0% 85%;
+  /* Light Grey Accent */
+  --accent-foreground: 0 0% 24%;
+  --destructive: 0 0% 40%;
+  /* Grey (Monochromatic Destructive) */
+  --destructive-foreground: 0 0% 98%;
+  --border: 0 0% 92%;
+  /* Soft grey border */
+  --input: 0 0% 100%;
+  --ring: 0 0% 60%;
+  /* Grey focus ring */
+  --radius: 0.5rem;
+
+  --sidebar-background: 0 0% 92%;
+  /* Darker sidebar */
+  --sidebar-foreground: 0 0% 24%;
+  --sidebar-primary: 0 0% 85%;
+  /* Selection: Slightly darker than hover */
+  --sidebar-primary-foreground: 0 0% 24%;
+  --sidebar-accent: 0 0% 88%;
+  /* Darker hover state */
+  --sidebar-accent-foreground: 0 0% 15%;
+  --sidebar-border: 0 0% 88%;
+  /* Matching border */
+  --sidebar-ring: 0 0% 60%;
 }
 
 .dark {
-  --background: 224, 5%, 8%;            /* Deep dark background reminiscent of Spacedrive */
-  --foreground: 220, 8%, 92%;           /* Slightly dimmed light text */
-  --card: 224, 6%, 13%;                 /* Slightly lighter than bg for depth */
-  --card-foreground: 220, 7%, 88%;
-  --popover: 224, 6%, 11%;
-  --popover-foreground: 220, 7%, 88%;
-  --primary: 217, 91%, 60%;             /* Spacedrive-like vibrant blue */
-  --primary-foreground: 0, 0%, 100%;
-  --secondary: 215, 14%, 20%;           /* Muted secondary elements */
-  --secondary-foreground: 220, 6%, 82%;
-  --muted: 215, 12%, 27%;               /* More subtle muted color */
-  --muted-foreground: 215, 10%, 62%;
-  --accent: 217, 91%, 60%;              /* Same as primary */
-  --accent-foreground: 0, 0%, 100%;
-  --destructive: 0, 70%, 50%;           /* Red */
-  --destructive-foreground: 0, 0%, 100%;
-  --border: 215, 11%, 26%;              /* Subtle border */
-  --input: 224, 6%, 12%;                /* Input field matching card */
-  --ring: 217, 91%, 60%;                /* Focus ring */
-  --sidebar-background: 224, 6%, 10%;
-  --sidebar-foreground: 220, 7%, 88%;
-  --sidebar-primary: 217, 91%, 60%;
-  --sidebar-primary-foreground: 0, 0%, 100%;
-  --sidebar-accent: 217, 33%, 18%;
-  --sidebar-accent-foreground: 210, 40%, 98%;
-  --sidebar-border: 215, 11%, 26%;
-  --sidebar-ring: 217, 91%, 60%;
+  /* Ubuntu Yaru Dark Theme */
+  --background: 0 0% 18%;
+  /* #2E2E2E Warm dark grey */
+  --foreground: 0 0% 88%;
+  /* Soft light text */
+  --card: 0 0% 22%;
+  --card-foreground: 0 0% 88%;
+  --popover: 0 0% 22%;
+  --popover-foreground: 0 0% 88%;
+  --primary: 0 0% 90%;
+  /* Light Grey Primary */
+  --primary-foreground: 0 0% 18%;
+  --secondary: 0 0% 25%;
+  --secondary-foreground: 0 0% 90%;
+  --muted: 0 0% 25%;
+  --muted-foreground: 0 0% 60%;
+  --accent: 0 0% 30%;
+  /* Dark Grey Accent */
+  --accent-foreground: 0 0% 90%;
+  --destructive: 0 0% 60%;
+  --destructive-foreground: 0 0% 20%;
+  --border: 0 0% 22%;
+  /* Dark border */
+  --input: 0 0% 20%;
+  --ring: 0 0% 60%;
+
+  --sidebar-background: 0 0% 15%;
+  --sidebar-foreground: 0 0% 88%;
+  --sidebar-primary: 0 0% 30%;
+  /* Selection */
+  --sidebar-primary-foreground: 0 0% 90%;
+  --sidebar-accent: 0 0% 25%;
+  --sidebar-accent-foreground: 0 0% 95%;
+  --sidebar-border: 0 0% 22%;
+  --sidebar-ring: 0 0% 60%;
 }
 
 @tailwind components;
@@ -70,92 +103,21 @@
   }
 }
 
-.draft-ui {
-  --background: 0 0% 100%;
-  --foreground: 260 60% 15%;
-
-  --card: 0 0% 100%;
-  --card-foreground: 260 60% 15%;
-
-  --popover: 0 0% 100%;
-  --popover-foreground: 260 60% 15%;
-
-  --primary: 265 85% 65%;
-  --primary-foreground: 0 0% 100%;
-
-  --secondary: 265 50% 96%;
-  --secondary-foreground: 260 60% 15%;
-
-  --muted: 265 40% 96%;
-  --muted-foreground: 260 20% 50%;
-
-  --accent: 270 75% 60%;
-  --accent-foreground: 0 0% 100%;
-
-  --destructive: 0 84% 60%;
-  --destructive-foreground: 0 0% 100%;
-
-  --border: 265 30% 90%;
-  --input: 265 30% 90%;
-  --ring: 265 85% 65%;
-
-  --radius: 0.5rem;
-
-  --sidebar-background: 265 25% 95%;
-  --sidebar-foreground: 260 60% 20%;
-  --sidebar-primary: 265 85% 65%;
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 265 40% 88%;
-  --sidebar-accent-foreground: 260 60% 20%;
-  --sidebar-border: 265 20% 85%;
-  --sidebar-ring: 265 85% 65%;
-}
-
-.dark .draft-ui {
-  --background: 260 60% 12%;
-  --foreground: 0 0% 98%;
-
-  --card: 260 50% 15%;
-  --card-foreground: 0 0% 98%;
-
-  --popover: 260 60% 12%;
-  --popover-foreground: 0 0% 98%;
-
-  --primary: 265 85% 65%;
-  --primary-foreground: 0 0% 100%;
-
-  --secondary: 260 40% 20%;
-  --secondary-foreground: 0 0% 98%;
-
-  --muted: 260 40% 20%;
-  --muted-foreground: 265 20% 70%;
-
-  --accent: 270 75% 60%;
-  --accent-foreground: 0 0% 100%;
-
-  --destructive: 0 63% 31%;
-  --destructive-foreground: 0 0% 98%;
-
-  --border: 260 40% 20%;
-  --input: 260 40% 20%;
-  --ring: 265 85% 65%;
-  
-  --sidebar-background: 260 50% 16%;
-  --sidebar-foreground: 0 0% 98%;
-  --sidebar-primary: 265 85% 65%;
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 260 40% 22%;
-  --sidebar-accent-foreground: 0 0% 98%;
-  --sidebar-border: 260 30% 20%;
-  --sidebar-ring: 265 85% 65%;
-}
 
 body {
   @apply bg-background text-foreground;
+  font-family: "Ubuntu", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* Typography enhancements similar to Spacedrive */
-h1, h2, h3, h4, h5, h6 {
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
   font-weight: 550;
   line-height: 1.2;
   letter-spacing: -0.02em;
@@ -228,6 +190,7 @@ h3 {
   from {
     opacity: 0;
   }
+
   to {
     opacity: 1;
   }
@@ -238,6 +201,7 @@ h3 {
     opacity: 0;
     transform: translateY(10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -249,6 +213,7 @@ h3 {
     opacity: 0;
     transform: scale(0.95);
   }
+
   to {
     opacity: 1;
     transform: scale(1);
@@ -286,6 +251,14 @@ h3 {
 
 .shadow-xl {
   box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.08), 0 10px 10px -6px rgb(0 0 0 / 0.02);
+}
+
+.tauri-drag {
+  -webkit-app-region: drag;
+}
+
+.tauri-no-drag {
+  -webkit-app-region: no-drag;
 }
 
 /* Better focus styles for accessibility */

@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import {
   Search,
   LayoutGrid,
@@ -8,9 +9,11 @@ import {
   Upload,
   PanelLeft,
   PanelRight,
+  Palette,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { WindowControls } from "./WindowControls";
 import { FileGrid } from "./FileGrid";
 import { FileTable } from "./FileTable";
 import { UploadZone, type UploadFileLike, type UploadZoneRef } from "./UploadZone";
@@ -35,6 +38,28 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toast } from "@/hooks/use-toast";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
+  DEFAULT_ICON_THEME,
+  ICON_THEME_LABELS,
+  ICON_THEME_OPTIONS,
+  type IconTheme,
+  useIconTheme,
+} from "@/hooks/use-icon-theme";
 
 // Helper to extract file-like objects (including from dropped folders, where supported)
 async function collectFilesFromDataTransfer(
@@ -188,6 +213,9 @@ export function FileBrowser({
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [editTargetId, setEditTargetId] = useState<string | null>(null);
+  const { theme: iconTheme, setTheme: setIconTheme } = useIconTheme();
+  const [isEditingPath, setIsEditingPath] = useState(false);
+  const [pathInput, setPathInput] = useState("");
 
   const describeLoadError = (err: TauriApiError): LoadError => {
     const shortMessage = (err.message || "")
@@ -433,10 +461,10 @@ export function FileBrowser({
   const deleteOne = async (file: FileItem) => {
     try {
       await deletePath(sourceId, file.id);
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Delete failed",
-        description: error?.message || String(error),
+        description: error instanceof Error ? error.message : String(error),
         variant: "destructive",
       });
     }
@@ -445,7 +473,6 @@ export function FileBrowser({
   const handleBulkDelete = async () => {
     const toDelete = filteredFiles.filter((f) => selectedFiles.has(f.id));
     for (const file of toDelete) {
-      // eslint-disable-next-line no-await-in-loop
       await deleteOne(file);
     }
     await loadFiles(currentPath);
@@ -486,10 +513,10 @@ export function FileBrowser({
           const targetPath = `${basePath}/${file.name}`;
           await writeFile(sourceId, targetPath, new Uint8Array(buffer));
           successCount += 1;
-        } catch (error: any) {
+        } catch (error: unknown) {
           toast({
             title: "Upload failed",
-            description: error?.message || String(error),
+            description: error instanceof Error ? error.message : String(error),
             variant: "destructive",
           });
         }
@@ -556,7 +583,6 @@ export function FileBrowser({
   };
 
   const breadcrumbs = getBreadcrumbs();
-  const fullPath = breadcrumbs.map((crumb) => crumb.name).join(" / ");
   const currentLabel =
     breadcrumbs[breadcrumbs.length - 1]?.name ?? storageName;
 
@@ -589,13 +615,14 @@ export function FileBrowser({
               if (files.length) {
                 uploadZoneRef.current?.handleFiles(files);
               }
-            } catch (err) {
+            } catch (err: unknown) {
               // If folder support is not available, fall back gracefully.
               toast({
                 title: "Upload failed",
                 description:
-                  (err as any)?.message ||
-                  "Could not read some dropped items. Try dropping files only or use the file picker.",
+                  err instanceof Error
+                    ? err.message
+                    : "Could not read some dropped items. Try dropping files only or use the file picker.",
                 variant: "destructive",
               });
             }
@@ -603,203 +630,286 @@ export function FileBrowser({
         }}
       >
         <div className="flex flex-1 flex-col">
-        {/* Header with navigation */}
-        <div className="border-b bg-muted/30">
-          <div className="flex items-center gap-2 px-4 py-3">
-            <div className="flex items-center gap-1">
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-8 w-8 mr-1"
-                onClick={onToggleSidebar}
-                title={isSidebarOpen ? "Hide Storage Sidebar" : "Show Storage Sidebar"}
-              >
-                {isSidebarOpen ? (
-                  <PanelRight className="h-4 w-4" />
-                ) : (
-                  <PanelLeft className="h-4 w-4" />
-                )}
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-8 w-8"
-                onClick={goBack}
-                disabled={!canGoBack}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-8 w-8"
-                onClick={goForward}
-                disabled={!canGoForward}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
-
-            <div className="flex min-w-0 flex-1 items-center gap-2">
-              <span className="truncate text-sm font-medium">
-                {currentLabel}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <div className="relative w-48">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Search..."
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  className="h-8 bg-background pl-9"
-                />
-              </div>
-
-              <label htmlFor="file-upload">
+          {/* Header with navigation */}
+          <div className="border-b bg-muted/30" data-tauri-drag-region>
+            <div className="flex items-center gap-2 px-4 py-3" data-tauri-drag-region>
+              <div className="flex items-center gap-1 tauri-no-drag">
                 <Button
                   size="icon"
-                  variant="outline"
-                  className="h-8 w-8"
-                  asChild
+                  variant="ghost"
+                  className="h-8 w-8 mr-1 text-foreground/70 hover:bg-black/5 dark:hover:bg-white/5"
+                  onClick={onToggleSidebar}
+                  title={isSidebarOpen ? "Hide Storage Sidebar" : "Show Storage Sidebar"}
                 >
-                  <span>
-                    <Upload className="h-4 w-4" />
-                  </span>
+                  {isSidebarOpen ? (
+                    <PanelRight className="h-4 w-4" />
+                  ) : (
+                    <PanelLeft className="h-4 w-4" />
+                  )}
                 </Button>
-              </label>
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={() =>
-                  setViewMode((current) => (current === "grid" ? "table" : "grid"))
-                }
-                className="h-8 w-8"
-                title={viewMode === "grid" ? "Switch to list view" : "Switch to grid view"}
-              >
-                {viewMode === "grid" ? (
-                  <LayoutList className="h-4 w-4" />
-                ) : (
-                  <LayoutGrid className="h-4 w-4" />
-                )}
-              </Button>
-              {previewFile && (
                 <Button
                   size="icon"
-                  variant="secondary"
-                  onClick={() => setPreviewFile(null)}
-                  className="h-8 w-8"
-                  title="Close Preview"
+                  variant="ghost"
+                  className="h-8 w-8 text-foreground/70 hover:bg-black/5 dark:hover:bg-white/5"
+                  onClick={goBack}
+                  disabled={!canGoBack}
                 >
-                  <PanelRight className="h-4 w-4" />
+                  <ChevronLeft className="h-4 w-4" />
                 </Button>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Error */}
-        {error && (
-          <div className="border-b bg-gradient-to-r from-destructive/10 via-destructive/5 to-transparent px-6 py-3 text-sm text-destructive">
-            <div className="flex items-start gap-3">
-              <div className="mt-1 flex h-6 w-6 items-center justify-center rounded-full bg-destructive/20 text-destructive">
-                !
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8 text-foreground/70 hover:bg-black/5 dark:hover:bg-white/5"
+                  onClick={goForward}
+                  disabled={!canGoForward}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
               </div>
-              <div className="space-y-1">
-                <p className="font-semibold leading-tight">{error.title}</p>
-                {error.detail && (
-                  <p className="text-xs leading-relaxed text-destructive/80">
-                    {error.detail}
-                  </p>
-                )}
-                <div className="flex gap-2">
+
+              <div className="flex min-w-0 flex-1 items-center gap-2" data-tauri-drag-region>
+                <span className="truncate text-sm font-medium select-none pointer-events-none">
+                  {currentLabel}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2 tauri-no-drag">
+                <div className="relative w-48">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    placeholder="Search..."
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    className="h-8 bg-background pl-9 border-border focus-visible:ring-1 focus-visible:ring-primary/20 focus-visible:ring-offset-0 focus-visible:border-border shadow-sm"
+                  />
+                </div>
+
+                <label htmlFor="file-upload">
                   <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 border-destructive/40 text-destructive hover:bg-destructive/10"
-                    onClick={() => {
-                      void loadFiles(currentPath);
-                    }}
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8 text-foreground/70 hover:bg-black/5 dark:hover:bg-white/5"
+                    asChild
                   >
-                    Try again
+                    <span>
+                      <Upload className="h-4 w-4" />
+                    </span>
                   </Button>
+                </label>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8 text-foreground/70 hover:bg-black/5 dark:hover:bg-white/5"
+                      title={`Icon theme: ${ICON_THEME_LABELS[iconTheme] ?? ICON_THEME_LABELS[DEFAULT_ICON_THEME]}`}
+                    >
+                      <Palette className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-[160px]">
+                    <DropdownMenuLabel className="font-normal">Icon Theme</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuRadioGroup
+                      value={iconTheme}
+                      onValueChange={(value) => setIconTheme(value as IconTheme)}
+                    >
+                      {ICON_THEME_OPTIONS.map((theme) => (
+                        <DropdownMenuRadioItem key={theme} value={theme}>
+                          {ICON_THEME_LABELS[theme]}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() =>
+                    setViewMode((current) => (current === "grid" ? "table" : "grid"))
+                  }
+                  className="h-8 w-8 text-foreground/70 hover:bg-black/5 dark:hover:bg-white/5"
+                  title={viewMode === "grid" ? "Switch to list view" : "Switch to grid view"}
+                >
+                  {viewMode === "grid" ? (
+                    <LayoutList className="h-4 w-4" />
+                  ) : (
+                    <LayoutGrid className="h-4 w-4" />
+                  )}
+                </Button>
+                {previewFile && (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => setPreviewFile(null)}
+                    className="h-8 w-8 text-foreground/70 hover:bg-black/5 dark:hover:bg-white/5"
+                    title="Close Preview"
+                  >
+                    <PanelRight className="h-4 w-4" />
+                  </Button>
+                )}
+                <div className="ml-2 pl-2 border-l border-border/50">
+                  <WindowControls />
                 </div>
               </div>
             </div>
           </div>
-        )}
 
-        {/* Content */}
-        <div className="flex-1 overflow-hidden p-6">
-          {loading ? (
-            <div className="flex h-full items-center justify-center">
-              <div className="flex flex-col items-center gap-2">
-                <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                <span className="text-muted-foreground">Loading files...</span>
+          {/* Error */}
+          {error && (
+            <div className="border-b bg-gradient-to-r from-destructive/10 via-destructive/5 to-transparent px-6 py-3 text-sm text-destructive">
+              <div className="flex items-start gap-3">
+                <div className="mt-1 flex h-6 w-6 items-center justify-center rounded-full bg-destructive/20 text-destructive">
+                  !
+                </div>
+                <div className="space-y-1">
+                  <p className="font-semibold leading-tight">{error.title}</p>
+                  {error.detail && (
+                    <p className="text-xs leading-relaxed text-destructive/80">
+                      {error.detail}
+                    </p>
+                  )}
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 border-destructive/40 text-destructive hover:bg-destructive/10"
+                      onClick={() => {
+                        void loadFiles(currentPath);
+                      }}
+                    >
+                      Try again
+                    </Button>
+                  </div>
+                </div>
               </div>
             </div>
-          ) : viewMode === "grid" ? (
-            <FileGrid
-              files={sortedFiles}
-              selectedFiles={selectedFiles}
-              onSelectFile={handleSelectFile}
-              onOpenFile={handleOpenFile}
-              onEditFile={handleEditFile}
-              onDownloadFile={handleDownloadFile}
-              onDeleteFile={(file) => void deleteOne(file)}
-            />
-          ) : (
-            <FileTable
-              files={sortedFiles}
-              selectedFiles={selectedFiles}
-              onSelectFile={handleSelectFile}
-              onOpenFile={handleOpenFile}
-              onEditFile={handleEditFile}
-              onDownloadFile={handleDownloadFile}
-              onDeleteFile={(file) => void deleteOne(file)}
-              sortField={sortField}
-              sortDirection={sortDirection}
-              onSortChange={toggleSort}
-            />
           )}
-        </div>
 
-        {/* Footer path */}
-        <div className="border-t bg-muted/30 px-6 py-2">
-          <p className="truncate text-xs text-muted-foreground">{fullPath}</p>
-        </div>
+          {/* Panel Group for Content & Preview */}
+          <PanelGroup direction="horizontal" className="flex-1 overflow-hidden">
+            <Panel minSize={30} defaultSize={previewFile ? 70 : 100}>
+              <div className="flex h-full flex-col overflow-hidden relative">
+                <div className="flex-1 overflow-hidden">
+                  {loading ? (
+                    <div className="flex h-full items-center justify-center">
+                      <div className="flex flex-col items-center gap-2">
+                        <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                        <span className="text-muted-foreground">Loading files...</span>
+                      </div>
+                    </div>
+                  ) : viewMode === "grid" ? (
+                    <FileGrid
+                      files={sortedFiles}
+                      selectedFiles={selectedFiles}
+                      onSelectFile={handleSelectFile}
+                      onOpenFile={handleOpenFile}
+                      onEditFile={handleEditFile}
+                      onDownloadFile={handleDownloadFile}
+                      onDeleteFile={(file) => void deleteOne(file)}
+                    />
+                  ) : (
+                    <FileTable
+                      files={sortedFiles}
+                      selectedFiles={selectedFiles}
+                      onSelectFile={handleSelectFile}
+                      onOpenFile={handleOpenFile}
+                      onEditFile={handleEditFile}
+                      onDownloadFile={handleDownloadFile}
+                      onDeleteFile={(file) => void deleteOne(file)}
+                      sortField={sortField}
+                      sortDirection={sortDirection}
+                      onSortChange={toggleSort}
+                    />
+                  )}
+                </div>
 
-        <UploadZone
-          ref={uploadZoneRef}
-          onUpload={handleUpload}
-          isDragging={isDragging}
-        />
+                {/* Footer path (Inside Left Panel) */}
+                {/* Footer path (Editable) */}
+                <div className="border-t bg-muted/30 h-9 px-3 flex items-center shrink-0">
+                  {isEditingPath ? (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (pathInput.trim() !== currentPath) {
+                          handleNavigate(pathInput.trim());
+                        }
+                        setIsEditingPath(false);
+                      }}
+                      className="flex w-full"
+                    >
+                      <Input
+                        autoFocus
+                        value={pathInput}
+                        onChange={(e) => setPathInput(e.target.value)}
+                        onBlur={() => setIsEditingPath(false)}
+                        className="h-7 text-xs bg-background w-full border-0 focus-visible:ring-0 focus-visible:ring-offset-0 shadow-none px-2"
+                      />
+                    </form>
+                  ) : (
+                    <ContextMenu>
+                      <ContextMenuTrigger asChild>
+                        <button
+                          className="w-full text-left truncate text-xs text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5 rounded px-2 py-1 transition-colors cursor-text"
+                          onClick={() => {
+                            setPathInput(currentPath);
+                            setIsEditingPath(true);
+                          }}
+                          title="Click to edit path"
+                        >
+                          {currentPath}
+                        </button>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md">
+                        <ContextMenuItem
+                          className="hover:bg-sidebar-accent/30 hover:text-foreground focus:bg-sidebar-accent/30 focus:text-foreground"
+                          onClick={() => {
+                            navigator.clipboard?.writeText(currentPath).catch(() => { });
+                          }}
+                        >
+                          Copy path
+                        </ContextMenuItem>
+                      </ContextMenuContent>
+                    </ContextMenu>
+                  )}
+                </div>
+
+                <UploadZone
+                  ref={uploadZoneRef}
+                  onUpload={handleUpload}
+                  isDragging={isDragging}
+                />
+              </div>
+            </Panel>
+
+            {previewFile && (
+              <>
+                <PanelResizeHandle className="group relative flex w-1 items-center justify-center bg-transparent cursor-col-resize transition-colors focus:outline-none z-10 -ml-0.5">
+                  <div className="h-full w-[1px] bg-border group-hover:bg-foreground/50 transition-colors" />
+                </PanelResizeHandle>
+                <Panel defaultSize={30} minSize={20} maxSize={60} className="bg-background/50">
+                  <FilePreviewPanel
+                    file={previewFile}
+                    sourceId={sourceId}
+                    onClose={() => {
+                      setPreviewFile(null);
+                      setEditTargetId(null);
+                    }}
+                    startInEditMode={editTargetId === previewFile.id}
+                    onEditModeChange={(editing) => {
+                      setEditTargetId(editing ? previewFile.id : null);
+                    }}
+                    onDownload={() => {
+                      if (!previewFile) return;
+                      void downloadOne(previewFile);
+                    }}
+                  />
+                </Panel>
+              </>
+            )}
+          </PanelGroup>
+        </div>
       </div>
-
-      {previewFile && (
-        <div
-          className="absolute inset-y-0 right-0 z-50 w-full border-l-2 border-border/60 bg-card md:relative md:block md:w-[30%] md:min-w-[250px] md:max-w-[600px]"
-        >
-          <FilePreviewPanel
-            file={previewFile}
-            sourceId={sourceId}
-            onClose={() => {
-              setPreviewFile(null);
-              setEditTargetId(null);
-            }}
-            startInEditMode={editTargetId === previewFile.id}
-            onEditModeChange={(editing) => {
-              setEditTargetId(editing ? previewFile.id : null);
-            }}
-            onDownload={() => {
-              if (!previewFile) return;
-              void downloadOne(previewFile);
-            }}
-          />
-        </div>
-      )}
-    </div>
 
       <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
         <AlertDialogContent className="max-w-md rounded-2xl border border-border bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] shadow-2xl">

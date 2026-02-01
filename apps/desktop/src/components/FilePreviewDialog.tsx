@@ -162,17 +162,35 @@ export const FilePreviewDialog: React.FC<FilePreviewDialogProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
+  const [prevFileId, setPrevFileId] = useState<string | null>(null);
+
+  if (file?.id !== prevFileId) {
+    setPrevFileId(file?.id ?? null);
     setContent("");
     setError(null);
     setMode(null);
     setPreviewUrl(null);
-    setLoading(false);
+    setLoading(true);
 
+    if (file && file.type === "file") {
+      const ext = (file.extension || file.name.split(".").pop() || "").toLowerCase();
+      const isKnownBinary = BINARY_EXTENSIONS.has(ext);
+
+      if (file.size && file.size > MAX_PREVIEW_BYTES) {
+        setMode("unsupported");
+        setError(`File is too large to preview (${formatFileSize(file.size)}).`);
+      } else if (isKnownBinary) {
+        setMode("unsupported");
+        setError("Preview not available for this file type.");
+      }
+    }
+  }
+
+  useEffect(() => {
     if (!open || !file || file.type !== "file") return;
+    if (mode === "unsupported") return;
 
-    const ext =
-      (file.extension || file.name.split(".").pop() || "").toLowerCase();
+    const ext = (file.extension || file.name.split(".").pop() || "").toLowerCase();
     const isImage = ["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext);
     const isPdf = ext === "pdf";
     const lowerName = file.name.toLowerCase();
@@ -182,23 +200,10 @@ export const FilePreviewDialog: React.FC<FilePreviewDialogProps> = ({
       lowerName.startsWith(".env") ||
       lowerName.startsWith("dockerfile") ||
       lowerName.startsWith("makefile");
-    const isKnownBinary = BINARY_EXTENSIONS.has(ext);
-
-    if (file.size && file.size > MAX_PREVIEW_BYTES) {
-      setMode("unsupported");
-      setError(`File is too large to preview (${formatFileSize(file.size)}).`);
-      return;
-    }
-
-    if (isKnownBinary) {
-      setMode("unsupported");
-      setError("Preview not available for this file type.");
-      return;
-    }
 
     let cancelled = false;
 
-    setLoading(true);
+    // setLoading(true); // Moved to render phase reset
     readFile(sourceId, file.id)
       .then((data) => {
         if (cancelled) return;
@@ -212,8 +217,8 @@ export const FilePreviewDialog: React.FC<FilePreviewDialogProps> = ({
             isImage && ext !== "svg"
               ? `image/${ext === "jpg" ? "jpeg" : ext}`
               : isImage
-              ? "image/svg+xml"
-              : "application/pdf";
+                ? "image/svg+xml"
+                : "application/pdf";
           const blob = new Blob([buffer], { type: mime });
           const url = URL.createObjectURL(blob);
           setPreviewUrl(url);

@@ -40,12 +40,18 @@ export interface StorageKindSchema {
   fields: StorageFieldSchema[];
 }
 
-async function handleError(error: any): Promise<never> {
+async function handleError(error: unknown): Promise<never> {
   console.error("API Error:", error);
   if (typeof error === "object" && error !== null && "code" in error && "message" in error) {
-    throw new TauriApiError(error.message, error.code);
+    const apiErr = error as { code: string; message: string };
+    throw new TauriApiError(apiErr.message, apiErr.code);
   }
-  const message = typeof error === "string" ? error : error.message || String(error);
+  const message =
+    typeof error === "string"
+      ? error
+      : error instanceof Error
+        ? error.message
+        : String(error);
   throw new TauriApiError(message);
 }
 

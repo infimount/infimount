@@ -1,7 +1,6 @@
 import { FileItem } from "@/types/storage";
 import { Eye, Download, Trash2, Edit3 } from "lucide-react";
 import {
-  Table,
   TableBody,
   TableCell,
   TableHead,
@@ -97,10 +96,10 @@ export function FileTable({
   return (
     <div
       ref={parentRef}
-      className="h-full w-full overflow-auto rounded-md border bg-card"
+      className="h-full w-full overflow-auto bg-transparent"
     >
-      <Table className="table-fixed">
-        <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
+      <table className="w-full caption-bottom text-sm table-fixed">
+        <TableHeader className="sticky top-0 z-10 bg-background shadow-sm">
           <TableRow>
             <TableHead
               className="h-10 w-[48%] min-w-[12ch] cursor-pointer select-none whitespace-nowrap px-3"
@@ -199,7 +198,7 @@ export function FileTable({
                   )}
                   <ContextMenuItem
                     onClick={() => onDeleteFile?.(file)}
-                    className="text-destructive"
+                    className="text-foreground focus:text-foreground"
                   >
                     <Trash2 className="mr-2 h-4 w-4" />
                     Delete
@@ -214,7 +213,7 @@ export function FileTable({
             </TableRow>
           )}
         </TableBody>
-      </Table>
+      </table>
     </div>
   );
 }
