@@ -16,7 +16,7 @@ import gcsIcon from "@/assets/icons8-google-cloud.svg";
 import webdavIcon from "@/assets/webdav.svg";
 import folderIcon from "@/assets/folder.svg";
 import folderNetworkIcon from "@/assets/folder-network.svg";
-import logo from "@/assets/infimount.png";
+import logo from "@/assets/icon-32x32.png";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
