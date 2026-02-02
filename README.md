@@ -77,6 +77,7 @@ pnpm install
 ### 3. Run Dev Mode
 ```bash
 cd apps/desktop
+pnpm dev
 pnpm tauri dev
 ```
 
