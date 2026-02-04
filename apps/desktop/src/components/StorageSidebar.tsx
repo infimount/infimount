@@ -274,7 +274,7 @@ export function StorageSidebar({
 
       <div className="border-t border-sidebar-border h-9 px-3 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2 overflow-hidden">
-          <img src={logo} alt="" className="h-4 w-4 shrink-0" />
+          <img src={logo} alt="" className="h-7 w-7 shrink-0 object-contain" />
           <div className="flex items-center gap-1.5 overflow-hidden">
             <span className="text-xs font-semibold text-sidebar-foreground truncate">Infimount</span>
             <span className="text-[10px] text-muted-foreground shrink-0">v0.0.1</span>
