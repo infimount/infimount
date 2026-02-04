@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { StorageSidebar } from "@/components/StorageSidebar";
 import { AddStorageDialog } from "@/components/AddStorageDialog";
 import { FileBrowser } from "@/components/FileBrowser";
 import { StorageConfig, StorageType } from "@/types/storage";
 import type { Source, SourceKind } from "@/types/source";
 import { toast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import {
   listSources,
   addSource as apiAddSource,
@@ -84,35 +86,59 @@ const storageToSource = (storage: StorageConfig): Source => ({
   config: storage.config,
 });
 
+const SELECTED_STORAGE_KEY = "openhsb.selectedStorageId";
+
 const Index = () => {
   const [storages, setStorages] = useState<StorageConfig[]>([]);
-  const [selectedStorage, setSelectedStorage] = useState<string | null>(null);
+  const [selectedStorage, setSelectedStorage] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const stored = window.localStorage.getItem(SELECTED_STORAGE_KEY);
+    return stored || null;
+  });
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [editingStorage, setEditingStorage] = useState<StorageConfig | null>(null);
 
-  const reloadStorages = async () => {
+  const reloadStorages = useCallback(async () => {
     try {
       const sources = await listSources();
       const mapped = sources.map(sourceToStorage);
       setStorages(mapped);
-      if (!selectedStorage && mapped.length > 0) {
-        setSelectedStorage(mapped[0].id);
-      } else if (selectedStorage && !mapped.find((s) => s.id === selectedStorage)) {
-        setSelectedStorage(mapped[0]?.id ?? null);
+      const storedSelection =
+        typeof window === "undefined"
+          ? null
+          : window.localStorage.getItem(SELECTED_STORAGE_KEY);
+      let nextSelection = selectedStorage;
+      if (nextSelection && mapped.find((s) => s.id === nextSelection)) {
+        // keep current selection
+      } else if (storedSelection && mapped.find((s) => s.id === storedSelection)) {
+        nextSelection = storedSelection;
+      } else {
+        nextSelection = mapped[0]?.id ?? null;
       }
-    } catch (error: any) {
+      if (nextSelection !== selectedStorage) {
+        setSelectedStorage(nextSelection);
+      }
+    } catch (error: unknown) {
       toast({
         title: "Failed to load sources",
-        description: error?.message || String(error),
+        description: error instanceof Error ? error.message : String(error),
         variant: "destructive",
       });
     }
-  };
+  }, [selectedStorage]);
 
   useEffect(() => {
     void reloadStorages();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [reloadStorages]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (selectedStorage) {
+      window.localStorage.setItem(SELECTED_STORAGE_KEY, selectedStorage);
+    } else {
+      window.localStorage.removeItem(SELECTED_STORAGE_KEY);
+    }
+  }, [selectedStorage]);
 
   const handleAddStorage = async (data: {
     name: string;
@@ -134,10 +160,10 @@ const Index = () => {
         title: "Storage added",
         description: `Successfully added "${data.name}".`,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Failed to add storage",
-        description: error?.message || String(error),
+        description: error instanceof Error ? error.message : String(error),
         variant: "destructive",
       });
     }
@@ -168,10 +194,10 @@ const Index = () => {
         title: "Storage updated",
         description: `Successfully updated "${data.name}".`,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Failed to update storage",
-        description: error?.message || String(error),
+        description: error instanceof Error ? error.message : String(error),
         variant: "destructive",
       });
     } finally {
@@ -190,10 +216,10 @@ const Index = () => {
           description: `${storage?.name ?? "Storage"} has been deleted.`,
           variant: "destructive",
         });
-      } catch (error: any) {
+      } catch (error: unknown) {
         toast({
           title: "Failed to delete storage",
-          description: error?.message || String(error),
+          description: error instanceof Error ? error.message : String(error),
           variant: "destructive",
         });
       }
@@ -209,38 +235,6 @@ const Index = () => {
       });
       await reloadStorages();
     })();
-  };
-
-  const handleReorderStorages = (startIndex: number, endIndex: number) => {
-    if (startIndex === endIndex) return;
-    setStorages((current) => {
-      if (
-        startIndex < 0 ||
-        endIndex < 0 ||
-        startIndex >= current.length ||
-        endIndex >= current.length
-      ) {
-        return current;
-      }
-      const updated = [...current];
-      const [moved] = updated.splice(startIndex, 1);
-      updated.splice(endIndex, 0, moved);
-
-      void (async () => {
-        try {
-          await apiReplaceSources(updated.map(storageToSource));
-        } catch (error: any) {
-          toast({
-            title: "Failed to reorder storages",
-            description: error?.message || String(error),
-            variant: "destructive",
-          });
-          await reloadStorages();
-        }
-      })();
-
-      return updated;
-    });
   };
 
   const handleImportStorages = () => {
@@ -319,18 +313,18 @@ const Index = () => {
                 title: "Import successful",
                 description: `Imported ${sources.length} storage configuration(s).`,
               });
-            } catch (error: any) {
+            } catch (error: unknown) {
               toast({
                 title: "Import failed",
-                description: error?.message || String(error),
+                description: error instanceof Error ? error.message : String(error),
                 variant: "destructive",
               });
             }
           })();
-        } catch (error: any) {
+        } catch (error: unknown) {
           toast({
             title: "Import failed",
-            description: error?.message || String(error),
+            description: error instanceof Error ? error.message : String(error),
             variant: "destructive",
           });
         }
@@ -365,55 +359,114 @@ const Index = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   useEffect(() => {
-    if (isPreviewVisible && window.matchMedia("(max-width: 1024px)").matches) {
+    const mql = window.matchMedia("(max-width: 767px)");
+    const handle = () => {
+      if (mql.matches) {
+        setIsSidebarOpen(false);
+      } else {
+        setIsSidebarOpen(true);
+      }
+    };
+    handle();
+    mql.addEventListener("change", handle);
+    return () => mql.removeEventListener("change", handle);
+  }, []);
+
+  useEffect(() => {
+    const isCompact = window.matchMedia("(max-width: 1024px)").matches;
+    if (isPreviewVisible && isCompact) {
       setIsSidebarOpen(false);
-    } else if (!isPreviewVisible) {
-      // Optional: Auto-open when preview closes? 
-      // The user didn't explicitly ask for this, but it's good UX.
-      // Let's stick to the requested behavior: "visible in L also".
-      // If we are on L, it never closed.
-      // If we are on M, it closed. When preview closes, we probably want it back.
+    } else if (!isPreviewVisible && !isCompact) {
       setIsSidebarOpen(true);
     }
   }, [isPreviewVisible]);
 
   const toggleSidebar = () => setIsSidebarOpen((prev) => !prev);
+  const closeSidebar = () => setIsSidebarOpen(false);
+  const handleSelectStorage = (id: string) => {
+    setSelectedStorage(id);
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      setIsSidebarOpen(false);
+    }
+  };
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-background">
-      <div
-        className={`hidden md:resize-x overflow-hidden ${isSidebarOpen ? "md:block" : "md:hidden"}`}
-        style={{ minWidth: "180px", maxWidth: "360px" }}
-      >
-        <StorageSidebar
-          storages={storages}
-          selectedStorage={selectedStorage}
-          onSelectStorage={setSelectedStorage}
-          onAddStorage={() => setIsAddDialogOpen(true)}
-          onEditStorage={handleEditStorage}
-          onDeleteStorage={handleDeleteStorage}
-          onRefreshStorage={handleRefreshStorage}
-          onReorderStorages={handleReorderStorages}
-          onImportStorages={handleImportStorages}
-          onExportStorages={handleExportStorages}
-        />
-      </div>
-
-      <div className="flex-1 overflow-hidden">
-        {currentStorage ? (
-          <FileBrowser
-            key={currentStorage.id}
-            sourceId={currentStorage.id}
-            storageName={currentStorage.name}
-            onPreviewVisibilityChange={setIsPreviewVisible}
-            onToggleSidebar={toggleSidebar}
-          />
-        ) : (
-          <div className="flex h-full items-center justify-center">
-            <p className="text-muted-foreground">Select a storage to view files</p>
-          </div>
+    <div className="flex h-screen w-full overflow-hidden bg-background rounded-2xl border border-border/40">
+      <PanelGroup direction="horizontal">
+        {isSidebarOpen && (
+          <>
+            <Panel
+              className="hidden md:block transition-all duration-200"
+              defaultSize={20}
+              minSize={15}
+              maxSize={40}
+            >
+              <StorageSidebar
+                storages={storages}
+                selectedStorage={selectedStorage}
+                onSelectStorage={handleSelectStorage}
+                onAddStorage={() => setIsAddDialogOpen(true)}
+                onEditStorage={handleEditStorage}
+                onDeleteStorage={handleDeleteStorage}
+                onRefreshStorage={handleRefreshStorage}
+                onImportStorages={handleImportStorages}
+                onExportStorages={handleExportStorages}
+              />
+            </Panel>
+            <PanelResizeHandle className="hidden md:flex w-px flex-col items-center justify-center bg-transparent group/handle relative z-10">
+              <div className="absolute inset-y-0 -left-1 -right-1 z-50 cursor-col-resize" />
+              <div className="h-full w-[1px] bg-border/40 group-hover/handle:bg-primary/40 transition-colors" />
+            </PanelResizeHandle>
+          </>
         )}
-      </div>
+
+        {/* Mobile Sidebar Overlay */}
+        <div
+          className={cn(
+            "fixed inset-0 z-40 bg-black/40 transition-opacity md:hidden",
+            isSidebarOpen ? "opacity-100" : "pointer-events-none opacity-0",
+          )}
+          onClick={closeSidebar}
+        />
+        <div
+          className={cn(
+            "fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-sidebar shadow-xl transition-transform md:hidden",
+            isSidebarOpen ? "translate-x-0" : "-translate-x-full",
+          )}
+        >
+          <StorageSidebar
+            storages={storages}
+            selectedStorage={selectedStorage}
+            onSelectStorage={handleSelectStorage}
+            onAddStorage={() => setIsAddDialogOpen(true)}
+            onEditStorage={handleEditStorage}
+            onDeleteStorage={handleDeleteStorage}
+            onRefreshStorage={handleRefreshStorage}
+            onImportStorages={handleImportStorages}
+            onExportStorages={handleExportStorages}
+          />
+        </div>
+
+        {/* Main Content Area */}
+        <Panel className="flex-1 overflow-hidden">
+          <div className="flex h-full flex-col">
+            {currentStorage ? (
+              <FileBrowser
+                key={currentStorage.id}
+                sourceId={currentStorage.id}
+                storageName={currentStorage.name}
+                onPreviewVisibilityChange={setIsPreviewVisible}
+                onToggleSidebar={toggleSidebar}
+                isSidebarOpen={isSidebarOpen}
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center">
+                <p className="text-muted-foreground">Select a storage to view files</p>
+              </div>
+            )}
+          </div>
+        </Panel>
+      </PanelGroup>
 
       <AddStorageDialog
         open={isAddDialogOpen}

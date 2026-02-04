@@ -1,15 +1,13 @@
 import { FileItem } from "@/types/storage";
-import { MoreVertical, Edit, Eye, Download, Trash2 } from "lucide-react";
-import { getFileIcon, getFileColor } from "./FileIcon";
+import { Eye, Download, Trash2, Edit3 } from "lucide-react";
+import { FileTypeIcon } from "./FileIcon";
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 
 const formatFileSize = (bytes?: number) => {
   if (!bytes) return "";
@@ -19,11 +17,38 @@ const formatFileSize = (bytes?: number) => {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 };
 
+const GRID_MIN_COLUMN_WIDTH = 96;
+const GRID_GAP = 8;
+const GRID_PADDING = 4;
+const GRID_ROW_ESTIMATE = 112;
+const FILE_NAME_ELLIPSIS = "...";
+const FILE_NAME_SUFFIX_LENGTH = 4;
+
+const formatDisplayName = (name: string, maxChars: number) => {
+  if (name.length <= maxChars) return name;
+  if (maxChars <= FILE_NAME_ELLIPSIS.length + 1) {
+    return name.slice(0, maxChars);
+  }
+
+  const suffixLength = Math.min(
+    FILE_NAME_SUFFIX_LENGTH,
+    Math.max(1, maxChars - FILE_NAME_ELLIPSIS.length),
+  );
+  const prefixLength = maxChars - FILE_NAME_ELLIPSIS.length - suffixLength;
+
+  if (prefixLength <= 0) {
+    return `${FILE_NAME_ELLIPSIS}${name.slice(-suffixLength)}`;
+  }
+
+  return `${name.slice(0, prefixLength)}${FILE_NAME_ELLIPSIS}${name.slice(-suffixLength)}`;
+};
+
 interface FileGridProps {
   files: FileItem[];
   selectedFiles: Set<string>;
-  onSelectFile: (fileId: string) => void;
+  onSelectFile: (fileId: string, options?: { toggle?: boolean }) => void;
   onOpenFile?: (file: FileItem) => void;
+  onEditFile?: (file: FileItem) => void;
   onDownloadFile?: (file: FileItem) => void;
   onDeleteFile?: (file: FileItem) => void;
 }
@@ -36,22 +61,33 @@ export function FileGrid({
   selectedFiles,
   onSelectFile,
   onOpenFile,
+  onEditFile,
   onDownloadFile,
   onDeleteFile,
 }: FileGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [columns, setColumns] = useState(3);
+  const [columnWidth, setColumnWidth] = useState(GRID_MIN_COLUMN_WIDTH);
+  const [nameMaxChars, setNameMaxChars] = useState(24);
 
   // Calculate columns based on container width
   useEffect(() => {
     const updateColumns = () => {
       if (parentRef.current) {
-        const width = parentRef.current.offsetWidth;
-        const minColumnWidth = 140; // Minimum width for a card
-        const gap = 16; // Gap between items
-        // Calculate how many columns fit
-        const calculatedColumns = Math.max(1, Math.floor((width + gap) / (minColumnWidth + gap)));
+        const width = Math.floor(parentRef.current.clientWidth);
+        const usableWidth = Math.max(0, width - GRID_PADDING * 2);
+        const calculatedColumns = Math.max(
+          1,
+          Math.floor((usableWidth + GRID_GAP) / (GRID_MIN_COLUMN_WIDTH + GRID_GAP)),
+        );
+        const totalGaps = GRID_GAP * Math.max(0, calculatedColumns - 1);
+        const availableWidth = Math.max(0, usableWidth - totalGaps);
+        const computedColumnWidth = Math.max(1, Math.floor(availableWidth / calculatedColumns));
+        const approxCharsPerLine = Math.max(8, Math.floor(computedColumnWidth / 7));
+
         setColumns(calculatedColumns);
+        setColumnWidth(computedColumnWidth);
+        setNameMaxChars(Math.max(12, approxCharsPerLine * 2));
       }
     };
 
@@ -70,14 +106,14 @@ export function FileGrid({
   const rowVirtualizer = useVirtualizer({
     count: rowCount,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 115, // Further reduced height (~10%)
+    estimateSize: () => GRID_ROW_ESTIMATE,
     overscan: 5,
   });
 
   return (
     <div
       ref={parentRef}
-      className="h-full w-full overflow-auto"
+      className="h-full w-full overflow-y-auto overflow-x-hidden"
     >
       <div
         style={{
@@ -90,99 +126,102 @@ export function FileGrid({
           const startIndex = virtualRow.index * columns;
           const rowFiles = files.slice(startIndex, startIndex + columns);
 
+          const rowTop = Math.round(virtualRow.start);
+
           return (
             <div
               key={virtualRow.index}
+              data-index={virtualRow.index}
+              ref={rowVirtualizer.measureElement}
               style={{
                 position: "absolute",
-                top: 0,
+                top: `${rowTop}px`,
                 left: 0,
                 width: "100%",
-                height: `${virtualRow.size}px`,
-                transform: `translateY(${virtualRow.start}px)`,
+                boxSizing: "border-box",
                 display: "grid",
-                gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-                gap: "1rem",
-                padding: "0.75rem", // p-3
+                gridTemplateColumns: `repeat(${columns}, ${columnWidth}px)`,
+                gap: `${GRID_GAP}px`,
+                padding: `${GRID_PADDING}px`,
+                justifyContent: "start",
               }}
             >
               {rowFiles.map((file) => {
-                const Icon = getFileIcon(file);
-                const color = getFileColor(file);
                 const isSelected = selectedFiles.has(file.id);
+                const displayName = formatDisplayName(file.name, nameMaxChars);
 
                 return (
-                  <Card
-                    key={file.id}
-                    className={`group relative cursor-pointer overflow-hidden transition-all hover:shadow-md ${isSelected ? "border-primary ring-2 ring-primary/20" : "hover:border-primary/50"
-                      }`}
-                    onDoubleClick={() => onOpenFile?.(file)}
-                  >
-                    <Checkbox
-                      checked={isSelected}
-                      onCheckedChange={() => onSelectFile(file.id)}
-                      className="absolute left-1 top-1 z-10 opacity-0 group-hover:opacity-100 data-[state=checked]:opacity-100"
-                      onClick={(e) => e.stopPropagation()}
-                    />
-
-                    <div className="flex flex-col items-center gap-1 p-2 pb-1">
-                      <div className="relative w-full flex justify-center">
-                        <Icon className={`h-8 w-8 ${color}`} />
-                      </div>
-
-                      <div className="w-full text-center">
-                        <p className="mx-auto max-w-[12ch] truncate text-xs font-medium" title={file.name}>
-                          {file.name}
-                        </p>
-                        {file.size && (
-                          <p className="mt-0.5 text-[10px] text-muted-foreground">
-                            {formatFileSize(file.size)}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="absolute right-1 top-1 h-6 w-6 opacity-0 transition-opacity group-hover:opacity-100"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <MoreVertical className="h-3 w-3" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent
-                        align="end"
-                        className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md"
+                  <ContextMenu key={file.id}>
+                    <ContextMenuTrigger asChild>
+                      <Card
+                        className={`group relative cursor-pointer border-transparent font-normal text-foreground shadow-none antialiased transition-all duration-200 ${isSelected
+                          ? "bg-primary/15 ring-1 ring-primary/20"
+                          : "bg-transparent hover:bg-black/5 dark:hover:bg-white/5"
+                          }`}
+                        onDoubleClick={() => onOpenFile?.(file)}
+                        onClick={(event) => {
+                          const toggle = event.metaKey || event.ctrlKey;
+                          if (toggle) {
+                            onSelectFile(file.id, { toggle: true });
+                          } else {
+                            onSelectFile(file.id);
+                          }
+                        }}
+                        onContextMenu={() => {
+                          if (!selectedFiles.has(file.id)) {
+                            onSelectFile(file.id);
+                          }
+                        }}
                       >
-                        {file.type === "file" && (
-                          <>
-                            <DropdownMenuItem onClick={() => onOpenFile?.(file)}>
-                              <Eye className="mr-2 h-4 w-4" />
-                              Preview
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => onDownloadFile?.(file)}>
-                              <Download className="mr-2 h-4 w-4" />
-                              Download
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => console.log("Edit", file.id)}>
-                              <Edit className="mr-2 h-4 w-4" />
+                        <div className="flex flex-col items-center gap-1 p-2 pb-1">
+                          <div className="flex h-9 w-9 items-center justify-center">
+                            <FileTypeIcon item={file} className="h-8 w-8" />
+                          </div>
+
+                          <div className="w-full text-center">
+                            <p
+                              className="line-clamp-2 break-words text-xs font-normal leading-tight text-foreground"
+                              title={file.name}
+                            >
+                              {displayName}
+                            </p>
+                            {file.size && (
+                              <p className="mt-0.5 text-[10px] font-normal text-muted-foreground">
+                                {formatFileSize(file.size)}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </Card>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md">
+                      {file.type === "file" && (
+                        <>
+                          <ContextMenuItem onClick={() => onOpenFile?.(file)}>
+                            <Eye className="mr-2 h-4 w-4" />
+                            Preview
+                          </ContextMenuItem>
+                          <ContextMenuItem onClick={() => onDownloadFile?.(file)}>
+                            <Download className="mr-2 h-4 w-4" />
+                            Download
+                          </ContextMenuItem>
+                          {onEditFile && (
+                            <ContextMenuItem onClick={() => onEditFile(file)}>
+                              <Edit3 className="mr-2 h-4 w-4" />
                               Edit
-                            </DropdownMenuItem>
-                          </>
-                        )}
-                        <DropdownMenuItem
-                          onClick={() => onDeleteFile?.(file)}
-                          className="text-destructive"
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </Card>
+                            </ContextMenuItem>
+                          )}
+                        </>
+                      )}
+                      <ContextMenuItem
+                        onClick={() => onDeleteFile?.(file)}
+                        className="text-foreground focus:text-foreground"
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Delete
+                      </ContextMenuItem>
+                    </ContextMenuContent>
+                  </ContextMenu>
                 );
               })}
             </div>
@@ -192,4 +231,3 @@ export function FileGrid({
     </div>
   );
 }
-

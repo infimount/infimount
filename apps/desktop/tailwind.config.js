@@ -24,9 +24,9 @@ export default {
         "accent-foreground": "hsl(var(--accent-foreground) / <alpha-value>)",
         destructive: "hsl(var(--destructive) / <alpha-value>)",
         "destructive-foreground": "hsl(var(--destructive-foreground) / <alpha-value>)",
-        border: "hsl(var(--border) / <alpha-value>)",
-        input: "hsl(var(--input) / <alpha-value>)",
-        ring: "hsl(var(--ring) / <alpha-value>)",
+        border: "hsl(var(--border))",
+        input: "hsl(var(--input))",
+        ring: "hsl(var(--ring))",
         // Additional colors for Spacedrive-like UI
         popover: "hsl(var(--popover) / <alpha-value>)",
         "popover-foreground": "hsl(var(--popover-foreground) / <alpha-value>)",
@@ -49,6 +49,7 @@ export default {
       },
       fontFamily: {
         sans: [
+          "Ubuntu",
           "-apple-system",
           "BlinkMacSystemFont",
           '"Segoe UI"',

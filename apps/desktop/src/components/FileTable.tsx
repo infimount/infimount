@@ -1,22 +1,19 @@
 import { FileItem } from "@/types/storage";
-import { MoreVertical, Edit, Eye, Download, Trash2 } from "lucide-react";
+import { Eye, Download, Trash2, Edit3 } from "lucide-react";
 import {
-  Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { getFileIcon, getFileColor } from "./FileIcon";
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { FileTypeIcon } from "./FileIcon";
 
 const formatFileSize = (bytes?: number) => {
   if (!bytes) return "-";
@@ -51,9 +48,9 @@ const formatDate = (date: Date | null) => {
 interface FileTableProps {
   files: FileItem[];
   selectedFiles: Set<string>;
-  onSelectFile: (fileId: string) => void;
-  onSelectAll: () => void;
+  onSelectFile: (fileId: string, options?: { toggle?: boolean }) => void;
   onOpenFile?: (file: FileItem) => void;
+  onEditFile?: (file: FileItem) => void;
   onDownloadFile?: (file: FileItem) => void;
   onDeleteFile?: (file: FileItem) => void;
   sortField?: "name" | "type" | "modified" | "size";
@@ -68,15 +65,14 @@ export function FileTable({
   files,
   selectedFiles,
   onSelectFile,
-  onSelectAll,
   onOpenFile,
+  onEditFile,
   onDownloadFile,
   onDeleteFile,
   sortField = "name",
   sortDirection = "asc",
   onSortChange,
 }: FileTableProps) {
-  const allSelected = files.length > 0 && selectedFiles.size === files.length;
   const sortIndicator = (field: "name" | "type" | "modified" | "size") =>
     sortField === field ? (sortDirection === "asc" ? " ▲" : " ▼") : "";
 
@@ -100,134 +96,124 @@ export function FileTable({
   return (
     <div
       ref={parentRef}
-      className="h-full w-full overflow-auto rounded-md border bg-card"
+      className="h-full w-full overflow-auto bg-transparent"
     >
-      <Table className="table-fixed">
-        <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
+      <table className="w-full caption-bottom text-sm table-fixed">
+        <TableHeader className="sticky top-0 z-10 bg-background shadow-sm">
           <TableRow>
-            <TableHead className="w-12">
-              <Checkbox checked={allSelected} onCheckedChange={onSelectAll} />
-            </TableHead>
             <TableHead
-              className="w-[32%] min-w-[5ch] cursor-pointer select-none whitespace-nowrap"
+              className="h-10 w-[48%] min-w-[12ch] cursor-pointer select-none whitespace-nowrap px-3"
               onClick={() => onSortChange?.("name")}
             >
               Name{sortIndicator("name")}
             </TableHead>
             <TableHead
-              className="w-[14%] min-w-[34ch] cursor-pointer select-none whitespace-nowrap"
+              className="h-10 w-[14%] min-w-[10ch] cursor-pointer select-none whitespace-nowrap px-3"
               onClick={() => onSortChange?.("type")}
             >
               Type{sortIndicator("type")}
             </TableHead>
             <TableHead
-              className="w-[15%] min-w-[18ch] cursor-pointer select-none whitespace-nowrap"
+              className="h-10 w-[22%] min-w-[16ch] cursor-pointer select-none whitespace-nowrap px-3"
               onClick={() => onSortChange?.("modified")}
             >
               Modified{sortIndicator("modified")}
             </TableHead>
             <TableHead
-              className="w-[10%] min-w-[12ch] cursor-pointer select-none text-right whitespace-nowrap"
+              className="h-10 w-[16%] min-w-[8ch] cursor-pointer select-none text-right whitespace-nowrap px-3"
               onClick={() => onSortChange?.("size")}
             >
               Size{sortIndicator("size")}
             </TableHead>
-            <TableHead className="w-12" />
           </TableRow>
         </TableHeader>
         <TableBody>
           {paddingTop > 0 && (
             <TableRow>
-              <TableCell colSpan={6} style={{ height: `${paddingTop}px`, padding: 0 }} />
+              <TableCell colSpan={4} style={{ height: `${paddingTop}px`, padding: 0 }} />
             </TableRow>
           )}
           {virtualItems.map((virtualRow) => {
             const file = files[virtualRow.index];
-            const Icon = getFileIcon(file);
-            const color = getFileColor(file);
             const isSelected = selectedFiles.has(file.id);
 
             return (
-              <TableRow
-                key={file.id}
-                className={`group cursor-pointer ${isSelected ? "bg-muted/50" : "hover:bg-muted/50"
-                  }`}
-                onDoubleClick={() => onOpenFile?.(file)}
-              >
-                <TableCell>
-                  <Checkbox
-                    checked={isSelected}
-                    onCheckedChange={() => onSelectFile(file.id)}
-                  />
-                </TableCell>
-                <TableCell className="w-[32%] min-w-[5ch] align-top">
-                  <div className="flex items-start gap-3">
-                    <Icon className={`h-5 w-5 shrink-0 ${color}`} />
-                    <span className="block truncate text-sm font-medium" title={file.name}>
-                      {file.name}
-                    </span>
-                  </div>
-                </TableCell>
-                <TableCell className="w-[14%] min-w-[34ch] truncate text-xs text-muted-foreground align-top">
-                  {file.type === "folder" ? "Folder" : file.extension?.toUpperCase() || "-"}
-                </TableCell>
-                <TableCell className="w-[15%] min-w-[18ch] truncate text-muted-foreground">
-                  {formatDate(file.modified || null)}
-                </TableCell>
-                <TableCell className="w-[10%] min-w-[12ch] truncate text-right text-muted-foreground">
-                  {formatFileSize(file.size)}
-                </TableCell>
-                <TableCell>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 opacity-0 group-hover:opacity-100"
-                      >
-                        <MoreVertical className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent
-                      align="end"
-                      className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md"
-                    >
-                      {file.type === "file" && (
-                        <>
-                          <DropdownMenuItem onClick={() => onOpenFile?.(file)}>
-                            <Eye className="mr-2 h-4 w-4" />
-                            Preview
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => onDownloadFile?.(file)}>
-                            <Download className="mr-2 h-4 w-4" />
-                            Download
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => console.log("Edit", file.id)}>
-                            <Edit className="mr-2 h-4 w-4" />
-                            Edit
-                          </DropdownMenuItem>
-                        </>
+              <ContextMenu key={file.id}>
+                <ContextMenuTrigger asChild>
+                  <TableRow
+                    className={`group cursor-pointer ${isSelected ? "bg-muted/50" : "hover:bg-muted/50"
+                      }`}
+                    onDoubleClick={() => onOpenFile?.(file)}
+                    onClick={(event) => {
+                      const toggle = event.metaKey || event.ctrlKey;
+                      if (toggle) {
+                        onSelectFile(file.id, { toggle: true });
+                      } else {
+                        onSelectFile(file.id);
+                      }
+                    }}
+                    onContextMenu={() => {
+                      if (!selectedFiles.has(file.id)) {
+                        onSelectFile(file.id);
+                      }
+                    }}
+                  >
+                    <TableCell className="w-[48%] min-w-[12ch] align-top px-3 py-2">
+                      <div className="flex items-start gap-3">
+                        <FileTypeIcon item={file} className="h-5 w-5 shrink-0" />
+                        <span className="block truncate text-sm font-medium" title={file.name}>
+                          {file.name}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="w-[14%] min-w-[10ch] truncate text-xs text-muted-foreground align-top px-3 py-2">
+                      {file.type === "folder" ? "Folder" : file.extension?.toUpperCase() || "-"}
+                    </TableCell>
+                    <TableCell className="w-[22%] min-w-[16ch] truncate text-muted-foreground px-3 py-2">
+                      {formatDate(file.modified || null)}
+                    </TableCell>
+                    <TableCell className="w-[16%] min-w-[8ch] truncate text-right text-muted-foreground px-3 py-2">
+                      {formatFileSize(file.size)}
+                    </TableCell>
+                  </TableRow>
+                </ContextMenuTrigger>
+                <ContextMenuContent className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md">
+                  {file.type === "file" && (
+                    <>
+                      <ContextMenuItem onClick={() => onOpenFile?.(file)}>
+                        <Eye className="mr-2 h-4 w-4" />
+                        Preview
+                      </ContextMenuItem>
+                      <ContextMenuItem onClick={() => onDownloadFile?.(file)}>
+                        <Download className="mr-2 h-4 w-4" />
+                        Download
+                      </ContextMenuItem>
+                      {onEditFile && (
+                        <ContextMenuItem onClick={() => onEditFile(file)}>
+                          <Edit3 className="mr-2 h-4 w-4" />
+                          Edit
+                        </ContextMenuItem>
                       )}
-                      <DropdownMenuItem
-                        onClick={() => onDeleteFile?.(file)}
-                        className="text-destructive"
-                      >
-                        <Trash2 className="mr-2 h-4 w-4" />
-                        Delete
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </TableCell>
-              </TableRow>
+                    </>
+                  )}
+                  <ContextMenuItem
+                    onClick={() => onDeleteFile?.(file)}
+                    className="text-foreground focus:text-foreground"
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
             );
           })}
           {paddingBottom > 0 && (
             <TableRow>
-              <TableCell colSpan={6} style={{ height: `${paddingBottom}px`, padding: 0 }} />
+              <TableCell colSpan={4} style={{ height: `${paddingBottom}px`, padding: 0 }} />
             </TableRow>
           )}
         </TableBody>
-      </Table>
+      </table>
     </div>
   );
 }

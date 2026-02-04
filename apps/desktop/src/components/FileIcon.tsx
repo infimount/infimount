@@ -1,134 +1,97 @@
 import { FileItem } from "@/types/storage";
-import {
-  File,
-  Folder,
-  FileText,
-  FileImage,
-  FileVideo,
-  FileArchive,
-  FileCode,
-  FileSpreadsheet,
-  Music,
-  Package,
-} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { DEFAULT_ICON_THEME, type IconTheme, useIconTheme } from "@/hooks/use-icon-theme";
 
-export const getFileIcon = (item: FileItem) => {
-  if (item.type === "folder") return Folder;
+const classicModules = import.meta.glob("../assets/file-icons-classic/*.svg", {
+  eager: true,
+  import: "default",
+}) as Record<string, string>;
 
-  const ext = item.extension?.toLowerCase();
-  if (!ext) return File;
+const modernModules = import.meta.glob("../assets/file-icons-modern/*.svg", {
+  eager: true,
+  import: "default",
+}) as Record<string, string>;
 
-  if (["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "ico"].includes(ext)) {
-    return FileImage;
-  }
+const vividModules = import.meta.glob("../assets/file-icons-vivid/*.svg", {
+  eager: true,
+  import: "default",
+}) as Record<string, string>;
 
-  if (["mp4", "avi", "mov", "mkv", "webm", "flv", "wmv"].includes(ext)) {
-    return FileVideo;
-  }
+const squareModules = import.meta.glob("../assets/file-cons-square/*.svg", {
+  eager: true,
+  import: "default",
+}) as Record<string, string>;
 
-  if (["zip", "rar", "7z", "tar", "gz", "bz2", "xz"].includes(ext)) {
-    return FileArchive;
-  }
-
-  if (["txt", "md", "doc", "docx", "pdf", "rtf", "odt"].includes(ext)) {
-    return FileText;
-  }
-
-  if (
-    [
-      "js",
-      "ts",
-      "jsx",
-      "tsx",
-      "py",
-      "java",
-      "cpp",
-      "c",
-      "html",
-      "css",
-      "json",
-      "xml",
-      "yaml",
-      "yml",
-      "sh",
-      "bash",
-    ].includes(ext)
-  ) {
-    return FileCode;
-  }
-
-  if (["xls", "xlsx", "csv", "ods"].includes(ext)) {
-    return FileSpreadsheet;
-  }
-
-  if (["mp3", "wav", "ogg", "flac", "aac", "m4a"].includes(ext)) {
-    return Music;
-  }
-
-  if (["deb", "rpm", "dmg", "pkg", "apk"].includes(ext)) {
-    return Package;
-  }
-
-  return File;
+const buildIconMap = (modules: Record<string, string>) => {
+  const map = new Map<string, string>();
+  Object.entries(modules).forEach(([path, url]) => {
+    const name = path.split("/").pop()?.replace(".svg", "").toLowerCase();
+    if (name) {
+      map.set(name, url);
+    }
+  });
+  return map;
 };
 
-export const getFileColor = (item: FileItem) => {
-  if (item.type === "folder") return "text-primary";
-
-  const ext = item.extension?.toLowerCase();
-  if (!ext) return "text-muted-foreground";
-
-  if (["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "ico"].includes(ext)) {
-    return "text-pink-500";
-  }
-
-  if (["mp4", "avi", "mov", "mkv", "webm", "flv", "wmv"].includes(ext)) {
-    return "text-purple-500";
-  }
-
-  if (["zip", "rar", "7z", "tar", "gz", "bz2", "xz"].includes(ext)) {
-    return "text-amber-500";
-  }
-
-  if (["txt", "md", "doc", "docx", "pdf", "rtf", "odt"].includes(ext)) {
-    return "text-blue-500";
-  }
-
-  if (
-    [
-      "js",
-      "ts",
-      "jsx",
-      "tsx",
-      "py",
-      "java",
-      "cpp",
-      "c",
-      "html",
-      "css",
-      "json",
-      "xml",
-      "yaml",
-      "yml",
-      "sh",
-      "bash",
-    ].includes(ext)
-  ) {
-    return "text-emerald-500";
-  }
-
-  if (["xls", "xlsx", "csv", "ods"].includes(ext)) {
-    return "text-teal-500";
-  }
-
-  if (["mp3", "wav", "ogg", "flac", "aac", "m4a"].includes(ext)) {
-    return "text-cyan-500";
-  }
-
-  if (["deb", "rpm", "dmg", "pkg", "apk"].includes(ext)) {
-    return "text-rose-500";
-  }
-
-  return "text-muted-foreground";
+const iconMaps: Record<IconTheme, Map<string, string>> = {
+  classic: buildIconMap(classicModules),
+  modern: buildIconMap(modernModules),
+  vivid: buildIconMap(vividModules),
+  square: buildIconMap(squareModules),
 };
 
+const iconNameSet = new Set<string>();
+(Object.keys(iconMaps) as IconTheme[]).forEach((theme) => {
+  iconMaps[theme].forEach((_value, key) => iconNameSet.add(key));
+});
+
+const defaultThemeMap = iconMaps[DEFAULT_ICON_THEME];
+const defaultFallbackIcon = defaultThemeMap.get("default") ?? "";
+
+const getIconForTheme = (theme: IconTheme, key: string) => {
+  const themeMap = iconMaps[theme] ?? defaultThemeMap;
+  return themeMap.get(key)
+    ?? themeMap.get("default")
+    ?? defaultThemeMap.get(key)
+    ?? defaultFallbackIcon;
+};
+
+export const getFileIconKey = (item: FileItem): string => {
+  if (item.type === "folder") return "folder";
+
+  const ext = item.extension?.toLowerCase();
+  if (ext && iconNameSet.has(ext)) return ext;
+
+  const name = item.name.toLowerCase();
+  const stripped = name.startsWith(".") ? name.slice(1) : name;
+  if (iconNameSet.has(stripped)) return stripped;
+
+  return "default";
+};
+
+export const getFileIconPath = (
+  item: FileItem,
+  theme: IconTheme = DEFAULT_ICON_THEME,
+): string => {
+  const key = getFileIconKey(item);
+  return getIconForTheme(theme, key);
+};
+
+export const FileTypeIcon = ({
+  item,
+  className,
+}: {
+  item: FileItem;
+  className?: string;
+}) => {
+  const { theme } = useIconTheme();
+
+  return (
+    <img
+      src={getFileIconPath(item, theme)}
+      alt=""
+      aria-hidden="true"
+      className={cn("block object-contain object-center", className)}
+    />
+  );
+};

@@ -5,7 +5,6 @@ const NotFound = () => {
   const location = useLocation();
 
   useEffect(() => {
-    // eslint-disable-next-line no-console
     console.error("404 Error: User attempted to access non-existent route:", location.pathname);
   }, [location.pathname]);
 

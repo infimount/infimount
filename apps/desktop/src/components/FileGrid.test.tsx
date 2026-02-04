@@ -67,13 +67,7 @@ describe("FileGrid", () => {
             />
         );
 
-        // The checkbox is rendered within the virtual items.
-        // We need to find the checkbox for file1.txt (index 1).
-        const checkboxes = screen.getAllByRole("checkbox");
-        // The mock returns 2 items.
-        // Index 0: folder1
-        // Index 1: file1.txt
-        fireEvent.click(checkboxes[1]);
+        fireEvent.click(screen.getByText("file1.txt"));
         expect(onSelectFile).toHaveBeenCalledWith("/file1.txt");
     });
 

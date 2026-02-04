@@ -1,21 +1,22 @@
 import { useEffect, useState, useRef } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import {
   Search,
   LayoutGrid,
+  LayoutList,
   ChevronLeft,
   ChevronRight,
   Upload,
-  Download,
-  Trash2,
   PanelLeft,
   PanelRight,
+  Palette,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { WindowControls } from "./WindowControls";
 import { FileGrid } from "./FileGrid";
 import { FileTable } from "./FileTable";
-import { UploadZone } from "./UploadZone";
+import { UploadZone, type UploadFileLike, type UploadZoneRef } from "./UploadZone";
 import { FilePreviewPanel } from "./FilePreviewPanel";
 import { FileItem } from "@/types/storage";
 import {
@@ -24,19 +25,176 @@ import {
   readFile,
   writeFile,
   deletePath,
-  uploadDroppedFiles,
   TauriApiError,
 } from "@/lib/api";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "@/hooks/use-toast";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
+  DEFAULT_ICON_THEME,
+  ICON_THEME_LABELS,
+  ICON_THEME_OPTIONS,
+  type IconTheme,
+  useIconTheme,
+} from "@/hooks/use-icon-theme";
+
+// Helper to extract file-like objects (including from dropped folders, where supported)
+async function collectFilesFromDataTransfer(
+  dt: DataTransfer
+): Promise<UploadFileLike[]> {
+  const items = dt.items;
+  const files: UploadFileLike[] = [];
+
+  if (!items || items.length === 0) {
+    const fallback = Array.from(dt.files ?? []);
+    return fallback.map((f) => ({
+      name: f.name,
+      arrayBuffer: () => f.arrayBuffer(),
+    }));
+  }
+
+  // Non-standard folder support via webkitGetAsEntry (where available).
+  const walkEntry = async (
+    entry: any,
+    parentPath: string,
+  ): Promise<UploadFileLike[]> => {
+    if (!entry) return [];
+
+    if (entry.isFile) {
+      const file: File = await new Promise((resolve, reject) => {
+        entry.file(
+          (f: File) => resolve(f),
+          (err: unknown) => reject(err)
+        );
+      });
+      const relativeName = parentPath ? `${parentPath}/${file.name}` : file.name;
+      return [
+        {
+          name: relativeName,
+          arrayBuffer: () => file.arrayBuffer(),
+        },
+      ];
+    }
+
+    if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const entries: any[] = [];
+
+      await new Promise<void>((resolve, reject) => {
+        const readBatch = () => {
+          reader.readEntries(
+            (batch: any[]) => {
+              if (!batch.length) {
+                resolve();
+                return;
+              }
+              entries.push(...batch);
+              readBatch();
+            },
+            (err: unknown) => reject(err)
+          );
+        };
+        readBatch();
+      });
+
+      const nestedFiles: UploadFileLike[] = [];
+      for (const child of entries) {
+        const childDirPath = parentPath
+          ? `${parentPath}/${entry.name}`
+          : entry.name;
+        const childFiles = await walkEntry(child, childDirPath);
+        nestedFiles.push(...childFiles);
+      }
+      return nestedFiles;
+    }
+
+    return [];
+  };
+
+  const entryPromises: Promise<UploadFileLike[]>[] = [];
+
+  for (let i = 0; i < items.length; i += 1) {
+    const item = items[i];
+    if (item.kind !== "file") continue;
+
+    const anyItem = item as any;
+    if (typeof anyItem.webkitGetAsEntry === "function") {
+      const entry = anyItem.webkitGetAsEntry();
+      if (entry) {
+        entryPromises.push(walkEntry(entry, ""));
+        continue;
+      }
+    }
+
+    const file = item.getAsFile();
+    if (file) {
+      files.push({
+        name: file.name,
+        arrayBuffer: () => file.arrayBuffer(),
+      });
+    }
+  }
+
+  if (entryPromises.length > 0) {
+    const nested = await Promise.all(entryPromises);
+    nested.forEach((group) => files.push(...group));
+  }
+
+  // Fallback if nothing collected via items.
+  if (files.length === 0) {
+    const fallback = Array.from(dt.files ?? []);
+    return fallback.map((f) => ({
+      name: f.name,
+      arrayBuffer: () => f.arrayBuffer(),
+    }));
+  }
+
+  return files;
+}
 
 interface FileBrowserProps {
   sourceId: string;
   storageName: string;
   onPreviewVisibilityChange?: (visible: boolean) => void;
   onToggleSidebar?: () => void;
+  isSidebarOpen?: boolean;
 }
 
-export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, onToggleSidebar }: FileBrowserProps) {
+interface LoadError {
+  title: string;
+  detail?: string;
+}
+
+export function FileBrowser({
+  sourceId,
+  storageName,
+  onPreviewVisibilityChange,
+  onToggleSidebar,
+  isSidebarOpen,
+}: FileBrowserProps) {
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPath, setCurrentPath] = useState<string>("/");
@@ -45,7 +203,7 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
   const [history, setHistory] = useState<string[]>(["/"]);
   const [historyIndex, setHistoryIndex] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<LoadError | null>(null);
 
   type SortField = "name" | "type" | "modified" | "size";
   type SortDirection = "asc" | "desc";
@@ -53,6 +211,51 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [editTargetId, setEditTargetId] = useState<string | null>(null);
+  const { theme: iconTheme, setTheme: setIconTheme } = useIconTheme();
+  const [isEditingPath, setIsEditingPath] = useState(false);
+  const [pathInput, setPathInput] = useState("");
+
+  const describeLoadError = (err: TauriApiError): LoadError => {
+    const shortMessage = (err.message || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)[0];
+
+    switch (err.code) {
+      case "NOT_FOUND":
+        return {
+          title: "Folder not found",
+          detail: "The requested path does not exist on this storage.",
+        };
+      case "PERMISSION_DENIED":
+        return {
+          title: "Access denied",
+          detail: "You don't have permission to view this location.",
+        };
+      case "CONFIG_ERROR":
+        return {
+          title: "Can't connect to this storage",
+          detail: "Check the credentials, endpoint URL, or bucket/container settings.",
+        };
+      case "IO_ERROR":
+        return {
+          title: "Network issue",
+          detail: "Unable to reach the storage service. Verify network/VPN settings.",
+        };
+      case "TIMEOUT":
+        return {
+          title: "Timed out",
+          detail: "The request took too long. Please check your connection and retry.",
+        };
+      default:
+        return {
+          title: "Could not connect to this storage",
+          detail: shortMessage || err.message,
+        };
+    }
+  };
 
   useEffect(() => {
     onPreviewVisibilityChange?.(!!previewFile);
@@ -84,26 +287,23 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
       setSelectedFiles(new Set());
     } catch (err) {
       if (err instanceof TauriApiError) {
-
-        switch (err.code) {
-          case "NOT_FOUND":
-            setError("The requested folder does not exist.");
-            break;
-          case "PERMISSION_DENIED":
-            setError("Access denied. You do not have permission to view this folder.");
-            break;
-          case "TIMEOUT":
-            setError("The operation timed out. Please check your connection.");
-            break;
-          default:
-            setError(err.message);
+        // If the root path is empty/not found, treat it as an empty folder instead of an error.
+        if (err.code === "NOT_FOUND" && (path === "/" || path === "")) {
+          setAllFiles([]);
+          setError(null);
+          setSelectedFiles(new Set());
+          setLoading(false);
+          return;
         }
+        setError(describeLoadError(err));
       } else {
-        setError("Failed to load files");
+        setError({
+          title: "Failed to load files",
+          detail: err instanceof Error ? err.message : String(err),
+        });
       }
       setAllFiles([]); // Clear files on error to prevent showing stale data
     } finally {
-
       setLoading(false);
     }
   };
@@ -115,6 +315,7 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
     setHistory(["/"]);
     setHistoryIndex(0);
     setPreviewFile(null);
+    setEditTargetId(null);
   }, [sourceId]);
 
   useEffect(() => {
@@ -162,25 +363,68 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
     handleNavigate(target, { fromHistory: true });
   };
 
-  const handleSelectFile = (fileId: string) => {
-    setSelectedFiles(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(fileId)) {
-        newSet.delete(fileId);
-      } else {
-        newSet.add(fileId);
-      }
-      return newSet;
-    });
+  const handleSelectFile = (fileId: string, options?: { toggle?: boolean }) => {
+    if (options?.toggle) {
+      setSelectedFiles((prev) => {
+        const newSet = new Set(prev);
+        if (newSet.has(fileId)) {
+          newSet.delete(fileId);
+        } else {
+          newSet.add(fileId);
+        }
+        return newSet;
+      });
+      return;
+    }
+    setSelectedFiles(new Set([fileId]));
   };
 
-  const handleSelectAll = () => {
-    if (selectedFiles.size === filteredFiles.length) {
-      setSelectedFiles(new Set());
-    } else {
-      setSelectedFiles(new Set(filteredFiles.map(f => f.id)));
-    }
-  };
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "a") {
+        return;
+      }
+      const active = document.activeElement as HTMLElement | null;
+      if (
+        active &&
+        (active.tagName === "INPUT" ||
+          active.tagName === "TEXTAREA" ||
+          active.isContentEditable)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      setSelectedFiles(new Set(filteredFiles.map((file) => file.id)));
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [filteredFiles]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (
+        (event.key !== "Delete" && event.key !== "Backspace") ||
+        selectedFiles.size === 0
+      ) {
+        return;
+      }
+      const active = document.activeElement as HTMLElement | null;
+      if (
+        active &&
+        (active.tagName === "INPUT" ||
+          active.tagName === "TEXTAREA" ||
+          active.isContentEditable)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      setShowDeleteConfirm(true);
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [selectedFiles]);
 
   const downloadOne = async (file: FileItem) => {
     if (file.type !== "file") return;
@@ -214,33 +458,21 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
     }
   };
 
-  const handleBulkDownload = async () => {
-    const filesToDownload = filteredFiles.filter(
-      (f) => selectedFiles.has(f.id) && f.type === "file",
-    );
-    for (const file of filesToDownload) {
-      // eslint-disable-next-line no-await-in-loop
-      await downloadOne(file);
-    }
-  };
-
   const deleteOne = async (file: FileItem) => {
     try {
       await deletePath(sourceId, file.id);
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Delete failed",
-        description: error?.message || String(error),
+        description: error instanceof Error ? error.message : String(error),
         variant: "destructive",
       });
     }
   };
 
   const handleBulkDelete = async () => {
-    if (!confirm("Delete selected items? This cannot be undone.")) return;
     const toDelete = filteredFiles.filter((f) => selectedFiles.has(f.id));
     for (const file of toDelete) {
-      // eslint-disable-next-line no-await-in-loop
       await deleteOne(file);
     }
     await loadFiles(currentPath);
@@ -255,15 +487,22 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
     if (file.type === "folder") {
       handleNavigate(file.id);
     } else {
+      setEditTargetId(null);
       setPreviewFile(file);
     }
+  };
+
+  const handleEditFile = (file: FileItem) => {
+    if (file.type === "folder") return;
+    setPreviewFile(file);
+    setEditTargetId(file.id);
   };
 
   const handleDownloadFile = (file: FileItem) => {
     void downloadOne(file);
   };
 
-  const handleUpload = (files: File[]) => {
+  const handleUpload = (files: UploadFileLike[]) => {
     void (async () => {
       if (!files.length) return;
       let successCount = 0;
@@ -274,10 +513,10 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
           const targetPath = `${basePath}/${file.name}`;
           await writeFile(sourceId, targetPath, new Uint8Array(buffer));
           successCount += 1;
-        } catch (error: any) {
+        } catch (error: unknown) {
           toast({
             title: "Upload failed",
-            description: error?.message || String(error),
+            description: error instanceof Error ? error.message : String(error),
             variant: "destructive",
           });
         }
@@ -344,218 +583,359 @@ export function FileBrowser({ sourceId, storageName, onPreviewVisibilityChange, 
   };
 
   const breadcrumbs = getBreadcrumbs();
-  const fullPath = breadcrumbs.map((crumb) => crumb.name).join(" / ");
   const currentLabel =
     breadcrumbs[breadcrumbs.length - 1]?.name ?? storageName;
 
   const [isDragging, setIsDragging] = useState(false);
-  const uploadZoneRef = useRef<{ handleFiles: (files: File[]) => void }>(null);
+  const uploadZoneRef = useRef<UploadZoneRef | null>(null);
 
   return (
-    <div
-      className="relative flex h-full bg-background"
-      onDragOver={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        setIsDragging(true);
-      }}
-      onDragLeave={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        setIsDragging(false);
-      }}
-      onDrop={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        setIsDragging(false);
-        const files = Array.from(event.dataTransfer?.files ?? []);
-        if (files.length && uploadZoneRef.current) {
-          uploadZoneRef.current.handleFiles(files);
-        }
-      }}
-    >
-      <div className="flex flex-1 flex-col">
-        {/* Header with navigation */}
-        <div className="border-b bg-muted/30">
-          <div className="flex items-center gap-2 px-4 py-3">
-            <div className="flex items-center gap-1">
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-8 w-8 mr-1"
-                onClick={onToggleSidebar}
-                title="Toggle Storage Sidebar"
-              >
-                <PanelLeft className="h-4 w-4" />
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-8 w-8"
-                onClick={goBack}
-                disabled={!canGoBack}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-8 w-8"
-                onClick={goForward}
-                disabled={!canGoForward}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
+    <>
+      <div
+        className="relative flex h-full bg-background"
+        onDragOver={(event: React.DragEvent<HTMLDivElement>) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setIsDragging(true);
+        }}
+        onDragLeave={(event: React.DragEvent<HTMLDivElement>) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setIsDragging(false);
+        }}
+        onDrop={(event: React.DragEvent<HTMLDivElement>) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setIsDragging(false);
+          if (!event.dataTransfer || !uploadZoneRef.current) return;
 
-            <div className="flex min-w-0 flex-1 items-center gap-2">
-              <span className="truncate text-sm font-medium">
-                {currentLabel}
-              </span>
-            </div>
+          void (async () => {
+            try {
+              const files = await collectFilesFromDataTransfer(event.dataTransfer);
+              if (files.length) {
+                uploadZoneRef.current?.handleFiles(files);
+              }
+            } catch (err: unknown) {
+              // If folder support is not available, fall back gracefully.
+              toast({
+                title: "Upload failed",
+                description:
+                  err instanceof Error
+                    ? err.message
+                    : "Could not read some dropped items. Try dropping files only or use the file picker.",
+                variant: "destructive",
+              });
+            }
+          })();
+        }}
+      >
+        <div className="flex flex-1 flex-col">
+          {/* Header with navigation */}
+          <div className="border-b bg-muted/30" data-tauri-drag-region>
+            <div className="flex items-center gap-2 px-4 py-3" data-tauri-drag-region>
+              <div className="flex items-center gap-1 tauri-no-drag">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8 mr-1 text-foreground/70 hover:bg-black/5 dark:hover:bg-white/5"
+                  onClick={onToggleSidebar}
+                  title={isSidebarOpen ? "Hide Storage Sidebar" : "Show Storage Sidebar"}
+                >
+                  {isSidebarOpen ? (
+                    <PanelRight className="h-4 w-4" />
+                  ) : (
+                    <PanelLeft className="h-4 w-4" />
+                  )}
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8 text-foreground/70 hover:bg-black/5 dark:hover:bg-white/5"
+                  onClick={goBack}
+                  disabled={!canGoBack}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8 text-foreground/70 hover:bg-black/5 dark:hover:bg-white/5"
+                  onClick={goForward}
+                  disabled={!canGoForward}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
 
-            <div className="flex items-center gap-2">
-              <div className="relative w-48">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Search..."
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  className="h-8 bg-background pl-9"
+              <div className="flex min-w-0 flex-1 items-center gap-2" data-tauri-drag-region>
+                <span className="truncate text-sm font-medium select-none pointer-events-none">
+                  {currentLabel}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2 tauri-no-drag">
+                <div className="relative w-48">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    placeholder="Search..."
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    className="h-8 bg-background pl-9 border-border focus-visible:ring-1 focus-visible:ring-primary/20 focus-visible:ring-offset-0 focus-visible:border-border shadow-sm"
+                  />
+                </div>
+
+                <label htmlFor="file-upload">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8 text-foreground/70 hover:bg-black/5 dark:hover:bg-white/5"
+                    asChild
+                  >
+                    <span>
+                      <Upload className="h-4 w-4" />
+                    </span>
+                  </Button>
+                </label>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8 text-foreground/70 hover:bg-black/5 dark:hover:bg-white/5"
+                      title={`Icon theme: ${ICON_THEME_LABELS[iconTheme] ?? ICON_THEME_LABELS[DEFAULT_ICON_THEME]}`}
+                    >
+                      <Palette className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-[160px]">
+                    <DropdownMenuLabel className="font-normal">Icon Theme</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuRadioGroup
+                      value={iconTheme}
+                      onValueChange={(value) => setIconTheme(value as IconTheme)}
+                    >
+                      {ICON_THEME_OPTIONS.map((theme) => (
+                        <DropdownMenuRadioItem key={theme} value={theme}>
+                          {ICON_THEME_LABELS[theme]}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() =>
+                    setViewMode((current) => (current === "grid" ? "table" : "grid"))
+                  }
+                  className="h-8 w-8 text-foreground/70 hover:bg-black/5 dark:hover:bg-white/5"
+                  title={viewMode === "grid" ? "Switch to list view" : "Switch to grid view"}
+                >
+                  {viewMode === "grid" ? (
+                    <LayoutList className="h-4 w-4" />
+                  ) : (
+                    <LayoutGrid className="h-4 w-4" />
+                  )}
+                </Button>
+                {previewFile && (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => setPreviewFile(null)}
+                    className="h-8 w-8 text-foreground/70 hover:bg-black/5 dark:hover:bg-white/5"
+                    title="Close Preview"
+                  >
+                    <PanelRight className="h-4 w-4" />
+                  </Button>
+                )}
+                <div className="ml-2 pl-2 border-l border-border/50">
+                  <WindowControls />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Error */}
+          {error && (
+            <div className="border-b bg-gradient-to-r from-destructive/10 via-destructive/5 to-transparent px-6 py-3 text-sm text-destructive">
+              <div className="flex items-start gap-3">
+                <div className="mt-1 flex h-6 w-6 items-center justify-center rounded-full bg-destructive/20 text-destructive">
+                  !
+                </div>
+                <div className="space-y-1">
+                  <p className="font-semibold leading-tight">{error.title}</p>
+                  {error.detail && (
+                    <p className="text-xs leading-relaxed text-destructive/80">
+                      {error.detail}
+                    </p>
+                  )}
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 border-destructive/40 text-destructive hover:bg-destructive/10"
+                      onClick={() => {
+                        void loadFiles(currentPath);
+                      }}
+                    >
+                      Try again
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Panel Group for Content & Preview */}
+          <PanelGroup direction="horizontal" className="flex-1 overflow-hidden">
+            <Panel minSize={30} defaultSize={previewFile ? 70 : 100}>
+              <div className="flex h-full flex-col overflow-hidden relative">
+                <div className="flex-1 overflow-hidden">
+                  {loading ? (
+                    <div className="flex h-full items-center justify-center">
+                      <div className="flex flex-col items-center gap-2">
+                        <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                        <span className="text-muted-foreground">Loading files...</span>
+                      </div>
+                    </div>
+                  ) : viewMode === "grid" ? (
+                    <FileGrid
+                      files={sortedFiles}
+                      selectedFiles={selectedFiles}
+                      onSelectFile={handleSelectFile}
+                      onOpenFile={handleOpenFile}
+                      onEditFile={handleEditFile}
+                      onDownloadFile={handleDownloadFile}
+                      onDeleteFile={(file) => void deleteOne(file)}
+                    />
+                  ) : (
+                    <FileTable
+                      files={sortedFiles}
+                      selectedFiles={selectedFiles}
+                      onSelectFile={handleSelectFile}
+                      onOpenFile={handleOpenFile}
+                      onEditFile={handleEditFile}
+                      onDownloadFile={handleDownloadFile}
+                      onDeleteFile={(file) => void deleteOne(file)}
+                      sortField={sortField}
+                      sortDirection={sortDirection}
+                      onSortChange={toggleSort}
+                    />
+                  )}
+                </div>
+
+                {/* Footer path (Inside Left Panel) */}
+                {/* Footer path (Editable) */}
+                <div className="border-t bg-muted/30 h-9 px-3 flex items-center shrink-0">
+                  {isEditingPath ? (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (pathInput.trim() !== currentPath) {
+                          handleNavigate(pathInput.trim());
+                        }
+                        setIsEditingPath(false);
+                      }}
+                      className="flex w-full"
+                    >
+                      <Input
+                        autoFocus
+                        value={pathInput}
+                        onChange={(e) => setPathInput(e.target.value)}
+                        onBlur={() => setIsEditingPath(false)}
+                        className="h-7 text-xs bg-background w-full border-0 focus-visible:ring-0 focus-visible:ring-offset-0 shadow-none px-2"
+                      />
+                    </form>
+                  ) : (
+                    <ContextMenu>
+                      <ContextMenuTrigger asChild>
+                        <button
+                          className="w-full text-left truncate text-xs text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5 rounded px-2 py-1 transition-colors cursor-text"
+                          onClick={() => {
+                            setPathInput(currentPath);
+                            setIsEditingPath(true);
+                          }}
+                          title="Click to edit path"
+                        >
+                          {currentPath}
+                        </button>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md">
+                        <ContextMenuItem
+                          className="hover:bg-sidebar-accent/30 hover:text-foreground focus:bg-sidebar-accent/30 focus:text-foreground"
+                          onClick={() => {
+                            navigator.clipboard?.writeText(currentPath).catch(() => { });
+                          }}
+                        >
+                          Copy path
+                        </ContextMenuItem>
+                      </ContextMenuContent>
+                    </ContextMenu>
+                  )}
+                </div>
+
+                <UploadZone
+                  ref={uploadZoneRef}
+                  onUpload={handleUpload}
+                  isDragging={isDragging}
                 />
               </div>
+            </Panel>
 
-              <label htmlFor="file-upload">
-                <Button
-                  size="icon"
-                  variant="outline"
-                  className="h-8 w-8"
-                  asChild
-                >
-                  <span>
-                    <Upload className="h-4 w-4" />
-                  </span>
-                </Button>
-              </label>
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={() =>
-                  setViewMode((current) => (current === "grid" ? "table" : "grid"))
-                }
-                className="h-8 w-8"
-                title={viewMode === "grid" ? "Switch to list view" : "Switch to grid view"}
-              >
-                <LayoutGrid className="h-4 w-4" />
-              </Button>
-              {previewFile && (
-                <Button
-                  size="icon"
-                  variant="secondary"
-                  onClick={() => setPreviewFile(null)}
-                  className="h-8 w-8"
-                  title="Close Preview"
-                >
-                  <PanelRight className="h-4 w-4" />
-                </Button>
-              )}
-            </div>
-          </div>
+            {previewFile && (
+              <>
+                <PanelResizeHandle className="group relative flex w-1 items-center justify-center bg-transparent cursor-col-resize transition-colors focus:outline-none z-10 -ml-0.5">
+                  <div className="h-full w-[1px] bg-border group-hover:bg-foreground/50 transition-colors" />
+                </PanelResizeHandle>
+                <Panel defaultSize={30} minSize={20} maxSize={60} className="bg-background/50">
+                  <FilePreviewPanel
+                    file={previewFile}
+                    sourceId={sourceId}
+                    onClose={() => {
+                      setPreviewFile(null);
+                      setEditTargetId(null);
+                    }}
+                    startInEditMode={editTargetId === previewFile.id}
+                    onEditModeChange={(editing) => {
+                      setEditTargetId(editing ? previewFile.id : null);
+                    }}
+                    onDownload={() => {
+                      if (!previewFile) return;
+                      void downloadOne(previewFile);
+                    }}
+                  />
+                </Panel>
+              </>
+            )}
+          </PanelGroup>
         </div>
-
-        {/* Error */}
-        {error && (
-          <div className="border-b bg-destructive/10 px-6 py-2 text-sm text-destructive">
-            {error}
-          </div>
-        )}
-
-        {/* Bulk Actions Bar */}
-        {selectedFiles.size > 0 && (
-          <div className="flex h-11 items-center justify-between border-b border-border bg-accent/20 px-6 py-3">
-            <span className="text-sm font-medium">
-              {selectedFiles.size} item{selectedFiles.size > 1 ? "s" : ""} selected
-            </span>
-            <div className="flex gap-2">
-              <Button size="sm" variant="outline" onClick={handleBulkDownload}>
-                <Download className="mr-2 h-4 w-4" />
-                Download
-              </Button>
-              <Button size="sm" variant="outline" onClick={handleBulkDelete}>
-                <Trash2 className="mr-2 h-4 w-4" />
-                Delete
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* Content */}
-        <div className="flex-1 overflow-hidden p-6">
-          {loading ? (
-            <div className="flex h-full items-center justify-center">
-              <div className="flex flex-col items-center gap-2">
-                <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                <span className="text-muted-foreground">Loading files...</span>
-              </div>
-            </div>
-          ) : viewMode === "grid" ? (
-            <FileGrid
-              files={sortedFiles}
-              selectedFiles={selectedFiles}
-              onSelectFile={handleSelectFile}
-              onOpenFile={handleOpenFile}
-              onDownloadFile={handleDownloadFile}
-              onDeleteFile={(file) => void deleteOne(file)}
-            />
-          ) : (
-            <FileTable
-              files={sortedFiles}
-              selectedFiles={selectedFiles}
-              onSelectFile={handleSelectFile}
-              onSelectAll={handleSelectAll}
-              onOpenFile={handleOpenFile}
-              onDownloadFile={handleDownloadFile}
-              onDeleteFile={(file) => void deleteOne(file)}
-              sortField={sortField}
-              sortDirection={sortDirection}
-              onSortChange={toggleSort}
-            />
-          )}
-        </div>
-
-        {/* Footer path */}
-        <div className="border-t bg-muted/30 px-6 py-2">
-          <p className="truncate text-xs text-muted-foreground">{fullPath}</p>
-        </div>
-
-        <UploadZone
-          ref={uploadZoneRef}
-          onUpload={handleUpload}
-          isDragging={isDragging}
-        />
       </div>
 
-      {previewFile && (
-        <div
-          className="absolute inset-y-0 right-0 z-50 w-full border-l-2 border-border/60 bg-card md:relative md:block md:w-[30%] md:min-w-[250px] md:max-w-[600px]"
-        >
-          <FilePreviewPanel
-            file={previewFile}
-            onClose={() => setPreviewFile(null)}
-            onEdit={() => {
-              toast({
-                title: "Open in editor",
-                description:
-                  "Opening files in an external editor is not implemented yet.",
-              });
-            }}
-            onDownload={() => {
-              if (!previewFile) return;
-              void downloadOne(previewFile);
-            }}
-          />
-        </div>
-      )}
-    </div>
+      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialogContent className="max-w-md rounded-2xl border border-border bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] shadow-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete selected items?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete the selected files and folders from{" "}
+              <span className="font-medium">{storageName}</span>. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                void (async () => {
+                  await handleBulkDelete();
+                  setShowDeleteConfirm(false);
+                })();
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
