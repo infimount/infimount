@@ -1,11 +1,13 @@
 import { FileItem } from "@/types/storage";
-import { Eye, Download, Trash2, Edit3 } from "lucide-react";
+import { Eye, Download, Trash2, Edit3, Scissors, Copy, ClipboardPaste } from "lucide-react";
 import { FileTypeIcon } from "./FileIcon";
 import { Card } from "@/components/ui/card";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 
@@ -51,6 +53,10 @@ interface FileGridProps {
   onEditFile?: (file: FileItem) => void;
   onDownloadFile?: (file: FileItem) => void;
   onDeleteFile?: (file: FileItem) => void;
+  onCutSelected?: () => void;
+  onCopySelected?: () => void;
+  canPaste?: boolean;
+  onPaste?: (targetDir?: string) => void;
 }
 
 import { useRef, useEffect, useState } from "react";
@@ -64,6 +70,10 @@ export function FileGrid({
   onEditFile,
   onDownloadFile,
   onDeleteFile,
+  onCutSelected,
+  onCopySelected,
+  canPaste,
+  onPaste,
 }: FileGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [columns, setColumns] = useState(3);
@@ -167,7 +177,9 @@ export function FileGrid({
                             onSelectFile(file.id);
                           }
                         }}
-                        onContextMenu={() => {
+                        onContextMenu={(event) => {
+                          // Prevent the background (destination) context menu from opening.
+                          event.stopPropagation();
                           if (!selectedFiles.has(file.id)) {
                             onSelectFile(file.id);
                           }
@@ -195,6 +207,38 @@ export function FileGrid({
                       </Card>
                     </ContextMenuTrigger>
                     <ContextMenuContent className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md">
+                      {(onCutSelected || onCopySelected || onPaste) && (
+                        <>
+                          {onCutSelected && (
+                            <ContextMenuItem onClick={onCutSelected}>
+                              <Scissors className="mr-2 h-4 w-4" />
+                              Cut
+                              <ContextMenuShortcut>⌘X</ContextMenuShortcut>
+                            </ContextMenuItem>
+                          )}
+                          {onCopySelected && (
+                            <ContextMenuItem onClick={onCopySelected}>
+                              <Copy className="mr-2 h-4 w-4" />
+                              Copy
+                              <ContextMenuShortcut>⌘C</ContextMenuShortcut>
+                            </ContextMenuItem>
+                          )}
+                          {onPaste && (
+                            <ContextMenuItem
+                              disabled={!canPaste}
+                              onClick={() => {
+                                const targetDir = file.type === "folder" ? file.id : undefined;
+                                onPaste(targetDir);
+                              }}
+                            >
+                              <ClipboardPaste className="mr-2 h-4 w-4" />
+                              {file.type === "folder" ? "Paste into folder" : "Paste"}
+                              <ContextMenuShortcut>⌘V</ContextMenuShortcut>
+                            </ContextMenuItem>
+                          )}
+                          <ContextMenuSeparator />
+                        </>
+                      )}
                       {file.type === "file" && (
                         <>
                           <ContextMenuItem onClick={() => onOpenFile?.(file)}>

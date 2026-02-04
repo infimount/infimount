@@ -40,6 +40,9 @@ export interface StorageKindSchema {
   fields: StorageFieldSchema[];
 }
 
+export type TransferOperation = "copy" | "move";
+export type TransferConflictPolicy = "fail" | "overwrite" | "skip";
+
 async function handleError(error: unknown): Promise<never> {
   console.error("API Error:", error);
   if (typeof error === "object" && error !== null && "code" in error && "message" in error) {
@@ -157,6 +160,28 @@ export async function replaceSources(sources: Source[]): Promise<void> {
 export async function listStorageSchemas(): Promise<StorageKindSchema[]> {
   try {
     return await tauriInvoke<StorageKindSchema[]>("list_storage_schemas");
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function transferEntries(
+  fromSourceId: string,
+  toSourceId: string,
+  paths: string[],
+  targetDir: string,
+  operation: TransferOperation,
+  conflictPolicy: TransferConflictPolicy,
+): Promise<void> {
+  try {
+    return await tauriInvoke("transfer_entries", {
+      fromSourceId,
+      toSourceId,
+      paths,
+      targetDir,
+      operation,
+      conflictPolicy,
+    });
   } catch (error) {
     return handleError(error);
   }

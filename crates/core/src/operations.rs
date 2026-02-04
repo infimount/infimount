@@ -1,10 +1,27 @@
 use futures::TryStreamExt;
+use futures::io::AsyncWriteExt;
 use opendal::{ErrorKind, Operator};
 use std::path::Path;
 use tokio::fs;
 
 use crate::models::{Entry, Result};
 use crate::util::extract_filename;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferOperation {
+    Copy,
+    Move,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferConflictPolicy {
+    /// Fail fast if any destination exists (no partial transfer).
+    Fail,
+    /// Replace destination objects when they already exist.
+    Overwrite,
+    /// Skip entries whose destinations already exist.
+    Skip,
+}
 
 /// List entries at the given path using the provided operator.
 pub async fn list_entries(op: &Operator, path: &str) -> Result<Vec<Entry>> {
@@ -94,6 +111,356 @@ fn join_target_dir(base: &str, name: &str) -> String {
     } else {
         format!("{}/{}", base, name)
     }
+}
+
+fn ensure_dir_path(path: &str) -> String {
+    if path.is_empty() || path == "/" {
+        "/".to_string()
+    } else if path.ends_with('/') {
+        path.to_string()
+    } else {
+        format!("{}/", path)
+    }
+}
+
+fn parent_dir_path(path: &str) -> Option<String> {
+    let trimmed = path.trim_end_matches('/');
+    let idx = trimmed.rfind('/')?;
+    let parent = &trimmed[..idx + 1];
+    if parent.is_empty() || parent == "/" {
+        None
+    } else {
+        Some(parent.to_string())
+    }
+}
+
+async fn ensure_parent_dir(op: &Operator, path: &str) -> Result<()> {
+    if let Some(parent) = parent_dir_path(path) {
+        let parent_dir = ensure_dir_path(&parent);
+        op.create_dir(&parent_dir).await?;
+    }
+    Ok(())
+}
+
+async fn copy_file_across_operators(from_op: &Operator, to_op: &Operator, from: &str, to: &str) -> Result<()> {
+    let meta = from_op.stat(from).await?;
+    let size = meta.content_length();
+    let mut reader = from_op
+        .reader(from)
+        .await?
+        .into_futures_async_read(0..size)
+        .await?;
+    let mut writer = to_op.writer(to).await?.into_futures_async_write();
+
+    futures::io::copy(&mut reader, &mut writer).await?;
+    writer.close().await?;
+    Ok(())
+}
+
+fn split_file_name(name: &str) -> (String, String) {
+    // Keep the last extension only (simple + predictable).
+    if name.starts_with('.') {
+        // ".env" => treat as no-extension for our purposes
+        return (name.to_string(), String::new());
+    }
+
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() => (stem.to_string(), format!(".{}", ext)),
+        _ => (name.to_string(), String::new()),
+    }
+}
+
+async fn unique_destination_path(
+    op: &Operator,
+    target_dir: &str,
+    name: &str,
+    is_dir: bool,
+) -> Result<String> {
+    let base_path = join_target_dir(target_dir, name);
+    let mut candidate = if is_dir {
+        ensure_dir_path(&base_path)
+    } else {
+        base_path
+    };
+
+    if !op.exists(&candidate).await? {
+        return Ok(candidate);
+    }
+
+    if is_dir {
+        let base_name = name.to_string();
+        for idx in 1..=9999u32 {
+            let suffix = if idx == 1 { " copy".to_string() } else { format!(" copy {}", idx) };
+            let next_name = format!("{}{}", base_name, suffix);
+            candidate = ensure_dir_path(&join_target_dir(target_dir, &next_name));
+            if !op.exists(&candidate).await? {
+                return Ok(candidate);
+            }
+        }
+    } else {
+        let (stem, ext) = split_file_name(name);
+        for idx in 1..=9999u32 {
+            let suffix = if idx == 1 { " copy".to_string() } else { format!(" copy {}", idx) };
+            let next_name = format!("{}{}{}", stem, suffix, ext);
+            candidate = join_target_dir(target_dir, &next_name);
+            if !op.exists(&candidate).await? {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    Err(opendal::Error::new(
+        ErrorKind::Unexpected,
+        "Failed to generate a unique destination path",
+    )
+    .into())
+}
+
+async fn transfer_file(
+    from_op: &Operator,
+    to_op: &Operator,
+    from_path: &str,
+    to_path: &str,
+    operation: TransferOperation,
+    same_source: bool,
+) -> Result<()> {
+    ensure_parent_dir(to_op, to_path).await?;
+
+    match operation {
+        TransferOperation::Copy => {
+            if same_source {
+                from_op.copy(from_path, to_path).await?;
+            } else {
+                copy_file_across_operators(from_op, to_op, from_path, to_path).await?;
+            }
+        }
+        TransferOperation::Move => {
+            if same_source {
+                from_op.rename(from_path, to_path).await?;
+            } else {
+                copy_file_across_operators(from_op, to_op, from_path, to_path).await?;
+                from_op.remove_all(from_path).await?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn transfer_dir_recursive(
+    from_op: &Operator,
+    to_op: &Operator,
+    from_dir: &str,
+    to_dir: &str,
+    operation: TransferOperation,
+    same_source: bool,
+) -> Result<()> {
+    let from_root = ensure_dir_path(from_dir);
+    let to_root = ensure_dir_path(to_dir);
+    to_op.create_dir(&to_root).await?;
+
+    let mut stack = vec![(from_root.clone(), to_root)];
+    while let Some((from_base, to_base)) = stack.pop() {
+        let mut lister = from_op.lister(&from_base).await?;
+        while let Some(obj) = lister.try_next().await? {
+            let child_path = obj.path().to_string();
+            let meta = from_op.stat(&child_path).await?;
+            let name = extract_filename(&child_path);
+
+            if meta.is_dir() {
+                let child_src_dir = ensure_dir_path(&child_path);
+                let child_dst_dir = ensure_dir_path(&join_target_dir(&to_base, &name));
+                to_op.create_dir(&child_dst_dir).await?;
+                stack.push((child_src_dir, child_dst_dir));
+            } else {
+                let child_dst_file = join_target_dir(&to_base, &name);
+                transfer_file(
+                    from_op,
+                    to_op,
+                    &child_path,
+                    &child_dst_file,
+                    TransferOperation::Copy,
+                    same_source,
+                )
+                .await?;
+            }
+        }
+    }
+
+    if operation == TransferOperation::Move {
+        from_op.remove_all(&from_root).await?;
+    }
+
+    Ok(())
+}
+
+/// Copy or move a set of file/folder paths into `target_dir`.
+///
+/// Conflict handling is controlled by `conflict_policy`.
+///
+/// Note: copying an entry onto itself (same source + same path) is treated as a duplicate copy
+/// and the destination name is auto-deduplicated to avoid clobbering the source.
+pub async fn transfer_entries(
+    from_op: &Operator,
+    to_op: &Operator,
+    paths: Vec<String>,
+    target_dir: &str,
+    operation: TransferOperation,
+    same_source: bool,
+    conflict_policy: TransferConflictPolicy,
+) -> Result<()> {
+    if conflict_policy == TransferConflictPolicy::Fail {
+        for from_path in &paths {
+            let meta = from_op.stat(from_path).await?;
+
+            if meta.is_dir() {
+                let dir_name = extract_filename(from_path);
+                let dest_dir = ensure_dir_path(&join_target_dir(target_dir, &dir_name));
+                let normalized_src = ensure_dir_path(from_path);
+                let normalized_dest = ensure_dir_path(&dest_dir);
+
+                if same_source {
+                    if operation == TransferOperation::Move && normalized_src == normalized_dest {
+                        continue;
+                    }
+                    if normalized_dest.starts_with(&normalized_src) && normalized_dest != normalized_src {
+                        return Err(opendal::Error::new(
+                            ErrorKind::IsSameFile,
+                            "Cannot copy a folder into itself",
+                        )
+                        .into());
+                    }
+                }
+
+                // Copying onto itself is treated as "duplicate" (keep both) and won't conflict.
+                if operation == TransferOperation::Copy && same_source && normalized_src == normalized_dest {
+                    continue;
+                }
+
+                if to_op.exists(&dest_dir).await? {
+                    return Err(opendal::Error::new(
+                        ErrorKind::AlreadyExists,
+                        "Destination directory already exists",
+                    )
+                    .into());
+                }
+            } else {
+                let file_name = extract_filename(from_path);
+                let dest_file = join_target_dir(target_dir, &file_name);
+
+                if same_source {
+                    if operation == TransferOperation::Move && *from_path == dest_file {
+                        continue;
+                    }
+                    if operation == TransferOperation::Copy && *from_path == dest_file {
+                        continue;
+                    }
+                }
+
+                if to_op.exists(&dest_file).await? {
+                    return Err(opendal::Error::new(
+                        ErrorKind::AlreadyExists,
+                        "Destination file already exists",
+                    )
+                    .into());
+                }
+            }
+        }
+    }
+
+    for from_path in paths {
+        let meta = from_op.stat(&from_path).await?;
+        if meta.is_dir() {
+            let dir_name = extract_filename(&from_path);
+            let base_dest_dir = ensure_dir_path(&join_target_dir(target_dir, &dir_name));
+            let normalized_src = ensure_dir_path(&from_path);
+            let normalized_dest = ensure_dir_path(&base_dest_dir);
+
+            if same_source {
+                if operation == TransferOperation::Move && normalized_src == normalized_dest {
+                    continue;
+                }
+                if normalized_dest.starts_with(&normalized_src) && normalized_dest != normalized_src {
+                    return Err(opendal::Error::new(
+                        ErrorKind::IsSameFile,
+                        "Cannot copy a folder into itself",
+                    )
+                    .into());
+                }
+            }
+
+            let dest_dir = if operation == TransferOperation::Copy
+                && same_source
+                && normalized_src == normalized_dest
+            {
+                unique_destination_path(to_op, target_dir, &dir_name, true).await?
+            } else {
+                base_dest_dir
+            };
+
+            if to_op.exists(&dest_dir).await? {
+                match conflict_policy {
+                    TransferConflictPolicy::Fail => {
+                        return Err(opendal::Error::new(
+                            ErrorKind::AlreadyExists,
+                            "Destination directory already exists",
+                        )
+                        .into())
+                    }
+                    TransferConflictPolicy::Overwrite => {
+                        to_op.remove_all(&dest_dir).await?;
+                    }
+                    TransferConflictPolicy::Skip => {
+                        continue;
+                    }
+                }
+            }
+
+            transfer_dir_recursive(
+                from_op,
+                to_op,
+                &ensure_dir_path(&from_path),
+                &dest_dir,
+                operation,
+                same_source,
+            )
+            .await?;
+        } else {
+            let file_name = extract_filename(&from_path);
+            let base_dest_file = join_target_dir(target_dir, &file_name);
+            let dest_file =
+                if operation == TransferOperation::Copy && same_source && from_path == base_dest_file {
+                    unique_destination_path(to_op, target_dir, &file_name, false).await?
+                } else {
+                    base_dest_file
+                };
+
+            if operation == TransferOperation::Move && same_source && from_path == dest_file {
+                continue;
+            }
+
+            if to_op.exists(&dest_file).await? {
+                match conflict_policy {
+                    TransferConflictPolicy::Fail => {
+                        return Err(opendal::Error::new(
+                            ErrorKind::AlreadyExists,
+                            "Destination file already exists",
+                        )
+                        .into())
+                    }
+                    TransferConflictPolicy::Overwrite => {
+                        to_op.remove_all(&dest_file).await?;
+                    }
+                    TransferConflictPolicy::Skip => {
+                        continue;
+                    }
+                }
+            }
+            transfer_file(from_op, to_op, &from_path, &dest_file, operation, same_source).await?;
+        }
+    }
+
+    Ok(())
 }
 
 async fn upload_path_recursive(op: &Operator, src: &Path, target_dir: &str) -> Result<()> {

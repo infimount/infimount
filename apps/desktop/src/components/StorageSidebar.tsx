@@ -125,7 +125,7 @@ export function StorageSidebar({
   };
 
   return (
-    <div className="flex h-full flex-col border-r bg-sidebar">
+    <div className="flex h-full min-w-0 flex-col overflow-hidden border-r bg-sidebar">
       <div className="relative border-b px-3 py-3" data-tauri-drag-region>
         <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
           <div className="h-8 w-8" />
@@ -223,7 +223,7 @@ export function StorageSidebar({
                   <ContextMenuTrigger asChild>
                     <div
                       className={cn(
-                        "w-full flex items-center gap-2 rounded-lg px-3 py-2.5 transition-colors group",
+                        "group flex w-full items-center gap-2 overflow-hidden rounded-lg px-3 py-2.5 transition-colors",
                         selectedStorage === storage.id
                           ? "bg-primary/20 text-sidebar-foreground font-medium"
                           : "text-sidebar-foreground hover:bg-black/5 dark:hover:bg-white/5",
@@ -232,7 +232,7 @@ export function StorageSidebar({
                     >
                       <button
                         onClick={() => onSelectStorage(storage.id)}
-                        className="flex flex-1 items-center gap-2 text-left text-sm font-normal min-w-0"
+                        className="flex w-full flex-1 items-center gap-2 overflow-hidden text-left text-sm font-normal min-w-0"
                       >
                         <img
                           src={iconSrc}

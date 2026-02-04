@@ -25,6 +25,7 @@ import {
   readFile,
   writeFile,
   deletePath,
+  transferEntries,
   TauriApiError,
 } from "@/lib/api";
 import {
@@ -51,6 +52,8 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
@@ -60,6 +63,7 @@ import {
   type IconTheme,
   useIconTheme,
 } from "@/hooks/use-icon-theme";
+import { useFileClipboard } from "@/hooks/use-file-clipboard";
 
 // Helper to extract file-like objects (including from dropped folders, where supported)
 async function collectFilesFromDataTransfer(
@@ -212,8 +216,16 @@ export function FileBrowser({
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [pasteConflict, setPasteConflict] = useState<{
+    fromSourceId: string;
+    toSourceId: string;
+    paths: string[];
+    targetDir: string;
+    operation: "copy" | "move";
+  } | null>(null);
   const [editTargetId, setEditTargetId] = useState<string | null>(null);
   const { theme: iconTheme, setTheme: setIconTheme } = useIconTheme();
+  const { clipboard, setClipboard, clearClipboard } = useFileClipboard();
   const [isEditingPath, setIsEditingPath] = useState(false);
   const [pathInput, setPathInput] = useState("");
 
@@ -400,6 +412,104 @@ export function FileBrowser({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [filteredFiles]);
+
+  const setClipboardFromSelection = (operation: "copy" | "move") => {
+    if (selectedFiles.size === 0) return;
+    setClipboard({
+      operation,
+      sourceId,
+      paths: Array.from(selectedFiles),
+    });
+  };
+
+  const pasteInto = async (targetDir?: string) => {
+    if (!clipboard || clipboard.paths.length === 0) {
+      return;
+    }
+
+    const destinationDir = targetDir ?? currentPath;
+    try {
+      await transferEntries(
+        clipboard.sourceId,
+        sourceId,
+        clipboard.paths,
+        destinationDir,
+        clipboard.operation,
+        "fail",
+      );
+      await loadFiles(currentPath);
+      toast({
+        title: clipboard.operation === "copy" ? "Copied" : "Moved",
+        description: `${clipboard.paths.length} item${clipboard.paths.length === 1 ? "" : "s"} ${
+          clipboard.operation === "copy" ? "copied" : "moved"
+        }.`,
+      });
+      if (clipboard.operation === "move") {
+        clearClipboard();
+      }
+    } catch (err) {
+      if (err instanceof TauriApiError) {
+        if (err.code === "ALREADY_EXISTS" && clipboard.operation === "copy") {
+          setPasteConflict({
+            fromSourceId: clipboard.sourceId,
+            toSourceId: sourceId,
+            paths: clipboard.paths,
+            targetDir: destinationDir,
+            operation: clipboard.operation,
+          });
+          return;
+        }
+        toast({
+          title: clipboard.operation === "copy" ? "Copy failed" : "Move failed",
+          description: err.message,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: clipboard.operation === "copy" ? "Copy failed" : "Move failed",
+          description: err instanceof Error ? err.message : String(err),
+          variant: "destructive",
+        });
+      }
+    }
+  };
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) {
+        return;
+      }
+
+      const active = document.activeElement as HTMLElement | null;
+      if (
+        active &&
+        (active.tagName === "INPUT" ||
+          active.tagName === "TEXTAREA" ||
+          active.isContentEditable)
+      ) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+
+      if (key === "c") {
+        if (selectedFiles.size === 0) return;
+        event.preventDefault();
+        setClipboardFromSelection("copy");
+      } else if (key === "x") {
+        if (selectedFiles.size === 0) return;
+        event.preventDefault();
+        setClipboardFromSelection("move");
+      } else if (key === "v") {
+        if (!clipboard) return;
+        event.preventDefault();
+        void pasteInto();
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [clipboard, currentPath, selectedFiles, setClipboard, sourceId]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -589,13 +699,20 @@ export function FileBrowser({
   const [isDragging, setIsDragging] = useState(false);
   const uploadZoneRef = useRef<UploadZoneRef | null>(null);
 
+  const isFileDrag = (event: React.DragEvent) => {
+    const types = Array.from(event.dataTransfer?.types ?? []);
+    return types.includes("Files") || types.includes("text/uri-list");
+  };
+
   return (
     <>
       <div
         className="relative flex h-full bg-background"
         onDragOver={(event: React.DragEvent<HTMLDivElement>) => {
+          if (!isFileDrag(event)) return;
           event.preventDefault();
           event.stopPropagation();
+          event.dataTransfer.dropEffect = "copy";
           setIsDragging(true);
         }}
         onDragLeave={(event: React.DragEvent<HTMLDivElement>) => {
@@ -604,6 +721,7 @@ export function FileBrowser({
           setIsDragging(false);
         }}
         onDrop={(event: React.DragEvent<HTMLDivElement>) => {
+          if (!isFileDrag(event)) return;
           event.preventDefault();
           event.stopPropagation();
           setIsDragging(false);
@@ -789,40 +907,72 @@ export function FileBrowser({
           {/* Panel Group for Content & Preview */}
           <PanelGroup direction="horizontal" className="flex-1 overflow-hidden">
             <Panel minSize={30} defaultSize={previewFile ? 70 : 100}>
-              <div className="flex h-full flex-col overflow-hidden relative">
-                <div className="flex-1 overflow-hidden">
-                  {loading ? (
-                    <div className="flex h-full items-center justify-center">
-                      <div className="flex flex-col items-center gap-2">
-                        <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                        <span className="text-muted-foreground">Loading files...</span>
-                      </div>
+                <div className="flex h-full flex-col overflow-hidden relative">
+                <ContextMenu>
+                  <ContextMenuTrigger asChild>
+                    <div className="flex-1 overflow-hidden">
+                      {loading ? (
+                        <div className="flex h-full items-center justify-center">
+                          <div className="flex flex-col items-center gap-2">
+                            <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                            <span className="text-muted-foreground">Loading files...</span>
+                          </div>
+                        </div>
+                      ) : viewMode === "grid" ? (
+                        <FileGrid
+                          files={sortedFiles}
+                          selectedFiles={selectedFiles}
+                          onSelectFile={handleSelectFile}
+                          onOpenFile={handleOpenFile}
+                          onEditFile={handleEditFile}
+                          onDownloadFile={handleDownloadFile}
+                          onDeleteFile={(file) => void deleteOne(file)}
+                          onCutSelected={() => setClipboardFromSelection("move")}
+                          onCopySelected={() => setClipboardFromSelection("copy")}
+                          canPaste={!!clipboard}
+                          onPaste={(targetDir) => void pasteInto(targetDir)}
+                        />
+                      ) : (
+                        <FileTable
+                          files={sortedFiles}
+                          selectedFiles={selectedFiles}
+                          onSelectFile={handleSelectFile}
+                          onOpenFile={handleOpenFile}
+                          onEditFile={handleEditFile}
+                          onDownloadFile={handleDownloadFile}
+                          onDeleteFile={(file) => void deleteOne(file)}
+                          sortField={sortField}
+                          sortDirection={sortDirection}
+                          onSortChange={toggleSort}
+                          onCutSelected={() => setClipboardFromSelection("move")}
+                          onCopySelected={() => setClipboardFromSelection("copy")}
+                          canPaste={!!clipboard}
+                          onPaste={(targetDir) => void pasteInto(targetDir)}
+                        />
+                      )}
                     </div>
-                  ) : viewMode === "grid" ? (
-                    <FileGrid
-                      files={sortedFiles}
-                      selectedFiles={selectedFiles}
-                      onSelectFile={handleSelectFile}
-                      onOpenFile={handleOpenFile}
-                      onEditFile={handleEditFile}
-                      onDownloadFile={handleDownloadFile}
-                      onDeleteFile={(file) => void deleteOne(file)}
-                    />
-                  ) : (
-                    <FileTable
-                      files={sortedFiles}
-                      selectedFiles={selectedFiles}
-                      onSelectFile={handleSelectFile}
-                      onOpenFile={handleOpenFile}
-                      onEditFile={handleEditFile}
-                      onDownloadFile={handleDownloadFile}
-                      onDeleteFile={(file) => void deleteOne(file)}
-                      sortField={sortField}
-                      sortDirection={sortDirection}
-                      onSortChange={toggleSort}
-                    />
-                  )}
-                </div>
+                  </ContextMenuTrigger>
+                  <ContextMenuContent className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md">
+                    <ContextMenuItem
+                      disabled={!clipboard}
+                      onClick={() => {
+                        void pasteInto();
+                      }}
+                    >
+                      Paste
+                      <ContextMenuShortcut>⌘V</ContextMenuShortcut>
+                    </ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem
+                      onClick={() => {
+                        setSelectedFiles(new Set(filteredFiles.map((file) => file.id)));
+                      }}
+                    >
+                      Select all
+                      <ContextMenuShortcut>⌘A</ContextMenuShortcut>
+                    </ContextMenuItem>
+                  </ContextMenuContent>
+                </ContextMenu>
 
                 {/* Footer path (Inside Left Panel) */}
                 {/* Footer path (Editable) */}
@@ -932,6 +1082,91 @@ export function FileBrowser({
               }}
             >
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={!!pasteConflict}
+        onOpenChange={(open) => {
+          if (!open) setPasteConflict(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-md rounded-2xl border border-border bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] shadow-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Item already exists</AlertDialogTitle>
+            <AlertDialogDescription>
+              One or more items with the same name already exist in this location. Do you want to overwrite them or discard this copy?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-muted text-foreground hover:bg-muted/80"
+              onClick={() => {
+                if (!pasteConflict) return;
+                void (async () => {
+                  try {
+                    await transferEntries(
+                      pasteConflict.fromSourceId,
+                      pasteConflict.toSourceId,
+                      pasteConflict.paths,
+                      pasteConflict.targetDir,
+                      pasteConflict.operation,
+                      "skip",
+                    );
+                    await loadFiles(currentPath);
+                    toast({
+                      title: "Paste completed",
+                      description: "Existing items were discarded.",
+                    });
+                  } catch (error) {
+                    toast({
+                      title: "Paste failed",
+                      description: error instanceof Error ? error.message : String(error),
+                      variant: "destructive",
+                    });
+                  } finally {
+                    setPasteConflict(null);
+                  }
+                })();
+              }}
+            >
+              Discard
+            </AlertDialogAction>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (!pasteConflict) return;
+                void (async () => {
+                  try {
+                    await transferEntries(
+                      pasteConflict.fromSourceId,
+                      pasteConflict.toSourceId,
+                      pasteConflict.paths,
+                      pasteConflict.targetDir,
+                      pasteConflict.operation,
+                      "overwrite",
+                    );
+                    await loadFiles(currentPath);
+                    toast({
+                      title: "Paste completed",
+                      description: "Existing items were overwritten.",
+                    });
+                  } catch (error) {
+                    toast({
+                      title: "Paste failed",
+                      description: error instanceof Error ? error.message : String(error),
+                      variant: "destructive",
+                    });
+                  } finally {
+                    setPasteConflict(null);
+                  }
+                })();
+              }}
+            >
+              Overwrite
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
