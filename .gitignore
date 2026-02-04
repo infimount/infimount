@@ -11,6 +11,10 @@ dist/
 apps/dist/
 **/dist/
 
+# Vite dev cache
+.vite/
+**/.vite/
+
 # Tauri generated files
 apps/desktop/src-tauri/gen/
 apps/desktop/src-tauri/openhsb.json
@@ -19,4 +23,3 @@ apps/desktop/src-tauri/openhsb.json
 *.log
 pnpm-debug.log*
 .DS_Store
-
