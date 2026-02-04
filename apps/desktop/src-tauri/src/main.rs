@@ -6,15 +6,25 @@
 mod commands;
 mod state;
 
-use state::AppState;
-
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
+#[cfg(target_os = "macos")]
+use tauri::Manager;
 
 fn main() {
     tauri::Builder::default()
         .manage(state::AppState::new())
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(main_window) = app.get_webview_window("main") {
+                    // Native shadows on transparent, undecorated windows are rectangular on macOS,
+                    // which makes the window corners look sharp. Disable it and rely on the
+                    // webview's rounded UI instead.
+                    main_window.set_shadow(false)?;
+                }
+            }
+
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&quit_i])?;
 

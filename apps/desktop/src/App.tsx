@@ -13,7 +13,7 @@ const queryClient = new QueryClient();
 
 export const App: React.FC = () => {
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="h-full w-full bg-background text-foreground">
       <QueryClientProvider client={queryClient}>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <IconThemeProvider>

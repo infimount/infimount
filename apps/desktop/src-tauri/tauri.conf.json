@@ -22,7 +22,9 @@
         "dragDropEnabled": false,
         "decorations": false,
         "transparent": true,
-        "shadow": true
+        "shadow": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {
