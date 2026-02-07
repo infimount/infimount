@@ -34,7 +34,7 @@ infimount/
 │   │   │   ├── registry.rs          # Operator registry (source_id → Operator)
 │   │   │   ├── models.rs            # Source, Entry, SourceKind, error types
 │   │   │   ├── operations.rs        # Thin wrappers around OpenDAL APIs
-│   │   │   ├── config.rs            # Read/write app config (infimount.json + env override)
+│   │   │   ├── config.rs            # Read/write app config (~/.infimount/config.json + env override)
 │   │   │   └── util.rs              # Helpers (path utils, conversions)
 │   │   └── Cargo.toml
 │   │
@@ -100,7 +100,7 @@ When generating or modifying code, agents MUST follow these rules:
     - `write_bytes(source_id, path, data)`
     - `delete_entry(source_id, path)`
   - Managing config (load/save source list + preferences).
-- Config is stored as `infimount.json` at the workspace root (override with `INFIMOUNT_CONFIG`); keep it JSON-only until we add other stores.
+- Config is stored as `~/.infimount/config.json` (override with `INFIMOUNT_CONFIG`); keep it JSON-only until we add other stores.
   - Defining shared models (`Source`, `Entry`, `SourceKind`, error types).
 - Should be **portable**: usable by CLI, desktop, mobile, or any future app.
 

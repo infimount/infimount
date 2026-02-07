@@ -17,15 +17,11 @@ apps/dist/
 
 # Tauri generated files
 apps/desktop/src-tauri/gen/
-apps/desktop/src-tauri/infimount.json
 
 # Python
 .venv/
 __pycache__/
 *.pyc
-
-# Local config (may contain credentials)
-infimount.json
 
 # Logs and misc
 *.log

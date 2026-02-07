@@ -5,13 +5,29 @@ use crate::models::{Result, Source};
 
 /// Location of the configuration file.
 ///
-/// For now this is a simple `infimount.json` in the current working
-/// directory, or a custom path via the `INFIMOUNT_CONFIG` env var.
+/// Uses `~/.infimount/config.json` by default, or a custom
+/// path via the `INFIMOUNT_CONFIG` env var.
 fn config_path() -> PathBuf {
     if let Ok(p) = std::env::var("INFIMOUNT_CONFIG") {
         return PathBuf::from(p);
     }
-    PathBuf::from("infimount.json")
+
+    default_config_path().unwrap_or_else(|| PathBuf::from(".infimount").join("config.json"))
+}
+
+fn non_empty_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn home_dir() -> Option<String> {
+    non_empty_env("HOME").or_else(|| non_empty_env("USERPROFILE"))
+}
+
+fn default_config_path() -> Option<PathBuf> {
+    home_dir().map(|home| PathBuf::from(home).join(".infimount").join("config.json"))
 }
 
 /// Load all configured sources.
@@ -30,6 +46,11 @@ pub fn load_sources() -> Result<Vec<Source>> {
 /// Persist the current list of sources.
 pub fn save_sources(sources: &[Source]) -> Result<()> {
     let path = config_path();
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
     let data = serde_json::to_string_pretty(sources)?;
     fs::write(path, data)?;
     Ok(())

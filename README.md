@@ -11,6 +11,7 @@
 > 🔐 **LOCAL-FIRST BY DEFAULT**
 >
 > Infimount stores your storage sources, app config, and credentials on your own machine.
+> Default path: `~/.infimount/config.json` (or override via `INFIMOUNT_CONFIG`).
 > No Infimount-hosted backend is required.
 
 <p align="center">
