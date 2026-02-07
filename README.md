@@ -43,11 +43,15 @@ Pre-built binaries for **Linux**, **macOS**, and **Windows** are available on th
 
 | Platform | Latest Download Link | Format |
 |----------|----------------------|--------|
-| Linux (Debian/Ubuntu) | [Latest Linux Downloads](https://github.com/infimount/infimount/releases/latest) | `.deb` |
-| Linux (Fedora/RHEL) | [Latest Linux Downloads](https://github.com/infimount/infimount/releases/latest) | `.rpm` |
-| Linux (Universal) | [Latest Linux Downloads](https://github.com/infimount/infimount/releases/latest) | `.AppImage` |
-| macOS | [Latest macOS Downloads](https://github.com/infimount/infimount/releases/latest) | `.dmg` |
-| Windows | [Latest Windows Downloads](https://github.com/infimount/infimount/releases/latest) | `.msi` / `.exe` |
+| Linux (Debian/Ubuntu) | [Infimount-amd64.deb](https://github.com/infimount/infimount/releases/latest/download/Infimount-amd64.deb) | `.deb` |
+| Linux (Fedora/RHEL) | [Infimount-x86_64.rpm](https://github.com/infimount/infimount/releases/latest/download/Infimount-x86_64.rpm) | `.rpm` |
+| Linux (Universal) | [Infimount-x86_64.AppImage](https://github.com/infimount/infimount/releases/latest/download/Infimount-x86_64.AppImage) | `.AppImage` |
+| macOS | [Infimount.dmg](https://github.com/infimount/infimount/releases/latest/download/Infimount.dmg) | `.dmg` |
+| Windows (Installer) | [Infimount.msi](https://github.com/infimount/infimount/releases/latest/download/Infimount.msi) | `.msi` |
+| Windows (NSIS) | [Infimount-setup.exe](https://github.com/infimount/infimount/releases/latest/download/Infimount-setup.exe) | `.exe` |
+
+> ℹ️ **Tip:** Use assets from the **GitHub Release page**.
+> The `linux-artifacts.zip` from Actions is a temporary CI artifact and is not the canonical public download link.
 
 > ⚠️ **Note**: Binaries are currently unsigned. See [Installation Notes](#installation-notes) below.
 
