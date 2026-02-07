@@ -1,10 +1,10 @@
-<table align="center" border="0" cellpadding="0" cellspacing="0" style="border-collapse: collapse; border: none;">
+<table align="center" border="0" cellpadding="0" cellspacing="0" style="border-collapse: collapse; border: 0; border-style: hidden; outline: none;">
   <tr>
-    <td valign="middle" style="border: none; padding: 0 8px 0 0;">
-      <img src="infimount-1024.png" alt="Infimount" width="80" />
+    <td valign="middle" style="border: none; outline: none; padding: 0 8px 0 0;">
+      <img src="infimount-1024.png" alt="Infimount" width="80" style="display: block; border: 0; outline: none;" />
     </td>
-    <td valign="middle" style="border: none; padding: 0;">
-      <b><font size="7">Infimount</font></b>
+    <td valign="middle" style="border: none; outline: none; padding: 0;">
+      <span style="font-size: 36pt; font-weight: bold; line-height: 1;">Infimount</span>
     </td>
   </tr>
 </table>
