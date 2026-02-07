@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
-use opendal::services::{Azblob, Fs, Gcs, S3, Webdav};
+use opendal::services::{Azblob, Fs, Gcs, Webdav, S3};
 use opendal::Operator;
 use tokio::sync::RwLock;
 
@@ -157,9 +157,7 @@ fn build_operator(source: &Source) -> Result<Operator> {
 fn build_local_operator(root: &str) -> Result<Operator> {
     let expanded = expand_tilde_home(root);
     let builder = Fs::default().root(&expanded);
-    let op = Operator::new(builder)
-        .map_err(CoreError::Storage)?
-        .finish();
+    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
     Ok(op)
 }
 
@@ -231,9 +229,7 @@ fn build_s3_operator(source: &Source) -> Result<Operator> {
         }
     }
 
-    let op = Operator::new(builder)
-        .map_err(CoreError::Storage)?
-        .finish();
+    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
     Ok(op)
 }
 
@@ -259,9 +255,7 @@ fn build_webdav_operator(source: &Source) -> Result<Operator> {
         }
     }
 
-    let op = Operator::new(builder)
-        .map_err(CoreError::Storage)?
-        .finish();
+    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
     Ok(op)
 }
 
@@ -296,9 +290,7 @@ fn build_azure_blob_operator(source: &Source) -> Result<Operator> {
         }
     }
 
-    let op = Operator::new(builder)
-        .map_err(CoreError::Storage)?
-        .finish();
+    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
     Ok(op)
 }
 
@@ -343,9 +335,7 @@ fn build_gcs_operator(source: &Source) -> Result<Operator> {
         }
     }
 
-    let op = Operator::new(builder)
-        .map_err(CoreError::Storage)?
-        .finish();
+    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
     Ok(op)
 }
 
@@ -371,7 +361,11 @@ fn normalize_gcs_credential(raw: &str) -> Option<String> {
     } else {
         // Treat as base64; strip whitespace/newlines so pasted values still work.
         let cleaned: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
-        if cleaned.is_empty() { None } else { Some(cleaned) }
+        if cleaned.is_empty() {
+            None
+        } else {
+            Some(cleaned)
+        }
     }
 }
 
@@ -454,10 +448,7 @@ mod tests {
     #[test]
     fn expand_tilde_home_expands_simple_prefix() {
         std::env::set_var("HOME", "/home/testuser");
-        assert_eq!(
-            expand_tilde_home("~/Downloads"),
-            "/home/testuser/Downloads"
-        );
+        assert_eq!(expand_tilde_home("~/Downloads"), "/home/testuser/Downloads");
         assert_eq!(expand_tilde_home("~"), "/home/testuser");
     }
 }

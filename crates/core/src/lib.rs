@@ -1,9 +1,9 @@
-pub mod registry;
+pub mod config;
 pub mod models;
 pub mod operations;
-pub mod config;
-pub mod util;
+pub mod registry;
 pub mod schema;
+pub mod util;
 
 pub use crate::models::{CoreError, Entry, Result, Source, SourceKind};
 pub use crate::registry::OperatorRegistry;

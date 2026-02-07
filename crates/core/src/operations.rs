@@ -1,5 +1,5 @@
-use futures::TryStreamExt;
 use futures::io::AsyncWriteExt;
+use futures::TryStreamExt;
 use opendal::{ErrorKind, Operator};
 use std::path::Path;
 use tokio::fs;
@@ -96,9 +96,7 @@ pub async fn stat_entry(op: &Operator, path: &str) -> Result<Entry> {
         name,
         is_dir: meta.is_dir(),
         size: meta.content_length(),
-        modified_at: meta
-            .last_modified()
-            .map(|dt| dt.to_rfc3339()),
+        modified_at: meta.last_modified().map(|dt| dt.to_rfc3339()),
     })
 }
 
@@ -124,7 +122,11 @@ pub async fn delete(op: &Operator, path: &str) -> Result<()> {
 }
 
 /// Upload files from local paths to the target directory.
-pub async fn upload_files_from_paths(op: &Operator, paths: Vec<String>, target_dir: String) -> Result<()> {
+pub async fn upload_files_from_paths(
+    op: &Operator,
+    paths: Vec<String>,
+    target_dir: String,
+) -> Result<()> {
     for path_str in paths {
         let path = Path::new(&path_str);
         upload_path_recursive(op, path, &target_dir).await?;
@@ -171,7 +173,12 @@ async fn ensure_parent_dir(op: &Operator, path: &str) -> Result<()> {
     Ok(())
 }
 
-async fn copy_file_across_operators(from_op: &Operator, to_op: &Operator, from: &str, to: &str) -> Result<()> {
+async fn copy_file_across_operators(
+    from_op: &Operator,
+    to_op: &Operator,
+    from: &str,
+    to: &str,
+) -> Result<()> {
     let meta = from_op.stat(from).await?;
     let size = meta.content_length();
     let mut reader = from_op
@@ -194,7 +201,9 @@ fn split_file_name(name: &str) -> (String, String) {
     }
 
     match name.rsplit_once('.') {
-        Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() => (stem.to_string(), format!(".{}", ext)),
+        Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() => {
+            (stem.to_string(), format!(".{}", ext))
+        }
         _ => (name.to_string(), String::new()),
     }
 }
@@ -219,7 +228,11 @@ async fn unique_destination_path(
     if is_dir {
         let base_name = name.to_string();
         for idx in 1..=9999u32 {
-            let suffix = if idx == 1 { " copy".to_string() } else { format!(" copy {}", idx) };
+            let suffix = if idx == 1 {
+                " copy".to_string()
+            } else {
+                format!(" copy {}", idx)
+            };
             let next_name = format!("{}{}", base_name, suffix);
             candidate = ensure_dir_path(&join_target_dir(target_dir, &next_name));
             if !op.exists(&candidate).await? {
@@ -229,7 +242,11 @@ async fn unique_destination_path(
     } else {
         let (stem, ext) = split_file_name(name);
         for idx in 1..=9999u32 {
-            let suffix = if idx == 1 { " copy".to_string() } else { format!(" copy {}", idx) };
+            let suffix = if idx == 1 {
+                " copy".to_string()
+            } else {
+                format!(" copy {}", idx)
+            };
             let next_name = format!("{}{}{}", stem, suffix, ext);
             candidate = join_target_dir(target_dir, &next_name);
             if !op.exists(&candidate).await? {
@@ -352,7 +369,9 @@ pub async fn transfer_entries(
                     if operation == TransferOperation::Move && normalized_src == normalized_dest {
                         continue;
                     }
-                    if normalized_dest.starts_with(&normalized_src) && normalized_dest != normalized_src {
+                    if normalized_dest.starts_with(&normalized_src)
+                        && normalized_dest != normalized_src
+                    {
                         return Err(opendal::Error::new(
                             ErrorKind::IsSameFile,
                             "Cannot copy a folder into itself",
@@ -362,7 +381,10 @@ pub async fn transfer_entries(
                 }
 
                 // Copying onto itself is treated as "duplicate" (keep both) and won't conflict.
-                if operation == TransferOperation::Copy && same_source && normalized_src == normalized_dest {
+                if operation == TransferOperation::Copy
+                    && same_source
+                    && normalized_src == normalized_dest
+                {
                     continue;
                 }
 
@@ -409,7 +431,8 @@ pub async fn transfer_entries(
                 if operation == TransferOperation::Move && normalized_src == normalized_dest {
                     continue;
                 }
-                if normalized_dest.starts_with(&normalized_src) && normalized_dest != normalized_src {
+                if normalized_dest.starts_with(&normalized_src) && normalized_dest != normalized_src
+                {
                     return Err(opendal::Error::new(
                         ErrorKind::IsSameFile,
                         "Cannot copy a folder into itself",
@@ -457,12 +480,14 @@ pub async fn transfer_entries(
         } else {
             let file_name = extract_filename(&from_path);
             let base_dest_file = join_target_dir(target_dir, &file_name);
-            let dest_file =
-                if operation == TransferOperation::Copy && same_source && from_path == base_dest_file {
-                    unique_destination_path(to_op, target_dir, &file_name, false).await?
-                } else {
-                    base_dest_file
-                };
+            let dest_file = if operation == TransferOperation::Copy
+                && same_source
+                && from_path == base_dest_file
+            {
+                unique_destination_path(to_op, target_dir, &file_name, false).await?
+            } else {
+                base_dest_file
+            };
 
             if operation == TransferOperation::Move && same_source && from_path == dest_file {
                 continue;
@@ -485,7 +510,15 @@ pub async fn transfer_entries(
                     }
                 }
             }
-            transfer_file(from_op, to_op, &from_path, &dest_file, operation, same_source).await?;
+            transfer_file(
+                from_op,
+                to_op,
+                &from_path,
+                &dest_file,
+                operation,
+                same_source,
+            )
+            .await?;
         }
     }
 
@@ -533,22 +566,14 @@ async fn upload_path_recursive(op: &Operator, src: &Path, target_dir: &str) -> R
             while let Some(entry) = entries.next_entry().await.map_err(|e| {
                 opendal::Error::new(
                     ErrorKind::Unexpected,
-                    &format!(
-                        "Failed to iterate directory {}: {}",
-                        dir_path.display(),
-                        e
-                    ),
+                    &format!("Failed to iterate directory {}: {}", dir_path.display(), e),
                 )
             })? {
                 let child_path = entry.path();
                 let child_meta = fs::metadata(&child_path).await.map_err(|e| {
                     opendal::Error::new(
                         ErrorKind::Unexpected,
-                        &format!(
-                            "Failed to stat local path {}: {}",
-                            child_path.display(),
-                            e
-                        ),
+                        &format!("Failed to stat local path {}: {}", child_path.display(), e),
                     )
                 })?;
 
@@ -558,11 +583,7 @@ async fn upload_path_recursive(op: &Operator, src: &Path, target_dir: &str) -> R
                     let data = fs::read(&child_path).await.map_err(|e| {
                         opendal::Error::new(
                             ErrorKind::Unexpected,
-                            &format!(
-                                "Failed to read local file {}: {}",
-                                child_path.display(),
-                                e
-                            ),
+                            &format!("Failed to read local file {}: {}", child_path.display(), e),
                         )
                     })?;
                     op.write(&target_path, data).await?;
@@ -592,7 +613,9 @@ mod tests {
     async fn test_list_entries() {
         let op = create_test_operator().await;
         op.write("file1.txt", "content1".as_bytes()).await.unwrap();
-        op.write("dir1/file2.txt", "content2".as_bytes()).await.unwrap();
+        op.write("dir1/file2.txt", "content2".as_bytes())
+            .await
+            .unwrap();
 
         let entries = list_entries(&op, "/").await.unwrap();
         assert_eq!(entries.len(), 2); // file1.txt and dir1

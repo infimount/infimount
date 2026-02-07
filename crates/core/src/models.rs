@@ -70,7 +70,6 @@ impl Serialize for CoreError {
     }
 }
 
-
 pub type Result<T> = std::result::Result<T, CoreError>;
 
 /// A configured storage source (currently only local filesystem).
@@ -156,10 +155,13 @@ mod tests {
     fn test_error_serialization() {
         let err = CoreError::SourceNotFound("foo".to_string());
         let json = serde_json::to_value(&err).unwrap();
-        assert_eq!(json, json!({
-            "code": "NOT_FOUND",
-            "message": "source not found: foo"
-        }));
+        assert_eq!(
+            json,
+            json!({
+                "code": "NOT_FOUND",
+                "message": "source not found: foo"
+            })
+        );
     }
 
     #[test]

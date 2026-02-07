@@ -1,4 +1,7 @@
-use opendal::{services::{Azblob, Gcs, S3, Webdav}, Operator};
+use opendal::{
+    services::{Azblob, Gcs, Webdav, S3},
+    Operator,
+};
 use std::error::Error;
 
 #[tokio::main]
@@ -13,7 +16,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .allow_anonymous()
         .disable_vm_metadata()
         .disable_config_load();
-    
+
     let op_gcs = Operator::new(gcs)?.finish();
     match op_gcs.list("/").await {
         Ok(_) => println!("✅ GCS: Connection successful (Bucket 'test-bucket' found)"),
@@ -28,14 +31,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .region("us-east-1")
         .access_key_id("admin")
         .secret_access_key("password123");
-    
+
     let op_s3 = Operator::new(s3)?.finish();
-    
+
     match op_s3.write("test_file.txt", "Hello S3").await {
         Ok(_) => println!("✅ S3: Write successful (Bucket 'test-bucket' accessible)"),
         Err(e) => println!("❌ S3: Write Failed - {}", e),
     }
-    
+
     // 3. Verify Azure
     println!("\n--- Verifying Azure ---");
     let az = Azblob::default()
@@ -43,9 +46,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .container("test-container")
         .endpoint("http://127.0.0.1:10000/devstoreaccount1")
         .account_key("Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==");
-    
+
     let op_az = Operator::new(az)?.finish();
-    
+
     match op_az.write("test_file.txt", "Hello Azure").await {
         Ok(_) => println!("✅ Azure: Write successful"),
         Err(e) => {
@@ -59,7 +62,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let webdav = Webdav::default()
         .endpoint("http://localhost:7333")
         .root("/");
-    
+
     let op_webdav = Operator::new(webdav)?.finish();
     match op_webdav.list("/").await {
         Ok(_) => println!("✅ WebDAV: Connection successful"),

@@ -32,4 +32,3 @@ pub fn list_storage_schemas() -> Result<Vec<StorageKindSchema>> {
     let items: Vec<StorageKindSchema> = serde_json::from_str(JSON)?;
     Ok(items)
 }
-

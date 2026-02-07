@@ -75,10 +75,7 @@ pub async fn add_source(state: State<'_, AppState>, source: Source) -> Result<()
 }
 
 #[tauri::command]
-pub async fn remove_source(
-    state: State<'_, AppState>,
-    sourceId: String,
-) -> Result<(), CoreError> {
+pub async fn remove_source(state: State<'_, AppState>, sourceId: String) -> Result<(), CoreError> {
     state.registry.remove_source(&sourceId).await
 }
 
