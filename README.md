@@ -263,7 +263,7 @@ chmod +x Infimount-*.AppImage
 - **[Apache OpenDAL](https://opendal.apache.org/)** — Unified storage access layer
 - **[Tauri](https://tauri.app/)** — Lightweight native app framework
 - **[React](https://react.dev/)** + **[TypeScript](https://www.typescriptlang.org/)** — Modern frontend stack
-- **[Radix UI](https://www.radix-ui.com/)** — Accessible component primitives
+- **[File Icons](https://github.com/dmhendricks/file-icon-vectors/)** — File Icons by Dan Hendricks
 
 ---
 
