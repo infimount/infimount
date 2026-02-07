@@ -43,7 +43,8 @@ jobs:
             ${{ runner.os }}-pnpm-store-
 
       - name: Install dependencies
-        run: pnpm install
+        working-directory: .
+        run: pnpm install --frozen-lockfile
 
       - name: Lint
         run: pnpm exec eslint . --report-unused-disable-directives

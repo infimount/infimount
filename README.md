@@ -39,25 +39,21 @@
 
 Pre-built binaries for **Linux**, **macOS**, and **Windows** are available on the [Releases](https://github.com/infimount/infimount/releases) page.
 
-| Platform | Format |
-|----------|--------|
-| Linux (Debian/Ubuntu) | `.deb` |
-| Linux (Fedora/RHEL) | `.rpm` |
-| Linux (Universal) | `.AppImage` |
-| macOS | `.dmg` |
-| Windows | `.msi` / `.exe` |
+**Current pre-release:** [`v0.1.0-alpha.1`](https://github.com/infimount/infimount/releases/tag/v0.1.0-alpha.1)
+
+| Platform | Latest Download Link | Format |
+|----------|----------------------|--------|
+| Linux (Debian/Ubuntu) | [Latest Linux Downloads](https://github.com/infimount/infimount/releases/latest) | `.deb` |
+| Linux (Fedora/RHEL) | [Latest Linux Downloads](https://github.com/infimount/infimount/releases/latest) | `.rpm` |
+| Linux (Universal) | [Latest Linux Downloads](https://github.com/infimount/infimount/releases/latest) | `.AppImage` |
+| macOS | [Latest macOS Downloads](https://github.com/infimount/infimount/releases/latest) | `.dmg` |
+| Windows | [Latest Windows Downloads](https://github.com/infimount/infimount/releases/latest) | `.msi` / `.exe` |
 
 > ⚠️ **Note**: Binaries are currently unsigned. See [Installation Notes](#installation-notes) below.
 
 ### Build from Source
 
 See [Building from Source](#️-building-from-source) section below.
-
----
-
-## 🖼️ Screenshots
-
-*Coming soon — screenshots of the app in action*
 
 ---
 
