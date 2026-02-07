@@ -7,6 +7,12 @@
   Browse local and cloud storage through a single interface.
 </p>
 
+> 🔐 **LOCAL-FIRST BY DEFAULT**
+>
+> Infimount stores your storage sources, app config, and credentials on your own machine.
+> By default this is `infimount.json` (or a custom path via `INFIMOUNT_CONFIG`).
+> No Infimount-hosted backend is required.
+
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"/></a>
   <a href="CODE_OF_CONDUCT.md"><img src="https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg" alt="Contributor Covenant"/></a>
@@ -20,6 +26,7 @@
 ## ✨ Features
 
 - 🗂️ **Unified File Browser** — Browse local files, S3, Azure Blob, GCS, and WebDAV from one app
+- 🔐 **Local-First Storage of Config + Credentials** — Sources and credentials persist locally on your machine
 - 🖼️ **Rich Previews** — View images, text files, and documents inline
 - 📁 **Grid & List Views** — Switch between visual layouts
 - 🔄 **Drag & Drop** — Upload files by dropping them into any storage
@@ -74,6 +81,7 @@ Infimount is built on a clean, modular architecture:
 ```
 
 **Core Principles:**
+- 🏠 **Your config lives locally** — Storage definitions and credentials are kept on-device
 - 🚫 **No reinventing storage logic** — All I/O delegated to [Apache OpenDAL](https://opendal.apache.org/)
 - 🪶 **Thin Rust core** — Only orchestrates operators, no business logic bloat
 - 🔒 **UI never touches storage** — All operations go through Tauri commands
