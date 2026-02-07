@@ -1,9 +1,9 @@
-<table align="center">
+<table align="center" border="0" cellpadding="0" cellspacing="0" style="border-collapse: collapse; border: none;">
   <tr>
-    <td valign="middle">
+    <td valign="middle" style="border: none; padding: 0 8px 0 0;">
       <img src="infimount-1024.png" alt="Infimount" width="80" />
     </td>
-    <td valign="middle">
+    <td valign="middle" style="border: none; padding: 0;">
       <b><font size="7">Infimount</font></b>
     </td>
   </tr>

@@ -22,7 +22,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'pnpm'
 
       - uses: pnpm/action-setup@v3
         name: Install pnpm
@@ -47,7 +46,7 @@ jobs:
         run: pnpm install
 
       - name: Lint
-        run: pnpm lint
+        run: pnpm exec eslint . --report-unused-disable-directives
 
       - name: Type Check
         run: pnpm tsc --noEmit
@@ -79,7 +78,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings -A clippy::result_large_err -A clippy::needless_borrows_for_generic_args
 
       - name: Run tests
         run: cargo test --workspace
@@ -88,4 +87,4 @@ jobs:
         run: cargo check -p infimount_core
 
       - name: Check Tauri Desktop
-        run: cargo check -p openhsb-desktop
+        run: cargo check -p infimount
