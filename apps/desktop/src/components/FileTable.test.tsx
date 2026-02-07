@@ -36,6 +36,7 @@ describe("FileTable", () => {
     it("renders list of files", () => {
         render(
             <FileTable
+                sourceId="test"
                 files={mockFiles}
                 selectedFiles={new Set()}
                 onSelectFile={() => { }}
@@ -53,6 +54,7 @@ describe("FileTable", () => {
         const onSelectFile = vi.fn();
         render(
             <FileTable
+                sourceId="test"
                 files={mockFiles}
                 selectedFiles={new Set()}
                 onSelectFile={onSelectFile}
@@ -70,6 +72,7 @@ describe("FileTable", () => {
         const onOpenFile = vi.fn();
         render(
             <FileTable
+                sourceId="test"
                 files={mockFiles}
                 selectedFiles={new Set()}
                 onSelectFile={() => { }}

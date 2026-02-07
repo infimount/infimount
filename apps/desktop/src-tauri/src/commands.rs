@@ -1,7 +1,7 @@
 use tauri::State;
 
 use crate::state::AppState;
-use openhsb_core::{operations, schema::StorageKindSchema, CoreError, Entry, Source};
+use infimount_core::{operations, schema::StorageKindSchema, CoreError, Entry, Source};
 
 #[tauri::command]
 pub async fn list_entries(
@@ -146,5 +146,5 @@ pub async fn transfer_entries(
 
 #[tauri::command]
 pub fn list_storage_schemas() -> Result<Vec<StorageKindSchema>, CoreError> {
-    openhsb_core::schema::list_storage_schemas()
+    infimount_core::schema::list_storage_schemas()
 }

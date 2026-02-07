@@ -20,7 +20,7 @@ import { StorageType, type StorageConfig } from "@/types/storage";
 import { listStorageSchemas, type StorageKindSchema } from "@/lib/api";
 import s3Icon from "@/assets/amazon-s3.svg";
 import azureIcon from "@/assets/azure-storage-blob.svg";
-import gcsIcon from "@/assets/icons8-google-cloud.svg";
+import gcsIcon from "@/assets/google-cloud.svg";
 import webdavIcon from "@/assets/webdav.svg";
 import folderNetworkIcon from "@/assets/folder-network.svg";
 
@@ -199,17 +199,30 @@ export function AddStorageDialog({
               >
                 {field.label}
               </Label>
-              <Input
-                id={field.name}
-                type={field.input_type === "password" || field.secret ? "password" : "text"}
-                value={config[field.name] || ""}
-                onChange={(e) =>
-                  setConfig({ ...config, [field.name]: e.target.value })
-                }
-                placeholder={field.label}
-                required={field.required}
-                className="border border-border bg-[hsl(var(--card))] text-sm text-[hsl(var(--card-foreground))] focus-visible:border-border/60 focus-visible:ring-0 focus-visible:ring-offset-0"
-              />
+              {field.input_type === "textarea" ? (
+                <textarea
+                  id={field.name}
+                  value={config[field.name] || ""}
+                  onChange={(e) =>
+                    setConfig({ ...config, [field.name]: e.target.value })
+                  }
+                  placeholder={field.label}
+                  rows={6}
+                  className="w-full resize-none rounded-md border border-border bg-[hsl(var(--card))] px-3 py-2 text-xs font-mono text-[hsl(var(--card-foreground))] shadow-sm outline-none focus-visible:border-border/60 focus-visible:ring-0 focus-visible:ring-offset-0"
+                />
+              ) : (
+                <Input
+                  id={field.name}
+                  type={field.input_type === "password" || field.secret ? "password" : "text"}
+                  value={config[field.name] || ""}
+                  onChange={(e) =>
+                    setConfig({ ...config, [field.name]: e.target.value })
+                  }
+                  placeholder={field.label}
+                  required={field.required}
+                  className="border border-border bg-[hsl(var(--card))] text-sm text-[hsl(var(--card-foreground))] focus-visible:border-border/60 focus-visible:ring-0 focus-visible:ring-offset-0"
+                />
+              )}
             </div>
           ))}
 

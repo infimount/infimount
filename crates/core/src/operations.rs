@@ -23,9 +23,34 @@ pub enum TransferConflictPolicy {
     Skip,
 }
 
+fn normalize_opendal_path(path: &str) -> String {
+    let trimmed = path.trim();
+    if trimmed.is_empty() || trimmed == "/" {
+        return String::new();
+    }
+    trimmed.trim_start_matches('/').to_string()
+}
+
+fn normalize_list_path(path: &str) -> String {
+    let mut p = normalize_opendal_path(path);
+    if !p.is_empty() && !p.ends_with('/') {
+        p.push('/');
+    }
+    p
+}
+
 /// List entries at the given path using the provided operator.
 pub async fn list_entries(op: &Operator, path: &str) -> Result<Vec<Entry>> {
-    let mut lister = op.lister(path).await?;
+    let p = normalize_list_path(path);
+    let mut lister = if p.is_empty() {
+        match op.lister("").await {
+            Ok(l) => l,
+            Err(e) if e.kind() == ErrorKind::NotFound => op.lister("/").await?,
+            Err(e) => return Err(e.into()),
+        }
+    } else {
+        op.lister(&p).await?
+    };
     let mut out = Vec::new();
 
     while let Some(obj) = lister.try_next().await? {
@@ -61,8 +86,9 @@ pub async fn list_entries(op: &Operator, path: &str) -> Result<Vec<Entry>> {
 
 /// Stat a single entry.
 pub async fn stat_entry(op: &Operator, path: &str) -> Result<Entry> {
-    let meta = op.stat(path).await?;
-    let full_path = path.to_string();
+    let p = normalize_opendal_path(path);
+    let meta = op.stat(&p).await?;
+    let full_path = p.to_string();
     let name = extract_filename(&full_path);
 
     Ok(Entry {
@@ -78,19 +104,22 @@ pub async fn stat_entry(op: &Operator, path: &str) -> Result<Entry> {
 
 /// Read the full contents of a file.
 pub async fn read_full(op: &Operator, path: &str) -> Result<Vec<u8>> {
-    let data = op.read(path).await?;
+    let p = normalize_opendal_path(path);
+    let data = op.read(&p).await?;
     Ok(data.to_vec())
 }
 
 /// Write the full contents of a file, overwriting if it exists.
 pub async fn write_full(op: &Operator, path: &str, data: &[u8]) -> Result<()> {
-    op.write(path, data.to_vec()).await?;
+    let p = normalize_opendal_path(path);
+    op.write(&p, data.to_vec()).await?;
     Ok(())
 }
 
 /// Delete a path (file or directory).
 pub async fn delete(op: &Operator, path: &str) -> Result<()> {
-    op.remove_all(path).await?;
+    let p = normalize_opendal_path(path);
+    op.remove_all(&p).await?;
     Ok(())
 }
 

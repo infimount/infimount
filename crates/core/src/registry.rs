@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine;
 use opendal::services::{Azblob, Fs, Gcs, S3, Webdav};
 use opendal::Operator;
 use tokio::sync::RwLock;
@@ -153,11 +155,44 @@ fn build_operator(source: &Source) -> Result<Operator> {
 }
 
 fn build_local_operator(root: &str) -> Result<Operator> {
-    let builder = Fs::default().root(root);
+    let expanded = expand_tilde_home(root);
+    let builder = Fs::default().root(&expanded);
     let op = Operator::new(builder)
         .map_err(CoreError::Storage)?
         .finish();
     Ok(op)
+}
+
+fn expand_tilde_home(path: &str) -> String {
+    let trimmed = path.trim();
+    if trimmed == "~" {
+        return home_dir().unwrap_or_else(|| trimmed.to_string());
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("~/") {
+        if let Some(home) = home_dir() {
+            return format!("{home}/{rest}");
+        }
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("~\\") {
+        if let Some(home) = home_dir() {
+            return format!("{home}\\{rest}");
+        }
+    }
+
+    trimmed.to_string()
+}
+
+fn home_dir() -> Option<String> {
+    std::env::var("HOME")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| {
+            std::env::var("USERPROFILE")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+        })
 }
 
 fn build_s3_operator(source: &Source) -> Result<Operator> {
@@ -280,9 +315,11 @@ fn build_gcs_operator(source: &Source) -> Result<Operator> {
             builder = builder.bucket(bucket);
         }
 
-        let credential = config.get("credential").filter(|s| !s.is_empty());
-        if let Some(cred) = credential {
-            builder = builder.credential(cred);
+        let credential = config
+            .get("credential")
+            .and_then(|v| normalize_gcs_credential(v));
+        if let Some(encoded) = &credential {
+            builder = builder.credential(encoded);
         }
 
         let credential_path = config.get("credentialPath").filter(|s| !s.is_empty());
@@ -312,6 +349,32 @@ fn build_gcs_operator(source: &Source) -> Result<Operator> {
     Ok(op)
 }
 
+fn normalize_gcs_credential(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // Some paste sources include a UTF-8 BOM or wrap JSON in quotes. Handle both.
+    let trimmed = trimmed.strip_prefix('\u{feff}').unwrap_or(trimmed).trim();
+    let trimmed = if (trimmed.starts_with('"') && trimmed.ends_with('"'))
+        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+    {
+        trimmed[1..trimmed.len().saturating_sub(1)].trim()
+    } else {
+        trimmed
+    };
+
+    if trimmed.starts_with('{') {
+        // OpenDAL/reqsign expects base64-encoded credential content.
+        Some(BASE64_STANDARD.encode(trimmed.as_bytes()))
+    } else {
+        // Treat as base64; strip whitespace/newlines so pasted values still work.
+        let cleaned: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+        if cleaned.is_empty() { None } else { Some(cleaned) }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,7 +385,7 @@ mod tests {
 
     fn test_config_path() -> PathBuf {
         let mut p = env::temp_dir();
-        p.push("openhsb_test_config.json");
+        p.push("infimount_test_config.json");
         p
     }
 
@@ -334,7 +397,7 @@ mod tests {
     async fn add_remove_source_persists() {
         let cfg = test_config_path();
         reset_config_file(&cfg);
-        env::set_var("OPENHSB_CONFIG", &cfg);
+        env::set_var("INFIMOUNT_CONFIG", &cfg);
 
         let registry = OperatorRegistry::new(vec![]);
 
@@ -357,5 +420,44 @@ mod tests {
 
         // cleanup
         let _ = fs::remove_file(cfg);
+    }
+
+    #[test]
+    fn normalize_gcs_credential_encodes_raw_json() {
+        let raw = r#"{ "type": "service_account", "project_id": "demo" }"#;
+        let encoded = normalize_gcs_credential(raw).expect("credential must exist");
+        let decoded = BASE64_STANDARD
+            .decode(&encoded)
+            .expect("must be valid base64");
+        assert_eq!(std::str::from_utf8(&decoded).unwrap(), raw);
+    }
+
+    #[test]
+    fn normalize_gcs_credential_strips_quotes_and_bom() {
+        let raw = "\u{feff}\"{\n  \"type\": \"service_account\"\n}\"";
+        let encoded = normalize_gcs_credential(raw).expect("credential must exist");
+        let decoded = BASE64_STANDARD
+            .decode(&encoded)
+            .expect("must be valid base64");
+        let decoded_str = std::str::from_utf8(&decoded).unwrap();
+        assert!(decoded_str.starts_with('{'));
+        assert!(decoded_str.contains("\"type\""));
+    }
+
+    #[test]
+    fn normalize_gcs_credential_cleans_base64_whitespace() {
+        let encoded = BASE64_STANDARD.encode(b"hello");
+        let with_ws = format!("  {} \n", encoded);
+        assert_eq!(normalize_gcs_credential(&with_ws).unwrap(), encoded);
+    }
+
+    #[test]
+    fn expand_tilde_home_expands_simple_prefix() {
+        std::env::set_var("HOME", "/home/testuser");
+        assert_eq!(
+            expand_tilde_home("~/Downloads"),
+            "/home/testuser/Downloads"
+        );
+        assert_eq!(expand_tilde_home("~"), "/home/testuser");
     }
 }

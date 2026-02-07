@@ -38,6 +38,7 @@ describe("FileGrid", () => {
     it("renders list of files", () => {
         render(
             <FileGrid
+                sourceId="test"
                 files={mockFiles}
                 selectedFiles={new Set()}
                 onSelectFile={() => { }}
@@ -58,6 +59,7 @@ describe("FileGrid", () => {
         const onSelectFile = vi.fn();
         render(
             <FileGrid
+                sourceId="test"
                 files={mockFiles}
                 selectedFiles={new Set()}
                 onSelectFile={onSelectFile}
@@ -75,6 +77,7 @@ describe("FileGrid", () => {
         const onOpenFile = vi.fn();
         render(
             <FileGrid
+                sourceId="test"
                 files={mockFiles}
                 selectedFiles={new Set()}
                 onSelectFile={() => { }}

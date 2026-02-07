@@ -86,10 +86,12 @@ const storageToSource = (storage: StorageConfig): Source => ({
   config: storage.config,
 });
 
-const SELECTED_STORAGE_KEY = "openhsb.selectedStorageId";
+const SELECTED_STORAGE_KEY = "infimount.selectedStorageId";
 
 const Index = () => {
   const [storages, setStorages] = useState<StorageConfig[]>([]);
+  const [isStoragesLoading, setIsStoragesLoading] = useState(true);
+  const [storageRefreshTick, setStorageRefreshTick] = useState<Record<string, number>>({});
   const [selectedStorage, setSelectedStorage] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
     const stored = window.localStorage.getItem(SELECTED_STORAGE_KEY);
@@ -99,6 +101,7 @@ const Index = () => {
   const [editingStorage, setEditingStorage] = useState<StorageConfig | null>(null);
 
   const reloadStorages = useCallback(async () => {
+    setIsStoragesLoading(true);
     try {
       const sources = await listSources();
       const mapped = sources.map(sourceToStorage);
@@ -124,6 +127,8 @@ const Index = () => {
         description: error instanceof Error ? error.message : String(error),
         variant: "destructive",
       });
+    } finally {
+      setIsStoragesLoading(false);
     }
   }, [selectedStorage]);
 
@@ -233,6 +238,10 @@ const Index = () => {
         title: "Refreshing",
         description: `Refreshing ${storage?.name ?? "storage"}...`,
       });
+      setStorageRefreshTick((prev) => ({
+        ...prev,
+        [id]: (prev[id] ?? 0) + 1,
+      }));
       await reloadStorages();
     })();
   };
@@ -343,7 +352,7 @@ const Index = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "openhsb-storages.json";
+    link.download = "infimount-storages.json";
     link.click();
     URL.revokeObjectURL(url);
 
@@ -411,6 +420,7 @@ const Index = () => {
                 onRefreshStorage={handleRefreshStorage}
                 onImportStorages={handleImportStorages}
                 onExportStorages={handleExportStorages}
+                isLoading={isStoragesLoading}
               />
             </Panel>
             <PanelResizeHandle className="hidden md:flex w-px flex-col items-center justify-center bg-transparent group/handle relative z-10">
@@ -444,6 +454,7 @@ const Index = () => {
             onRefreshStorage={handleRefreshStorage}
             onImportStorages={handleImportStorages}
             onExportStorages={handleExportStorages}
+            isLoading={isStoragesLoading}
           />
         </div>
 
@@ -455,6 +466,7 @@ const Index = () => {
                 key={currentStorage.id}
                 sourceId={currentStorage.id}
                 storageName={currentStorage.name}
+                refreshTick={storageRefreshTick[currentStorage.id] ?? 0}
                 onPreviewVisibilityChange={setIsPreviewVisible}
                 onToggleSidebar={toggleSidebar}
                 isSidebarOpen={isSidebarOpen}

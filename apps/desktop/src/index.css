@@ -194,6 +194,18 @@ h3 {
 @tailwind utilities;
 
 @layer utilities {
+  .infimount-zoom-shell {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .infimount-zoom-inner {
+    transform: scale(var(--infimount-zoom, 1));
+    transform-origin: top left;
+    width: calc(100% / var(--infimount-zoom, 1));
+    height: calc(100% / var(--infimount-zoom, 1));
+  }
+
   .line-clamp-1 {
     display: -webkit-box;
     -webkit-box-orient: vertical;

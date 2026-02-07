@@ -1,4 +1,4 @@
-# OpenHSB – Build & Run Guide
+# Infimount – Build & Run Guide
 
 This repo is a multi‑target Tauri + React app.  
 Below are the steps to run and build the **desktop app** on Linux, Windows, macOS, and the entry points for iOS.
@@ -78,23 +78,23 @@ pnpm tauri build
 
 On Linux this produces in `target/release`:
 
-- Binary: `target/release/OpenHSB`
-- `.deb`: `target/release/bundle/deb/OpenHSB_0.1.0_amd64.deb`
-- `.rpm`: `target/release/bundle/rpm/OpenHSB-0.1.0-1.x86_64.rpm`
+- Binary: `target/release/infimount`
+- `.deb`: `target/release/bundle/deb/Infimount_0.1.0_amd64.deb`
+- `.rpm`: `target/release/bundle/rpm/Infimount-0.1.0-1.x86_64.rpm`
 - (Optional) AppImage: may require additional permissions; if it fails with “Permission denied”, rerun on your local machine with appropriate permissions.
 
 Install the `.deb`:
 
 ```bash
-sudo apt install ./target/release/bundle/deb/OpenHSB_0.1.0_amd64.deb
+sudo apt install ./target/release/bundle/deb/Infimount_0.1.0_amd64.deb
 ```
 
 > **Icons on Linux:**  
 > The `.deb` installs icons under:
-> - `/usr/share/icons/hicolor/32x32/apps/OpenHSB.png`  
-> - `/usr/share/icons/hicolor/128x128/apps/OpenHSB.png`  
-> - `/usr/share/icons/hicolor/256x256@2/apps/OpenHSB.png`  
-> and a desktop entry at `/usr/share/applications/OpenHSB.desktop` with `Icon=OpenHSB`.  
+> - `/usr/share/icons/hicolor/32x32/apps/Infimount.png`  
+> - `/usr/share/icons/hicolor/128x128/apps/Infimount.png`  
+> - `/usr/share/icons/hicolor/256x256@2/apps/Infimount.png`  
+> and a desktop entry at `/usr/share/applications/Infimount.desktop` with `Icon=Infimount`.  
 > If the dash still shows a generic gear, it is usually an icon cache issue:
 > - Log out and log back in, **or**
 > - Run a cache refresh for your desktop environment (e.g. `gtk-update-icon-cache` / `update-icon-caches`) after installing.
@@ -104,7 +104,7 @@ sudo apt install ./target/release/bundle/deb/OpenHSB_0.1.0_amd64.deb
 On a Windows machine:
 
 ```powershell
-cd path\to\openhsb\apps\desktop
+cd path\\to\\infimount\\apps\\desktop
 pnpm install
 pnpm build
 pnpm tauri build
@@ -113,7 +113,7 @@ pnpm tauri build
 Tauri will generate a Windows executable and installer under `target\release\bundle\` (e.g. NSIS `.exe` or MSI, depending on configuration).
 
 The app name and icon are taken from:
-- `apps/desktop/src-tauri/tauri.conf.json` → `productName: "OpenHSB"`
+- `apps/desktop/src-tauri/tauri.conf.json` → `productName: "Infimount"`
 - `apps/desktop/src-tauri/icons/icon.ico` (generated via `cargo tauri icon`).
 
 ### 4.3 macOS
@@ -121,7 +121,7 @@ The app name and icon are taken from:
 On macOS:
 
 ```bash
-cd /path/to/openhsb/apps/desktop
+cd /path/to/infimount/apps/desktop
 pnpm install
 pnpm build
 pnpm tauri build
@@ -145,7 +145,7 @@ The repo includes iOS icon assets under `apps/desktop/src-tauri/icons/ios` / `iO
 Typical flow on macOS:
 
 ```bash
-cd /path/to/openhsb/apps/desktop
+cd /path/to/infimount/apps/desktop
 pnpm install
 pnpm build
 cargo tauri ios dev    # run in simulator
@@ -180,4 +180,3 @@ cargo tauri icon src-tauri/icons/MacOS.appiconset/icon-512x512.png
 ```
 
 If you ever update the logo, re‑run the `cargo tauri icon` command and then rebuild with `pnpm tauri build`.
-

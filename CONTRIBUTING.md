@@ -1,6 +1,6 @@
-# Contributing to OpenHSB
+# Contributing to Infimount
 
-Thank you for your interest in contributing to OpenHSB! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to Infimount! This document provides guidelines and instructions for contributing.
 
 ## Table of Contents
 - [Code of Conduct](#code-of-conduct)
@@ -20,12 +20,12 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 1. **Fork the repository** on GitHub
 2. **Clone your fork** locally:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/openhsb.git
-   cd openhsb
+   git clone https://github.com/YOUR_USERNAME/infimount.git
+   cd infimount
    ```
 3. **Add the upstream remote**:
    ```bash
-   git remote add upstream https://github.com/openhsb/openhsb.git
+   git remote add upstream https://github.com/infimount/infimount.git
    ```
 
 ## Development Setup
@@ -144,4 +144,4 @@ Use the appropriate issue template when available.
 
 ---
 
-Thank you for contributing to OpenHSB! 🎉
+Thank you for contributing to Infimount!

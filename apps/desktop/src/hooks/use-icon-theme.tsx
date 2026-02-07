@@ -11,7 +11,7 @@ export const ICON_THEME_LABELS: Record<IconTheme, string> = {
   square: "Square",
 };
 
-const STORAGE_KEY = "openhsb.iconTheme";
+const STORAGE_KEY = "infimount.iconTheme";
 
 type IconThemeContextValue = {
   theme: IconTheme;

@@ -1,5 +1,5 @@
 [package]
-name = "openhsb_core"
+name = "infimount_core"
 version = "0.1.0"
 edition = "2021"
 
@@ -11,3 +11,4 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs"] }
 thiserror = "1.0"
+base64 = "0.22"

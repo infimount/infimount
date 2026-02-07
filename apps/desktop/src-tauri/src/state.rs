@@ -1,4 +1,4 @@
-use openhsb_core::{config, OperatorRegistry};
+use infimount_core::{config, OperatorRegistry};
 
 pub struct AppState {
     pub registry: OperatorRegistry,
@@ -11,4 +11,3 @@ impl AppState {
         Self { registry }
     }
 }
-

@@ -3,6 +3,7 @@ import { fireEvent } from "@testing-library/react";
 import { FileBrowser } from "./FileBrowser";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { listEntries, TauriApiError } from "@/lib/api";
+import { AppZoomProvider } from "@/hooks/use-app-zoom";
 
 // Mock the api module
 vi.mock("@/lib/api", () => ({
@@ -39,7 +40,11 @@ describe("FileBrowser Error Handling", () => {
             .mockResolvedValueOnce([])
             .mockRejectedValueOnce(new TauriApiError("Raw error", "NOT_FOUND"));
 
-        render(<FileBrowser sourceId="test" storageName="Test Storage" />);
+        render(
+            <AppZoomProvider>
+                <FileBrowser sourceId="test" storageName="Test Storage" />
+            </AppZoomProvider>
+        );
 
         // Navigate to a missing path (root NOT_FOUND is treated as empty).
         await waitFor(() => {
@@ -61,7 +66,11 @@ describe("FileBrowser Error Handling", () => {
     it("displays user-friendly message for PERMISSION_DENIED error", async () => {
         (listEntries as any).mockRejectedValue(new TauriApiError("Raw error", "PERMISSION_DENIED"));
 
-        render(<FileBrowser sourceId="test" storageName="Test Storage" />);
+        render(
+            <AppZoomProvider>
+                <FileBrowser sourceId="test" storageName="Test Storage" />
+            </AppZoomProvider>
+        );
 
         await waitFor(() => {
             expect(screen.getByText("Access denied")).toBeInTheDocument();
@@ -74,7 +83,11 @@ describe("FileBrowser Error Handling", () => {
     it("displays raw message for unknown errors", async () => {
         (listEntries as any).mockRejectedValue(new TauriApiError("Something went wrong", "UNKNOWN"));
 
-        render(<FileBrowser sourceId="test" storageName="Test Storage" />);
+        render(
+            <AppZoomProvider>
+                <FileBrowser sourceId="test" storageName="Test Storage" />
+            </AppZoomProvider>
+        );
 
         await waitFor(() => {
             expect(screen.getByText("Could not connect to this storage")).toBeInTheDocument();

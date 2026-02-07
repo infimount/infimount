@@ -12,10 +12,10 @@ currently being supported with security updates.
 
 ## Reporting a Vulnerability
 
-We take the security of OpenHSB seriously. If you discover a security vulnerability, please do NOT open an issue.
+We take the security of Infimount seriously. If you discover a security vulnerability, please do NOT open an issue.
 
 Instead, please report it via [INSERT CONTACT METHOD, e.g., email to security@example.com].
 
 We will acknowledge your report within 48 hours and provide an estimated timeframe for a fix. We ask that you give us a reasonable amount of time to patch the vulnerability before disclosing it to the public.
 
-Thank you for helping keep OpenHSB safe!
+Thank you for helping keep Infimount safe!

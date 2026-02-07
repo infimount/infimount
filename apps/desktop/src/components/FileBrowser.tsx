@@ -64,6 +64,8 @@ import {
   useIconTheme,
 } from "@/hooks/use-icon-theme";
 import { useFileClipboard } from "@/hooks/use-file-clipboard";
+import { useAppZoom } from "@/hooks/use-app-zoom";
+import infinityLoader from "@/assets/loading-infinity.apng";
 
 // Helper to extract file-like objects (including from dropped folders, where supported)
 async function collectFilesFromDataTransfer(
@@ -182,6 +184,7 @@ async function collectFilesFromDataTransfer(
 interface FileBrowserProps {
   sourceId: string;
   storageName: string;
+  refreshTick?: number;
   onPreviewVisibilityChange?: (visible: boolean) => void;
   onToggleSidebar?: () => void;
   isSidebarOpen?: boolean;
@@ -195,10 +198,12 @@ interface LoadError {
 export function FileBrowser({
   sourceId,
   storageName,
+  refreshTick = 0,
   onPreviewVisibilityChange,
   onToggleSidebar,
   isSidebarOpen,
 }: FileBrowserProps) {
+  const { zoom } = useAppZoom();
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPath, setCurrentPath] = useState<string>("/");
@@ -235,6 +240,11 @@ export function FileBrowser({
       .map((line) => line.trim())
       .filter(Boolean)[0];
 
+    const msg = err.message || "";
+    const isGcsCredentialLoadFailure =
+      msg.includes("service: gcs")
+      && (msg.includes("reqsign::LoadCredential") || msg.includes("metadata.google.internal"));
+
     switch (err.code) {
       case "NOT_FOUND":
         return {
@@ -262,6 +272,13 @@ export function FileBrowser({
           detail: "The request took too long. Please check your connection and retry.",
         };
       default:
+        if (isGcsCredentialLoadFailure) {
+          return {
+            title: "Missing Google Cloud credentials",
+            detail:
+              "Add a Service Account JSON to this storage (Edit storage → Google Cloud Storage → Service Account JSON). You can paste the raw JSON. Or configure Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS).",
+          };
+        }
         return {
           title: "Could not connect to this storage",
           detail: shortMessage || err.message,
@@ -299,14 +316,6 @@ export function FileBrowser({
       setSelectedFiles(new Set());
     } catch (err) {
       if (err instanceof TauriApiError) {
-        // If the root path is empty/not found, treat it as an empty folder instead of an error.
-        if (err.code === "NOT_FOUND" && (path === "/" || path === "")) {
-          setAllFiles([]);
-          setError(null);
-          setSelectedFiles(new Set());
-          setLoading(false);
-          return;
-        }
         setError(describeLoadError(err));
       } else {
         setError({
@@ -333,7 +342,7 @@ export function FileBrowser({
   useEffect(() => {
     void loadFiles(currentPath);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPath, sourceId]);
+  }, [currentPath, sourceId, refreshTick]);
 
   const handleNavigate = (path: string, options?: { fromHistory?: boolean }) => {
     const normalized = path || "/";
@@ -390,6 +399,8 @@ export function FileBrowser({
     }
     setSelectedFiles(new Set([fileId]));
   };
+
+  const clearSelection = () => setSelectedFiles(new Set());
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -449,7 +460,7 @@ export function FileBrowser({
       }
     } catch (err) {
       if (err instanceof TauriApiError) {
-        if (err.code === "ALREADY_EXISTS" && clipboard.operation === "copy") {
+        if (err.code === "ALREADY_EXISTS") {
           setPasteConflict({
             fromSourceId: clipboard.sourceId,
             toSourceId: sourceId,
@@ -467,6 +478,50 @@ export function FileBrowser({
       } else {
         toast({
           title: clipboard.operation === "copy" ? "Copy failed" : "Move failed",
+          description: err instanceof Error ? err.message : String(err),
+          variant: "destructive",
+        });
+      }
+    }
+  };
+
+  const moveIntoFolder = async (paths: string[], folderPath: string) => {
+    if (paths.length === 0) return;
+
+    try {
+      await transferEntries(
+        sourceId,
+        sourceId,
+        paths,
+        folderPath,
+        "move",
+        "fail",
+      );
+      await loadFiles(currentPath);
+      toast({
+        title: "Moved",
+        description: `${paths.length} item${paths.length === 1 ? "" : "s"} moved.`,
+      });
+    } catch (err) {
+      if (err instanceof TauriApiError) {
+        if (err.code === "ALREADY_EXISTS") {
+          setPasteConflict({
+            fromSourceId: sourceId,
+            toSourceId: sourceId,
+            paths,
+            targetDir: folderPath,
+            operation: "move",
+          });
+          return;
+        }
+        toast({
+          title: "Move failed",
+          description: err.message,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Move failed",
           description: err instanceof Error ? err.message : String(err),
           variant: "destructive",
         });
@@ -699,9 +754,15 @@ export function FileBrowser({
   const [isDragging, setIsDragging] = useState(false);
   const uploadZoneRef = useRef<UploadZoneRef | null>(null);
 
-  const isFileDrag = (event: React.DragEvent) => {
-    const types = Array.from(event.dataTransfer?.types ?? []);
-    return types.includes("Files") || types.includes("text/uri-list");
+  const isExternalFileDrag = (event: React.DragEvent) => {
+    const dt = event.dataTransfer;
+    if (!dt) return false;
+
+    // Reliable signal for OS file drags.
+    if (dt.files && dt.files.length > 0) return true;
+
+    const items = Array.from(dt.items ?? []);
+    return items.some((item) => item.kind === "file");
   };
 
   return (
@@ -709,7 +770,7 @@ export function FileBrowser({
       <div
         className="relative flex h-full bg-background"
         onDragOver={(event: React.DragEvent<HTMLDivElement>) => {
-          if (!isFileDrag(event)) return;
+          if (!isExternalFileDrag(event)) return;
           event.preventDefault();
           event.stopPropagation();
           event.dataTransfer.dropEffect = "copy";
@@ -721,7 +782,7 @@ export function FileBrowser({
           setIsDragging(false);
         }}
         onDrop={(event: React.DragEvent<HTMLDivElement>) => {
-          if (!isFileDrag(event)) return;
+          if (!isExternalFileDrag(event)) return;
           event.preventDefault();
           event.stopPropagation();
           setIsDragging(false);
@@ -804,14 +865,14 @@ export function FileBrowser({
 
                 <label htmlFor="file-upload">
                   <Button
+                    type="button"
                     size="icon"
                     variant="ghost"
                     className="h-8 w-8 text-foreground/70 hover:bg-black/5 dark:hover:bg-white/5"
-                    asChild
+                    title="Upload files"
+                    aria-label="Upload files"
                   >
-                    <span>
-                      <Upload className="h-4 w-4" />
-                    </span>
+                    <Upload className="h-4 w-4" />
                   </Button>
                 </label>
                 <DropdownMenu>
@@ -910,46 +971,79 @@ export function FileBrowser({
                 <div className="flex h-full flex-col overflow-hidden relative">
                 <ContextMenu>
                   <ContextMenuTrigger asChild>
-                    <div className="flex-1 overflow-hidden">
-                      {loading ? (
-                        <div className="flex h-full items-center justify-center">
-                          <div className="flex flex-col items-center gap-2">
-                            <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                            <span className="text-muted-foreground">Loading files...</span>
+                    <div
+                      className="flex-1 overflow-hidden infimount-zoom-shell bg-white dark:bg-background"
+                      data-infimount-zoom-region="true"
+                      style={{ ["--infimount-zoom" as any]: zoom }}
+                    >
+                      <div className="infimount-zoom-inner">
+                        {loading ? (
+                          <div className="flex h-full items-center justify-center">
+                            <div className="flex flex-col items-center gap-2">
+                              <img
+                                src={infinityLoader}
+                                alt=""
+                                aria-hidden="true"
+                                className="h-6 w-6"
+                                draggable={false}
+                              />
+                              <span className="text-muted-foreground">Loading files...</span>
+                            </div>
                           </div>
-                        </div>
-                      ) : viewMode === "grid" ? (
-                        <FileGrid
-                          files={sortedFiles}
-                          selectedFiles={selectedFiles}
-                          onSelectFile={handleSelectFile}
-                          onOpenFile={handleOpenFile}
-                          onEditFile={handleEditFile}
-                          onDownloadFile={handleDownloadFile}
-                          onDeleteFile={(file) => void deleteOne(file)}
-                          onCutSelected={() => setClipboardFromSelection("move")}
-                          onCopySelected={() => setClipboardFromSelection("copy")}
-                          canPaste={!!clipboard}
-                          onPaste={(targetDir) => void pasteInto(targetDir)}
-                        />
-                      ) : (
-                        <FileTable
-                          files={sortedFiles}
-                          selectedFiles={selectedFiles}
-                          onSelectFile={handleSelectFile}
-                          onOpenFile={handleOpenFile}
-                          onEditFile={handleEditFile}
-                          onDownloadFile={handleDownloadFile}
-                          onDeleteFile={(file) => void deleteOne(file)}
-                          sortField={sortField}
-                          sortDirection={sortDirection}
-                          onSortChange={toggleSort}
-                          onCutSelected={() => setClipboardFromSelection("move")}
-                          onCopySelected={() => setClipboardFromSelection("copy")}
-                          canPaste={!!clipboard}
-                          onPaste={(targetDir) => void pasteInto(targetDir)}
-                        />
-                      )}
+                        ) : !error && sortedFiles.length === 0 ? (
+                          <div className="flex h-full items-center justify-center">
+                            <div className="flex flex-col items-center gap-1 text-center">
+                              <p className="text-sm font-medium text-foreground/80">
+                                This folder is empty
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                Drop files here to upload, or navigate to another folder.
+                              </p>
+                            </div>
+                          </div>
+                        ) : viewMode === "grid" ? (
+                          <FileGrid
+                            sourceId={sourceId}
+                            files={sortedFiles}
+                            selectedFiles={selectedFiles}
+                            onSelectFile={handleSelectFile}
+                            onOpenFile={handleOpenFile}
+                            onEditFile={handleEditFile}
+                            onDownloadFile={handleDownloadFile}
+                            onDeleteFile={(file) => void deleteOne(file)}
+                            onCutSelected={() => setClipboardFromSelection("move")}
+                            onCopySelected={() => setClipboardFromSelection("copy")}
+                            canPaste={!!clipboard}
+                            onPaste={(targetDir) => void pasteInto(targetDir)}
+                            onMoveToFolder={(paths, folderPath) =>
+                              void moveIntoFolder(paths, folderPath)
+                            }
+                            onClearSelection={clearSelection}
+                          />
+                        ) : (
+                          <FileTable
+                            sourceId={sourceId}
+                            files={sortedFiles}
+                            selectedFiles={selectedFiles}
+                            onSelectFile={handleSelectFile}
+                            onOpenFile={handleOpenFile}
+                            onEditFile={handleEditFile}
+                            onDownloadFile={handleDownloadFile}
+                            onDeleteFile={(file) => void deleteOne(file)}
+                            sortField={sortField}
+                            sortDirection={sortDirection}
+                            onSortChange={toggleSort}
+                            onCutSelected={() => setClipboardFromSelection("move")}
+                            onCopySelected={() => setClipboardFromSelection("copy")}
+                            canPaste={!!clipboard}
+                            onPaste={(targetDir) => void pasteInto(targetDir)}
+                            onMoveToFolder={(paths, folderPath) =>
+                              void moveIntoFolder(paths, folderPath)
+                            }
+                            onClearSelection={clearSelection}
+                          />
+                        )}
+                      </div>
                     </div>
                   </ContextMenuTrigger>
                   <ContextMenuContent className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md">
@@ -1038,22 +1132,30 @@ export function FileBrowser({
                   <div className="h-full w-[1px] bg-border group-hover:bg-foreground/50 transition-colors" />
                 </PanelResizeHandle>
                 <Panel defaultSize={30} minSize={20} maxSize={60} className="bg-background/50">
-                  <FilePreviewPanel
-                    file={previewFile}
-                    sourceId={sourceId}
-                    onClose={() => {
-                      setPreviewFile(null);
-                      setEditTargetId(null);
-                    }}
-                    startInEditMode={editTargetId === previewFile.id}
-                    onEditModeChange={(editing) => {
-                      setEditTargetId(editing ? previewFile.id : null);
-                    }}
-                    onDownload={() => {
-                      if (!previewFile) return;
-                      void downloadOne(previewFile);
-                    }}
-                  />
+                  <div
+                    className="h-full w-full infimount-zoom-shell bg-white dark:bg-background"
+                    data-infimount-zoom-region="true"
+                    style={{ ["--infimount-zoom" as any]: zoom }}
+                  >
+                    <div className="infimount-zoom-inner">
+                      <FilePreviewPanel
+                        file={previewFile}
+                        sourceId={sourceId}
+                        onClose={() => {
+                          setPreviewFile(null);
+                          setEditTargetId(null);
+                        }}
+                        startInEditMode={editTargetId === previewFile.id}
+                        onEditModeChange={(editing) => {
+                          setEditTargetId(editing ? previewFile.id : null);
+                        }}
+                        onDownload={() => {
+                          if (!previewFile) return;
+                          void downloadOne(previewFile);
+                        }}
+                      />
+                    </div>
+                  </div>
                 </Panel>
               </>
             )}
@@ -1097,7 +1199,7 @@ export function FileBrowser({
           <AlertDialogHeader>
             <AlertDialogTitle>Item already exists</AlertDialogTitle>
             <AlertDialogDescription>
-              One or more items with the same name already exist in this location. Do you want to overwrite them or discard this copy?
+              One or more items with the same name already exist in this location. Do you want to overwrite them or discard this transfer?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1118,12 +1220,21 @@ export function FileBrowser({
                     );
                     await loadFiles(currentPath);
                     toast({
-                      title: "Paste completed",
-                      description: "Existing items were discarded.",
+                      title: pasteConflict.operation === "copy" ? "Copy completed" : "Move completed",
+                      description: "Existing items were skipped.",
                     });
+                    if (
+                      clipboard &&
+                      clipboard.operation === "move" &&
+                      clipboard.sourceId === pasteConflict.fromSourceId &&
+                      clipboard.paths.length === pasteConflict.paths.length &&
+                      clipboard.paths.every((p) => pasteConflict.paths.includes(p))
+                    ) {
+                      clearClipboard();
+                    }
                   } catch (error) {
                     toast({
-                      title: "Paste failed",
+                      title: pasteConflict.operation === "copy" ? "Copy failed" : "Move failed",
                       description: error instanceof Error ? error.message : String(error),
                       variant: "destructive",
                     });
@@ -1151,12 +1262,21 @@ export function FileBrowser({
                     );
                     await loadFiles(currentPath);
                     toast({
-                      title: "Paste completed",
+                      title: pasteConflict.operation === "copy" ? "Copy completed" : "Move completed",
                       description: "Existing items were overwritten.",
                     });
+                    if (
+                      clipboard &&
+                      clipboard.operation === "move" &&
+                      clipboard.sourceId === pasteConflict.fromSourceId &&
+                      clipboard.paths.length === pasteConflict.paths.length &&
+                      clipboard.paths.every((p) => pasteConflict.paths.includes(p))
+                    ) {
+                      clearClipboard();
+                    }
                   } catch (error) {
                     toast({
-                      title: "Paste failed",
+                      title: pasteConflict.operation === "copy" ? "Copy failed" : "Move failed",
                       description: error instanceof Error ? error.message : String(error),
                       variant: "destructive",
                     });

@@ -91,6 +91,7 @@ export const FileTypeIcon = ({
       src={getFileIconPath(item, theme)}
       alt=""
       aria-hidden="true"
+      draggable={false}
       className={cn("block object-contain object-center", className)}
     />
   );

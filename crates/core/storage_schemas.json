@@ -146,8 +146,8 @@
       },
       {
         "name": "credential",
-        "label": "Credential (JSON/Token)",
-        "input_type": "password",
+        "label": "Service Account JSON",
+        "input_type": "textarea",
         "required": false,
         "secret": true
       }

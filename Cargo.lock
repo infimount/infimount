@@ -3,16 +3,6 @@
 version = 4
 
 [[package]]
-name = "OpenHSB"
-version = "0.1.0"
-dependencies = [
- "openhsb_core",
- "serde",
- "tauri",
- "tauri-build",
-]
-
-[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1653,6 +1643,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "infimount"
+version = "0.1.0"
+dependencies = [
+ "infimount_core",
+ "serde",
+ "tauri",
+ "tauri-build",
+]
+
+[[package]]
+name = "infimount_core"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "futures",
+ "opendal",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "inout"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2425,18 +2438,6 @@ dependencies = [
  "sha2",
  "tokio",
  "uuid",
-]
-
-[[package]]
-name = "openhsb_core"
-version = "0.1.0"
-dependencies = [
- "futures",
- "opendal",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
 ]
 
 [[package]]

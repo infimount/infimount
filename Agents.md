@@ -1,6 +1,6 @@
-# Agents Guide – OpenHSB (Open Hybrid Storage Browser)
+# Agents Guide – Infimount (Hybrid Storage Browser)
 
-This document is for code assistants (OpenAI, GitHub Copilot, etc.) working on **OpenHSB**.
+This document is for code assistants (OpenAI, GitHub Copilot, etc.) working on **Infimount**.
 
 The goal is to keep contributions **modular, aligned with the architecture**, and **thin on top of Apache OpenDAL**.
 
@@ -8,7 +8,7 @@ The goal is to keep contributions **modular, aligned with the architecture**, an
 
 ## 1. High-Level Intent
 
-OpenHSB is a **cross-platform storage browser**:
+Infimount is a **cross-platform storage browser**:
 
 - Desktop app (Windows, macOS, Linux) using **Tauri + React**.
 - Storage abstraction via **Apache OpenDAL** (Rust).
@@ -26,7 +26,7 @@ The backend should mainly:
 ## 2. Repository Layout
 
 ```text
-openhsb/
+infimount/
 ├── crates/
 │   ├── core/                        # Shared Rust backend logic (NO UI, NO Tauri)
 │   │   ├── src/
@@ -34,7 +34,7 @@ openhsb/
 │   │   │   ├── registry.rs          # Operator registry (source_id → Operator)
 │   │   │   ├── models.rs            # Source, Entry, SourceKind, error types
 │   │   │   ├── operations.rs        # Thin wrappers around OpenDAL APIs
-│   │   │   ├── config.rs            # Read/write openhsb config (openhsb.json + env override)
+│   │   │   ├── config.rs            # Read/write app config (infimount.json + env override)
 │   │   │   └── util.rs              # Helpers (path utils, conversions)
 │   │   └── Cargo.toml
 │   │
@@ -56,7 +56,7 @@ openhsb/
 │   │   └── src-tauri/
 │   │       ├── src/
 │   │       │   ├── main.rs          # Tauri setup & app bootstrap
-│   │       │   ├── commands.rs      # Tauri commands → call into openhsb_core
+│   │       │   ├── commands.rs      # Tauri commands → call into infimount_core
 │   │       │   └── state.rs         # AppState (shared registry/config)
 │   │       └── Cargo.toml
 │   │
@@ -89,7 +89,7 @@ When generating or modifying code, agents MUST follow these rules:
 
 ### 3.2 Core vs App Responsibilities
 
-**`crates/core` (openhsb_core):**
+**`crates/core` (infimount_core):**
 
 - Knows **nothing** about Tauri, React, or UI.
 - Responsible for:
@@ -100,16 +100,16 @@ When generating or modifying code, agents MUST follow these rules:
     - `write_bytes(source_id, path, data)`
     - `delete_entry(source_id, path)`
   - Managing config (load/save source list + preferences).
-    - Config is stored as `openhsb.json` at the workspace root (override with `OPENHSB_CONFIG`); keep it JSON-only until we add other stores.
+- Config is stored as `infimount.json` at the workspace root (override with `INFIMOUNT_CONFIG`); keep it JSON-only until we add other stores.
   - Defining shared models (`Source`, `Entry`, `SourceKind`, error types).
 - Should be **portable**: usable by CLI, desktop, mobile, or any future app.
 
 **`apps/desktop/src-tauri` (Tauri backend):**
 
-- Pure **bridge layer** between JS and `openhsb_core`.
+- Pure **bridge layer** between JS and `infimount_core`.
 - Each Tauri command should:
   - Read input params.
-  - Call the appropriate `openhsb_core` function.
+  - Call the appropriate `infimount_core` function.
   - Map errors to strings / basic error types for JS.
 - MUST NOT:
   - Contain storage logic.
@@ -171,7 +171,7 @@ _Today only `SourceKind::Local` is functional; the UI hard-limits browsing to lo
 ## 7. Things Agents MUST NOT Do
 
 - ❌ Do not reimplement OpenDAL logic.
-- ❌ Do not bypass openhsb_core.
+- ❌ Do not bypass infimount_core.
 - ❌ Do not mix UI logic into Rust core.
 - ❌ Do not change shared models without syncing TS/Rust.
 - ❌ Do not create deep couplings between features.
@@ -187,4 +187,4 @@ _Today only `SourceKind::Local` is functional; the UI hard-limits browsing to lo
 
 Focus remains:
 
-> **OpenHSB Desktop – clean, thin, multi-backend storage browser.**
+> **Infimount Desktop – clean, thin, multi-backend storage browser.**

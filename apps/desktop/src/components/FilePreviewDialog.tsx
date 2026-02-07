@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/dialog";
 import type { FileItem } from "@/types/storage";
 import { readFile } from "@/lib/api";
+import infinityLoader from "@/assets/loading-infinity.apng";
 
 const MAX_PREVIEW_BYTES = 20 * 1024 * 1024;
 
@@ -278,7 +279,13 @@ export const FilePreviewDialog: React.FC<FilePreviewDialogProps> = ({
         <div className="mt-3 flex-1 overflow-hidden rounded-md border border-border bg-[hsl(var(--background))]">
           {loading && (
             <div className="flex h-full flex-col items-center justify-center gap-3">
-              <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              <img
+                src={infinityLoader}
+                alt=""
+                aria-hidden="true"
+                className="h-6 w-6"
+                draggable={false}
+              />
               <span className="text-xs text-muted-foreground">
                 Loading preview…
               </span>

@@ -16,6 +16,7 @@ import {
 import { FileTypeIcon } from "./FileIcon";
 import { readFile, statEntry, writeFile } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
+import infinityLoader from "@/assets/loading-infinity.apng";
 
 const MAX_PREVIEW_BYTES = 20 * 1024 * 1024;
 
@@ -457,7 +458,13 @@ export function FilePreviewPanel({
           <div className="min-h-full">
             {loading && (
               <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-muted-foreground">
-                <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                <img
+                  src={infinityLoader}
+                  alt=""
+                  aria-hidden="true"
+                  className="h-5 w-5"
+                  draggable={false}
+                />
                 <span>Loading preview…</span>
               </div>
             )}

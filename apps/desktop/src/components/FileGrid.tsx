@@ -46,6 +46,7 @@ const formatDisplayName = (name: string, maxChars: number) => {
 };
 
 interface FileGridProps {
+  sourceId: string;
   files: FileItem[];
   selectedFiles: Set<string>;
   onSelectFile: (fileId: string, options?: { toggle?: boolean }) => void;
@@ -57,12 +58,64 @@ interface FileGridProps {
   onCopySelected?: () => void;
   canPaste?: boolean;
   onPaste?: (targetDir?: string) => void;
+  onMoveToFolder?: (paths: string[], folderPath: string) => void;
+  onClearSelection?: () => void;
 }
 
 import { useRef, useEffect, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
+type InternalTransferPayload = {
+  kind: "infimount-transfer";
+  fromSourceId: string;
+  paths: string[];
+  operation?: "copy" | "move";
+};
+
+const INTERNAL_TRANSFER_MIME = "application/x-infimount-transfer";
+
+const isExternalFileDrag = (dt: DataTransfer) => {
+  const types = Array.from(dt.types ?? []);
+  if (types.includes("Files")) return true;
+  if (dt.files && dt.files.length > 0) return true;
+
+  const items = Array.from(dt.items ?? []);
+  return items.some((item) => item.kind === "file");
+};
+
+const isLikelyInternalTransferDrag = (dt: DataTransfer) => {
+  const types = Array.from(dt.types ?? []);
+  if (types.includes(INTERNAL_TRANSFER_MIME)) return true;
+  if (isExternalFileDrag(dt)) return false;
+  return types.includes("text/plain") || types.includes("Text");
+};
+
+const parseInternalTransfer = (dt: DataTransfer): InternalTransferPayload | null => {
+  const raw =
+    dt.getData(INTERNAL_TRANSFER_MIME)
+    || dt.getData("text/plain");
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<InternalTransferPayload>;
+    if (parsed.kind !== "infimount-transfer") return null;
+    if (typeof parsed.fromSourceId !== "string" || parsed.fromSourceId.length === 0) return null;
+    if (!Array.isArray(parsed.paths) || parsed.paths.length === 0) return null;
+    const paths = parsed.paths.filter((p) => typeof p === "string") as string[];
+    if (paths.length === 0) return null;
+    return {
+      kind: "infimount-transfer",
+      fromSourceId: parsed.fromSourceId,
+      paths,
+      operation: parsed.operation === "move" ? "move" : "copy",
+    };
+  } catch {
+    return null;
+  }
+};
+
 export function FileGrid({
+  sourceId,
   files,
   selectedFiles,
   onSelectFile,
@@ -74,11 +127,14 @@ export function FileGrid({
   onCopySelected,
   canPaste,
   onPaste,
+  onMoveToFolder,
+  onClearSelection,
 }: FileGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [columns, setColumns] = useState(3);
   const [columnWidth, setColumnWidth] = useState(GRID_MIN_COLUMN_WIDTH);
   const [nameMaxChars, setNameMaxChars] = useState(24);
+  const [folderDropTargetId, setFolderDropTargetId] = useState<string | null>(null);
 
   // Calculate columns based on container width
   useEffect(() => {
@@ -124,6 +180,13 @@ export function FileGrid({
     <div
       ref={parentRef}
       className="h-full w-full overflow-y-auto overflow-x-hidden"
+      onMouseDown={(event) => {
+        if (event.button !== 0) return;
+        const target = event.target as HTMLElement | null;
+        if (!target) return;
+        if (target.closest('[data-infimount-file-item="true"]')) return;
+        onClearSelection?.();
+      }}
     >
       <div
         style={{
@@ -164,10 +227,57 @@ export function FileGrid({
                   <ContextMenu key={file.id}>
                     <ContextMenuTrigger asChild>
                       <Card
+                        data-infimount-file-item="true"
                         className={`group relative cursor-pointer border-transparent font-normal text-foreground shadow-none antialiased transition-all duration-200 ${isSelected
                           ? "bg-primary/15 ring-1 ring-primary/20"
                           : "bg-transparent hover:bg-black/5 dark:hover:bg-white/5"
+                          } ${file.type === "folder" && folderDropTargetId === file.id && !isSelected
+                            ? "bg-primary/10 ring-1 ring-primary/30"
+                            : ""
                           }`}
+                        draggable
+                        onDragStart={(event) => {
+                          const paths = selectedFiles.has(file.id)
+                            ? Array.from(selectedFiles)
+                            : [file.id];
+
+                          if (!selectedFiles.has(file.id)) {
+                            onSelectFile(file.id);
+                          }
+
+                          const payload = JSON.stringify({
+                            kind: "infimount-transfer",
+                            fromSourceId: sourceId,
+                            paths,
+                            operation: "copy",
+                          });
+                          event.dataTransfer.setData(INTERNAL_TRANSFER_MIME, payload);
+                          event.dataTransfer.setData("text/plain", payload);
+                          event.dataTransfer.effectAllowed = "copyMove";
+                        }}
+                        onDragOver={(event) => {
+                          if (file.type !== "folder" || !onMoveToFolder) return;
+                          if (!isLikelyInternalTransferDrag(event.dataTransfer)) return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          event.dataTransfer.dropEffect = "move";
+                          setFolderDropTargetId(file.id);
+                        }}
+                        onDragLeave={() => {
+                          if (file.type !== "folder" || !onMoveToFolder) return;
+                          setFolderDropTargetId((prev) => (prev === file.id ? null : prev));
+                        }}
+                        onDrop={(event) => {
+                          if (file.type !== "folder" || !onMoveToFolder) return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setFolderDropTargetId(null);
+
+                          const payload = parseInternalTransfer(event.dataTransfer);
+                          if (!payload) return;
+                          if (payload.fromSourceId !== sourceId) return;
+                          onMoveToFolder(payload.paths, file.id);
+                        }}
                         onDoubleClick={() => onOpenFile?.(file)}
                         onClick={(event) => {
                           const toggle = event.metaKey || event.ctrlKey;

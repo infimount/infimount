@@ -5,16 +5,16 @@ use crate::models::{Result, Source};
 
 /// Location of the configuration file.
 ///
-/// For now this is a simple `openhsb.json` in the current working
-/// directory, or a custom path via the `OPENHSB_CONFIG` env var.
+/// For now this is a simple `infimount.json` in the current working
+/// directory, or a custom path via the `INFIMOUNT_CONFIG` env var.
 fn config_path() -> PathBuf {
-    if let Ok(p) = std::env::var("OPENHSB_CONFIG") {
+    if let Ok(p) = std::env::var("INFIMOUNT_CONFIG") {
         return PathBuf::from(p);
     }
-    PathBuf::from("openhsb.json")
+    PathBuf::from("infimount.json")
 }
 
-/// Load all configured sources from `openhsb.json`.
+/// Load all configured sources.
 pub fn load_sources() -> Result<Vec<Source>> {
     let path = config_path();
     if !path.exists() {
@@ -27,11 +27,10 @@ pub fn load_sources() -> Result<Vec<Source>> {
     Ok(sources)
 }
 
-/// Persist the current list of sources to `openhsb.json`.
+/// Persist the current list of sources.
 pub fn save_sources(sources: &[Source]) -> Result<()> {
     let path = config_path();
     let data = serde_json::to_string_pretty(sources)?;
     fs::write(path, data)?;
     Ok(())
 }
-
