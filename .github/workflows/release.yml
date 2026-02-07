@@ -60,7 +60,7 @@ jobs:
           cp "$RPM" out/linux/Infimount-x86_64.rpm
 
       - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: linux-artifacts
           path: out/linux/*
@@ -108,7 +108,7 @@ jobs:
           cp "$DMG" out/macos/Infimount.dmg
 
       - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: macos-artifacts
           path: out/macos/*
@@ -159,7 +159,7 @@ jobs:
           Copy-Item $exe.FullName out/windows/Infimount-setup.exe
 
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-artifacts
           path: out/windows/*
