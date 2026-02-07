@@ -7,10 +7,10 @@
   Browse local and cloud storage through a single interface.
 </p>
 
+
 > 🔐 **LOCAL-FIRST BY DEFAULT**
 >
 > Infimount stores your storage sources, app config, and credentials on your own machine.
-> By default this is `infimount.json` (or a custom path via `INFIMOUNT_CONFIG`).
 > No Infimount-hosted backend is required.
 
 <p align="center">
