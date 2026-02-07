@@ -17,7 +17,7 @@ apps/dist/
 
 # Tauri generated files
 apps/desktop/src-tauri/gen/
-apps/desktop/src-tauri/openhsb.json
+apps/desktop/src-tauri/infimount.json
 
 # Logs and misc
 *.log

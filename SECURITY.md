@@ -14,7 +14,7 @@ currently being supported with security updates.
 
 We take the security of Infimount seriously. If you discover a security vulnerability, please do NOT open an issue.
 
-Instead, please report it via [INSERT CONTACT METHOD, e.g., email to security@example.com].
+Instead, please report it via email to **security@infimount.org** (or **rajan.kadeval@gmail.com** until a dedicated address is set up).
 
 We will acknowledge your report within 48 hours and provide an estimated timeframe for a fix. We ask that you give us a reasonable amount of time to patch the vulnerability before disclosing it to the public.
 

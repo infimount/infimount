@@ -1,0 +1,18 @@
+# Infimount CODEOWNERS
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything
+* @roylkng
+
+# Rust Core
+/crates/ @roylkng
+
+# Desktop Application
+/apps/desktop/ @roylkng
+
+# CI/CD and GitHub config
+/.github/ @roylkng
+
+# Documentation
+/*.md @roylkng
+/docs/ @roylkng
