@@ -11,6 +11,7 @@
   },
   "app": {
     "withGlobalTauri": true,
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "Infimount",
@@ -22,9 +23,7 @@
         "dragDropEnabled": false,
         "decorations": false,
         "transparent": true,
-        "backgroundColor": "#00000000",
         "shadow": true,
-        "titleBarStyle": "Overlay",
         "hiddenTitle": true
       }
     ],

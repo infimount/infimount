@@ -7,6 +7,8 @@ body {
   padding: 0;
   height: 100%;
   overflow: hidden;
+  /* macOS transparent window rounded corners fix */
+  -webkit-mask-image: -webkit-radial-gradient(white, black);
 }
 
 /* CSS Custom Properties - Theme Variables */
@@ -116,19 +118,25 @@ body,
 #root {
   width: 100%;
   height: 100%;
+  margin: 0;
+  padding: 0;
 }
 
-html,
+html {
+  background-color: transparent !important;
+}
+
 body {
-  border-radius: 12px;
-  overflow: hidden;
-  background-color: transparent;
+  background-color: transparent !important;
 }
 
 #root {
   border-radius: 12px;
   overflow: hidden;
   background-color: hsl(var(--background));
+  /* Clip content to rounded corners on macOS */
+  -webkit-mask-image: -webkit-radial-gradient(white, black);
+  isolation: isolate;
 }
 
 /* Typography enhancements similar to Spacedrive */

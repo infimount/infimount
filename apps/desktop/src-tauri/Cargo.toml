@@ -4,9 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
 serde = { version = "1.0", features = ["derive"] }
 infimount_core = { path = "../../../crates/core" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.5"
+objc2-app-kit = { version = "0.2", features = ["NSWindow", "NSView", "NSResponder"] }
+objc2-foundation = "0.2"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

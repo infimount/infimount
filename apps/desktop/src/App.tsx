@@ -44,7 +44,7 @@ export const App: React.FC = () => {
   }, []);
 
   return (
-    <div className="h-full w-full bg-background text-foreground">
+    <div className="h-full w-full bg-background text-foreground rounded-[12px] overflow-hidden">
       <QueryClientProvider client={queryClient}>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <IconThemeProvider>
