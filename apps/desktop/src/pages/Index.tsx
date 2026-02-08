@@ -12,6 +12,7 @@ import {
   addSource as apiAddSource,
   removeSource as apiRemoveSource,
   updateSource as apiUpdateSource,
+  verifySource as apiVerifySource,
   replaceSources as apiReplaceSources,
 } from "@/lib/api";
 
@@ -195,6 +196,10 @@ const Index = () => {
       };
       await apiUpdateSource(updatedSource);
       await reloadStorages();
+      setStorageRefreshTick((prev) => ({
+        ...prev,
+        [id]: (prev[id] ?? 0) + 1,
+      }));
       toast({
         title: "Storage updated",
         description: `Successfully updated "${data.name}".`,
@@ -208,6 +213,22 @@ const Index = () => {
     } finally {
       setEditingStorage(null);
     }
+  };
+
+  const handleVerifyStorage = async (data: {
+    name: string;
+    type: StorageType;
+    config: Record<string, string>;
+  }) => {
+    const source: Source = {
+      id: editingStorage?.id ?? "verify-source",
+      name: data.name,
+      kind: mapStorageTypeToSourceKind(data.type),
+      root: deriveRootFromConfig(data.type, data.config),
+      config: data.config,
+    };
+
+    await apiVerifySource(source);
   };
 
   const handleDeleteStorage = (id: string) => {
@@ -488,6 +509,7 @@ const Index = () => {
         }}
         onAdd={handleAddStorage}
         onUpdate={handleUpdateStorage}
+        onVerify={handleVerifyStorage}
         initialStorage={editingStorage ?? undefined}
       />
     </div>

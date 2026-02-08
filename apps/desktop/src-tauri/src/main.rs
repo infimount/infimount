@@ -77,6 +77,7 @@ fn main() {
             commands::add_source,
             commands::remove_source,
             commands::update_source,
+            commands::verify_source,
             commands::replace_sources,
             commands::upload_dropped_files,
             commands::transfer_entries,

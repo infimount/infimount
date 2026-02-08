@@ -1,7 +1,10 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
+use futures::TryStreamExt;
+use opendal::ErrorKind;
 use opendal::services::{Azblob, Fs, Gcs, Webdav, S3};
 use opendal::Operator;
 use tokio::sync::RwLock;
@@ -44,6 +47,10 @@ impl OperatorRegistry {
     /// Replace all sources with the provided list, clearing any
     /// cached operators and persisting the new configuration.
     pub async fn replace_sources(&self, sources: Vec<Source>) -> Result<()> {
+        for source in &sources {
+            validate_source(source)?;
+        }
+
         {
             let mut srcs = self.sources.write().await;
             srcs.clear();
@@ -65,6 +72,8 @@ impl OperatorRegistry {
 
     /// Add a new source and persist configuration.
     pub async fn add_source(&self, source: Source) -> Result<()> {
+        validate_source(&source)?;
+
         {
             let mut sources = self.sources.write().await;
             sources.insert(source.id.clone(), source.clone());
@@ -102,6 +111,8 @@ impl OperatorRegistry {
 
     /// Update an existing source (or add if missing) and persist.
     pub async fn update_source(&self, source: Source) -> Result<()> {
+        validate_source(&source)?;
+
         {
             let mut sources = self.sources.write().await;
             sources.insert(source.id.clone(), source.clone());
@@ -142,6 +153,20 @@ impl OperatorRegistry {
         ops.insert(source_id.to_string(), op.clone());
         Ok(op)
     }
+
+    /// Verify whether a source configuration is reachable and valid.
+    pub async fn verify_source(&self, source: &Source) -> Result<()> {
+        validate_source(source)?;
+        let op = build_operator(source)?;
+        // Trigger a lightweight backend call to validate auth/endpoint/root.
+        let mut lister = match op.lister("").await {
+            Ok(l) => l,
+            Err(err) if err.kind() == ErrorKind::NotFound => op.lister("/").await?,
+            Err(err) => return Err(err.into()),
+        };
+        let _ = lister.try_next().await?;
+        Ok(())
+    }
 }
 
 fn build_operator(source: &Source) -> Result<Operator> {
@@ -152,6 +177,32 @@ fn build_operator(source: &Source) -> Result<Operator> {
         SourceKind::AzureBlob => build_azure_blob_operator(source),
         SourceKind::Gcs => build_gcs_operator(source),
     }
+}
+
+fn validate_source(source: &Source) -> Result<()> {
+    if matches!(source.kind, SourceKind::Local) {
+        validate_local_root(&source.root)?;
+    }
+    Ok(())
+}
+
+fn validate_local_root(root: &str) -> Result<()> {
+    let expanded = expand_tilde_home(root);
+    let normalized = expanded.trim();
+
+    if normalized.is_empty() {
+        return Err(CoreError::Config("directory does not exist".to_string()));
+    }
+
+    let path = Path::new(normalized);
+    if !path.exists() || !path.is_dir() {
+        return Err(CoreError::Config(format!(
+            "directory does not exist: {}",
+            normalized
+        )));
+    }
+
+    Ok(())
 }
 
 fn build_local_operator(root: &str) -> Result<Operator> {
@@ -450,5 +501,25 @@ mod tests {
         std::env::set_var("HOME", "/home/testuser");
         assert_eq!(expand_tilde_home("~/Downloads"), "/home/testuser/Downloads");
         assert_eq!(expand_tilde_home("~"), "/home/testuser");
+    }
+
+    #[tokio::test]
+    async fn add_source_rejects_missing_local_directory() {
+        let cfg = test_config_path();
+        reset_config_file(&cfg);
+        env::set_var("INFIMOUNT_CONFIG", &cfg);
+
+        let registry = OperatorRegistry::new(vec![]);
+
+        let s = Source {
+            id: "missing-dir".to_string(),
+            name: "Missing Dir".to_string(),
+            kind: crate::models::SourceKind::Local,
+            root: "/tmp/infimount-this-path-does-not-exist".to_string(),
+            config: None,
+        };
+
+        let err = registry.add_source(s).await.unwrap_err();
+        assert!(err.to_string().contains("directory does not exist"));
     }
 }

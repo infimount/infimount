@@ -37,6 +37,11 @@ interface AddStorageDialogProps {
   onOpenChange: (open: boolean) => void;
   onAdd?: (config: { name: string; type: StorageType; config: Record<string, string> }) => void;
   onUpdate?: (id: string, config: { name: string; type: StorageType; config: Record<string, string> }) => void;
+  onVerify?: (config: {
+    name: string;
+    type: StorageType;
+    config: Record<string, string>;
+  }) => Promise<void>;
   initialStorage?: StorageConfig;
 }
 
@@ -45,6 +50,7 @@ export function AddStorageDialog({
   onOpenChange,
   onAdd,
   onUpdate,
+  onVerify,
   initialStorage,
 }: AddStorageDialogProps) {
   const isEditing = Boolean(initialStorage);
@@ -52,6 +58,8 @@ export function AddStorageDialog({
   const [type, setType] = useState<StorageType>(initialStorage?.type ?? "aws-s3");
   const [config, setConfig] = useState<Record<string, string>>(initialStorage?.config ?? {});
   const [schemas, setSchemas] = useState<StorageKindSchema[]>([]);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   useEffect(() => {
     if (initialStorage && open) {
@@ -63,6 +71,10 @@ export function AddStorageDialog({
       setName("");
       setType("aws-s3");
       setConfig({});
+    }
+    if (!open) {
+      setVerifyResult(null);
+      setIsVerifying(false);
     }
   }, [initialStorage, open]);
 
@@ -99,6 +111,21 @@ export function AddStorageDialog({
     onOpenChange(false);
   };
 
+  const handleVerify = async () => {
+    if (!onVerify) return;
+    setIsVerifying(true);
+    setVerifyResult(null);
+    try {
+      await onVerify({ name, type, config });
+      setVerifyResult({ ok: true, message: "Connection successful." });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setVerifyResult({ ok: false, message });
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
   const currentSchema = schemas.find((s) => s.id === type);
   const fields = currentSchema?.fields ?? [];
 
@@ -124,7 +151,13 @@ export function AddStorageDialog({
             >
               Storage Type
             </Label>
-            <Select value={type} onValueChange={(v) => setType(v as StorageType)}>
+            <Select
+              value={type}
+              onValueChange={(v) => {
+                setType(v as StorageType);
+                setVerifyResult(null);
+              }}
+            >
               <SelectTrigger
                 id="type"
                 className="border border-border bg-[hsl(var(--card))] text-sm text-[hsl(var(--card-foreground))] focus:border-border focus:ring-0 focus:ring-offset-0 focus-visible:border-border focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=open]:border-border"
@@ -185,6 +218,7 @@ export function AddStorageDialog({
               id="name"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              onInput={() => setVerifyResult(null)}
               placeholder="My Storage"
               required
               className="border border-border bg-[hsl(var(--card))] text-sm text-[hsl(var(--card-foreground))] focus-visible:border-border/60 focus-visible:ring-0 focus-visible:ring-offset-0"
@@ -206,6 +240,7 @@ export function AddStorageDialog({
                   onChange={(e) =>
                     setConfig({ ...config, [field.name]: e.target.value })
                   }
+                  onInput={() => setVerifyResult(null)}
                   placeholder={field.label}
                   rows={6}
                   className="w-full resize-none rounded-md border border-border bg-[hsl(var(--card))] px-3 py-2 text-xs font-mono text-[hsl(var(--card-foreground))] shadow-sm outline-none focus-visible:border-border/60 focus-visible:ring-0 focus-visible:ring-offset-0"
@@ -218,6 +253,7 @@ export function AddStorageDialog({
                   onChange={(e) =>
                     setConfig({ ...config, [field.name]: e.target.value })
                   }
+                  onInput={() => setVerifyResult(null)}
                   placeholder={field.label}
                   required={field.required}
                   className="border border-border bg-[hsl(var(--card))] text-sm text-[hsl(var(--card-foreground))] focus-visible:border-border/60 focus-visible:ring-0 focus-visible:ring-offset-0"
@@ -226,7 +262,28 @@ export function AddStorageDialog({
             </div>
           ))}
 
+          {verifyResult ? (
+            <div
+              className={`rounded-md border px-3 py-2 text-xs ${
+                verifyResult.ok
+                  ? "border-emerald-300/80 bg-emerald-50 text-emerald-700 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-300"
+                  : "border-rose-300/80 bg-rose-50 text-rose-700 dark:border-rose-700/60 dark:bg-rose-950/40 dark:text-rose-300"
+              }`}
+            >
+              {verifyResult.message}
+            </div>
+          ) : null}
+
           <div className="flex justify-end gap-3 pt-4">
+            <Button
+              type="button"
+              variant="outline"
+              className="border border-border hover:bg-sidebar-accent/30 hover:text-foreground"
+              onClick={handleVerify}
+              disabled={isVerifying || !name.trim()}
+            >
+              {isVerifying ? "Verifying..." : "Verify Storage"}
+            </Button>
             <Button
               type="button"
               variant="outline"

@@ -149,6 +149,14 @@ export async function updateSource(source: Source): Promise<void> {
   }
 }
 
+export async function verifySource(source: Source): Promise<void> {
+  try {
+    return await tauriInvoke("verify_source", { source });
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
 export async function replaceSources(sources: Source[]): Promise<void> {
   try {
     return await tauriInvoke("replace_sources", { sources });

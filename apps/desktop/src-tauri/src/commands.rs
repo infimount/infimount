@@ -85,6 +85,11 @@ pub async fn update_source(state: State<'_, AppState>, source: Source) -> Result
 }
 
 #[tauri::command]
+pub async fn verify_source(state: State<'_, AppState>, source: Source) -> Result<(), CoreError> {
+    state.registry.verify_source(&source).await
+}
+
+#[tauri::command]
 pub async fn upload_dropped_files(
     state: State<'_, AppState>,
     sourceId: String,

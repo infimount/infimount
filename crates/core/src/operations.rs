@@ -64,7 +64,7 @@ pub async fn list_entries(op: &Operator, path: &str) -> Result<Vec<Entry>> {
             Ok(meta) => (
                 meta.is_dir(),
                 meta.content_length(),
-                meta.last_modified().map(|dt| dt.to_rfc3339()),
+                meta.last_modified().map(|dt| dt.to_string()),
             ),
             Err(e) if e.kind() == ErrorKind::NotFound => (false, 0, None),
             Err(e) => return Err(e.into()),
@@ -96,7 +96,7 @@ pub async fn stat_entry(op: &Operator, path: &str) -> Result<Entry> {
         name,
         is_dir: meta.is_dir(),
         size: meta.content_length(),
-        modified_at: meta.last_modified().map(|dt| dt.to_rfc3339()),
+        modified_at: meta.last_modified().map(|dt| dt.to_string()),
     })
 }
 
