@@ -73,6 +73,7 @@ fn main() {
             commands::stat_entry,
             commands::read_file,
             commands::write_file,
+            commands::create_directory,
             commands::delete_path,
             commands::list_sources,
             commands::add_source,

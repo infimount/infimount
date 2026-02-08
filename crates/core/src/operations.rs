@@ -114,6 +114,13 @@ pub async fn write_full(op: &Operator, path: &str, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Create a directory at the given path.
+pub async fn create_directory(op: &Operator, path: &str) -> Result<()> {
+    let p = normalize_list_path(path);
+    op.create_dir(&p).await?;
+    Ok(())
+}
+
 /// Delete a path (file or directory).
 pub async fn delete(op: &Operator, path: &str) -> Result<()> {
     let p = normalize_opendal_path(path);
@@ -650,5 +657,13 @@ mod tests {
 
         let exists = op.exists(path).await.unwrap();
         assert!(!exists);
+    }
+
+    #[tokio::test]
+    async fn test_create_directory() {
+        let op = create_test_operator().await;
+        create_directory(&op, "new-folder").await.unwrap();
+        let exists = op.exists("new-folder/").await.unwrap();
+        assert!(exists);
     }
 }

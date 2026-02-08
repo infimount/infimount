@@ -47,6 +47,16 @@ pub async fn write_file(
 }
 
 #[tauri::command]
+pub async fn create_directory(
+    state: State<'_, AppState>,
+    sourceId: String,
+    path: String,
+) -> Result<(), CoreError> {
+    let op = state.registry.get_operator(&sourceId).await?;
+    operations::create_directory(&op, &path).await
+}
+
+#[tauri::command]
 pub async fn delete_path(
     state: State<'_, AppState>,
     sourceId: String,

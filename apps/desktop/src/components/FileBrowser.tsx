@@ -24,6 +24,7 @@ import {
   listEntries,
   readFile,
   writeFile,
+  createDirectory,
   deletePath,
   transferEntries,
   TauriApiError,
@@ -233,6 +234,9 @@ export function FileBrowser({
   const { clipboard, setClipboard, clearClipboard } = useFileClipboard();
   const [isEditingPath, setIsEditingPath] = useState(false);
   const [pathInput, setPathInput] = useState("");
+  const [createTargetType, setCreateTargetType] = useState<"file" | "folder" | null>(null);
+  const [newEntryName, setNewEntryName] = useState("");
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const describeLoadError = (err: TauriApiError): LoadError => {
     const shortMessage = (err.message || "")
@@ -337,6 +341,8 @@ export function FileBrowser({
     setHistoryIndex(0);
     setPreviewFile(null);
     setEditTargetId(null);
+    setCreateTargetType(null);
+    setNewEntryName("");
   }, [sourceId]);
 
   useEffect(() => {
@@ -423,6 +429,41 @@ export function FileBrowser({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [filteredFiles]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      if (key === "f") {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+        return;
+      }
+
+      if (key === "n" && event.shiftKey) {
+        const active = document.activeElement as HTMLElement | null;
+        if (
+          active &&
+          (active.tagName === "INPUT" ||
+            active.tagName === "TEXTAREA" ||
+            active.isContentEditable)
+        ) {
+          return;
+        }
+
+        event.preventDefault();
+        setCreateTargetType("folder");
+        setNewEntryName("New Folder");
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   const setClipboardFromSelection = (operation: "copy" | "move") => {
     if (selectedFiles.size === 0) return;
@@ -526,6 +567,67 @@ export function FileBrowser({
           variant: "destructive",
         });
       }
+    }
+  };
+
+  const composeTargetPath = (name: string) => {
+    const basePath = currentPath === "/" ? "" : currentPath.replace(/\/$/, "");
+    return `${basePath}/${name}`;
+  };
+
+  const openCreateTargetDialog = (type: "file" | "folder") => {
+    setCreateTargetType(type);
+    setNewEntryName(type === "folder" ? "New Folder" : "new-file.txt");
+  };
+
+  const createTarget = async () => {
+    if (!createTargetType) return;
+    const name = newEntryName.trim();
+
+    if (!name) {
+      toast({
+        title: "Invalid name",
+        description: "Please enter a name.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (name.includes("/") || name.includes("\\")) {
+      toast({
+        title: "Invalid name",
+        description: "Name cannot include path separators.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const path = composeTargetPath(name);
+
+    try {
+      if (createTargetType === "folder") {
+        await createDirectory(sourceId, path);
+        toast({
+          title: "Folder created",
+          description: `"${name}" was created.`,
+        });
+      } else {
+        await writeFile(sourceId, path, new Uint8Array());
+        toast({
+          title: "File created",
+          description: `"${name}" was created.`,
+        });
+      }
+
+      await loadFiles(currentPath);
+      setCreateTargetType(null);
+      setNewEntryName("");
+    } catch (error: unknown) {
+      toast({
+        title: createTargetType === "folder" ? "Failed to create folder" : "Failed to create file",
+        description: error instanceof Error ? error.message : String(error),
+        variant: "destructive",
+      });
     }
   };
 
@@ -856,6 +958,7 @@ export function FileBrowser({
                 <div className="relative w-48">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
+                    ref={searchInputRef}
                     placeholder="Search..."
                     value={searchQuery}
                     onChange={(event) => setSearchQuery(event.target.value)}
@@ -1048,6 +1151,22 @@ export function FileBrowser({
                   </ContextMenuTrigger>
                   <ContextMenuContent className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md">
                     <ContextMenuItem
+                      onClick={() => {
+                        openCreateTargetDialog("folder");
+                      }}
+                    >
+                      New folder
+                      <ContextMenuShortcut>⌘⇧N</ContextMenuShortcut>
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onClick={() => {
+                        openCreateTargetDialog("file");
+                      }}
+                    >
+                      New file
+                    </ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem
                       disabled={!clipboard}
                       onClick={() => {
                         void pasteInto();
@@ -1162,6 +1281,53 @@ export function FileBrowser({
           </PanelGroup>
         </div>
       </div>
+
+      <AlertDialog
+        open={!!createTargetType}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCreateTargetType(null);
+            setNewEntryName("");
+          }
+        }}
+      >
+        <AlertDialogContent className="max-w-md rounded-2xl border border-border bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] shadow-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {createTargetType === "folder" ? "Create new folder" : "Create new file"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {createTargetType === "folder"
+                ? "Enter a folder name to create in the current directory."
+                : "Enter a file name to create an empty file in the current directory."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Input
+            autoFocus
+            value={newEntryName}
+            onChange={(event) => setNewEntryName(event.target.value)}
+            placeholder={createTargetType === "folder" ? "New Folder" : "new-file.txt"}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void createTarget();
+              }
+            }}
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+              onClick={(event) => {
+                event.preventDefault();
+                void createTarget();
+              }}
+            >
+              Create
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
         <AlertDialogContent className="max-w-md rounded-2xl border border-border bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] shadow-2xl">

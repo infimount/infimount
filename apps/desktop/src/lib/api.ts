@@ -97,6 +97,17 @@ export async function writeFile(
   }
 }
 
+export async function createDirectory(
+  sourceId: string,
+  path: string,
+): Promise<void> {
+  try {
+    return await tauriInvoke("create_directory", { sourceId, path });
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
 export async function uploadDroppedFiles(
   sourceId: string,
   paths: string[],
