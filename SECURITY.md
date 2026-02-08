@@ -2,20 +2,54 @@
 
 ## Supported Versions
 
-Use this section to tell people about which versions of your project are
-currently being supported with security updates.
+| Version | Supported |
+| ------- | --------- |
+| 0.1.x   | ✅        |
+| < 0.1   | ❌        |
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 1.0.x   | :white_check_mark: |
-| < 1.0   | :x:                |
+## Security Model
+
+- Infimount is local-first. Storage source definitions are written to `~/.infimount/config.json` (or `INFIMOUNT_CONFIG` if set).
+- Credentials are currently stored in that config file as plain JSON values.
+- Credentials are **not encrypted at rest** by Infimount in the current release.
+- Security relies on OS-level account and filesystem permissions on the host machine.
+
+## What To Report
+
+Please report vulnerabilities such as:
+
+- credential disclosure or unauthorized access
+- privilege escalation, path traversal, unsafe file operations
+- remote code execution or command injection
+- auth bypass against storage backends
+- dependency vulnerabilities with practical impact
 
 ## Reporting a Vulnerability
 
-We take the security of Infimount seriously. If you discover a security vulnerability, please do NOT open an issue.
+Do not open a public issue for security reports.
 
-Instead, please report it via email to **security@infimount.org** (or **rajan.kadeval@gmail.com** until a dedicated address is set up).
+Report privately to:
 
-We will acknowledge your report within 48 hours and provide an estimated timeframe for a fix. We ask that you give us a reasonable amount of time to patch the vulnerability before disclosing it to the public.
+- `security@infimount.org`
+- fallback: `rajan.kadeval@gmail.com`
 
-Thank you for helping keep Infimount safe!
+Response targets:
+
+- acknowledgment within 48 hours
+- initial triage within 5 business days
+- coordinated disclosure after a fix is available
+
+## Non-Production Dummy/Mock Data In Repo
+
+The following files intentionally contain simulator credentials or test/sample data and must not be used in production:
+
+- `storage-simulator/bootstrap.sh`
+- `storage-simulator/create_resources.py`
+- `storage-simulator/docker-compose.yml`
+- `storage-simulator/opendal/s3.yaml`
+- `storage-simulator/opendal/webdav.yaml`
+- `storage-simulator/opendal/filer.yaml`
+- `storage-simulator/opendal/azure.yaml`
+- `crates/core/src/bin/verify_storage.rs`
+
+These are local test fixtures only (for SeaweedFS/Azurite/Fake GCS simulation).
