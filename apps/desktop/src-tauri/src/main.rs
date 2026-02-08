@@ -18,6 +18,10 @@ fn main() {
             #[cfg(target_os = "macos")]
             {
                 if let Some(main_window) = app.get_webview_window("main") {
+                    // Ensure the native window background stays transparent so rounded webview
+                    // edges don't show white patches in macOS corners.
+                    main_window.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)))?;
+
                     // Native shadows on transparent, undecorated windows are rectangular on macOS,
                     // which makes the window corners look sharp. Disable it and rely on the
                     // webview's rounded UI instead.

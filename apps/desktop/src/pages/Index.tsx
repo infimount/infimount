@@ -400,7 +400,7 @@ const Index = () => {
   };
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-background border border-border/40">
+    <div className="flex h-screen w-full overflow-hidden rounded-[12px] bg-background border border-border/40">
       <PanelGroup direction="horizontal">
         {isSidebarOpen && (
           <>
