@@ -4,8 +4,8 @@ use std::path::Path;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use futures::TryStreamExt;
-use opendal::ErrorKind;
 use opendal::services::{Azblob, Fs, Gcs, Webdav, S3};
+use opendal::ErrorKind;
 use opendal::Operator;
 use tokio::sync::RwLock;
 

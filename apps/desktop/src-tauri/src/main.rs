@@ -29,17 +29,18 @@ fn main() {
                     if let Ok(ns_window) = main_window.ns_window() {
                         unsafe {
                             let ns_win = ns_window as *mut AnyObject;
-                            
+
                             // Set the window's background color to clear
-                            let clear_color: *mut AnyObject = msg_send![class!(NSColor), clearColor];
+                            let clear_color: *mut AnyObject =
+                                msg_send![class!(NSColor), clearColor];
                             let _: () = msg_send![ns_win, setBackgroundColor: clear_color];
-                            
+
                             // Get the content view and apply corner radius
                             let content_view: *mut AnyObject = msg_send![ns_win, contentView];
                             if !content_view.is_null() {
                                 // Ensure the view has a layer
                                 let _: () = msg_send![content_view, setWantsLayer: true];
-                                
+
                                 let layer: *mut AnyObject = msg_send![content_view, layer];
                                 if !layer.is_null() {
                                     let _: () = msg_send![layer, setCornerRadius: 12.0_f64];
