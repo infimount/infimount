@@ -52,6 +52,7 @@ interface FileTableProps {
   files: FileItem[];
   selectedFiles: Set<string>;
   onSelectFile: (fileId: string, options?: { toggle?: boolean }) => void;
+  onSelectFiles?: (fileIds: string[]) => void;
   onOpenFile?: (file: FileItem) => void;
   onEditFile?: (file: FileItem) => void;
   onDownloadFile?: (file: FileItem) => void;
@@ -67,7 +68,7 @@ interface FileTableProps {
   onSortChange?: (field: "name" | "type" | "modified" | "size") => void;
 }
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 type InternalTransferPayload = {
@@ -124,6 +125,7 @@ export function FileTable({
   files,
   selectedFiles,
   onSelectFile,
+  onSelectFiles,
   onOpenFile,
   onEditFile,
   onDownloadFile,
@@ -142,7 +144,14 @@ export function FileTable({
     sortField === field ? (sortDirection === "asc" ? " ▲" : " ▼") : "";
 
   const parentRef = useRef<HTMLDivElement>(null);
+  const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
   const [folderDropTargetId, setFolderDropTargetId] = useState<string | null>(null);
+  const [dragSelect, setDragSelect] = useState<{
+    startX: number;
+    startY: number;
+    x: number;
+    y: number;
+  } | null>(null);
 
   const rowVirtualizer = useVirtualizer({
     count: files.length,
@@ -159,17 +168,75 @@ export function FileTable({
       ? getTotalSize() - virtualItems[virtualItems.length - 1].end
       : 0;
 
+  useEffect(() => {
+    if (!dragSelect || !onSelectFiles || !parentRef.current) return;
+
+    const container = parentRef.current;
+    const containerRect = container.getBoundingClientRect();
+    const scrollLeft = container.scrollLeft;
+    const scrollTop = container.scrollTop;
+
+    const left = Math.min(dragSelect.startX, dragSelect.x);
+    const right = Math.max(dragSelect.startX, dragSelect.x);
+    const top = Math.min(dragSelect.startY, dragSelect.y);
+    const bottom = Math.max(dragSelect.startY, dragSelect.y);
+
+    const selected: string[] = [];
+    rowRefs.current.forEach((row, id) => {
+      const rect = row.getBoundingClientRect();
+      const rowLeft = rect.left - containerRect.left + scrollLeft;
+      const rowRight = rowLeft + rect.width;
+      const rowTop = rect.top - containerRect.top + scrollTop;
+      const rowBottom = rowTop + rect.height;
+
+      const intersects =
+        rowLeft < right &&
+        rowRight > left &&
+        rowTop < bottom &&
+        rowBottom > top;
+
+      if (intersects) {
+        selected.push(id);
+      }
+    });
+
+    onSelectFiles(selected);
+  }, [dragSelect, onSelectFiles]);
+
   return (
     <div
       ref={parentRef}
-      className="h-full w-full overflow-auto bg-transparent"
+      className="relative h-full w-full overflow-auto bg-transparent"
       onMouseDown={(event) => {
         if (event.button !== 0) return;
         const target = event.target as HTMLElement | null;
         if (!target) return;
         if (target.closest('[data-infimount-file-item="true"]')) return;
         if (target.closest("thead")) return;
+        if (!parentRef.current) return;
+        const rect = parentRef.current.getBoundingClientRect();
+        const x = event.clientX - rect.left + parentRef.current.scrollLeft;
+        const y = event.clientY - rect.top + parentRef.current.scrollTop;
+        setDragSelect({ startX: x, startY: y, x, y });
         onClearSelection?.();
+        event.preventDefault();
+      }}
+      onMouseMove={(event) => {
+        if (!dragSelect || !parentRef.current) return;
+        const rect = parentRef.current.getBoundingClientRect();
+        const x = event.clientX - rect.left + parentRef.current.scrollLeft;
+        const y = event.clientY - rect.top + parentRef.current.scrollTop;
+        setDragSelect((prev) => (prev ? { ...prev, x, y } : prev));
+        event.preventDefault();
+      }}
+      onMouseUp={() => {
+        if (dragSelect) {
+          setDragSelect(null);
+        }
+      }}
+      onMouseLeave={(event) => {
+        if (!dragSelect || (event.buttons & 1) !== 1) return;
+        setDragSelect(null);
       }}
     >
       <table className="w-full caption-bottom text-sm table-fixed">
@@ -215,6 +282,13 @@ export function FileTable({
               <ContextMenu key={file.id}>
                 <ContextMenuTrigger asChild>
                   <TableRow
+                    ref={(node) => {
+                      if (node) {
+                        rowRefs.current.set(file.id, node);
+                      } else {
+                        rowRefs.current.delete(file.id);
+                      }
+                    }}
                     data-infimount-file-item="true"
                     className={`group cursor-pointer ${isSelected ? "bg-muted/50" : "hover:bg-muted/50"
                       } ${file.type === "folder" && folderDropTargetId === file.id && !isSelected ? "bg-primary/10" : ""
@@ -367,6 +441,17 @@ export function FileTable({
           )}
         </TableBody>
       </table>
+      {dragSelect && (
+        <div
+          className="pointer-events-none absolute z-20 rounded-sm border border-primary/60 bg-primary/15"
+          style={{
+            left: `${Math.min(dragSelect.startX, dragSelect.x)}px`,
+            top: `${Math.min(dragSelect.startY, dragSelect.y)}px`,
+            width: `${Math.abs(dragSelect.x - dragSelect.startX)}px`,
+            height: `${Math.abs(dragSelect.y - dragSelect.startY)}px`,
+          }}
+        />
+      )}
     </div>
   );
 }

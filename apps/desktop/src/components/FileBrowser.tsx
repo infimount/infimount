@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import {
   Search,
@@ -405,6 +405,16 @@ export function FileBrowser({
     }
     setSelectedFiles(new Set([fileId]));
   };
+
+  const handleSelectFiles = useCallback((fileIds: string[]) => {
+    const nextIds = [...new Set(fileIds)];
+    setSelectedFiles((prev) => {
+      if (prev.size === nextIds.length && nextIds.every((id) => prev.has(id))) {
+        return prev;
+      }
+      return new Set(nextIds);
+    });
+  }, []);
 
   const clearSelection = () => setSelectedFiles(new Set());
 
@@ -1110,6 +1120,7 @@ export function FileBrowser({
                             files={sortedFiles}
                             selectedFiles={selectedFiles}
                             onSelectFile={handleSelectFile}
+                            onSelectFiles={handleSelectFiles}
                             onOpenFile={handleOpenFile}
                             onEditFile={handleEditFile}
                             onDownloadFile={handleDownloadFile}
@@ -1129,6 +1140,7 @@ export function FileBrowser({
                             files={sortedFiles}
                             selectedFiles={selectedFiles}
                             onSelectFile={handleSelectFile}
+                            onSelectFiles={handleSelectFiles}
                             onOpenFile={handleOpenFile}
                             onEditFile={handleEditFile}
                             onDownloadFile={handleDownloadFile}

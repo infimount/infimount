@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { fireEvent } from "@testing-library/react";
 import { FileBrowser } from "./FileBrowser";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { listEntries, TauriApiError } from "@/lib/api";
+import { createDirectory, listEntries, TauriApiError } from "@/lib/api";
 import { AppZoomProvider } from "@/hooks/use-app-zoom";
 
 // Mock the api module
@@ -10,6 +10,7 @@ vi.mock("@/lib/api", () => ({
     listEntries: vi.fn(),
     readFile: vi.fn(),
     writeFile: vi.fn(),
+    createDirectory: vi.fn(),
     deletePath: vi.fn(),
     transferEntries: vi.fn(),
     TauriApiError: class extends Error {
@@ -92,6 +93,50 @@ describe("FileBrowser Error Handling", () => {
         await waitFor(() => {
             expect(screen.getByText("Could not connect to this storage")).toBeInTheDocument();
             expect(screen.getByText("Something went wrong")).toBeInTheDocument();
+        });
+    });
+});
+
+describe("FileBrowser shortcuts and creation", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        (listEntries as any).mockResolvedValue([]);
+        (createDirectory as any).mockResolvedValue(undefined);
+    });
+
+    it("focuses search on Ctrl/Cmd+F", async () => {
+        render(
+            <AppZoomProvider>
+                <FileBrowser sourceId="test" storageName="Test Storage" />
+            </AppZoomProvider>
+        );
+
+        const search = await screen.findByPlaceholderText("Search...");
+        fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+        expect(document.activeElement).toBe(search);
+    });
+
+    it("opens create folder dialog on Ctrl/Cmd+Shift+N and creates folder", async () => {
+        render(
+            <AppZoomProvider>
+                <FileBrowser sourceId="test" storageName="Test Storage" />
+            </AppZoomProvider>
+        );
+
+        await waitFor(() => {
+            expect(listEntries).toHaveBeenCalledWith("test", "/");
+        });
+
+        fireEvent.keyDown(window, { key: "N", ctrlKey: true, shiftKey: true });
+
+        expect(await screen.findByText("Create new folder")).toBeInTheDocument();
+        fireEvent.change(screen.getByPlaceholderText("New Folder"), {
+            target: { value: "from-shortcut" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+        await waitFor(() => {
+            expect(createDirectory).toHaveBeenCalledWith("test", "/from-shortcut");
         });
     });
 });

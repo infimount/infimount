@@ -50,6 +50,7 @@ interface FileGridProps {
   files: FileItem[];
   selectedFiles: Set<string>;
   onSelectFile: (fileId: string, options?: { toggle?: boolean }) => void;
+  onSelectFiles?: (fileIds: string[]) => void;
   onOpenFile?: (file: FileItem) => void;
   onEditFile?: (file: FileItem) => void;
   onDownloadFile?: (file: FileItem) => void;
@@ -119,6 +120,7 @@ export function FileGrid({
   files,
   selectedFiles,
   onSelectFile,
+  onSelectFiles,
   onOpenFile,
   onEditFile,
   onDownloadFile,
@@ -131,10 +133,17 @@ export function FileGrid({
   onClearSelection,
 }: FileGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [columns, setColumns] = useState(3);
   const [columnWidth, setColumnWidth] = useState(GRID_MIN_COLUMN_WIDTH);
   const [nameMaxChars, setNameMaxChars] = useState(24);
   const [folderDropTargetId, setFolderDropTargetId] = useState<string | null>(null);
+  const [dragSelect, setDragSelect] = useState<{
+    startX: number;
+    startY: number;
+    x: number;
+    y: number;
+  } | null>(null);
 
   // Calculate columns based on container width
   useEffect(() => {
@@ -176,6 +185,41 @@ export function FileGrid({
     overscan: 5,
   });
 
+  useEffect(() => {
+    if (!dragSelect || !onSelectFiles || !parentRef.current) return;
+
+    const container = parentRef.current;
+    const containerRect = container.getBoundingClientRect();
+    const scrollLeft = container.scrollLeft;
+    const scrollTop = container.scrollTop;
+
+    const left = Math.min(dragSelect.startX, dragSelect.x);
+    const right = Math.max(dragSelect.startX, dragSelect.x);
+    const top = Math.min(dragSelect.startY, dragSelect.y);
+    const bottom = Math.max(dragSelect.startY, dragSelect.y);
+
+    const selected: string[] = [];
+    itemRefs.current.forEach((element, id) => {
+      const rect = element.getBoundingClientRect();
+      const itemLeft = rect.left - containerRect.left + scrollLeft;
+      const itemRight = itemLeft + rect.width;
+      const itemTop = rect.top - containerRect.top + scrollTop;
+      const itemBottom = itemTop + rect.height;
+
+      const intersects =
+        itemLeft < right &&
+        itemRight > left &&
+        itemTop < bottom &&
+        itemBottom > top;
+
+      if (intersects) {
+        selected.push(id);
+      }
+    });
+
+    onSelectFiles(selected);
+  }, [dragSelect, onSelectFiles]);
+
   return (
     <div
       ref={parentRef}
@@ -185,7 +229,30 @@ export function FileGrid({
         const target = event.target as HTMLElement | null;
         if (!target) return;
         if (target.closest('[data-infimount-file-item="true"]')) return;
+        if (!parentRef.current) return;
+        const rect = parentRef.current.getBoundingClientRect();
+        const x = event.clientX - rect.left + parentRef.current.scrollLeft;
+        const y = event.clientY - rect.top + parentRef.current.scrollTop;
+        setDragSelect({ startX: x, startY: y, x, y });
         onClearSelection?.();
+        event.preventDefault();
+      }}
+      onMouseMove={(event) => {
+        if (!dragSelect || !parentRef.current) return;
+        const rect = parentRef.current.getBoundingClientRect();
+        const x = event.clientX - rect.left + parentRef.current.scrollLeft;
+        const y = event.clientY - rect.top + parentRef.current.scrollTop;
+        setDragSelect((prev) => (prev ? { ...prev, x, y } : prev));
+        event.preventDefault();
+      }}
+      onMouseUp={() => {
+        if (dragSelect) {
+          setDragSelect(null);
+        }
+      }}
+      onMouseLeave={(event) => {
+        if (!dragSelect || (event.buttons & 1) !== 1) return;
+        setDragSelect(null);
       }}
     >
       <div
@@ -227,6 +294,13 @@ export function FileGrid({
                   <ContextMenu key={file.id}>
                     <ContextMenuTrigger asChild>
                       <Card
+                        ref={(node) => {
+                          if (node) {
+                            itemRefs.current.set(file.id, node);
+                          } else {
+                            itemRefs.current.delete(file.id);
+                          }
+                        }}
                         data-infimount-file-item="true"
                         className={`group relative cursor-pointer border-transparent font-normal text-foreground shadow-none antialiased transition-all duration-200 ${isSelected
                           ? "bg-primary/15 ring-1 ring-primary/20"
@@ -381,6 +455,17 @@ export function FileGrid({
             </div>
           );
         })}
+        {dragSelect && (
+          <div
+            className="pointer-events-none absolute z-20 rounded-sm border border-primary/60 bg-primary/15"
+            style={{
+              left: `${Math.min(dragSelect.startX, dragSelect.x)}px`,
+              top: `${Math.min(dragSelect.startY, dragSelect.y)}px`,
+              width: `${Math.abs(dragSelect.x - dragSelect.startX)}px`,
+              height: `${Math.abs(dragSelect.y - dragSelect.startY)}px`,
+            }}
+          />
+        )}
       </div>
     </div>
   );

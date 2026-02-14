@@ -76,6 +76,8 @@ export const UploadZone = forwardRef<UploadZoneRef, UploadZoneProps>(
         });
 
         handleFiles(fileLikes);
+        // Allow selecting the same file again in subsequent picks.
+        event.target.value = "";
       },
       [handleFiles],
     );
@@ -125,13 +127,10 @@ export const UploadZone = forwardRef<UploadZoneRef, UploadZoneProps>(
             </div>
           </div>
         )}
-        {/* Allow selecting directories in supporting webviews/browsers */}
         <input
           id="file-upload"
           type="file"
           multiple
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          {...({ webkitdirectory: "", directory: "" } as any)}
           onChange={handleFileSelect}
           className="hidden"
         />
