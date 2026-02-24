@@ -1,0 +1,12 @@
+extends: default
+
+ignore: |
+  node_modules/
+  .pnpm-store/
+  target/
+
+rules:
+  document-start: disable
+  line-length:
+    max: 160
+    level: warning

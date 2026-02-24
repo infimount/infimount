@@ -38,7 +38,10 @@
 
 ### Download
 
-Pre-built binaries for **Linux**, **macOS**, and **Windows** are available on the [Releases](https://github.com/infimount/infimount/releases) page.
+Pre-built binaries for **Linux**, **macOS**, and **Windows** are available on:
+
+- GitHub Pages download hub: [infimount.github.io/infimount](https://infimount.github.io/infimount/)
+- Releases page: [github.com/infimount/infimount/releases](https://github.com/infimount/infimount/releases)
 
 **Current pre-release:** [`v0.1.0-alpha.1`](https://github.com/infimount/infimount/releases/tag/v0.1.0-alpha.1)
 
@@ -54,7 +57,11 @@ Pre-built binaries for **Linux**, **macOS**, and **Windows** are available on th
 > ℹ️ **Tip:** Use assets from the **GitHub Release page**.
 > The `linux-artifacts.zip` from Actions is a temporary CI artifact and is not the canonical public download link.
 
-> ⚠️ **Note**: Binaries are currently unsigned. See [Installation Notes](#installation-notes) below.
+> 🔐 **Integrity:** Every release includes `SHA256SUMS.txt` and per-file `.sha256` assets.
+> After download, verify with:
+> `sha256sum -c SHA256SUMS.txt`
+
+> ⚠️ **Note**: macOS/Windows binaries may be unsigned for some releases. See [Installation Notes](#installation-notes) below.
 
 ### Build from Source
 
@@ -140,6 +147,7 @@ Outputs:
 - **Windows**: `target/release/bundle/msi/`, `bundle/nsis/`
 
 > 📖 For detailed platform-specific instructions, see [build.md](build.md).
+> For release operations and checklist, see [docs/releasing.md](docs/releasing.md).
 
 ---
 

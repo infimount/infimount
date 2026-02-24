@@ -1,0 +1,62 @@
+name: Bug report
+description: Report a reproducible problem in Infimount
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please fill out all sections so we can reproduce quickly.
+
+  - type: input
+    id: version
+    attributes:
+      label: Infimount version
+      description: Example: v0.1.0-alpha.1
+      placeholder: v0.1.0-alpha.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps from app launch to failure.
+      placeholder: |
+        1. Open Infimount
+        2. Add storage...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or screenshots
+      description: Redact secrets before sharing.
+      render: shell
