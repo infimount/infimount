@@ -38,7 +38,7 @@ jobs:
     name: Build Linux
     runs-on: ubuntu-22.04
     needs: [validate-release-version]
-    
+
     steps:
       - uses: actions/checkout@v6
 
@@ -109,7 +109,7 @@ jobs:
     name: Build macOS
     runs-on: macos-latest
     needs: [validate-release-version]
-    
+
     steps:
       - uses: actions/checkout@v6
 
@@ -137,8 +137,24 @@ jobs:
         working-directory: apps/desktop
         run: pnpm build
 
+      - name: Detect macOS signing configuration
+        id: apple_signing
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "${APPLE_CERTIFICATE}" ] && [ -n "${APPLE_CERTIFICATE_PASSWORD}" ] && [ -n "${APPLE_SIGNING_IDENTITY}" ] && [ -n "${APPLE_ID}" ] && [ -n "${APPLE_PASSWORD}" ] && [ -n "${APPLE_TEAM_ID}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build Tauri app (signed + notarized)
-        if: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' && secrets.APPLE_ID != '' && secrets.APPLE_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
+        if: ${{ steps.apple_signing.outputs.enabled == 'true' }}
         working-directory: apps/desktop
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -150,7 +166,7 @@ jobs:
         run: pnpm tauri build
 
       - name: Build Tauri app (unsigned fallback)
-        if: ${{ !(secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' && secrets.APPLE_ID != '' && secrets.APPLE_PASSWORD != '' && secrets.APPLE_TEAM_ID != '') }}
+        if: ${{ steps.apple_signing.outputs.enabled != 'true' }}
         working-directory: apps/desktop
         run: pnpm tauri build
 
@@ -184,7 +200,7 @@ jobs:
     name: Build Windows
     runs-on: windows-latest
     needs: [validate-release-version]
-    
+
     steps:
       - uses: actions/checkout@v6
 
@@ -216,8 +232,21 @@ jobs:
         working-directory: apps/desktop
         run: pnpm tauri build
 
+      - name: Detect Windows signing configuration
+        id: windows_signing
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if (![string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64) -and ![string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD)) {
+            "enabled=true" >> $env:GITHUB_OUTPUT
+          } else {
+            "enabled=false" >> $env:GITHUB_OUTPUT
+          }
+
       - name: Sign Windows installers (optional)
-        if: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}
+        if: ${{ steps.windows_signing.outputs.enabled == 'true' }}
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
@@ -289,7 +318,7 @@ jobs:
       contents: write
       id-token: write
       attestations: write
-    
+
     steps:
       - uses: actions/checkout@v6
 
@@ -354,9 +383,9 @@ jobs:
             release-assets/*.sha256
           body: |
             ## Infimount ${{ steps.get_version.outputs.VERSION }}
-            
+
             ### Downloads
-            
+
             | Platform | File |
             |----------|------|
             | Linux (Debian/Ubuntu) | `.deb` |
@@ -380,12 +409,12 @@ jobs:
 
             - `SBOM.spdx.json` (software bill of materials, SPDX JSON)
             - GitHub artifact attestation for release assets (provenance)
-            
+
             ### Notes
-            
+
             ⚠️ **Signing status**: macOS/Windows binaries may be unsigned if signing secrets are not configured for this release.
-            
+
             - **macOS**: Right-click the app and select "Open" to bypass Gatekeeper
             - **Windows**: Click "More info" → "Run anyway" on SmartScreen
-            
+
             See [CHANGELOG.md](https://github.com/infimount/infimount/blob/main/CHANGELOG.md) for details.

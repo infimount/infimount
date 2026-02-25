@@ -2,15 +2,15 @@ name: CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
   test-desktop:
     name: Desktop App (Lint & Test)
     runs-on: ubuntu-latest
-    
+
     defaults:
       run:
         working-directory: apps/desktop
@@ -58,7 +58,7 @@ jobs:
   check-rust:
     name: Rust Core & Tauri
     runs-on: ubuntu-latest
-    
+
     steps:
       - uses: actions/checkout@v6
 

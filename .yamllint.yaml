@@ -4,6 +4,7 @@ ignore: |
   node_modules/
   .pnpm-store/
   target/
+  pnpm-lock.yaml
 
 rules:
   document-start: disable

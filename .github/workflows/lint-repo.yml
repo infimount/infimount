@@ -20,8 +20,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
       - name: actionlint
-        uses: rhysd/actionlint@v1
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@latest
+          "$(go env GOPATH)/bin/actionlint"
 
   lint-yaml:
     name: YAML Lint
@@ -47,4 +53,6 @@ jobs:
         with:
           node-version: 20
       - name: Lint Markdown
-        run: npx --yes markdownlint-cli "**/*.md" --config .markdownlint.yaml --ignore node_modules --ignore target --ignore .pnpm-store
+        run: |
+          git ls-files "*.md" > /tmp/markdown-files.txt
+          xargs -a /tmp/markdown-files.txt npx --yes markdownlint-cli --config .markdownlint.yaml
