@@ -9,35 +9,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  validate-release-version:
-    name: Validate Tag Version
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Validate tag matches project versions
-        run: |
-          set -euo pipefail
-          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-          DESKTOP_VERSION="$(jq -r '.version' apps/desktop/package.json)"
-          TAURI_CONF_VERSION="$(jq -r '.version' apps/desktop/src-tauri/tauri.conf.json)"
-          CARGO_VERSION="$(awk -F'"' '/^version = "/ { print $2; exit }' apps/desktop/src-tauri/Cargo.toml)"
-
-          echo "Tag version:        ${TAG_VERSION}"
-          echo "Desktop package:    ${DESKTOP_VERSION}"
-          echo "Tauri config:       ${TAURI_CONF_VERSION}"
-          echo "Tauri Cargo crate:  ${CARGO_VERSION}"
-
-          test "${TAG_VERSION}" = "${DESKTOP_VERSION}" || (echo "Version mismatch: tag vs apps/desktop/package.json" && exit 1)
-          test "${TAG_VERSION}" = "${TAURI_CONF_VERSION}" || (echo "Version mismatch: tag vs apps/desktop/src-tauri/tauri.conf.json" && exit 1)
-          test "${TAG_VERSION}" = "${CARGO_VERSION}" || (echo "Version mismatch: tag vs apps/desktop/src-tauri/Cargo.toml" && exit 1)
-
   build-linux:
     name: Build Linux
     runs-on: ubuntu-22.04
-    needs: [validate-release-version]
 
     steps:
       - uses: actions/checkout@v6
@@ -46,6 +20,9 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 20
+
+      - name: Apply tag version to app manifests
+        run: node scripts/sync-release-version.mjs
 
       - uses: pnpm/action-setup@v4
         name: Install pnpm
@@ -108,7 +85,6 @@ jobs:
   build-macos:
     name: Build macOS
     runs-on: macos-latest
-    needs: [validate-release-version]
 
     steps:
       - uses: actions/checkout@v6
@@ -117,6 +93,9 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 20
+
+      - name: Apply tag version to app manifests
+        run: node scripts/sync-release-version.mjs
 
       - uses: pnpm/action-setup@v4
         name: Install pnpm
@@ -204,7 +183,6 @@ jobs:
   build-windows:
     name: Build Windows
     runs-on: windows-latest
-    needs: [validate-release-version]
 
     steps:
       - uses: actions/checkout@v6
@@ -213,6 +191,9 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 20
+
+      - name: Apply tag version to app manifests
+        run: node scripts/sync-release-version.mjs
 
       - uses: pnpm/action-setup@v4
         name: Install pnpm
