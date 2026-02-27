@@ -43,16 +43,16 @@ Pre-built binaries for **Linux**, **macOS**, and **Windows** are available on:
 - GitHub Pages download hub: [infimount.github.io/infimount](https://infimount.github.io/infimount/)
 - Releases page: [github.com/infimount/infimount/releases](https://github.com/infimount/infimount/releases)
 
-**Current pre-release:** [`v0.1.0-alpha.1`](https://github.com/infimount/infimount/releases/tag/v0.1.0-alpha.1)
+**Current pre-release:** [`v0.1.0-alpha.12`](https://github.com/infimount/infimount/releases/tag/v0.1.0-alpha.12)
 
-| Platform | Latest Download Link | Format |
+| Platform | Download Link (`v0.1.0-alpha.12`) | Format |
 |----------|----------------------|--------|
-| Linux (Debian/Ubuntu) | [Infimount-amd64.deb](https://github.com/infimount/infimount/releases/latest/download/Infimount-amd64.deb) | `.deb` |
-| Linux (Fedora/RHEL) | [Infimount-x86_64.rpm](https://github.com/infimount/infimount/releases/latest/download/Infimount-x86_64.rpm) | `.rpm` |
-| Linux (Universal) | [Infimount-x86_64.AppImage](https://github.com/infimount/infimount/releases/latest/download/Infimount-x86_64.AppImage) | `.AppImage` |
-| macOS | [Infimount.dmg](https://github.com/infimount/infimount/releases/latest/download/Infimount.dmg) | `.dmg` |
-| Windows (Installer) | [Infimount.msi](https://github.com/infimount/infimount/releases/latest/download/Infimount.msi) | `.msi` |
-| Windows (NSIS) | [Infimount-setup.exe](https://github.com/infimount/infimount/releases/latest/download/Infimount-setup.exe) | `.exe` |
+| Linux (Debian/Ubuntu) | [Infimount-amd64.deb](https://github.com/infimount/infimount/releases/download/v0.1.0-alpha.12/Infimount-amd64.deb) | `.deb` |
+| Linux (Fedora/RHEL) | [Infimount-x86_64.rpm](https://github.com/infimount/infimount/releases/download/v0.1.0-alpha.12/Infimount-x86_64.rpm) | `.rpm` |
+| Linux (Universal) | [Infimount-x86_64.AppImage](https://github.com/infimount/infimount/releases/download/v0.1.0-alpha.12/Infimount-x86_64.AppImage) | `.AppImage` |
+| macOS | [Infimount.dmg](https://github.com/infimount/infimount/releases/download/v0.1.0-alpha.12/Infimount.dmg) | `.dmg` |
+| Windows (Installer) | [Infimount.msi](https://github.com/infimount/infimount/releases/download/v0.1.0-alpha.12/Infimount.msi) | `.msi` |
+| Windows (NSIS) | [Infimount-setup.exe](https://github.com/infimount/infimount/releases/download/v0.1.0-alpha.12/Infimount-setup.exe) | `.exe` |
 
 > ℹ️ **Tip:** Use assets from the **GitHub Release page**.
 > The `linux-artifacts.zip` from Actions is a temporary CI artifact and is not the canonical public download link.
