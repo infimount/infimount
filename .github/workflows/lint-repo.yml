@@ -55,5 +55,4 @@ jobs:
           node-version: 20
       - name: Lint Markdown
         run: |
-          git ls-files "*.md" > /tmp/markdown-files.txt
-          xargs -a /tmp/markdown-files.txt npx --yes markdownlint-cli --config .markdownlint.yaml
+          git ls-files -z "*.md" | xargs -0 -r npx --yes markdownlint-cli --config .markdownlint.yaml

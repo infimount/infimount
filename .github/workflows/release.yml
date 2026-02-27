@@ -78,9 +78,9 @@ jobs:
       - name: Collect Linux release assets
         run: |
           mkdir -p out/linux
-          APPIMAGE="$(ls target/release/bundle/appimage/*.AppImage | head -n1)"
-          DEB="$(ls target/release/bundle/deb/*.deb | head -n1)"
-          RPM="$(ls target/release/bundle/rpm/*.rpm | head -n1)"
+          APPIMAGE="$(find target/release/bundle/appimage -maxdepth 1 -type f -name '*.AppImage' | sort | head -n 1)"
+          DEB="$(find target/release/bundle/deb -maxdepth 1 -type f -name '*.deb' | sort | head -n 1)"
+          RPM="$(find target/release/bundle/rpm -maxdepth 1 -type f -name '*.rpm' | sort | head -n 1)"
           cp "$APPIMAGE" out/linux/Infimount-x86_64.AppImage
           cp "$DEB" out/linux/Infimount-amd64.deb
           cp "$RPM" out/linux/Infimount-x86_64.rpm
@@ -147,7 +147,12 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          if [ -n "${APPLE_CERTIFICATE}" ] && [ -n "${APPLE_CERTIFICATE_PASSWORD}" ] && [ -n "${APPLE_SIGNING_IDENTITY}" ] && [ -n "${APPLE_ID}" ] && [ -n "${APPLE_PASSWORD}" ] && [ -n "${APPLE_TEAM_ID}" ]; then
+          if [ -n "${APPLE_CERTIFICATE}" ] \
+            && [ -n "${APPLE_CERTIFICATE_PASSWORD}" ] \
+            && [ -n "${APPLE_SIGNING_IDENTITY}" ] \
+            && [ -n "${APPLE_ID}" ] \
+            && [ -n "${APPLE_PASSWORD}" ] \
+            && [ -n "${APPLE_TEAM_ID}" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
@@ -173,7 +178,7 @@ jobs:
       - name: Collect macOS release assets
         run: |
           mkdir -p out/macos
-          DMG="$(ls target/release/bundle/dmg/*.dmg | head -n1)"
+          DMG="$(find target/release/bundle/dmg -maxdepth 1 -type f -name '*.dmg' | sort | head -n 1)"
           cp "$DMG" out/macos/Infimount.dmg
 
       - name: Smoke check macOS artifact
@@ -332,7 +337,7 @@ jobs:
 
       - name: Get version from tag
         id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
       - name: Collect release files
         run: |
@@ -365,7 +370,7 @@ jobs:
           subject-path: release-assets/*
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           name: Infimount ${{ steps.get_version.outputs.VERSION }}
           draft: true
