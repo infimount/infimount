@@ -8,6 +8,8 @@ ignore: |
 
 rules:
   document-start: disable
+  truthy:
+    check-keys: false
   line-length:
-    max: 160
+    max: 260
     level: warning

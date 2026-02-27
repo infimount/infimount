@@ -12,7 +12,7 @@ body:
     id: version
     attributes:
       label: Infimount version
-      description: Example: v0.1.0-alpha.1
+      description: "Example: v0.1.0-alpha.1"
       placeholder: v0.1.0-alpha.1
     validations:
       required: true
