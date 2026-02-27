@@ -6,17 +6,21 @@
     <title>Infimount Downloads</title>
     <meta
       name="description"
-      content="Download the latest Infimount builds for Linux, macOS, and Windows."
+      content="Download Infimount for Linux, macOS, and Windows."
     />
     <style>
+      @import url("https://fonts.googleapis.com/css2?family=Ubuntu:wght@400;500;700&display=swap");
+
       :root {
-        --bg: #f5f7fb;
-        --card: #ffffff;
-        --text: #0f172a;
-        --muted: #475569;
-        --border: #e2e8f0;
-        --primary: #2563eb;
-        --primary-soft: #dbeafe;
+        --bg: #f7f7f7;
+        --surface: #ffffff;
+        --surface-soft: #f2f2f2;
+        --text: #3d3d3d;
+        --text-soft: #666666;
+        --border: #e8e8e8;
+        --accent: #4a4a4a;
+        --accent-soft: #efefef;
+        --radius: 14px;
       }
 
       * {
@@ -25,108 +29,177 @@
 
       body {
         margin: 0;
-        font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
-        background: radial-gradient(circle at top, #eef4ff 0%, var(--bg) 45%, #f8fafc 100%);
+        font-family: "Ubuntu", system-ui, -apple-system, "Segoe UI", sans-serif;
         color: var(--text);
+        background:
+          radial-gradient(1200px 520px at 50% -80px, #ffffff 0%, #f4f4f4 55%, #f7f7f7 100%),
+          var(--bg);
       }
 
-      .wrap {
-        max-width: 980px;
+      .shell {
+        max-width: 1040px;
         margin: 0 auto;
-        padding: 3rem 1rem 4rem;
+        padding: 2rem 1rem 3rem;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+        padding: 0.85rem 1rem;
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.82);
+        backdrop-filter: blur(6px);
+        border-radius: var(--radius);
+      }
+
+      .logo {
+        width: 36px;
+        height: 36px;
+        border-radius: 9px;
+        object-fit: cover;
+        border: 1px solid #dddddd;
+      }
+
+      .brand {
+        line-height: 1.1;
+      }
+
+      .brand h1 {
+        margin: 0;
+        font-size: 1.04rem;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+      }
+
+      .brand p {
+        margin: 0.18rem 0 0;
+        font-size: 0.82rem;
+        color: var(--text-soft);
       }
 
       .hero {
-        text-align: center;
-        margin-bottom: 2rem;
+        margin-top: 1rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface);
+        padding: 1.2rem;
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.04);
       }
 
-      .hero h1 {
-        margin: 0 0 0.5rem;
-        font-size: clamp(1.75rem, 3vw, 2.4rem);
+      .hero h2 {
+        margin: 0;
+        font-size: clamp(1.3rem, 2.6vw, 1.9rem);
+        font-weight: 700;
+        letter-spacing: -0.015em;
       }
 
       .hero p {
-        margin: 0;
-        color: var(--muted);
-        font-size: 1rem;
+        margin: 0.42rem 0 0;
+        color: var(--text-soft);
+        font-size: 0.95rem;
       }
 
       .grid {
+        margin-top: 1rem;
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-        gap: 1rem;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 0.9rem;
       }
 
       .card {
-        background: var(--card);
+        background: var(--surface);
         border: 1px solid var(--border);
-        border-radius: 14px;
+        border-radius: var(--radius);
         padding: 1rem;
-        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
       }
 
-      .card h2 {
-        margin: 0 0 0.4rem;
-        font-size: 1.06rem;
+      .card h3 {
+        margin: 0;
+        font-size: 1rem;
+        font-weight: 700;
       }
 
-      .muted {
-        margin: 0 0 0.75rem;
-        color: var(--muted);
-        font-size: 0.92rem;
+      .card p {
+        margin: 0.45rem 0 0.85rem;
+        color: var(--text-soft);
+        font-size: 0.88rem;
       }
 
-      .links {
+      .actions {
         display: flex;
         flex-direction: column;
-        gap: 0.45rem;
+        gap: 0.5rem;
       }
 
       .btn {
-        display: inline-block;
-        width: 100%;
+        display: block;
         text-align: center;
         text-decoration: none;
-        color: #1e3a8a;
-        background: var(--primary-soft);
-        border: 1px solid #bfdbfe;
+        font-size: 0.88rem;
+        font-weight: 500;
+        color: var(--text);
+        background: var(--accent-soft);
+        border: 1px solid #e2e2e2;
         border-radius: 10px;
         padding: 0.55rem 0.75rem;
-        font-weight: 600;
-        font-size: 0.9rem;
+        transition: background-color 120ms ease;
       }
 
       .btn:hover {
-        background: #cfe3ff;
+        background: #e7e7e7;
       }
 
       .footer {
-        margin-top: 1.5rem;
-        text-align: center;
-        color: var(--muted);
-        font-size: 0.9rem;
+        margin-top: 1rem;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        border-radius: var(--radius);
+        padding: 0.85rem 1rem;
+        font-size: 0.88rem;
+        color: var(--text-soft);
       }
 
       .footer a {
-        color: var(--primary);
+        color: var(--accent);
+        font-weight: 500;
         text-decoration: none;
-        font-weight: 600;
+      }
+
+      @media (max-width: 640px) {
+        .shell {
+          padding: 1rem 0.75rem 2rem;
+        }
+
+        .topbar,
+        .hero,
+        .card,
+        .footer {
+          border-radius: 12px;
+        }
       }
     </style>
   </head>
   <body>
-    <main class="wrap">
+    <main class="shell">
+      <header class="topbar">
+        <img class="logo" src="./assets/logo.png" alt="Infimount logo" />
+        <div class="brand">
+          <h1>Infimount</h1>
+          <p>Unified Storage Browser</p>
+        </div>
+      </header>
+
       <section class="hero">
-        <h1>Infimount Downloads</h1>
-        <p>Get Infimount v0.1.0-alpha.12 for your operating system.</p>
+        <h2>Downloads</h2>
+        <p>Current pre-release: <strong>v0.1.0-alpha.12</strong></p>
       </section>
 
       <section class="grid">
         <article class="card">
-          <h2>Linux</h2>
-          <p class="muted">Debian, Fedora/RHEL, and AppImage variants.</p>
-          <div class="links">
+          <h3>Linux</h3>
+          <p>Debian/Ubuntu, Fedora/RHEL, and AppImage.</p>
+          <div class="actions">
             <a class="btn" href="https://github.com/infimount/infimount/releases/download/v0.1.0-alpha.12/Infimount-amd64.deb">Download .deb</a>
             <a class="btn" href="https://github.com/infimount/infimount/releases/download/v0.1.0-alpha.12/Infimount-x86_64.rpm">Download .rpm</a>
             <a class="btn" href="https://github.com/infimount/infimount/releases/download/v0.1.0-alpha.12/Infimount-x86_64.AppImage">Download .AppImage</a>
@@ -134,30 +207,27 @@
         </article>
 
         <article class="card">
-          <h2>macOS</h2>
-          <p class="muted">Installer image for Intel and Apple Silicon builds.</p>
-          <div class="links">
+          <h3>macOS</h3>
+          <p>Installer image for Apple Silicon and Intel Macs.</p>
+          <div class="actions">
             <a class="btn" href="https://github.com/infimount/infimount/releases/download/v0.1.0-alpha.12/Infimount.dmg">Download .dmg</a>
           </div>
         </article>
 
         <article class="card">
-          <h2>Windows</h2>
-          <p class="muted">MSI and EXE installer variants.</p>
-          <div class="links">
+          <h3>Windows</h3>
+          <p>Installer packages for standard Windows setup.</p>
+          <div class="actions">
             <a class="btn" href="https://github.com/infimount/infimount/releases/download/v0.1.0-alpha.12/Infimount.msi">Download .msi</a>
             <a class="btn" href="https://github.com/infimount/infimount/releases/download/v0.1.0-alpha.12/Infimount-setup.exe">Download .exe</a>
           </div>
         </article>
       </section>
 
-      <p class="footer">
-        Need release notes or older versions?
-        <a href="https://github.com/infimount/infimount/releases">Open all releases</a>.
-      </p>
-      <p class="footer">
-        For integrity verification, download `SHA256SUMS.txt` from the same release assets page.
-      </p>
+      <section class="footer">
+        Integrity files (`SHA256SUMS.txt` and `.sha256`) are available in the same release.
+        See all releases: <a href="https://github.com/infimount/infimount/releases">github.com/infimount/infimount/releases</a>
+      </section>
     </main>
   </body>
 </html>
