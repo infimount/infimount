@@ -193,7 +193,7 @@ jobs:
           node-version: 20
 
       - name: Apply tag version to app manifests
-        run: node scripts/sync-release-version.mjs
+        run: node scripts/sync-release-version.mjs --msi-safe
 
       - uses: pnpm/action-setup@v4
         name: Install pnpm
