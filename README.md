@@ -238,6 +238,9 @@ cargo test --workspace               # Rust tests
 pnpm lint                            # ESLint
 cargo fmt --check                    # Rust formatting
 cargo clippy                         # Rust lints
+
+# Enable local pre-commit checks (yamllint, markdownlint, actionlint)
+pnpm setup:hooks
 ```
 
 ---

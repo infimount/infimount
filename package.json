@@ -1,4 +1,7 @@
 {
+	"scripts": {
+		"setup:hooks": "bash scripts/setup-git-hooks.sh"
+	},
 	"dependencies": {
 		"@tauri-apps/cli": "2.9.4",
 		"@tauri-apps/api": "2.9.1"
