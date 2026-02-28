@@ -166,6 +166,56 @@
         text-decoration: none;
       }
 
+      .steps {
+        margin-top: 1rem;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        border-radius: var(--radius);
+        padding: 1rem;
+      }
+
+      .steps h3 {
+        margin: 0 0 0.5rem;
+        font-size: 1rem;
+      }
+
+      .steps ul {
+        margin: 0;
+        padding-left: 1.1rem;
+        color: var(--text-soft);
+        font-size: 0.9rem;
+        line-height: 1.45;
+      }
+
+      .steps li {
+        margin-bottom: 0.45rem;
+      }
+
+      .steps code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        background: #f1f1f1;
+        border: 1px solid #e3e3e3;
+        border-radius: 6px;
+        padding: 0.1rem 0.35rem;
+        color: #333;
+      }
+
+      .preview {
+        margin-top: 1rem;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        border-radius: var(--radius);
+        padding: 0.75rem;
+      }
+
+      .preview img {
+        width: 100%;
+        height: auto;
+        display: block;
+        border-radius: 10px;
+        border: 1px solid #e6e6e6;
+      }
+
       @media (max-width: 640px) {
         .shell {
           padding: 1rem 0.75rem 2rem;
@@ -195,6 +245,10 @@
         <p>Current pre-release: <strong>v0.1.0-alpha.12</strong></p>
       </section>
 
+      <section class="preview">
+        <img src="./assets/screenshot-infimount.png" alt="Infimount desktop application screenshot" />
+      </section>
+
       <section class="grid">
         <article class="card">
           <h3>Linux</h3>
@@ -222,6 +276,17 @@
             <a class="btn" href="https://github.com/infimount/infimount/releases/download/v0.1.0-alpha.12/Infimount-setup.exe">Download .exe</a>
           </div>
         </article>
+      </section>
+
+      <section class="steps">
+        <h3>After Download (First Run)</h3>
+        <ul>
+          <li><strong>Linux AppImage:</strong> <code>chmod +x Infimount-*.AppImage && ./Infimount-*.AppImage</code></li>
+          <li><strong>Linux DEB:</strong> <code>sudo apt install ./Infimount-amd64.deb</code></li>
+          <li><strong>Linux RPM:</strong> <code>sudo rpm -i Infimount-x86_64.rpm</code></li>
+          <li><strong>macOS DMG:</strong> Open DMG, drag app to Applications, then right-click <code>Infimount</code> -> <code>Open</code> on first launch.</li>
+          <li><strong>Windows MSI/EXE:</strong> If SmartScreen appears, choose <code>More info</code> -> <code>Run anyway</code>.</li>
+        </ul>
       </section>
 
       <section class="footer">

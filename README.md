@@ -7,6 +7,10 @@
   Browse local and cloud storage through a single interface.
 </p>
 
+<p align="center">
+  <img src="docs/assets/screenshot-infimount.png" alt="Infimount app screenshot" width="900" />
+</p>
+
 
 > 🔐 **LOCAL-FIRST BY DEFAULT**
 >
@@ -62,6 +66,19 @@ Pre-built binaries for **Linux**, **macOS**, and **Windows** are available on:
 > `sha256sum -c SHA256SUMS.txt`
 
 > ⚠️ **Note**: macOS/Windows binaries may be unsigned for some releases. See [Installation Notes](#installation-notes) below.
+
+### Quick First Run (After Download)
+
+1. Linux (`.AppImage`)
+   `chmod +x Infimount-*.AppImage && ./Infimount-*.AppImage`
+2. Linux (`.deb`)
+   `sudo apt install ./Infimount-amd64.deb`
+3. Linux (`.rpm`)
+   `sudo rpm -i Infimount-x86_64.rpm`
+4. macOS (`.dmg`)
+   Open DMG, drag Infimount to Applications, then right-click app -> `Open` on first launch.
+5. Windows (`.msi` or `.exe`)
+   Run installer. If SmartScreen appears: `More info` -> `Run anyway`.
 
 ### Build from Source
 
@@ -245,16 +262,17 @@ Your sponsorship helps:
 ## 📝 Installation Notes
 
 ### macOS
-Binaries are not notarized. To open:
-1. Right-click the app
-2. Select "Open"
-3. Click "Open" in the dialog
+Binaries may be unsigned/not notarized in some releases. To open:
+1. Open the `.dmg`
+2. Drag `Infimount.app` to `Applications`
+3. Right-click the app and select `Open`
+4. Click `Open` in the dialog
 
 ### Windows
-SmartScreen may block the installer. Click "More info" → "Run anyway".
+SmartScreen may block the installer. Click `More info` -> `Run anyway`.
 
 ### Linux
-AppImage may need executable permission:
+AppImage needs executable permission:
 ```bash
 chmod +x Infimount-*.AppImage
 ./Infimount-*.AppImage

@@ -2,4 +2,4 @@ type: azblob
 endpoint: "http://localhost:10000/devstoreaccount1"
 container: "test-container"
 account_name: "devstoreaccount1"
-account_key: "Eby8vdM02xNoGuBy+EXAMPLEKEY=="
+account_key: "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBek=="
