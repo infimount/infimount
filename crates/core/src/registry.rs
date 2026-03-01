@@ -4,6 +4,7 @@ use std::path::Path;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use futures::TryStreamExt;
+use indexmap::IndexMap;
 use opendal::services::{Azblob, Fs, Gcs, Webdav, S3};
 use opendal::ErrorKind;
 use opendal::Operator;
@@ -16,14 +17,14 @@ use crate::models::{CoreError, Result, Source, SourceKind};
 ///
 /// Operators are built lazily from `Source` configuration and cached.
 pub struct OperatorRegistry {
-    sources: RwLock<HashMap<String, Source>>,
+    sources: RwLock<IndexMap<String, Source>>,
     operators: RwLock<HashMap<String, Operator>>,
 }
 
 impl OperatorRegistry {
     /// Create a new registry from a list of configured sources.
     pub fn new(sources: Vec<Source>) -> Self {
-        let mut map = HashMap::new();
+        let mut map = IndexMap::new();
         for src in sources {
             map.insert(src.id.clone(), src);
         }
@@ -42,6 +43,18 @@ impl OperatorRegistry {
             .values()
             .cloned()
             .collect::<Vec<_>>()
+    }
+
+    async fn persist_sources(&self) -> Result<()> {
+        let all_sources = self
+            .sources
+            .read()
+            .await
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        config::save_sources(&all_sources)?;
+        Ok(())
     }
 
     /// Replace all sources with the provided list, clearing any
@@ -65,9 +78,7 @@ impl OperatorRegistry {
             ops.clear();
         }
 
-        let all_sources = self.list_sources().await;
-        config::save_sources(&all_sources)?;
-        Ok(())
+        self.persist_sources().await
     }
 
     /// Add a new source and persist configuration.
@@ -76,7 +87,8 @@ impl OperatorRegistry {
 
         {
             let mut sources = self.sources.write().await;
-            sources.insert(source.id.clone(), source.clone());
+            let key = source.id.clone();
+            sources.shift_insert(0, key, source.clone());
         }
 
         // Clear any existing operator cached for this source (if any).
@@ -86,16 +98,14 @@ impl OperatorRegistry {
         }
 
         // Persist the updated list.
-        let all_sources = self.list_sources().await;
-        config::save_sources(&all_sources)?;
-        Ok(())
+        self.persist_sources().await
     }
 
     /// Remove a source by id and persist configuration.
     pub async fn remove_source(&self, source_id: &str) -> Result<()> {
         {
             let mut sources = self.sources.write().await;
-            sources.remove(source_id);
+            sources.shift_remove(source_id);
         }
 
         // Remove cached operator reference.
@@ -104,9 +114,7 @@ impl OperatorRegistry {
             ops.remove(source_id);
         }
 
-        let all_sources = self.list_sources().await;
-        config::save_sources(&all_sources)?;
-        Ok(())
+        self.persist_sources().await
     }
 
     /// Update an existing source (or add if missing) and persist.
@@ -124,9 +132,7 @@ impl OperatorRegistry {
             ops.remove(&source.id);
         }
 
-        let all_sources = self.list_sources().await;
-        config::save_sources(&all_sources)?;
-        Ok(())
+        self.persist_sources().await
     }
 
     /// Get (or lazily build) an operator for the given source ID.
@@ -464,6 +470,48 @@ mod tests {
         assert_eq!(sources.len(), 0);
 
         // cleanup
+        let _ = fs::remove_file(cfg);
+    }
+
+    #[tokio::test]
+    async fn sources_are_listed_newest_first() {
+        let cfg = test_config_path();
+        reset_config_file(&cfg);
+        env::set_var("INFIMOUNT_CONFIG", &cfg);
+
+        let registry = OperatorRegistry::new(vec![]);
+
+        let mk = |id: &str| Source {
+            id: id.to_string(),
+            name: id.to_string(),
+            kind: crate::models::SourceKind::Local,
+            root: "/tmp".to_string(),
+            config: None,
+        };
+
+        registry.add_source(mk("a")).await.unwrap();
+        registry.add_source(mk("b")).await.unwrap();
+        registry.add_source(mk("c")).await.unwrap();
+
+        let ids = registry
+            .list_sources()
+            .await
+            .into_iter()
+            .map(|s| s.id)
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["c", "b", "a"]);
+
+        let mut updated_b = mk("b");
+        updated_b.name = "updated".to_string();
+        registry.update_source(updated_b).await.unwrap();
+        let ids_after_update = registry
+            .list_sources()
+            .await
+            .into_iter()
+            .map(|s| s.id)
+            .collect::<Vec<_>>();
+        assert_eq!(ids_after_update, vec!["c", "b", "a"]);
+
         let _ = fs::remove_file(cfg);
     }
 
