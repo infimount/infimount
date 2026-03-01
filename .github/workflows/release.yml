@@ -100,7 +100,7 @@ jobs:
             cp "$sig" out/linux/updater/
             if [ -f "$artifact" ]; then
               cp "$artifact" out/linux/updater/
-              if [ -z "$UPDATER_SIG" ] && [[ "$artifact" == *.tar.gz || "$artifact" == *.zip ]]; then
+              if [ -z "$UPDATER_SIG" ] && [[ "$artifact" == *.tar.gz || "$artifact" == *.zip || "$artifact" == *.AppImage ]]; then
                 UPDATER_SIG="$sig"
                 UPDATER_ARTIFACT="$artifact"
               fi
@@ -109,7 +109,7 @@ jobs:
 
           if [ -z "${LATEST_JSON}" ]; then
             if [ -z "$UPDATER_SIG" ] || [ -z "$UPDATER_ARTIFACT" ]; then
-              echo "No updater latest*.json and no signed updater archive (*.tar.gz|*.zip) found." >&2
+              echo "No updater latest*.json and no signed updater archive (*.tar.gz|*.AppImage|*.zip) found." >&2
               exit 1
             fi
 
@@ -449,7 +449,7 @@ jobs:
             $artifact = $sig.FullName.Substring(0, $sig.FullName.Length - 4)
             if (Test-Path $artifact) {
               Copy-Item $artifact out/windows/updater/
-              if (-not $updaterSig -and ($artifact.EndsWith(".zip") -or $artifact.EndsWith(".tar.gz"))) {
+              if (-not $updaterSig -and ($artifact.EndsWith(".zip") -or $artifact.EndsWith(".tar.gz") -or $artifact.EndsWith(".exe") -or $artifact.EndsWith(".msi"))) {
                 $updaterSig = $sig
                 $updaterArtifact = $artifact
               }
@@ -458,7 +458,7 @@ jobs:
 
           if (-not $latest) {
             if (-not $updaterSig -or -not $updaterArtifact) {
-              throw "No updater latest*.json and no signed updater archive (*.tar.gz|*.zip) found."
+              throw "No updater latest*.json and no signed updater archive (*.tar.gz|*.zip|*.exe|*.msi) found."
             }
 
             $sigValue = (Get-Content $updaterSig.FullName -Raw).Trim()
