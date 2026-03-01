@@ -83,7 +83,11 @@ jobs:
             cp "${LATEST_JSON}" out/linux/updater/latest-linux.json
           fi
 
-          mapfile -t SIG_FILES < <(find target/release/bundle -type f -name '*.sig' | sort)
+          SIG_FILES=()
+          while IFS= read -r line; do
+            SIG_FILES+=("$line")
+          done < <(find target/release/bundle -type f -name '*.sig' | sort)
+
           if [ "${#SIG_FILES[@]}" -eq 0 ]; then
             echo "No updater signature files generated. Check TAURI_SIGNING_PRIVATE_KEY." >&2
             exit 1
@@ -248,7 +252,11 @@ jobs:
             cp "${LATEST_JSON}" out/macos/updater/latest-macos.json
           fi
 
-          mapfile -t SIG_FILES < <(find target/release/bundle -type f -name '*.sig' | sort)
+          SIG_FILES=()
+          while IFS= read -r line; do
+            SIG_FILES+=("$line")
+          done < <(find target/release/bundle -type f -name '*.sig' | sort)
+
           if [ "${#SIG_FILES[@]}" -eq 0 ]; then
             echo "No updater signature files generated. Check TAURI_SIGNING_PRIVATE_KEY." >&2
             exit 1
