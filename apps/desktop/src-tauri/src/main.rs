@@ -13,6 +13,10 @@ fn main() {
     tauri::Builder::default()
         .manage(state::AppState::new())
         .setup(|app| {
+            #[cfg(desktop)]
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
+
             #[cfg(target_os = "macos")]
             {
                 use tauri::Manager;

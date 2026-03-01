@@ -1,8 +1,14 @@
 {
-\t"folders": [
-\t\t{
-\t\t\t"path": "."
-\t\t}
-\t],
-\t"settings": {}
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../homebrew-infimount"
+		},
+		{
+			"path": "../brew"
+		}
+	],
+	"settings": {}
 }

@@ -7,6 +7,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+  TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
 jobs:
   build-linux:
@@ -61,6 +63,32 @@ jobs:
           cp "$APPIMAGE" out/linux/Infimount-x86_64.AppImage
           cp "$DEB" out/linux/Infimount-amd64.deb
           cp "$RPM" out/linux/Infimount-x86_64.rpm
+
+      - name: Collect Linux updater artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p out/linux/updater
+
+          LATEST_JSON="$(find target/release/bundle -type f -name 'latest*.json' | sort | head -n 1)"
+          if [ -z "${LATEST_JSON}" ]; then
+            echo "No updater latest*.json generated. Check TAURI_SIGNING_PRIVATE_KEY and updater config." >&2
+            exit 1
+          fi
+          cp "${LATEST_JSON}" out/linux/updater/latest-linux.json
+
+          mapfile -t SIG_FILES < <(find target/release/bundle -type f -name '*.sig' | sort)
+          if [ "${#SIG_FILES[@]}" -eq 0 ]; then
+            echo "No updater signature files generated. Check TAURI_SIGNING_PRIVATE_KEY." >&2
+            exit 1
+          fi
+
+          for sig in "${SIG_FILES[@]}"; do
+            artifact="${sig%.sig}"
+            cp "$sig" out/linux/updater/
+            if [ -f "$artifact" ]; then
+              cp "$artifact" out/linux/updater/
+            fi
+          done
 
       - name: Smoke check Linux artifacts
         run: |
@@ -159,6 +187,32 @@ jobs:
           mkdir -p out/macos
           DMG="$(find target/release/bundle/dmg -maxdepth 1 -type f -name '*.dmg' | sort | head -n 1)"
           cp "$DMG" out/macos/Infimount.dmg
+
+      - name: Collect macOS updater artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p out/macos/updater
+
+          LATEST_JSON="$(find target/release/bundle -type f -name 'latest*.json' | sort | head -n 1)"
+          if [ -z "${LATEST_JSON}" ]; then
+            echo "No updater latest*.json generated. Check TAURI_SIGNING_PRIVATE_KEY and updater config." >&2
+            exit 1
+          fi
+          cp "${LATEST_JSON}" out/macos/updater/latest-macos.json
+
+          mapfile -t SIG_FILES < <(find target/release/bundle -type f -name '*.sig' | sort)
+          if [ "${#SIG_FILES[@]}" -eq 0 ]; then
+            echo "No updater signature files generated. Check TAURI_SIGNING_PRIVATE_KEY." >&2
+            exit 1
+          fi
+
+          for sig in "${SIG_FILES[@]}"; do
+            artifact="${sig%.sig}"
+            cp "$sig" out/macos/updater/
+            if [ -f "$artifact" ]; then
+              cp "$artifact" out/macos/updater/
+            fi
+          done
 
       - name: Smoke check macOS artifact
         run: |
@@ -275,6 +329,30 @@ jobs:
           Copy-Item $msi.FullName out/windows/Infimount.msi
           Copy-Item $exe.FullName out/windows/Infimount-setup.exe
 
+      - name: Collect Windows updater artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out/windows/updater | Out-Null
+
+          $latest = Get-ChildItem -Path target/release/bundle -Recurse -Filter "latest*.json" | Sort-Object FullName | Select-Object -First 1
+          if (-not $latest) {
+            throw "No updater latest*.json generated. Check TAURI_SIGNING_PRIVATE_KEY and updater config."
+          }
+          Copy-Item $latest.FullName "out/windows/updater/latest-windows.json"
+
+          $sigFiles = Get-ChildItem -Path target/release/bundle -Recurse -Filter "*.sig" | Sort-Object FullName
+          if (-not $sigFiles -or $sigFiles.Count -eq 0) {
+            throw "No updater signature files generated. Check TAURI_SIGNING_PRIVATE_KEY."
+          }
+
+          foreach ($sig in $sigFiles) {
+            Copy-Item $sig.FullName out/windows/updater/
+            $artifact = $sig.FullName.Substring(0, $sig.FullName.Length - 4)
+            if (Test-Path $artifact) {
+              Copy-Item $artifact out/windows/updater/
+            }
+          }
+
       - name: Smoke check Windows artifacts
         shell: pwsh
         run: |
@@ -316,12 +394,16 @@ jobs:
       - name: Display structure of downloaded files
         run: ls -R artifacts
 
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
       - name: Get version from tag
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
       - name: Collect release files
         run: |
+          set -euo pipefail
           mkdir -p release-assets
           cp artifacts/linux-artifacts/Infimount-amd64.deb release-assets/
           cp artifacts/linux-artifacts/Infimount-x86_64.rpm release-assets/
@@ -329,6 +411,35 @@ jobs:
           cp artifacts/macos-artifacts/Infimount.dmg release-assets/
           cp artifacts/windows-artifacts/Infimount.msi release-assets/
           cp artifacts/windows-artifacts/Infimount-setup.exe release-assets/
+
+          for dir in artifacts/linux-artifacts/updater artifacts/macos-artifacts/updater artifacts/windows-artifacts/updater; do
+            if [ -d "$dir" ]; then
+              cp "$dir"/* release-assets/
+            fi
+          done
+
+      - name: Merge updater metadata
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          latest_files=(release-assets/latest-*.json)
+          if [ "${#latest_files[@]}" -eq 0 ]; then
+            echo "No updater latest-*.json files were collected from build jobs." >&2
+            exit 1
+          fi
+
+          jq -s '{
+            version: (.[0].version // ""),
+            notes: (.[0].notes // ""),
+            pub_date: (.[0].pub_date // null),
+            platforms: (reduce .[] as $item ({}; . + ($item.platforms // {})))
+          }' "${latest_files[@]}" > release-assets/latest.json
+
+          platform_count="$(jq '.platforms | length' release-assets/latest.json)"
+          if [ "${platform_count}" -eq 0 ]; then
+            echo "Merged latest.json has no platforms entries." >&2
+            exit 1
+          fi
 
       - name: Generate checksums
         run: |
@@ -364,6 +475,10 @@ jobs:
             release-assets/Infimount.dmg
             release-assets/Infimount.msi
             release-assets/Infimount-setup.exe
+            release-assets/latest.json
+            release-assets/*.sig
+            release-assets/*.tar.gz
+            release-assets/*.zip
             release-assets/SHA256SUMS.txt
             release-assets/SBOM.spdx.json
             release-assets/*.sha256
@@ -395,6 +510,7 @@ jobs:
 
             - `SBOM.spdx.json` (software bill of materials, SPDX JSON)
             - GitHub artifact attestation for release assets (provenance)
+            - `latest.json` + signed updater archives for in-app auto-update
 
             ### Notes
 

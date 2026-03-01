@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { getVersion as getAppVersion } from "@tauri-apps/api/app";
+import { check as checkUpdater } from "@tauri-apps/plugin-updater";
 import {
   Menu,
   Plus,
@@ -61,6 +63,9 @@ interface StorageSidebarProps {
   isLoading?: boolean;
 }
 
+const RELEASES_PAGE_URL = "https://github.com/infimount/infimount/releases/latest";
+const normalizeVersion = (value: string): string => value.trim().replace(/^v/i, "");
+
 const getStorageIcon = (type: string) => {
   switch (type) {
     case 'aws-s3':
@@ -95,6 +100,9 @@ export function StorageSidebar({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const [dragTargetId, setDragTargetId] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState<string | null | undefined>(undefined);
+  const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
+  const hasAutoCheckedUpdatesRef = useRef(false);
   const [dropConflict, setDropConflict] = useState<{
     fromSourceId: string;
     toSourceId: string;
@@ -198,12 +206,100 @@ export function StorageSidebar({
     }
   };
 
+  const checkForUpdates = useCallback(
+    async (silent = false) => {
+      if (isCheckingUpdates) return;
+
+      setIsCheckingUpdates(true);
+      if (!silent) {
+        toast({
+          title: "Checking for updates...",
+          description: "Looking for an in-app update package.",
+        });
+      }
+
+      try {
+        const update = await checkUpdater();
+        if (!update) {
+          if (!silent) {
+            toast({
+              title: "You're up to date",
+              description: `Infimount v${appVersion ? normalizeVersion(appVersion) : "current"} is the latest available build.`,
+            });
+          }
+          return;
+        }
+
+        if (silent) {
+          toast({
+            title: `Update available: v${update.version}`,
+            description: "Click the sparkle icon to download and install.",
+          });
+          return;
+        }
+
+        const shouldInstall = window.confirm(
+          `Update v${update.version} is available (current: v${update.currentVersion}).\n\nDownload and install now?`,
+        );
+        if (!shouldInstall) {
+          return;
+        }
+
+        toast({
+          title: `Downloading update v${update.version}...`,
+          description: "Please wait while Infimount installs the update package.",
+        });
+        await update.downloadAndInstall();
+        setAppVersion(normalizeVersion(update.version));
+        toast({
+          title: "Update installed",
+          description: "Restart Infimount to apply the new version.",
+        });
+      } catch (error) {
+        if (!silent) {
+          toast({
+            title: "Update check failed",
+            description:
+              error instanceof Error
+                ? `${error.message}. You can download manually: ${RELEASES_PAGE_URL}`
+                : `Unable to check updates. Visit ${RELEASES_PAGE_URL}`,
+            variant: "destructive",
+          });
+        }
+      } finally {
+        setIsCheckingUpdates(false);
+      }
+    },
+    [appVersion, isCheckingUpdates, toast],
+  );
+
   const handleCheckUpdate = () => {
-    toast({
-      title: "Checking for updates...",
-      description: "You are on the latest version of Infimount (v0.0.1).",
-    });
+    void checkForUpdates(false);
   };
+
+  useEffect(() => {
+    let active = true;
+    void getAppVersion()
+      .then((version) => {
+        if (!active) return;
+        setAppVersion(normalizeVersion(version));
+      })
+      .catch(() => {
+        if (!active) return;
+        setAppVersion(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (hasAutoCheckedUpdatesRef.current) return;
+    if (appVersion === undefined) return;
+
+    hasAutoCheckedUpdatesRef.current = true;
+    void checkForUpdates(true);
+  }, [appVersion, checkForUpdates]);
 
   useEffect(() => {
     if (isSearchOpen) {
@@ -424,7 +520,9 @@ export function StorageSidebar({
           <img src={logo} alt="" className="h-7 w-7 shrink-0 object-contain" draggable={false} />
           <div className="flex items-center gap-1.5 overflow-hidden">
             <span className="text-xs font-semibold text-sidebar-foreground truncate">Infimount</span>
-            <span className="text-[10px] text-muted-foreground shrink-0">v0.0.1</span>
+            <span className="text-[10px] text-muted-foreground shrink-0">
+              {appVersion ? `v${appVersion}` : "v-"}
+            </span>
           </div>
         </div>
         <Button
@@ -432,7 +530,8 @@ export function StorageSidebar({
           size="icon"
           className="h-8 w-8 text-muted-foreground hover:text-foreground"
           onClick={handleCheckUpdate}
-          title="Check for updates"
+          title={isCheckingUpdates ? "Checking updates..." : "Check for updates"}
+          disabled={isCheckingUpdates}
         >
           <Sparkles className="h-4 w-4" />
         </Button>
