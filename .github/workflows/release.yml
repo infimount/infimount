@@ -68,13 +68,20 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out/linux/updater
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          PUB_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          ARCH="$(uname -m)"
+          case "$ARCH" in
+            x86_64) PLATFORM_ARCH="x86_64" ;;
+            aarch64|arm64) PLATFORM_ARCH="aarch64" ;;
+            *) PLATFORM_ARCH="$ARCH" ;;
+          esac
+          PLATFORM_KEY="linux-${PLATFORM_ARCH}"
 
           LATEST_JSON="$(find target/release/bundle -type f -name 'latest*.json' | sort | head -n 1)"
-          if [ -z "${LATEST_JSON}" ]; then
-            echo "No updater latest*.json generated. Check TAURI_SIGNING_PRIVATE_KEY and updater config." >&2
-            exit 1
+          if [ -n "${LATEST_JSON}" ]; then
+            cp "${LATEST_JSON}" out/linux/updater/latest-linux.json
           fi
-          cp "${LATEST_JSON}" out/linux/updater/latest-linux.json
 
           mapfile -t SIG_FILES < <(find target/release/bundle -type f -name '*.sig' | sort)
           if [ "${#SIG_FILES[@]}" -eq 0 ]; then
@@ -82,13 +89,47 @@ jobs:
             exit 1
           fi
 
+          UPDATER_SIG=""
+          UPDATER_ARTIFACT=""
           for sig in "${SIG_FILES[@]}"; do
             artifact="${sig%.sig}"
             cp "$sig" out/linux/updater/
             if [ -f "$artifact" ]; then
               cp "$artifact" out/linux/updater/
+              if [ -z "$UPDATER_SIG" ] && [[ "$artifact" == *.tar.gz || "$artifact" == *.zip ]]; then
+                UPDATER_SIG="$sig"
+                UPDATER_ARTIFACT="$artifact"
+              fi
             fi
           done
+
+          if [ -z "${LATEST_JSON}" ]; then
+            if [ -z "$UPDATER_SIG" ] || [ -z "$UPDATER_ARTIFACT" ]; then
+              echo "No updater latest*.json and no signed updater archive (*.tar.gz|*.zip) found." >&2
+              exit 1
+            fi
+
+            SIG_VALUE="$(tr -d '\r\n' < "$UPDATER_SIG")"
+            UPDATER_ARTIFACT_NAME="$(basename "$UPDATER_ARTIFACT")"
+            jq -n \
+              --arg version "$VERSION" \
+              --arg notes "See release notes." \
+              --arg pub_date "$PUB_DATE" \
+              --arg platform "$PLATFORM_KEY" \
+              --arg signature "$SIG_VALUE" \
+              --arg url "https://github.com/infimount/infimount/releases/latest/download/${UPDATER_ARTIFACT_NAME}" \
+              '{
+                version: $version,
+                notes: $notes,
+                pub_date: $pub_date,
+                platforms: {
+                  ($platform): {
+                    signature: $signature,
+                    url: $url
+                  }
+                }
+              }' > out/linux/updater/latest-linux.json
+          fi
 
       - name: Smoke check Linux artifacts
         run: |
@@ -192,13 +233,20 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out/macos/updater
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          PUB_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          ARCH="$(uname -m)"
+          case "$ARCH" in
+            x86_64) PLATFORM_ARCH="x86_64" ;;
+            aarch64|arm64) PLATFORM_ARCH="aarch64" ;;
+            *) PLATFORM_ARCH="$ARCH" ;;
+          esac
+          PLATFORM_KEY="darwin-${PLATFORM_ARCH}"
 
           LATEST_JSON="$(find target/release/bundle -type f -name 'latest*.json' | sort | head -n 1)"
-          if [ -z "${LATEST_JSON}" ]; then
-            echo "No updater latest*.json generated. Check TAURI_SIGNING_PRIVATE_KEY and updater config." >&2
-            exit 1
+          if [ -n "${LATEST_JSON}" ]; then
+            cp "${LATEST_JSON}" out/macos/updater/latest-macos.json
           fi
-          cp "${LATEST_JSON}" out/macos/updater/latest-macos.json
 
           mapfile -t SIG_FILES < <(find target/release/bundle -type f -name '*.sig' | sort)
           if [ "${#SIG_FILES[@]}" -eq 0 ]; then
@@ -206,13 +254,47 @@ jobs:
             exit 1
           fi
 
+          UPDATER_SIG=""
+          UPDATER_ARTIFACT=""
           for sig in "${SIG_FILES[@]}"; do
             artifact="${sig%.sig}"
             cp "$sig" out/macos/updater/
             if [ -f "$artifact" ]; then
               cp "$artifact" out/macos/updater/
+              if [ -z "$UPDATER_SIG" ] && [[ "$artifact" == *.tar.gz || "$artifact" == *.zip ]]; then
+                UPDATER_SIG="$sig"
+                UPDATER_ARTIFACT="$artifact"
+              fi
             fi
           done
+
+          if [ -z "${LATEST_JSON}" ]; then
+            if [ -z "$UPDATER_SIG" ] || [ -z "$UPDATER_ARTIFACT" ]; then
+              echo "No updater latest*.json and no signed updater archive (*.tar.gz|*.zip) found." >&2
+              exit 1
+            fi
+
+            SIG_VALUE="$(tr -d '\r\n' < "$UPDATER_SIG")"
+            UPDATER_ARTIFACT_NAME="$(basename "$UPDATER_ARTIFACT")"
+            jq -n \
+              --arg version "$VERSION" \
+              --arg notes "See release notes." \
+              --arg pub_date "$PUB_DATE" \
+              --arg platform "$PLATFORM_KEY" \
+              --arg signature "$SIG_VALUE" \
+              --arg url "https://github.com/infimount/infimount/releases/latest/download/${UPDATER_ARTIFACT_NAME}" \
+              '{
+                version: $version,
+                notes: $notes,
+                pub_date: $pub_date,
+                platforms: {
+                  ($platform): {
+                    signature: $signature,
+                    url: $url
+                  }
+                }
+              }' > out/macos/updater/latest-macos.json
+          fi
 
       - name: Smoke check macOS artifact
         run: |
@@ -333,24 +415,60 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path out/windows/updater | Out-Null
+          $version = $env:GITHUB_REF -replace '^refs/tags/v', ''
+          $pubDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $arch = switch ($env:RUNNER_ARCH) {
+            "X64" { "x86_64" }
+            "ARM64" { "aarch64" }
+            default { $env:RUNNER_ARCH.ToLowerInvariant() }
+          }
+          $platformKey = "windows-$arch"
 
           $latest = Get-ChildItem -Path target/release/bundle -Recurse -Filter "latest*.json" | Sort-Object FullName | Select-Object -First 1
-          if (-not $latest) {
-            throw "No updater latest*.json generated. Check TAURI_SIGNING_PRIVATE_KEY and updater config."
+          if ($latest) {
+            Copy-Item $latest.FullName "out/windows/updater/latest-windows.json"
           }
-          Copy-Item $latest.FullName "out/windows/updater/latest-windows.json"
 
           $sigFiles = Get-ChildItem -Path target/release/bundle -Recurse -Filter "*.sig" | Sort-Object FullName
           if (-not $sigFiles -or $sigFiles.Count -eq 0) {
             throw "No updater signature files generated. Check TAURI_SIGNING_PRIVATE_KEY."
           }
 
+          $updaterSig = $null
+          $updaterArtifact = $null
           foreach ($sig in $sigFiles) {
             Copy-Item $sig.FullName out/windows/updater/
             $artifact = $sig.FullName.Substring(0, $sig.FullName.Length - 4)
             if (Test-Path $artifact) {
               Copy-Item $artifact out/windows/updater/
+              if (-not $updaterSig -and ($artifact.EndsWith(".zip") -or $artifact.EndsWith(".tar.gz"))) {
+                $updaterSig = $sig
+                $updaterArtifact = $artifact
+              }
             }
+          }
+
+          if (-not $latest) {
+            if (-not $updaterSig -or -not $updaterArtifact) {
+              throw "No updater latest*.json and no signed updater archive (*.tar.gz|*.zip) found."
+            }
+
+            $sigValue = (Get-Content $updaterSig.FullName -Raw).Trim()
+            $artifactName = Split-Path -Leaf $updaterArtifact
+            $url = "https://github.com/infimount/infimount/releases/latest/download/$artifactName"
+            $latestObject = [ordered]@{
+              version = $version
+              notes = "See release notes."
+              pub_date = $pubDate
+              platforms = [ordered]@{
+                $platformKey = [ordered]@{
+                  signature = $sigValue
+                  url = $url
+                }
+              }
+            }
+
+            $latestObject | ConvertTo-Json -Depth 10 | Out-File -FilePath out/windows/updater/latest-windows.json -Encoding utf8NoBOM
           }
 
       - name: Smoke check Windows artifacts
