@@ -7,6 +7,9 @@
 			"path": "../homebrew-infimount"
 		},
 		{
+			"path": "../homebrew-cask"
+		},
+		{
 			"path": "../brew"
 		}
 	],
