@@ -88,13 +88,19 @@ See [Building from Source](#️-building-from-source) section below.
 
 ```bash
 brew tap infimount/infimount
+# Linux (formula)
 brew install infimount
+
+# macOS (cask)
+brew install --cask infimount
 ```
 
 Upgrade later with:
 
 ```bash
-brew update && brew upgrade infimount
+brew update
+brew upgrade infimount
+brew upgrade --cask infimount
 ```
 
 ---
