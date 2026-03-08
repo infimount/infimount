@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
+use std::fs;
 use tokio::time::{timeout, Duration};
 
-use crate::errors::{err_with_details, McpErrorCode, McpResult};
+use crate::errors::McpResult;
 use crate::opendal_adapter;
 use crate::tools_fs::FsToolsContext;
 
@@ -39,6 +40,37 @@ pub async fn validate_storage(
     let op = opendal_adapter::build_operator(&storage)?;
     let caps = op.info().full_capability();
 
+    if matches!(storage.backend.as_str(), "local" | "fs") {
+        let root = storage
+            .config
+            .get("root")
+            .and_then(|value| value.as_str())
+            .or_else(|| storage.config.get("path").and_then(|value| value.as_str()));
+
+        if let Some(root) = root {
+            let is_valid_dir = fs::metadata(root)
+                .map(|metadata| metadata.is_dir())
+                .unwrap_or(false);
+            if !is_valid_dir {
+                return Ok(ValidateStorageOutput {
+                    valid: false,
+                    details: "storage validation failed".to_string(),
+                    capabilities: StorageCapabilities {
+                        list: caps.list,
+                        stat: caps.stat,
+                        read: caps.read,
+                        write: caps.write,
+                        delete: caps.delete,
+                        copy: caps.copy,
+                        rename: caps.rename,
+                        presign_read: caps.presign_read,
+                        create_dir: caps.create_dir,
+                    },
+                });
+            }
+        }
+    }
+
     let validation = timeout(Duration::from_secs(10), async {
         if caps.list {
             let _ = op.lister("").await?;
@@ -65,15 +97,35 @@ pub async fn validate_storage(
                 create_dir: caps.create_dir,
             },
         }),
-        Ok(Err(err)) => Err(err_with_details(
-            McpErrorCode::ERR_INTERNAL,
-            "storage validation failed",
-            serde_json::json!({ "backend_error": err.to_string() }),
-        )),
-        Err(_) => Err(err_with_details(
-            McpErrorCode::ERR_INTERNAL,
-            "storage validation timed out",
-            serde_json::json!({ "timeout_seconds": 10 }),
-        )),
+        Ok(Err(_err)) => Ok(ValidateStorageOutput {
+            valid: false,
+            details: "storage validation failed".to_string(),
+            capabilities: StorageCapabilities {
+                list: caps.list,
+                stat: caps.stat,
+                read: caps.read,
+                write: caps.write,
+                delete: caps.delete,
+                copy: caps.copy,
+                rename: caps.rename,
+                presign_read: caps.presign_read,
+                create_dir: caps.create_dir,
+            },
+        }),
+        Err(_) => Ok(ValidateStorageOutput {
+            valid: false,
+            details: "storage validation timed out".to_string(),
+            capabilities: StorageCapabilities {
+                list: caps.list,
+                stat: caps.stat,
+                read: caps.read,
+                write: caps.write,
+                delete: caps.delete,
+                copy: caps.copy,
+                rename: caps.rename,
+                presign_read: caps.presign_read,
+                create_dir: caps.create_dir,
+            },
+        }),
     }
 }

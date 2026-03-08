@@ -169,6 +169,34 @@ async fn validate_storage_local_root_succeeds() {
 }
 
 #[tokio::test]
+async fn validate_storage_invalid_root_returns_valid_false() {
+    let dir = TempDir::new().unwrap();
+    let invalid_root = dir.path().join("not-a-directory.txt");
+    std::fs::write(&invalid_root, b"not a directory").unwrap();
+
+    let registry = registry_in(&dir);
+    let storage = crate::registry::StorageRecord::new(
+        "Broken".to_string(),
+        "local".to_string(),
+        serde_json::json!({"root": invalid_root}),
+    );
+    registry.save_all_atomic(&[storage]).unwrap();
+    let ctx = FsToolsContext { registry };
+
+    let out = validate_storage(
+        &ctx,
+        ValidateStorageInput {
+            name: "Broken".to_string(),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(!out.valid);
+    assert_eq!(out.details, "storage validation failed");
+}
+
+#[tokio::test]
 async fn remove_storage_missing_returns_not_found() {
     let dir = TempDir::new().unwrap();
     let registry = registry_in(&dir);

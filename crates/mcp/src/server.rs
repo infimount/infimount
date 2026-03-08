@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use rmcp::model::{
     CallToolRequestMethod, CallToolRequestParams, CallToolResult, ErrorData,
@@ -11,6 +12,7 @@ use rmcp::ServerHandler;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::json;
+use tracing::info;
 
 use crate::errors::{err_with_details, wrap_json, McpErrorCode, McpResult};
 use crate::prompts;
@@ -229,6 +231,9 @@ impl ServerHandler for InfimountMcpServer {
         request: CallToolRequestParams,
         _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let tool_name = request.name.to_string();
+        let storage_ref = storage_log_ref(&tool_name, request.arguments.as_ref());
+        let started = Instant::now();
         let result = self
             .dispatch_tool_json(request.name.as_ref(), request.arguments)
             .await?;
@@ -238,10 +243,29 @@ impl ServerHandler for InfimountMcpServer {
             .and_then(|value| value.as_bool())
             .map(|ok| !ok)
             .unwrap_or(true);
+        let latency_ms = started.elapsed().as_millis() as u64;
 
         if is_error {
+            let error_code = result
+                .get("error")
+                .and_then(|error| error.get("code"))
+                .and_then(|code| code.as_str())
+                .unwrap_or("ERR_INTERNAL");
+            info!(
+                tool = tool_name.as_str(),
+                storage = storage_ref.as_deref().unwrap_or("-"),
+                error_code,
+                latency_ms,
+                "mcp tool failed"
+            );
             Ok(CallToolResult::structured_error(result))
         } else {
+            info!(
+                tool = tool_name.as_str(),
+                storage = storage_ref.as_deref().unwrap_or("-"),
+                latency_ms,
+                "mcp tool succeeded"
+            );
             Ok(CallToolResult::structured(result))
         }
     }
@@ -661,4 +685,48 @@ fn mcp_to_rmcp_error(error: crate::errors::McpError) -> ErrorData {
         }
         _ => ErrorData::invalid_params(error.message, data),
     }
+}
+
+fn storage_log_ref(name: &str, arguments: Option<&JsonObject>) -> Option<String> {
+    let args = arguments?;
+
+    match name {
+        "list_dir"
+        | "stat_path"
+        | "read_file"
+        | "write_file"
+        | "mkdir"
+        | "delete_path"
+        | "search_paths"
+        | "generate_download_link" => {
+            path_storage_name(args.get("path").and_then(|value| value.as_str()))
+        }
+        "copy_path" | "move_path" => {
+            let src = path_storage_name(args.get("src").and_then(|value| value.as_str()));
+            let dst = path_storage_name(args.get("dst").and_then(|value| value.as_str()));
+            match (src, dst) {
+                (Some(src), Some(dst)) if src == dst => Some(src),
+                (Some(src), Some(dst)) => Some(format!("{src}->{dst}")),
+                (Some(src), None) => Some(src),
+                (None, Some(dst)) => Some(dst),
+                (None, None) => None,
+            }
+        }
+        "list_storages" | "import_config" | "export_config" => None,
+        "add_storage" | "remove_storage" | "validate_storage" => args
+            .get("name")
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string()),
+        "edit_storage" => args
+            .get("name")
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string()),
+        _ => None,
+    }
+}
+
+fn path_storage_name(path: Option<&str>) -> Option<String> {
+    let path = path?;
+    let parsed = crate::path::parse_mcp_path(path).ok()?;
+    parsed.storage_name
 }
