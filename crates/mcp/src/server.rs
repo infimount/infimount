@@ -232,6 +232,7 @@ impl ServerHandler for InfimountMcpServer {
         _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let tool_name = request.name.to_string();
+        let normalized_path = normalized_path_log_ref(&tool_name, request.arguments.as_ref());
         let storage_ref = storage_log_ref(&tool_name, request.arguments.as_ref());
         let started = Instant::now();
         let result = self
@@ -253,6 +254,7 @@ impl ServerHandler for InfimountMcpServer {
                 .unwrap_or("ERR_INTERNAL");
             info!(
                 tool = tool_name.as_str(),
+                path = normalized_path.as_deref().unwrap_or("-"),
                 storage = storage_ref.as_deref().unwrap_or("-"),
                 error_code,
                 latency_ms,
@@ -262,6 +264,7 @@ impl ServerHandler for InfimountMcpServer {
         } else {
             info!(
                 tool = tool_name.as_str(),
+                path = normalized_path.as_deref().unwrap_or("-"),
                 storage = storage_ref.as_deref().unwrap_or("-"),
                 latency_ms,
                 "mcp tool succeeded"
@@ -725,8 +728,43 @@ fn storage_log_ref(name: &str, arguments: Option<&JsonObject>) -> Option<String>
     }
 }
 
+fn normalized_path_log_ref(name: &str, arguments: Option<&JsonObject>) -> Option<String> {
+    let args = arguments?;
+
+    match name {
+        "list_dir"
+        | "stat_path"
+        | "read_file"
+        | "write_file"
+        | "mkdir"
+        | "delete_path"
+        | "search_paths"
+        | "generate_download_link" => {
+            normalize_logged_path(args.get("path").and_then(|value| value.as_str()))
+        }
+        "copy_path" | "move_path" => {
+            let src = normalize_logged_path(args.get("src").and_then(|value| value.as_str()));
+            let dst = normalize_logged_path(args.get("dst").and_then(|value| value.as_str()));
+            match (src, dst) {
+                (Some(src), Some(dst)) => Some(format!("{src} -> {dst}")),
+                (Some(src), None) => Some(src),
+                (None, Some(dst)) => Some(dst),
+                (None, None) => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 fn path_storage_name(path: Option<&str>) -> Option<String> {
     let path = path?;
     let parsed = crate::path::parse_mcp_path(path).ok()?;
     parsed.storage_name
+}
+
+fn normalize_logged_path(path: Option<&str>) -> Option<String> {
+    let path = path?;
+    crate::path::parse_mcp_path(path)
+        .ok()
+        .map(|parsed| parsed.normalized)
 }

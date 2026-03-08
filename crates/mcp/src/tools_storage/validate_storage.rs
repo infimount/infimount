@@ -6,6 +6,8 @@ use crate::errors::McpResult;
 use crate::opendal_adapter;
 use crate::tools_fs::FsToolsContext;
 
+const VALIDATE_STORAGE_TIMEOUT_SECONDS: u64 = 60;
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ValidateStorageInput {
@@ -71,14 +73,17 @@ pub async fn validate_storage(
         }
     }
 
-    let validation = timeout(Duration::from_secs(10), async {
-        if caps.list {
-            let _ = op.lister("").await?;
-        } else {
-            let _ = op.stat("").await?;
-        }
-        Ok::<(), opendal::Error>(())
-    })
+    let validation = timeout(
+        Duration::from_secs(VALIDATE_STORAGE_TIMEOUT_SECONDS),
+        async {
+            if caps.list {
+                let _ = op.lister("").await?;
+            } else {
+                let _ = op.stat("").await?;
+            }
+            Ok::<(), opendal::Error>(())
+        },
+    )
     .await;
 
     match validation {
