@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/core",
+  "crates/mcp",
   "apps/desktop/src-tauri",
 ]
 resolver = "2"
