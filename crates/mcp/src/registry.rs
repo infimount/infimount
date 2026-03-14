@@ -294,27 +294,22 @@ pub fn is_secret_key(key: &str) -> bool {
     .any(|needle| lowered.contains(needle))
 }
 
-pub fn default_registry_path() -> PathBuf {
+pub fn default_config_dir() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
         let base = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
-        return PathBuf::from(base).join("infimount").join("storages.json");
+        return PathBuf::from(base).join("infimount");
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-            if !xdg.trim().is_empty() {
-                return PathBuf::from(xdg).join("infimount").join("storages.json");
-            }
-        }
-
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        PathBuf::from(home)
-            .join(".config")
-            .join("infimount")
-            .join("storages.json")
+        PathBuf::from(home).join(".infimount")
     }
+}
+
+pub fn default_registry_path() -> PathBuf {
+    default_config_dir().join("storages.json")
 }
 
 fn ensure_parent(path: &Path) -> McpResult<()> {

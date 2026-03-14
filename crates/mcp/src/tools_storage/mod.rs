@@ -16,5 +16,6 @@ pub use import_config::{import_config, ImportConfigInput, ImportConfigOutput};
 pub use list_storages::{list_storages, ListStoragesInput, ListStoragesOutput};
 pub use remove_storage::{remove_storage, RemoveStorageInput, RemoveStorageOutput};
 pub use validate_storage::{
-    validate_storage, StorageCapabilities, ValidateStorageInput, ValidateStorageOutput,
+    validate_storage, validate_storage_record, StorageCapabilities, ValidateStorageInput,
+    ValidateStorageOutput,
 };

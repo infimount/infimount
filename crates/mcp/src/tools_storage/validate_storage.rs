@@ -4,6 +4,7 @@ use tokio::time::{timeout, Duration};
 
 use crate::errors::McpResult;
 use crate::opendal_adapter;
+use crate::registry::StorageRecord;
 use crate::tools_fs::FsToolsContext;
 
 const VALIDATE_STORAGE_TIMEOUT_SECONDS: u64 = 60;
@@ -39,7 +40,11 @@ pub async fn validate_storage(
     input: ValidateStorageInput,
 ) -> McpResult<ValidateStorageOutput> {
     let storage = ctx.registry.find_by_name(&input.name)?;
-    let op = opendal_adapter::build_operator(&storage)?;
+    validate_storage_record(&storage).await
+}
+
+pub async fn validate_storage_record(storage: &StorageRecord) -> McpResult<ValidateStorageOutput> {
+    let op = opendal_adapter::build_operator(storage)?;
     let caps = op.info().full_capability();
 
     if matches!(storage.backend.as_str(), "local" | "fs") {
@@ -47,6 +52,12 @@ pub async fn validate_storage(
             .config
             .get("root")
             .and_then(|value| value.as_str())
+            .or_else(|| {
+                storage
+                    .config
+                    .get("rootPath")
+                    .and_then(|value| value.as_str())
+            })
             .or_else(|| storage.config.get("path").and_then(|value| value.as_str()));
 
         if let Some(root) = root {

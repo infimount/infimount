@@ -23,6 +23,7 @@ fn build_fs_operator(storage: &StorageRecord) -> McpResult<Operator> {
         .config
         .get("root")
         .and_then(|v| v.as_str())
+        .or_else(|| storage.config.get("rootPath").and_then(|v| v.as_str()))
         .or_else(|| storage.config.get("path").and_then(|v| v.as_str()))
         .ok_or_else(|| {
             err_with_details(
@@ -32,7 +33,7 @@ fn build_fs_operator(storage: &StorageRecord) -> McpResult<Operator> {
             )
         })?;
 
-    let builder = Fs::default().root(root);
+    let builder = Fs::default().root(&expand_home_path(root));
     Operator::new(builder)
         .map_err(|e| super::errors::map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))
         .map(|op| op.finish())
@@ -137,8 +138,14 @@ fn build_gcs_operator(storage: &StorageRecord) -> McpResult<Operator> {
     }
     if let Some(key) = storage
         .config
-        .get("serviceAccountJson")
+        .get("credential")
         .and_then(|v| v.as_str())
+        .or_else(|| {
+            storage
+                .config
+                .get("serviceAccountJson")
+                .and_then(|v| v.as_str())
+        })
     {
         builder = builder.credential(key);
     }
@@ -146,4 +153,23 @@ fn build_gcs_operator(storage: &StorageRecord) -> McpResult<Operator> {
     Operator::new(builder)
         .map_err(|e| super::errors::map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))
         .map(|op| op.finish())
+}
+
+fn expand_home_path(input: &str) -> String {
+    if input == "~" {
+        return std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| input.to_string());
+    }
+
+    if let Some(rest) = input.strip_prefix("~/") {
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_default();
+        if !home.is_empty() {
+            return format!("{home}/{rest}");
+        }
+    }
+
+    input.to_string()
 }

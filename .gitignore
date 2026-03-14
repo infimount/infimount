@@ -10,10 +10,17 @@ node_modules/
 dist/
 apps/dist/
 **/dist/
+coverage/
+**/coverage/
 
 # Vite dev cache
 .vite/
 **/.vite/
+playwright-report/
+**/playwright-report/
+test-results/
+**/test-results/
+**/playwright/.cache/
 
 # Tauri generated files
 apps/desktop/src-tauri/gen/

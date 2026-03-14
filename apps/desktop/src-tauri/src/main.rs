@@ -8,10 +8,13 @@ mod state;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
+use tauri::Manager;
 
 fn main() {
+    let app_state = state::AppState::new().expect("failed to initialize desktop state");
+
     tauri::Builder::default()
-        .manage(state::AppState::new())
+        .manage(app_state)
         .setup(|app| {
             #[cfg(desktop)]
             app.handle()
@@ -40,6 +43,16 @@ fn main() {
                 })
                 .build(app)?;
 
+            {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let app_state = app_handle.state::<state::AppState>();
+                    if let Err(error) = app_state.ensure_runtime_from_settings().await {
+                        eprintln!("failed to initialize MCP runtime: {}", error.message);
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -49,15 +62,23 @@ fn main() {
             commands::write_file,
             commands::create_directory,
             commands::delete_path,
-            commands::list_sources,
-            commands::add_source,
-            commands::remove_source,
-            commands::update_source,
-            commands::verify_source,
-            commands::replace_sources,
+            commands::list_storages,
+            commands::add_storage,
+            commands::remove_storage,
+            commands::update_storage,
+            commands::verify_storage,
+            commands::import_storage_config,
+            commands::export_storage_config,
             commands::upload_dropped_files,
             commands::transfer_entries,
             commands::list_storage_schemas,
+            commands::get_mcp_settings,
+            commands::list_mcp_tools,
+            commands::update_mcp_settings,
+            commands::get_mcp_status,
+            commands::start_mcp_http,
+            commands::stop_mcp_http,
+            commands::get_mcp_client_snippets,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -142,14 +143,65 @@ pub fn rmcp_tools() -> Vec<Tool> {
         .collect()
 }
 
+pub fn all_tool_names() -> Vec<String> {
+    let mut names = tool_definitions()
+        .into_iter()
+        .map(|definition| definition.name.to_string())
+        .collect::<Vec<_>>();
+    names.sort();
+    names
+}
+
+pub fn default_enabled_tool_names() -> Vec<String> {
+    all_tool_names()
+}
+
+fn filtered_tool_definitions(enabled_tools: &HashSet<String>) -> Vec<ToolDefinition> {
+    tool_definitions()
+        .into_iter()
+        .filter(|definition| enabled_tools.contains(definition.name))
+        .collect()
+}
+
+fn rmcp_tools_for(enabled_tools: &HashSet<String>) -> Vec<Tool> {
+    filtered_tool_definitions(enabled_tools)
+        .into_iter()
+        .map(|definition| {
+            Tool::new(
+                definition.name,
+                definition.description,
+                Arc::new(schema_to_object(definition.input_schema)),
+            )
+            .with_annotations(tool_annotations(definition.name))
+        })
+        .collect()
+}
+
+fn normalize_enabled_tools(enabled_tools: Vec<String>) -> HashSet<String> {
+    let available = all_tool_names().into_iter().collect::<HashSet<_>>();
+    enabled_tools
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && available.contains(value))
+        .collect()
+}
+
 #[derive(Debug)]
 pub struct InfimountMcpServer {
     ctx: FsToolsContext,
+    enabled_tools: HashSet<String>,
 }
 
 impl InfimountMcpServer {
-    pub fn new(ctx: FsToolsContext) -> Self {
-        Self { ctx }
+    pub fn new(ctx: FsToolsContext, enabled_tools: Vec<String>) -> Self {
+        Self {
+            ctx,
+            enabled_tools: normalize_enabled_tools(enabled_tools),
+        }
+    }
+
+    fn is_tool_enabled(&self, tool_name: &str) -> bool {
+        self.enabled_tools.contains(tool_name)
     }
 
     async fn dispatch_tool_json(
@@ -157,6 +209,10 @@ impl InfimountMcpServer {
         name: &str,
         arguments: Option<JsonObject>,
     ) -> Result<serde_json::Value, ErrorData> {
+        if !self.is_tool_enabled(name) {
+            return Err(ErrorData::method_not_found::<CallToolRequestMethod>());
+        }
+
         let raw_input = serde_json::Value::Object(arguments.unwrap_or_default());
 
         let result = match name {
@@ -219,11 +275,19 @@ impl ServerHandler for InfimountMcpServer {
         _request: Option<rmcp::model::PaginatedRequestParams>,
         _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        Ok(ListToolsResult::with_all_items(rmcp_tools()))
+        Ok(ListToolsResult::with_all_items(rmcp_tools_for(
+            &self.enabled_tools,
+        )))
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
-        rmcp_tools().into_iter().find(|tool| tool.name == name)
+        if !self.is_tool_enabled(name) {
+            return None;
+        }
+
+        rmcp_tools_for(&self.enabled_tools)
+            .into_iter()
+            .find(|tool| tool.name == name)
     }
 
     async fn call_tool(
@@ -767,4 +831,30 @@ fn normalize_logged_path(path: Option<&str>) -> Option<String> {
     crate::path::parse_mcp_path(path)
         .ok()
         .map(|parsed| parsed.normalized)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_enabled_tools_match_all_tool_names() {
+        let default_names = default_enabled_tool_names();
+        let all_names = all_tool_names();
+        assert_eq!(default_names, all_names);
+        assert!(!default_names.is_empty());
+    }
+
+    #[test]
+    fn normalize_enabled_tools_filters_invalid_entries() {
+        let normalized = normalize_enabled_tools(vec![
+            "list_dir".to_string(),
+            "  list_dir ".to_string(),
+            "unknown_tool".to_string(),
+            "".to_string(),
+        ]);
+
+        assert!(normalized.contains("list_dir"));
+        assert_eq!(normalized.len(), 1);
+    }
 }

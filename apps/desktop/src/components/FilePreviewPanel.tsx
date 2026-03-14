@@ -205,9 +205,11 @@ export function FilePreviewPanel({
       const isKnownBinary = BINARY_EXTENSIONS.has(ext);
 
       if (file.size && file.size > MAX_PREVIEW_BYTES) {
+        setLoading(false);
         setMode("unsupported");
         setError(`File is too large to preview (${formatFileSize(file.size)}).`);
       } else if (isKnownBinary) {
+        setLoading(false);
         setMode("unsupported");
         setError("Preview not available for this file type.");
       }

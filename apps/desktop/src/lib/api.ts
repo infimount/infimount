@@ -1,5 +1,15 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 
+import type {
+  McpClientSnippets,
+  McpRuntimeStatus,
+  McpSettings,
+  McpToolDefinition,
+  StorageConfig,
+  StorageDraft,
+  StorageValidationResult,
+} from "@/types/storage";
+
 export interface Entry {
   path: string;
   name: string;
@@ -7,8 +17,6 @@ export interface Entry {
   size: number;
   modified_at: string | null;
 }
-
-import type { Source, SourceKind } from "../types/source";
 
 export interface ApiError {
   code: string;
@@ -18,7 +26,7 @@ export interface ApiError {
 export class TauriApiError extends Error {
   code: string;
 
-  constructor(message: string, code: string = "UNKNOWN") {
+  constructor(message: string, code = "UNKNOWN") {
     super(message);
     this.name = "TauriApiError";
     this.code = code;
@@ -36,12 +44,26 @@ export interface StorageFieldSchema {
 export interface StorageKindSchema {
   id: string;
   label: string;
-  kind: SourceKind;
+  kind: string;
   fields: StorageFieldSchema[];
 }
 
 export type TransferOperation = "copy" | "move";
 export type TransferConflictPolicy = "fail" | "overwrite" | "skip";
+
+export interface ImportStoragesRequest {
+  json: string;
+  mode: "merge" | "replace";
+  onConflict: "error" | "overwrite" | "rename";
+}
+
+export interface ImportStoragesResult {
+  imported: number;
+}
+
+export interface ExportStoragesResult {
+  json: string;
+}
 
 async function handleError(error: unknown): Promise<never> {
   console.error("API Error:", error);
@@ -49,6 +71,7 @@ async function handleError(error: unknown): Promise<never> {
     const apiErr = error as { code: string; message: string };
     throw new TauriApiError(apiErr.message, apiErr.code);
   }
+
   const message =
     typeof error === "string"
       ? error
@@ -57,7 +80,6 @@ async function handleError(error: unknown): Promise<never> {
         : String(error);
   throw new TauriApiError(message);
 }
-
 
 export async function listEntries(sourceId: string, path: string): Promise<Entry[]> {
   try {
@@ -78,7 +100,7 @@ export async function statEntry(sourceId: string, path: string): Promise<Entry> 
 export async function readFile(sourceId: string, path: string): Promise<Uint8Array> {
   try {
     const data = await tauriInvoke<number[]>("read_file", { sourceId, path });
-    return new Uint8Array(data as number[]);
+    return new Uint8Array(data);
   } catch (error) {
     return handleError(error);
   }
@@ -87,20 +109,16 @@ export async function readFile(sourceId: string, path: string): Promise<Uint8Arr
 export async function writeFile(
   sourceId: string,
   path: string,
-  data: Uint8Array
+  data: Uint8Array,
 ): Promise<void> {
   try {
-    const dataArray = Array.from(data);
-    return await tauriInvoke("write_file", { sourceId, path, data: dataArray });
+    return await tauriInvoke("write_file", { sourceId, path, data: Array.from(data) });
   } catch (error) {
     return handleError(error);
   }
 }
 
-export async function createDirectory(
-  sourceId: string,
-  path: string,
-): Promise<void> {
+export async function createDirectory(sourceId: string, path: string): Promise<void> {
   try {
     return await tauriInvoke("create_directory", { sourceId, path });
   } catch (error) {
@@ -111,7 +129,7 @@ export async function createDirectory(
 export async function uploadDroppedFiles(
   sourceId: string,
   paths: string[],
-  targetDir: string
+  targetDir: string,
 ): Promise<void> {
   try {
     return await tauriInvoke("upload_dropped_files", { sourceId, paths, targetDir });
@@ -123,62 +141,6 @@ export async function uploadDroppedFiles(
 export async function deletePath(sourceId: string, path: string): Promise<void> {
   try {
     return await tauriInvoke("delete_path", { sourceId, path });
-  } catch (error) {
-    return handleError(error);
-  }
-}
-
-export async function listSources(): Promise<Source[]> {
-  try {
-    return await tauriInvoke<Source[]>("list_sources");
-  } catch (error) {
-    return handleError(error);
-  }
-}
-
-export async function addSource(source: Source): Promise<void> {
-  try {
-    return await tauriInvoke("add_source", { source });
-  } catch (error) {
-    return handleError(error);
-  }
-}
-
-export async function removeSource(sourceId: string): Promise<void> {
-  try {
-    return await tauriInvoke("remove_source", { sourceId });
-  } catch (error) {
-    return handleError(error);
-  }
-}
-
-export async function updateSource(source: Source): Promise<void> {
-  try {
-    return await tauriInvoke("update_source", { source });
-  } catch (error) {
-    return handleError(error);
-  }
-}
-
-export async function verifySource(source: Source): Promise<void> {
-  try {
-    return await tauriInvoke("verify_source", { source });
-  } catch (error) {
-    return handleError(error);
-  }
-}
-
-export async function replaceSources(sources: Source[]): Promise<void> {
-  try {
-    return await tauriInvoke("replace_sources", { sources });
-  } catch (error) {
-    return handleError(error);
-  }
-}
-
-export async function listStorageSchemas(): Promise<StorageKindSchema[]> {
-  try {
-    return await tauriInvoke<StorageKindSchema[]>("list_storage_schemas");
   } catch (error) {
     return handleError(error);
   }
@@ -201,6 +163,141 @@ export async function transferEntries(
       operation,
       conflictPolicy,
     });
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function listStorages(): Promise<StorageConfig[]> {
+  try {
+    return await tauriInvoke<StorageConfig[]>("list_storages");
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function addStorage(storage: StorageDraft): Promise<StorageConfig> {
+  try {
+    return await tauriInvoke<StorageConfig>("add_storage", { storage });
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function updateStorage(
+  storageId: string,
+  storage: StorageDraft,
+): Promise<StorageConfig> {
+  try {
+    return await tauriInvoke<StorageConfig>("update_storage", { storageId, storage });
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function removeStorage(storageId: string): Promise<void> {
+  try {
+    return await tauriInvoke("remove_storage", { storageId });
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function verifyStorage(storage: StorageDraft): Promise<StorageValidationResult> {
+  try {
+    return await tauriInvoke<StorageValidationResult>("verify_storage", { storage });
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function importStorageConfig(
+  request: ImportStoragesRequest,
+): Promise<ImportStoragesResult> {
+  try {
+    return await tauriInvoke<ImportStoragesResult>("import_storage_config", {
+      request: {
+        json: request.json,
+        mode: request.mode,
+        onConflict: request.onConflict,
+      },
+    });
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function exportStorageConfig(
+  includeSecrets: boolean,
+): Promise<ExportStoragesResult> {
+  try {
+    return await tauriInvoke<ExportStoragesResult>("export_storage_config", {
+      includeSecrets,
+    });
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function listStorageSchemas(): Promise<StorageKindSchema[]> {
+  try {
+    return await tauriInvoke<StorageKindSchema[]>("list_storage_schemas");
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function getMcpSettings(): Promise<McpSettings> {
+  try {
+    return await tauriInvoke<McpSettings>("get_mcp_settings");
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function listMcpTools(): Promise<McpToolDefinition[]> {
+  try {
+    return await tauriInvoke<McpToolDefinition[]>("list_mcp_tools");
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function updateMcpSettings(settings: McpSettings): Promise<McpRuntimeStatus> {
+  try {
+    return await tauriInvoke<McpRuntimeStatus>("update_mcp_settings", { settings });
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function getMcpStatus(): Promise<McpRuntimeStatus> {
+  try {
+    return await tauriInvoke<McpRuntimeStatus>("get_mcp_status");
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function startMcpHttp(): Promise<McpRuntimeStatus> {
+  try {
+    return await tauriInvoke<McpRuntimeStatus>("start_mcp_http");
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function stopMcpHttp(): Promise<McpRuntimeStatus> {
+  try {
+    return await tauriInvoke<McpRuntimeStatus>("stop_mcp_http");
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function getMcpClientSnippets(): Promise<McpClientSnippets> {
+  try {
+    return await tauriInvoke<McpClientSnippets>("get_mcp_client_snippets");
   } catch (error) {
     return handleError(error);
   }

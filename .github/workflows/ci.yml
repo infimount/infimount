@@ -53,7 +53,7 @@ jobs:
         run: pnpm tsc --noEmit
 
       - name: Run Unit Tests
-        run: pnpm test run
+        run: pnpm test:unit
 
   check-rust:
     name: Rust Core & Tauri

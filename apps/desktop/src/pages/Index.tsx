@@ -1,93 +1,118 @@
 import { useCallback, useEffect, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import { StorageSidebar } from "@/components/StorageSidebar";
+
 import { AddStorageDialog } from "@/components/AddStorageDialog";
 import { FileBrowser } from "@/components/FileBrowser";
-import { StorageConfig, StorageType } from "@/types/storage";
-import type { Source, SourceKind } from "@/types/source";
+import { McpSettingsDialog } from "@/components/McpSettingsDialog";
+import { StorageConfigEditorDialog } from "@/components/StorageConfigEditorDialog";
+import { StorageSidebar } from "@/components/StorageSidebar";
 import { toast } from "@/hooks/use-toast";
-import { cn } from "@/lib/utils";
 import {
-  listSources,
-  addSource as apiAddSource,
-  removeSource as apiRemoveSource,
-  updateSource as apiUpdateSource,
-  verifySource as apiVerifySource,
-  replaceSources as apiReplaceSources,
+  addStorage as apiAddStorage,
+  exportStorageConfig,
+  getMcpClientSnippets,
+  getMcpStatus,
+  listMcpTools,
+  importStorageConfig,
+  listStorages,
+  removeStorage as apiRemoveStorage,
+  startMcpHttp,
+  stopMcpHttp,
+  updateMcpSettings,
+  updateStorage as apiUpdateStorage,
+  verifyStorage as apiVerifyStorage,
 } from "@/lib/api";
-
-const mapSourceKindToStorageType = (kind: SourceKind): StorageType => {
-  switch (kind) {
-    case "s3":
-      return "aws-s3";
-    case "azure_blob":
-      return "azure-blob";
-    case "webdav":
-      return "webdav";
-    case "gcs":
-      return "gcs";
-    case "local":
-    default:
-      return "local-fs";
-  }
-};
-
-const mapStorageTypeToSourceKind = (type: StorageType): SourceKind => {
-  switch (type) {
-    case "aws-s3":
-      return "s3";
-    case "azure-blob":
-      return "azure_blob";
-    case "webdav":
-      return "webdav";
-    case "gcs":
-      return "gcs";
-    case "local-fs":
-    default:
-      return "local";
-  }
-};
-
-const deriveRootFromConfig = (type: StorageType, config: Record<string, string>): string => {
-  if (type === "local-fs") {
-    return config.rootPath || "";
-  }
-  if (type === "aws-s3") {
-    const bucket = config.bucketName || "";
-    const region = config.region || "";
-    return [bucket, region].filter(Boolean).join("@");
-  }
-  if (type === "azure-blob") {
-    const account = config.accountName || "";
-    const container = config.containerName || "";
-    return [account, container].filter(Boolean).join("/");
-  }
-  if (type === "webdav") {
-    return config.rootPath || config.serverUrl || "";
-  }
-  if (type === "gcs") {
-    return config.bucket || "";
-  }
-  return "";
-};
-
-const sourceToStorage = (source: Source): StorageConfig => ({
-  id: source.id,
-  name: source.name,
-  type: mapSourceKindToStorageType(source.kind),
-  config: source.config ?? {},
-  connected: true,
-});
-
-const storageToSource = (storage: StorageConfig): Source => ({
-  id: storage.id,
-  name: storage.name,
-  kind: mapStorageTypeToSourceKind(storage.type),
-  root: deriveRootFromConfig(storage.type, storage.config ?? {}),
-  config: storage.config,
-});
+import { cn } from "@/lib/utils";
+import type {
+  McpClientSnippets,
+  McpRuntimeStatus,
+  McpSettings,
+  McpToolDefinition,
+  StorageBackend,
+  StorageConfig,
+  StorageDraft,
+  StorageType,
+  StorageValidationResult,
+} from "@/types/storage";
 
 const SELECTED_STORAGE_KEY = "infimount.selectedStorageId";
+
+const BACKEND_TO_TYPE: Record<StorageBackend, StorageType> = {
+  local: "local-fs",
+  s3: "aws-s3",
+  azure_blob: "azure-blob",
+  webdav: "webdav",
+  gcs: "gcs",
+};
+
+function mapWireStorage(storage: StorageRecordWire): StorageConfig {
+  return {
+    id: storage.id,
+    name: storage.name,
+    backend: storage.backend,
+    type: BACKEND_TO_TYPE[storage.backend] ?? "local-fs",
+    config: isRecord(storage.config) ? storage.config : {},
+    enabled: storage.enabled,
+    mcpExposed: storage.mcp_exposed,
+    readOnly: storage.read_only,
+    connected: true,
+    createdAt: storage.created_at,
+    updatedAt: storage.updated_at,
+  };
+}
+
+function mapStatusWire(status: McpRuntimeStatusWire): McpRuntimeStatus {
+  return {
+    settings: {
+      enabled: status.settings.enabled,
+      transport: status.settings.transport,
+      bindAddress: status.settings.bindAddress,
+      port: status.settings.port,
+      enabledTools: status.settings.enabledTools ?? [],
+    },
+    runningHttp: status.runningHttp,
+    endpoint: status.endpoint,
+    endpointDisplay: status.endpointDisplay,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function mapDraftForBackend(draft: StorageDraft): StorageDraft {
+  return {
+    ...draft,
+    config: draft.config,
+  };
+}
+
+interface StorageRecordWire {
+  id: string;
+  name: string;
+  backend: StorageBackend;
+  config: unknown;
+  enabled: boolean;
+  mcp_exposed: boolean;
+  read_only: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+interface McpSettingsWire {
+  enabled: boolean;
+  transport: McpSettings["transport"];
+  bindAddress: string;
+  port: number;
+  enabledTools?: string[];
+}
+
+interface McpRuntimeStatusWire {
+  settings: McpSettingsWire;
+  runningHttp: boolean;
+  endpoint: string | null;
+  endpointDisplay: string;
+}
 
 const Index = () => {
   const [storages, setStorages] = useState<StorageConfig[]>([]);
@@ -95,26 +120,50 @@ const Index = () => {
   const [storageRefreshTick, setStorageRefreshTick] = useState<Record<string, number>>({});
   const [selectedStorage, setSelectedStorage] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
-    const stored = window.localStorage.getItem(SELECTED_STORAGE_KEY);
-    return stored || null;
+    return window.localStorage.getItem(SELECTED_STORAGE_KEY);
   });
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [editingStorage, setEditingStorage] = useState<StorageConfig | null>(null);
+  const [isStorageConfigEditorOpen, setIsStorageConfigEditorOpen] = useState(false);
+  const [isMcpDialogOpen, setIsMcpDialogOpen] = useState(false);
+  const [mcpStatus, setMcpStatus] = useState<McpRuntimeStatus | null>(null);
+  const [mcpSnippets, setMcpSnippets] = useState<McpClientSnippets | null>(null);
+  const [mcpTools, setMcpTools] = useState<McpToolDefinition[]>([]);
+  const [isPreviewVisible, setIsPreviewVisible] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  const reloadMcpStatus = useCallback(async () => {
+    try {
+      const [status, snippets, tools] = await Promise.all([
+        getMcpStatus().then(mapStatusWire),
+        getMcpClientSnippets(),
+        listMcpTools(),
+      ]);
+      setMcpStatus(status);
+      setMcpSnippets(snippets);
+      setMcpTools(tools);
+    } catch (error) {
+      console.error("Failed to load MCP status", error);
+    }
+  }, []);
 
   const reloadStorages = useCallback(async () => {
     setIsStoragesLoading(true);
     try {
-      const sources = await listSources();
-      const mapped = sources.map(sourceToStorage);
+      const items = await listStorages();
+      const mapped = items.map((item) =>
+        mapWireStorage(item as unknown as StorageRecordWire),
+      );
       setStorages(mapped);
+
       const storedSelection =
         typeof window === "undefined"
           ? null
           : window.localStorage.getItem(SELECTED_STORAGE_KEY);
       let nextSelection = selectedStorage;
-      if (nextSelection && mapped.find((s) => s.id === nextSelection)) {
+      if (nextSelection && mapped.find((storage) => storage.id === nextSelection)) {
         // keep current selection
-      } else if (storedSelection && mapped.find((s) => s.id === storedSelection)) {
+      } else if (storedSelection && mapped.find((storage) => storage.id === storedSelection)) {
         nextSelection = storedSelection;
       } else {
         nextSelection = mapped[0]?.id ?? null;
@@ -124,7 +173,7 @@ const Index = () => {
       }
     } catch (error: unknown) {
       toast({
-        title: "Failed to load sources",
+        title: "Failed to load storages",
         description: error instanceof Error ? error.message : String(error),
         variant: "destructive",
       });
@@ -135,7 +184,8 @@ const Index = () => {
 
   useEffect(() => {
     void reloadStorages();
-  }, [reloadStorages]);
+    void reloadMcpStatus();
+  }, [reloadMcpStatus, reloadStorages]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -146,25 +196,35 @@ const Index = () => {
     }
   }, [selectedStorage]);
 
-  const handleAddStorage = async (data: {
-    name: string;
-    type: StorageType;
-    config: Record<string, string>;
-  }) => {
+  useEffect(() => {
+    const mql = window.matchMedia("(max-width: 767px)");
+    const handle = () => {
+      setIsSidebarOpen(!mql.matches);
+    };
+    handle();
+    mql.addEventListener("change", handle);
+    return () => mql.removeEventListener("change", handle);
+  }, []);
+
+  useEffect(() => {
+    const isCompact = window.matchMedia("(max-width: 1024px)").matches;
+    if (isPreviewVisible && isCompact) {
+      setIsSidebarOpen(false);
+    } else if (!isPreviewVisible && !isCompact) {
+      setIsSidebarOpen(true);
+    }
+  }, [isPreviewVisible]);
+
+  const handleAddStorage = async (draft: StorageDraft) => {
     try {
-      const newSource: Source = {
-        id: Math.random().toString(36).substring(2, 10),
-        name: data.name,
-        kind: mapStorageTypeToSourceKind(data.type),
-        root: deriveRootFromConfig(data.type, data.config),
-        config: data.config,
-      };
-      await apiAddSource(newSource);
+      const added = (await apiAddStorage(
+        mapDraftForBackend(draft),
+      )) as unknown as StorageRecordWire;
       await reloadStorages();
-      setSelectedStorage(newSource.id);
+      setSelectedStorage(added.id);
       toast({
         title: "Storage added",
-        description: `Successfully added "${data.name}".`,
+        description: `Successfully added "${draft.name}".`,
       });
     } catch (error: unknown) {
       toast({
@@ -172,37 +232,28 @@ const Index = () => {
         description: error instanceof Error ? error.message : String(error),
         variant: "destructive",
       });
+      throw error;
     }
   };
 
   const handleEditStorage = (id: string) => {
-    const storage = storages.find((s) => s.id === id) || null;
+    const storage = storages.find((item) => item.id === id) ?? null;
     if (!storage) return;
     setEditingStorage(storage);
     setIsAddDialogOpen(true);
   };
 
-  const handleUpdateStorage = async (
-    id: string,
-    data: { name: string; type: StorageType; config: Record<string, string> },
-  ) => {
+  const handleUpdateStorage = async (id: string, draft: StorageDraft) => {
     try {
-      const updatedSource: Source = {
-        id,
-        name: data.name,
-        kind: mapStorageTypeToSourceKind(data.type),
-        root: deriveRootFromConfig(data.type, data.config),
-        config: data.config,
-      };
-      await apiUpdateSource(updatedSource);
+      await apiUpdateStorage(id, mapDraftForBackend(draft));
       await reloadStorages();
-      setStorageRefreshTick((prev) => ({
-        ...prev,
-        [id]: (prev[id] ?? 0) + 1,
+      setStorageRefreshTick((current) => ({
+        ...current,
+        [id]: (current[id] ?? 0) + 1,
       }));
       toast({
         title: "Storage updated",
-        description: `Successfully updated "${data.name}".`,
+        description: `Successfully updated "${draft.name}".`,
       });
     } catch (error: unknown) {
       toast({
@@ -210,32 +261,21 @@ const Index = () => {
         description: error instanceof Error ? error.message : String(error),
         variant: "destructive",
       });
+      throw error;
     } finally {
       setEditingStorage(null);
     }
   };
 
-  const handleVerifyStorage = async (data: {
-    name: string;
-    type: StorageType;
-    config: Record<string, string>;
-  }) => {
-    const source: Source = {
-      id: editingStorage?.id ?? "verify-source",
-      name: data.name,
-      kind: mapStorageTypeToSourceKind(data.type),
-      root: deriveRootFromConfig(data.type, data.config),
-      config: data.config,
-    };
-
-    await apiVerifySource(source);
+  const handleVerifyStorage = async (draft: StorageDraft): Promise<StorageValidationResult> => {
+    return apiVerifyStorage(mapDraftForBackend(draft));
   };
 
   const handleDeleteStorage = (id: string) => {
-    const storage = storages.find((s) => s.id === id);
+    const storage = storages.find((item) => item.id === id);
     void (async () => {
       try {
-        await apiRemoveSource(id);
+        await apiRemoveStorage(id);
         await reloadStorages();
         toast({
           title: "Storage deleted",
@@ -253,15 +293,15 @@ const Index = () => {
   };
 
   const handleRefreshStorage = (id: string) => {
-    const storage = storages.find((s) => s.id === id);
+    const storage = storages.find((item) => item.id === id);
     void (async () => {
       toast({
         title: "Refreshing",
         description: `Refreshing ${storage?.name ?? "storage"}...`,
       });
-      setStorageRefreshTick((prev) => ({
-        ...prev,
-        [id]: (prev[id] ?? 0) + 1,
+      setStorageRefreshTick((current) => ({
+        ...current,
+        [id]: (current[id] ?? 0) + 1,
       }));
       await reloadStorages();
     })();
@@ -277,141 +317,140 @@ const Index = () => {
 
       const reader = new FileReader();
       reader.onload = (loadEvent) => {
-        try {
-          const text = (loadEvent.target?.result as string) ?? "";
-          const parsed = JSON.parse(text);
-          if (!Array.isArray(parsed)) {
-            throw new Error("Expected a JSON array of storage configurations.");
+        const text = (loadEvent.target?.result as string) ?? "";
+        void (async () => {
+          try {
+            const result = await importStorageConfig({
+              json: text,
+              mode: "replace",
+              onConflict: "overwrite",
+            });
+            await reloadStorages();
+            toast({
+              title: "Import successful",
+              description: `Imported ${result.imported} storage configuration(s).`,
+            });
+          } catch (error: unknown) {
+            toast({
+              title: "Import failed",
+              description: error instanceof Error ? error.message : String(error),
+              variant: "destructive",
+            });
           }
-
-          const sources: Source[] = parsed.map((item, index) => {
-            if (!item || typeof item !== "object") {
-              throw new Error(`Invalid item at index ${index}.`);
-            }
-
-            // If it already looks like a Source
-            if ("kind" in item && "root" in item) {
-              const sourceItem = item as Partial<Source>;
-              const id =
-                typeof sourceItem.id === "string" && sourceItem.id.length > 0
-                  ? sourceItem.id
-                  : Math.random().toString(36).substring(2, 10);
-              const name =
-                typeof sourceItem.name === "string" && sourceItem.name.length > 0
-                  ? sourceItem.name
-                  : `Storage ${index + 1}`;
-              const kind = (sourceItem.kind ?? "local") as SourceKind;
-              const root = String(sourceItem.root ?? "");
-              return { id, name, kind, root };
-            }
-
-            // Fallback: treat it like a StorageConfig shape
-            if ("type" in item && "config" in item) {
-              const storageItem = item as {
-                id?: string;
-                name?: string;
-                type: StorageType;
-                config: Record<string, string>;
-              };
-              const id =
-                typeof storageItem.id === "string" && storageItem.id.length > 0
-                  ? storageItem.id
-                  : Math.random().toString(36).substring(2, 10);
-              const name =
-                typeof storageItem.name === "string" && storageItem.name.length > 0
-                  ? storageItem.name
-                  : `Storage ${index + 1}`;
-              const type = storageItem.type ?? "local-fs";
-              const config = storageItem.config ?? {};
-              return {
-                id,
-                name,
-                kind: mapStorageTypeToSourceKind(type),
-                root: deriveRootFromConfig(type, config),
-                config: config,
-              };
-            }
-
-            throw new Error(`Unsupported storage format at index ${index}.`);
-          });
-
-          void (async () => {
-            try {
-              await apiReplaceSources(sources);
-              await reloadStorages();
-              toast({
-                title: "Import successful",
-                description: `Imported ${sources.length} storage configuration(s).`,
-              });
-            } catch (error: unknown) {
-              toast({
-                title: "Import failed",
-                description: error instanceof Error ? error.message : String(error),
-                variant: "destructive",
-              });
-            }
-          })();
-        } catch (error: unknown) {
-          toast({
-            title: "Import failed",
-            description: error instanceof Error ? error.message : String(error),
-            variant: "destructive",
-          });
-        }
+        })();
       };
-
       reader.readAsText(file);
     };
-
     input.click();
   };
 
   const handleExportStorages = () => {
-    const sources = storages.map(storageToSource);
-    const dataStr = JSON.stringify(sources, null, 2);
-    const blob = new Blob([dataStr], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "infimount-storages.json";
-    link.click();
-    URL.revokeObjectURL(url);
+    void (async () => {
+      try {
+        const result = await exportStorageConfig(true);
+        const blob = new Blob([result.json], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "infimount-storages.json";
+        link.click();
+        URL.revokeObjectURL(url);
 
-    toast({
-      title: "Export successful",
-      description: `Exported ${sources.length} storage configuration(s).`,
-    });
+        toast({
+          title: "Export successful",
+          description: `Exported ${storages.length} storage configuration(s).`,
+        });
+      } catch (error: unknown) {
+        toast({
+          title: "Export failed",
+          description: error instanceof Error ? error.message : String(error),
+          variant: "destructive",
+        });
+      }
+    })();
   };
 
-  const currentStorage = storages.find((s) => s.id === selectedStorage);
+  const loadStorageConfigJson = async () => {
+    const result = await exportStorageConfig(true);
+    return result.json;
+  };
 
-  const [isPreviewVisible, setIsPreviewVisible] = useState(false);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-
-  useEffect(() => {
-    const mql = window.matchMedia("(max-width: 767px)");
-    const handle = () => {
-      if (mql.matches) {
-        setIsSidebarOpen(false);
-      } else {
-        setIsSidebarOpen(true);
-      }
-    };
-    handle();
-    mql.addEventListener("change", handle);
-    return () => mql.removeEventListener("change", handle);
-  }, []);
-
-  useEffect(() => {
-    const isCompact = window.matchMedia("(max-width: 1024px)").matches;
-    if (isPreviewVisible && isCompact) {
-      setIsSidebarOpen(false);
-    } else if (!isPreviewVisible && !isCompact) {
-      setIsSidebarOpen(true);
+  const handleSaveStorageConfigJson = async (json: string) => {
+    try {
+      const result = await importStorageConfig({
+        json,
+        mode: "replace",
+        onConflict: "overwrite",
+      });
+      await reloadStorages();
+      toast({
+        title: "Storage config updated",
+        description: `Applied ${result.imported} storage configuration(s) from JSON.`,
+      });
+    } catch (error: unknown) {
+      toast({
+        title: "Failed to apply storage config",
+        description: error instanceof Error ? error.message : String(error),
+        variant: "destructive",
+      });
+      throw error;
     }
-  }, [isPreviewVisible]);
+  };
 
-  const toggleSidebar = () => setIsSidebarOpen((prev) => !prev);
+  const handleSaveMcpSettings = async (settings: McpSettings) => {
+    try {
+      const status = await updateMcpSettings({
+        enabled: settings.enabled,
+        transport: settings.transport,
+        bindAddress: settings.bindAddress,
+        port: settings.port,
+        enabledTools: settings.enabledTools,
+      });
+      setMcpStatus(mapStatusWire(status as unknown as McpRuntimeStatusWire));
+      setMcpSnippets(await getMcpClientSnippets());
+    } catch (error: unknown) {
+      toast({
+        title: "Failed to update MCP settings",
+        description: error instanceof Error ? error.message : String(error),
+        variant: "destructive",
+      });
+      throw error;
+    }
+  };
+
+  const handleStartMcpHttp = async () => {
+    try {
+      const status = await startMcpHttp();
+      setMcpStatus(mapStatusWire(status as unknown as McpRuntimeStatusWire));
+      setMcpSnippets(await getMcpClientSnippets());
+    } catch (error: unknown) {
+      toast({
+        title: "Failed to start MCP HTTP server",
+        description: error instanceof Error ? error.message : String(error),
+        variant: "destructive",
+      });
+      throw error;
+    }
+  };
+
+  const handleStopMcpHttp = async () => {
+    try {
+      const status = await stopMcpHttp();
+      setMcpStatus(mapStatusWire(status as unknown as McpRuntimeStatusWire));
+      setMcpSnippets(await getMcpClientSnippets());
+    } catch (error: unknown) {
+      toast({
+        title: "Failed to stop MCP HTTP server",
+        description: error instanceof Error ? error.message : String(error),
+        variant: "destructive",
+      });
+      throw error;
+    }
+  };
+
+  const currentStorage = storages.find((storage) => storage.id === selectedStorage);
+
+  const toggleSidebar = () => setIsSidebarOpen((current) => !current);
   const closeSidebar = () => setIsSidebarOpen(false);
   const handleSelectStorage = (id: string) => {
     setSelectedStorage(id);
@@ -421,9 +460,9 @@ const Index = () => {
   };
 
   return (
-    <div className="flex h-screen w-full overflow-hidden rounded-[12px] bg-background border border-border/40">
+    <div className="flex h-screen w-full overflow-hidden rounded-[12px] border border-border/40 bg-background">
       <PanelGroup direction="horizontal">
-        {isSidebarOpen && (
+        {isSidebarOpen ? (
           <>
             <Panel
               className="hidden md:block transition-all duration-200"
@@ -440,18 +479,19 @@ const Index = () => {
                 onDeleteStorage={handleDeleteStorage}
                 onRefreshStorage={handleRefreshStorage}
                 onImportStorages={handleImportStorages}
+                onEditStorageConfig={() => setIsStorageConfigEditorOpen(true)}
                 onExportStorages={handleExportStorages}
+                onOpenMcpSettings={() => setIsMcpDialogOpen(true)}
                 isLoading={isStoragesLoading}
               />
             </Panel>
             <PanelResizeHandle className="hidden md:flex w-px flex-col items-center justify-center bg-transparent group/handle relative z-10">
               <div className="absolute inset-y-0 -left-1 -right-1 z-50 cursor-col-resize" />
-              <div className="h-full w-[1px] bg-border/40 group-hover/handle:bg-primary/40 transition-colors" />
+              <div className="h-full w-[1px] bg-border/40 transition-colors group-hover/handle:bg-primary/40" />
             </PanelResizeHandle>
           </>
-        )}
+        ) : null}
 
-        {/* Mobile Sidebar Overlay */}
         <div
           className={cn(
             "fixed inset-0 z-40 bg-black/40 transition-opacity md:hidden",
@@ -474,12 +514,13 @@ const Index = () => {
             onDeleteStorage={handleDeleteStorage}
             onRefreshStorage={handleRefreshStorage}
             onImportStorages={handleImportStorages}
+            onEditStorageConfig={() => setIsStorageConfigEditorOpen(true)}
             onExportStorages={handleExportStorages}
+            onOpenMcpSettings={() => setIsMcpDialogOpen(true)}
             isLoading={isStoragesLoading}
           />
         </div>
 
-        {/* Main Content Area */}
         <Panel className="flex-1 overflow-hidden">
           <div className="flex h-full flex-col">
             {currentStorage ? (
@@ -511,6 +552,24 @@ const Index = () => {
         onUpdate={handleUpdateStorage}
         onVerify={handleVerifyStorage}
         initialStorage={editingStorage ?? undefined}
+      />
+
+      <McpSettingsDialog
+        open={isMcpDialogOpen}
+        onOpenChange={setIsMcpDialogOpen}
+        status={mcpStatus}
+        snippets={mcpSnippets}
+        tools={mcpTools}
+        onSave={handleSaveMcpSettings}
+        onStartHttp={handleStartMcpHttp}
+        onStopHttp={handleStopMcpHttp}
+      />
+
+      <StorageConfigEditorDialog
+        open={isStorageConfigEditorOpen}
+        onOpenChange={setIsStorageConfigEditorOpen}
+        onLoad={loadStorageConfigJson}
+        onSave={handleSaveStorageConfigJson}
       />
     </div>
   );

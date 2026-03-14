@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+cd "$ROOT_DIR"
+
+echo "Running desktop type check..."
+pnpm --dir apps/desktop exec tsc --noEmit
+
+echo "Running desktop unit tests..."
+pnpm --dir apps/desktop test:unit
+
+echo "Running desktop integration tests..."
+pnpm --dir apps/desktop test:integration
+
+echo "Running Rust workspace tests..."
+cargo test --workspace
+
+echo "Pre-push checks passed."
