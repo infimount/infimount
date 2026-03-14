@@ -11,6 +11,8 @@ import {
   Download,
   Search,
   Sparkles,
+  Cable,
+  Braces,
 } from "lucide-react";
 import s3Icon from "@/assets/amazon-s3.svg";
 import azureIcon from "@/assets/azure-storage-blob.svg";
@@ -59,7 +61,9 @@ interface StorageSidebarProps {
   onDeleteStorage: (id: string) => void;
   onRefreshStorage: (id: string) => void;
   onImportStorages?: () => void;
+  onEditStorageConfig?: () => void;
   onExportStorages?: () => void;
+  onOpenMcpSettings?: () => void;
   isLoading?: boolean;
 }
 
@@ -92,7 +96,9 @@ export function StorageSidebar({
   onDeleteStorage,
   onRefreshStorage,
   onImportStorages,
+  onEditStorageConfig,
   onExportStorages,
+  onOpenMcpSettings,
   isLoading = false,
 }: StorageSidebarProps) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -373,11 +379,26 @@ export function StorageSidebar({
                   Import Config
                 </DropdownMenuItem>
               )}
+              {onEditStorageConfig && (
+                <DropdownMenuItem onClick={onEditStorageConfig}>
+                  <Braces className="mr-2 h-4 w-4" />
+                  Edit Config JSON
+                </DropdownMenuItem>
+              )}
               {onExportStorages && (
                 <DropdownMenuItem onClick={onExportStorages}>
                   <Download className="mr-2 h-4 w-4" />
-                  Export Config
+                  Download Config
                 </DropdownMenuItem>
+              )}
+              {onOpenMcpSettings && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={onOpenMcpSettings}>
+                    <Cable className="mr-2 h-4 w-4" />
+                    MCP Settings
+                  </DropdownMenuItem>
+                </>
               )}
             </DropdownMenuContent>
           </DropdownMenu>

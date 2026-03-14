@@ -6,5 +6,6 @@ cd "$ROOT_DIR"
 
 git config core.hooksPath .githooks
 chmod +x .githooks/pre-commit
+chmod +x .githooks/pre-push
 
 echo "Git hooks enabled (core.hooksPath=.githooks)."

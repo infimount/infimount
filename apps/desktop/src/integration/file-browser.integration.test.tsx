@@ -23,11 +23,11 @@ vi.mock("@/components/WindowControls", () => ({
   WindowControls: () => null,
 }));
 
-describe("FileBrowser end-to-end flow", () => {
+describe("FileBrowser integration flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (listEntries as any).mockResolvedValue([]);
-    (createDirectory as any).mockResolvedValue(undefined);
+    vi.mocked(listEntries).mockResolvedValue([]);
+    vi.mocked(createDirectory).mockResolvedValue(undefined);
   });
 
   it("supports search focus and create-folder flow", async () => {
@@ -44,6 +44,7 @@ describe("FileBrowser end-to-end flow", () => {
     fireEvent.keyDown(window, { key: "f", ctrlKey: true });
     const search = await screen.findByPlaceholderText("Search...");
     expect(document.activeElement).toBe(search);
+
     const emptyState = await screen.findByText("This folder is empty");
     fireEvent.contextMenu(emptyState);
     fireEvent.click(await screen.findByText("New folder"));
