@@ -27,12 +27,21 @@ EOF
 
 pnpm --dir "$ROOT_DIR/apps/desktop" build
 
-timeout 30s xvfb-run -a env \
+# Build desktop binary outside runtime timeout so CI cold builds do not get killed.
+cargo +stable build --manifest-path "$ROOT_DIR/apps/desktop/src-tauri/Cargo.toml"
+
+DESKTOP_BIN="$ROOT_DIR/target/debug/infimount"
+if [ ! -x "$DESKTOP_BIN" ]; then
+  echo "Smoke check failed: expected desktop binary at $DESKTOP_BIN" >&2
+  exit 1
+fi
+
+timeout 60s xvfb-run -a env \
   HOME="$TMP_HOME" \
   XDG_CONFIG_HOME="$TMP_HOME/.config" \
   CARGO_HOME="$CARGO_HOME_PATH" \
   RUSTUP_HOME="$RUSTUP_HOME_PATH" \
-  cargo +stable run --manifest-path "$ROOT_DIR/apps/desktop/src-tauri/Cargo.toml" >/tmp/infimount-smoke.log 2>&1 || true
+  "$DESKTOP_BIN" >/tmp/infimount-smoke.log 2>&1 || true
 
 STORAGES_FILE="$TMP_HOME/.infimount/storages.json"
 
