@@ -34,5 +34,20 @@ timeout 30s xvfb-run -a env \
   RUSTUP_HOME="$RUSTUP_HOME_PATH" \
   cargo +stable run --manifest-path "$ROOT_DIR/apps/desktop/src-tauri/Cargo.toml" >/tmp/infimount-smoke.log 2>&1 || true
 
-test -f "$TMP_HOME/.infimount/storages.json"
-grep -q '"name": "Smoke Home"' "$TMP_HOME/.infimount/storages.json"
+STORAGES_FILE="$TMP_HOME/.infimount/storages.json"
+
+if [ ! -f "$STORAGES_FILE" ]; then
+  echo "Smoke check failed: storages registry was not created at $STORAGES_FILE" >&2
+  echo "Desktop run log:" >&2
+  tail -n 200 /tmp/infimount-smoke.log >&2 || true
+  exit 1
+fi
+
+if ! grep -Eq '"name"[[:space:]]*:[[:space:]]*"Smoke Home"' "$STORAGES_FILE"; then
+  echo "Smoke check failed: migrated storage 'Smoke Home' was not found in $STORAGES_FILE" >&2
+  echo "storages.json contents:" >&2
+  cat "$STORAGES_FILE" >&2
+  echo "Desktop run log:" >&2
+  tail -n 200 /tmp/infimount-smoke.log >&2 || true
+  exit 1
+fi
