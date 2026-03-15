@@ -103,32 +103,21 @@ brew upgrade infimount
 brew upgrade --cask infimount
 ```
 
----
+### Upgrade to a New Release
 
-## 🧩 Architecture
+If you installed from release binaries (not Homebrew), upgrade like this:
 
-Infimount is built on a clean, modular architecture:
-
-```
-┌─────────────────────────┐
-│    React + TypeScript   │  ← Modern UI with Radix components
-└───────────▲─────────────┘
-            │ invoke()
-┌───────────┴─────────────┐
-│      Tauri Bridge       │  ← Thin command layer
-└───────────▲─────────────┘
-            │
-┌───────────┴─────────────┐
-│    infimount_core       │  ← Rust core with OpenDAL
-│      + Apache OpenDAL   │     (S3, Azure, GCS, WebDAV, local fs)
-└─────────────────────────┘
-```
-
-**Core Principles:**
-- 🏠 **Your config lives locally** — Storage definitions and credentials are kept on-device
-- 🚫 **No reinventing storage logic** — All I/O delegated to [Apache OpenDAL](https://opendal.apache.org/)
-- 🪶 **Thin Rust core** — Only orchestrates operators, no business logic bloat
-- 🔒 **UI never touches storage** — All operations go through Tauri commands
+1. Linux (`.deb`)
+   `sudo apt install ./Infimount-amd64.deb`
+2. Linux (`.rpm`)
+   `sudo rpm -Uvh ./Infimount-x86_64.rpm`
+3. Linux (`.AppImage`)
+   Download the latest AppImage, replace your old file, then run:
+   `chmod +x Infimount-*.AppImage && ./Infimount-*.AppImage`
+4. macOS (`.dmg`)
+   Download latest DMG and replace `Infimount.app` in Applications.
+5. Windows (`.msi` or `.exe`)
+   Run the latest installer; it upgrades the existing install.
 
 ---
 
@@ -184,35 +173,6 @@ Outputs:
 
 > 📖 For detailed platform-specific instructions, see [build.md](build.md).
 > For release operations and checklist, see [docs/releasing.md](docs/releasing.md).
-
----
-
-## 📁 Project Structure
-
-```
-infimount/
-├── crates/
-│   └── core/                 # Rust core library (infimount_core)
-│       ├── src/
-│       │   ├── models.rs     # Data types (Source, Entry, errors)
-│       │   ├── registry.rs   # Operator management
-│       │   ├── operations.rs # File operations (list, read, write, delete)
-│       │   └── config.rs     # Configuration persistence
-│       └── Cargo.toml
-├── apps/
-│   └── desktop/              # Tauri desktop application
-│       ├── src/              # React frontend
-│       │   ├── components/   # UI components
-│       │   ├── hooks/        # React hooks
-│       │   └── lib/          # API client, utilities
-│       └── src-tauri/        # Rust Tauri backend
-│           └── src/
-│               └── commands.rs  # Tauri command handlers
-├── GOVERNANCE.md             # Project governance
-├── MAINTAINERS.md            # Maintainer list
-├── CONTRIBUTING.md           # Contribution guide
-└── CHANGELOG.md              # Version history
-```
 
 ---
 
