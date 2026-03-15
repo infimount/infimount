@@ -78,6 +78,7 @@ In the release draft:
      - `brew install infimount`
      - `brew install --cask infimount` (macOS)
 5. Merge/publish Homebrew tap changes.
+6. Merge the automated version-sync PR (workflow: `Sync Version After Release`) so `main` app manifests reflect the published tag.
 
 ## 5. Rollback strategy
 

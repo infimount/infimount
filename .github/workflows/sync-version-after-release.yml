@@ -1,0 +1,70 @@
+name: Sync Version After Release
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to sync (example: v0.2.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync-version:
+    name: Sync app manifests from release tag
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: Resolve tag
+        id: resolve_tag
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${{ github.event.release.tag_name }}"
+          fi
+          if [ -z "${TAG}" ]; then
+            echo "Tag is empty." >&2
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "GITHUB_REF_NAME=${TAG}" >> "$GITHUB_ENV"
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Sync versions from tag
+        run: node scripts/sync-release-version.mjs
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: chore/sync-version-${{ steps.resolve_tag.outputs.tag }}
+          title: "chore(release): sync versions for ${{ steps.resolve_tag.outputs.tag }}"
+          commit-message: "chore(release): sync versions for ${{ steps.resolve_tag.outputs.tag }}"
+          body: |
+            Automated post-release version sync.
+
+            Source tag: `${{ steps.resolve_tag.outputs.tag }}`
+
+            Updated files:
+            - `apps/desktop/package.json`
+            - `apps/desktop/src-tauri/tauri.conf.json`
+            - `apps/desktop/src-tauri/Cargo.toml`
+          labels: |
+            chore
+            release
+          delete-branch: true

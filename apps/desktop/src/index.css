@@ -13,6 +13,7 @@ body {
 
 /* CSS Custom Properties - Theme Variables */
 :root {
+  --window-radius: 12px;
   /* Ubuntu Yaru Light Theme - Monochromatic Grey */
   --background: 0 0% 97%;
   /* #F7F7F7 Warm light background */
@@ -131,7 +132,7 @@ body {
 }
 
 #root {
-  border-radius: 12px;
+  border-radius: var(--window-radius);
   overflow: hidden;
   background-color: hsl(var(--background));
   /* Clip content to rounded corners on macOS */
