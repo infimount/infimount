@@ -5,7 +5,10 @@ This document is the operational checklist for cutting a release.
 ## 1. Pre-release checks
 
 1. Ensure `main` is green in all required workflows.
-2. If you want signed installers, configure release secrets first.
+2. Choose next version by impact:
+   - patch (`0.1.1`) for fixes only
+   - minor (`0.2.0`) for new user-facing features (recommended for MCP rollout)
+3. If you want signed installers, configure release secrets first.
    - macOS signing/notarization secrets:
      - `APPLE_CERTIFICATE`
      - `APPLE_CERTIFICATE_PASSWORD`
@@ -16,10 +19,6 @@ This document is the operational checklist for cutting a release.
    - Windows signing secrets:
      - `WINDOWS_CERTIFICATE_BASE64`
      - `WINDOWS_CERTIFICATE_PASSWORD`
-3. Confirm version is synced in:
-   - `apps/desktop/package.json`
-   - `apps/desktop/src-tauri/Cargo.toml`
-   - `apps/desktop/src-tauri/tauri.conf.json`
 4. Update `CHANGELOG.md`.
 5. Confirm no secrets or local artifacts are staged:
    - `git status`
@@ -36,7 +35,7 @@ git push origin vX.Y.Z
 
 The `Release` workflow is triggered by `v*` tags and will:
 
-- validate tag/version consistency
+- sync app manifest versions from the pushed tag via `scripts/sync-release-version.mjs`
 - build Linux, macOS, Windows binaries
 - sign/notarize macOS artifacts if Apple signing secrets are present
 - sign Windows installers if Windows signing secrets are present
@@ -71,6 +70,14 @@ In the release draft:
 1. Confirm `/releases/latest/download/...` links resolve.
 2. Confirm GitHub Pages download page still works.
 3. Confirm release notes render as expected.
+4. Update Homebrew tap repo (`infimount/homebrew-infimount`):
+   - bump Formula and Cask to the released tag
+   - update checksums from release assets
+   - validate locally:
+     - `brew tap infimount/infimount`
+     - `brew install infimount`
+     - `brew install --cask infimount` (macOS)
+5. Merge/publish Homebrew tap changes.
 
 ## 5. Rollback strategy
 

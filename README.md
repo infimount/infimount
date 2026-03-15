@@ -47,7 +47,7 @@ Pre-built binaries for **Linux**, **macOS**, and **Windows** are available on:
 - GitHub Pages download hub: [infimount.github.io/infimount](https://infimount.github.io/infimount/)
 - Releases page: [github.com/infimount/infimount/releases](https://github.com/infimount/infimount/releases)
 
-**Current stable release:** [`v0.1.0`](https://github.com/infimount/infimount/releases/tag/v0.1.0)
+**Current stable release:** [Latest Release](https://github.com/infimount/infimount/releases/latest)
 
 | Platform | Download Link (`latest stable`) | Format |
 |----------|----------------------|--------|
