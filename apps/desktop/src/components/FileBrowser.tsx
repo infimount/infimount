@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState, useRef } from "react";
-import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import {
   Search,
   LayoutGrid,
@@ -13,6 +12,11 @@ import {
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
 import { WindowControls } from "./WindowControls";
 import { FileGrid } from "./FileGrid";
 import { FileTable } from "./FileTable";
@@ -1079,8 +1083,8 @@ export function FileBrowser({
           )}
 
           {/* Panel Group for Content & Preview */}
-          <PanelGroup direction="horizontal" className="flex-1 overflow-hidden">
-            <Panel minSize={30} defaultSize={previewFile ? 70 : 100}>
+          <ResizablePanelGroup direction="horizontal" className="flex-1 overflow-hidden">
+            <ResizablePanel minSize={30} defaultSize={previewFile ? 70 : 100}>
                 <div className="flex h-full flex-col overflow-hidden relative">
                 <ContextMenu>
                   <ContextMenuTrigger asChild>
@@ -1255,14 +1259,14 @@ export function FileBrowser({
                   isDragging={isDragging}
                 />
               </div>
-            </Panel>
+            </ResizablePanel>
 
             {previewFile && (
               <>
-                <PanelResizeHandle className="group relative flex w-1 items-center justify-center bg-transparent cursor-col-resize transition-colors focus:outline-none z-10 -ml-0.5">
+                <ResizableHandle className="group relative flex w-1 items-center justify-center bg-transparent cursor-col-resize transition-colors focus:outline-none z-10 -ml-0.5">
                   <div className="h-full w-[1px] bg-border group-hover:bg-foreground/50 transition-colors" />
-                </PanelResizeHandle>
-                <Panel defaultSize={30} minSize={20} maxSize={60} className="bg-background/50">
+                </ResizableHandle>
+                <ResizablePanel defaultSize={30} minSize={20} maxSize={60} className="bg-background/50">
                   <div
                     className="h-full w-full infimount-zoom-shell bg-white dark:bg-background"
                     data-infimount-zoom-region="true"
@@ -1287,10 +1291,10 @@ export function FileBrowser({
                       />
                     </div>
                   </div>
-                </Panel>
+                </ResizablePanel>
               </>
             )}
-          </PanelGroup>
+          </ResizablePanelGroup>
         </div>
       </div>
 
