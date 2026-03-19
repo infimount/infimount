@@ -470,9 +470,9 @@ const Index = () => {
           <>
             <ResizablePanel
               className="hidden md:block transition-all duration-200"
-              defaultSize={20}
-              minSize={15}
-              maxSize={40}
+              defaultSize="20%"
+              minSize="15%"
+              maxSize="40%"
             >
               <StorageSidebar
                 storages={storages}
