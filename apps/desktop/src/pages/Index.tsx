@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 
 import { AddStorageDialog } from "@/components/AddStorageDialog";
 import { FileBrowser } from "@/components/FileBrowser";
 import { McpSettingsDialog } from "@/components/McpSettingsDialog";
 import { StorageConfigEditorDialog } from "@/components/StorageConfigEditorDialog";
 import { StorageSidebar } from "@/components/StorageSidebar";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
 import { toast } from "@/hooks/use-toast";
 import {
   addStorage as apiAddStorage,
@@ -461,14 +465,14 @@ const Index = () => {
 
   return (
     <div className="flex h-screen w-full overflow-hidden rounded-[12px] border border-border/40 bg-background">
-      <PanelGroup direction="horizontal">
+      <ResizablePanelGroup direction="horizontal">
         {isSidebarOpen ? (
           <>
-            <Panel
+            <ResizablePanel
               className="hidden md:block transition-all duration-200"
-              defaultSize={20}
-              minSize={15}
-              maxSize={40}
+              defaultSize="20%"
+              minSize="15%"
+              maxSize="40%"
             >
               <StorageSidebar
                 storages={storages}
@@ -484,11 +488,11 @@ const Index = () => {
                 onOpenMcpSettings={() => setIsMcpDialogOpen(true)}
                 isLoading={isStoragesLoading}
               />
-            </Panel>
-            <PanelResizeHandle className="hidden md:flex w-px flex-col items-center justify-center bg-transparent group/handle relative z-10">
+            </ResizablePanel>
+            <ResizableHandle className="hidden md:flex w-px flex-col items-center justify-center bg-transparent group/handle relative z-10">
               <div className="absolute inset-y-0 -left-1 -right-1 z-50 cursor-col-resize" />
               <div className="h-full w-[1px] bg-border/40 transition-colors group-hover/handle:bg-primary/40" />
-            </PanelResizeHandle>
+            </ResizableHandle>
           </>
         ) : null}
 
@@ -521,7 +525,7 @@ const Index = () => {
           />
         </div>
 
-        <Panel className="flex-1 overflow-hidden">
+        <ResizablePanel className="flex-1 overflow-hidden">
           <div className="flex h-full flex-col">
             {currentStorage ? (
               <FileBrowser
@@ -539,8 +543,8 @@ const Index = () => {
               </div>
             )}
           </div>
-        </Panel>
-      </PanelGroup>
+        </ResizablePanel>
+      </ResizablePanelGroup>
 
       <AddStorageDialog
         open={isAddDialogOpen}

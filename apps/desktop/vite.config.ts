@@ -14,6 +14,15 @@ export default defineConfig(async () => ({
   server: {
     port: 5173,
     strictPort: true,
+    watch: {
+      ignored: [
+        "**/coverage/**",
+        "**/test-results/**",
+        "**/playwright-report/**",
+        "**/.vite/**",
+        "**/node_modules/.vite/**",
+      ],
+    },
   },
   envPrefix: ["VITE_", "TAURI_"],
   build: {
