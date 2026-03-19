@@ -1,9 +1,6 @@
 import { AddStorageDialog } from "@/components/AddStorageDialog";
-import type {
-  StorageDraft,
-  StorageKindSchema,
-  StorageValidationResult,
-} from "@/lib/api";
+import type { StorageKindSchema } from "@/lib/api";
+import type { StorageDraft, StorageValidationResult } from "@/types/storage";
 
 const schemas: StorageKindSchema[] = [
   {
