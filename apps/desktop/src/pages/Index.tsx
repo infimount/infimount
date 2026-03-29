@@ -529,7 +529,6 @@ const Index = () => {
           <div className="flex h-full flex-col">
             {currentStorage ? (
               <FileBrowser
-                key={currentStorage.id}
                 sourceId={currentStorage.id}
                 storageName={currentStorage.name}
                 refreshTick={storageRefreshTick[currentStorage.id] ?? 0}
