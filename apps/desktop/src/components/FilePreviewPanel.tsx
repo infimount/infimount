@@ -305,7 +305,7 @@ export function FilePreviewPanel({
     onEditModeChange?.(true);
 
     let baselineMs: number | null = null;
-    let baselineRaw: string | null = null;
+    let baselineRaw: string | null;
     try {
       const latest = await statEntry(sourceId, file.id);
       baselineRaw = latest.modified_at ?? null;
