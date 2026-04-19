@@ -14,6 +14,9 @@ pub enum FsOp {
     DeletePath,
     SearchPaths,
     GenerateDownloadLink,
+    ListVersions,
+    ReadFileVersion,
+    DeleteVersion,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

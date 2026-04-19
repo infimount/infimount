@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::registry::StorageRegistry;
 use crate::server::InfimountMcpServer;
+use crate::session::SessionManager;
 use crate::settings::McpSettings;
 use crate::tools_fs::FsToolsContext;
 
@@ -42,7 +43,13 @@ pub async fn serve_stdio(
     registry: StorageRegistry,
     enabled_tools: Vec<String>,
 ) -> Result<(), Box<rmcp::RmcpError>> {
-    let ctx = FsToolsContext { registry };
+    let sessions = SessionManager::new();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
     let service = InfimountMcpServer::new(ctx, enabled_tools);
     let (stdin, stdout) = rmcp::transport::stdio();
     let running = service
@@ -63,6 +70,8 @@ pub async fn start_http_server(
     bind_address: &str,
     port: u16,
     enabled_tools: Vec<String>,
+    allow_insecure: bool,
+    auth_token: Option<String>,
 ) -> io::Result<McpHttpServerHandle> {
     let cancellation_token = CancellationToken::new();
     let config = StreamableHttpServerConfig {
@@ -71,12 +80,17 @@ pub async fn start_http_server(
     };
     let registry_for_factory = registry.clone();
     let enabled_tools_for_factory = enabled_tools.clone();
+    let allow_insecure_for_factory = allow_insecure;
+    let auth_token_for_factory = auth_token.clone();
     let service: StreamableHttpService<InfimountMcpServer, LocalSessionManager> =
         StreamableHttpService::new(
             move || {
                 Ok(InfimountMcpServer::new(
                     FsToolsContext {
                         registry: registry_for_factory.clone(),
+                        sessions: SessionManager::new(),
+                        allow_insecure: allow_insecure_for_factory,
+                        auth_token: auth_token_for_factory.clone(),
                     },
                     enabled_tools_for_factory.clone(),
                 ))
@@ -115,12 +129,18 @@ pub async fn start_http_server(
 pub async fn start_http_server_from_settings(
     registry: StorageRegistry,
     settings: &McpSettings,
+    allow_insecure: bool,
 ) -> io::Result<McpHttpServerHandle> {
+    let effective_auth_token = settings.auth_token.clone();
+    let require_auth = effective_auth_token.is_some();
+    let allow = allow_insecure && !require_auth;
     start_http_server(
         registry,
         &settings.bind_address,
         settings.port,
         settings.enabled_tools.clone(),
+        allow,
+        effective_auth_token,
     )
     .await
 }

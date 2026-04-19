@@ -5,6 +5,7 @@ import type {
   McpRuntimeStatus,
   McpSettings,
   McpToolDefinition,
+  StorageCapabilities,
   StorageConfig,
   StorageDraft,
   StorageValidationResult,
@@ -247,6 +248,18 @@ export async function listStorageSchemas(): Promise<StorageKindSchema[]> {
   }
 }
 
+export async function getStorageCapabilities(
+  storageId: string,
+): Promise<StorageCapabilities> {
+  try {
+    return await tauriInvoke<StorageCapabilities>("get_storage_capabilities", {
+      storageId,
+    });
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
 export async function getMcpSettings(): Promise<McpSettings> {
   try {
     return await tauriInvoke<McpSettings>("get_mcp_settings");
@@ -298,6 +311,76 @@ export async function stopMcpHttp(): Promise<McpRuntimeStatus> {
 export async function getMcpClientSnippets(): Promise<McpClientSnippets> {
   try {
     return await tauriInvoke<McpClientSnippets>("get_mcp_client_snippets");
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export interface FileVersion {
+  version: string;
+  size_bytes: number | null;
+  modified_at: string | null;
+  etag: string | null;
+}
+
+export interface ListVersionsResult {
+  path: string;
+  versions: FileVersion[];
+  next_cursor: string | null;
+}
+
+export async function listVersions(
+  sourceId: string,
+  path: string,
+  limit?: number,
+  cursor?: string,
+): Promise<ListVersionsResult> {
+  try {
+    return await tauriInvoke<ListVersionsResult>("list_versions", {
+      sourceId,
+      path,
+      limit,
+      cursor,
+    });
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function readFileVersion(
+  sourceId: string,
+  path: string,
+  version: string,
+): Promise<Uint8Array> {
+  try {
+    const data = await tauriInvoke<number[]>("read_file_version", {
+      sourceId,
+      path,
+      version,
+    });
+    return new Uint8Array(data);
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export interface DeleteVersionResult {
+  path: string;
+  version: string;
+  deleted: boolean;
+}
+
+export async function deleteFileVersion(
+  sourceId: string,
+  path: string,
+  version: string,
+): Promise<DeleteVersionResult> {
+  try {
+    return await tauriInvoke<DeleteVersionResult>("delete_version", {
+      sourceId,
+      path,
+      version,
+    });
   } catch (error) {
     return handleError(error);
   }

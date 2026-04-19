@@ -606,6 +606,87 @@ async fn upload_path_recursive(op: &Operator, src: &Path, target_dir: &str) -> R
     Ok(())
 }
 
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FileVersion {
+    pub version: String,
+    pub size_bytes: Option<u64>,
+    pub modified_at: Option<String>,
+    pub etag: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ListVersionsResult {
+    pub path: String,
+    pub versions: Vec<FileVersion>,
+    pub next_cursor: Option<String>,
+}
+
+pub async fn list_file_versions(
+    op: &Operator,
+    path: &str,
+    limit: u32,
+    _cursor: Option<&str>,
+) -> Result<ListVersionsResult> {
+    let normalized = normalize_opendal_path(path);
+    let mut versions = Vec::new();
+
+    let mut lister = match op.lister_with(&normalized).versions(true).await {
+        Ok(l) => l,
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            return Ok(ListVersionsResult {
+                path: path.to_string(),
+                versions: vec![],
+                next_cursor: None,
+            });
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    while let Some(entry) = lister.try_next().await? {
+        let meta = entry.metadata();
+        if let Some(version) = meta.version() {
+            let modified_at = meta.last_modified().map(|dt| dt.to_string());
+            let etag = meta.etag().map(|s| s.to_string());
+            versions.push(FileVersion {
+                version: version.to_string(),
+                size_bytes: Some(meta.content_length()),
+                modified_at,
+                etag,
+            });
+        }
+    }
+
+    versions.sort_by(|a, b| {
+        let a_time = a.modified_at.as_deref().unwrap_or("");
+        let b_time = b.modified_at.as_deref().unwrap_or("");
+        b_time.cmp(a_time).then_with(|| a.version.cmp(&b.version))
+    });
+
+    if limit > 0 && versions.len() > limit as usize {
+        versions.truncate(limit as usize);
+    }
+
+    Ok(ListVersionsResult {
+        path: path.to_string(),
+        versions,
+        next_cursor: None,
+    })
+}
+
+pub async fn read_file_version(op: &Operator, path: &str, version: &str) -> Result<Vec<u8>> {
+    let normalized = normalize_opendal_path(path);
+    let data = op.read_with(&normalized).version(version).await?;
+    Ok(data.to_vec())
+}
+
+pub async fn delete_file_version(op: &Operator, path: &str, version: &str) -> Result<()> {
+    let normalized = normalize_opendal_path(path);
+    op.delete_with(&normalized).version(version).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

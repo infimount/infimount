@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileItem } from "@/types/storage";
-import { X, Download, Edit3, Save, Undo2 } from "lucide-react";
+import { X, Download, Edit3, Save, Undo2, Clock, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,9 +15,10 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { FileTypeIcon } from "./FileIcon";
-import { readFile, statEntry, writeFile } from "@/lib/api";
+import { getStorageCapabilities, readFile, readFileVersion, statEntry, writeFile } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
 import infinityLoader from "@/assets/loading-infinity.apng";
+import { FileVersionsTab } from "./FileVersionsTab";
 
 const MAX_PREVIEW_BYTES = 20 * 1024 * 1024;
 
@@ -183,11 +185,14 @@ export function FilePreviewPanel({
   const [editBaselineRaw, setEditBaselineRaw] = useState<string | null>(null);
   const [remoteModifiedAtLabel, setRemoteModifiedAtLabel] = useState<string | null>(null);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
+  const [activeTab, setActiveTab] = useState("preview");
 
   const [prevFileId, setPrevFileId] = useState<string | null>(null);
+  const [versionsCapable, setVersionsCapable] = useState(false);
 
   if (file?.id !== prevFileId) {
     setPrevFileId(file?.id ?? null);
+    setActiveTab("preview");
     setContent("");
     setError(null);
     setMode(null);
@@ -287,6 +292,16 @@ export function FilePreviewPanel({
       setLoading(false);
     };
   }, [file, sourceId]);
+
+  useEffect(() => {
+    if (!sourceId) return;
+    setVersionsCapable(false);
+    getStorageCapabilities(sourceId)
+      .then((caps) => setVersionsCapable(caps.list_with_versions))
+      .catch(() => setVersionsCapable(false));
+  }, [sourceId]);
+
+  const showVersionsTab = versionsCapable;
 
   const isDirty = isEditing && draftContent !== originalContent;
   const canEdit = mode === "text" && !loading && !error;
@@ -449,16 +464,62 @@ export function FilePreviewPanel({
       <div className="flex h-full flex-col bg-card">
         {/* Header */}
         <div className="flex items-center justify-between bg-muted/30 p-3">
-          <h3 className="flex-1 truncate text-sm font-semibold">{file.name}</h3>
-          <Button size="icon" variant="ghost" onClick={onClose} className="h-8 w-8">
+          <h3 className="flex-1 truncate text-sm font-semibold pr-2" title={file.name}>{file.name}</h3>
+          <Button size="icon" variant="ghost" onClick={onClose} className="h-8 w-8 shrink-0">
             <X className="h-4 w-4" />
           </Button>
         </div>
 
+        {file.type === "file" && (
+          <div className="px-3 pt-2 border-b">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+              <TabsList className={`grid w-full ${showVersionsTab ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                <TabsTrigger value="preview" className="text-xs">
+                  <Eye className="w-3 h-3 mr-2" />
+                  Preview
+                </TabsTrigger>
+                {showVersionsTab && (
+                  <TabsTrigger value="versions" className="text-xs">
+                    <Clock className="w-3 h-3 mr-2" />
+                    Versions
+                  </TabsTrigger>
+                )}
+              </TabsList>
+            </Tabs>
+          </div>
+        )}
+
         {/* Preview Area */}
         <ScrollArea className="flex-1">
           <div className="min-h-full">
-            {loading && (
+            {activeTab === "versions" && showVersionsTab ? (
+              <FileVersionsTab 
+                sourceId={sourceId} 
+                path={file.id} 
+                onVersionDownload={async (version) => {
+                  try {
+                    const data = await readFileVersion(sourceId, file.id, version);
+                    const blob = new Blob([data.buffer as ArrayBuffer]);
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `${file.name}.v${version}`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                  } catch (err: any) {
+                    toast({
+                      title: "Download failed",
+                      description: err.message,
+                      variant: "destructive",
+                    });
+                  }
+                }}
+              />
+            ) : (
+              <>
+                {loading && (
               <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-muted-foreground">
                 <img
                   src={infinityLoader}
@@ -529,6 +590,8 @@ export function FilePreviewPanel({
                   button below to save it to your device.
                 </p>
               </div>
+            )}
+            </>
             )}
           </div>
         </ScrollArea>

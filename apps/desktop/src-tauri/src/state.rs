@@ -5,6 +5,7 @@ use infimount_mcp::registry::{StorageRecord, StorageRegistry};
 use infimount_mcp::runtime::{
     start_http_server_from_settings, McpHttpServerHandle, HTTP_ENDPOINT_PATH,
 };
+use infimount_mcp::session::SessionManager;
 use infimount_mcp::settings::{McpSettings, McpSettingsStore, McpTransport};
 use infimount_mcp::tools_fs::FsToolsContext;
 use opendal::Operator;
@@ -46,8 +47,12 @@ impl AppState {
     }
 
     pub fn fs_context(&self) -> FsToolsContext {
+        let settings = self.settings_store.load().unwrap_or_default();
         FsToolsContext {
             registry: self.registry.clone(),
+            sessions: SessionManager::new(),
+            allow_insecure: settings.auth_token.is_none(),
+            auth_token: settings.auth_token,
         }
     }
 
@@ -92,9 +97,11 @@ impl AppState {
         }
 
         self.stop_http_server_inner().await?;
-        let server = start_http_server_from_settings(self.registry.clone(), &settings)
-            .await
-            .map_err(map_runtime_io_error)?;
+        let allow_insecure = settings.auth_token.is_none();
+        let server =
+            start_http_server_from_settings(self.registry.clone(), &settings, allow_insecure)
+                .await
+                .map_err(map_runtime_io_error)?;
         let endpoint = server.endpoint().to_string();
 
         let mut guard = self.http_runtime.lock().await;

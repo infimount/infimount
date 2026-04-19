@@ -7,6 +7,10 @@ fn registry_in(dir: &TempDir) -> crate::registry::StorageRegistry {
     crate::registry::StorageRegistry::new(Some(dir.path().join("storages.json")))
 }
 
+fn sessions_in() -> crate::session::SessionManager {
+    crate::session::SessionManager::new()
+}
+
 #[tokio::test]
 async fn list_storages_masks_secrets() {
     let dir = TempDir::new().unwrap();
@@ -17,7 +21,13 @@ async fn list_storages_masks_secrets() {
         serde_json::json!({"access_key": "abc", "region": "us-east-1"}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let out = list_storages(&ctx).await.unwrap();
     assert_eq!(out.storages[0].config["access_key"], "********");
@@ -28,7 +38,13 @@ async fn list_storages_masks_secrets() {
 async fn add_edit_remove_storage_round_trip() {
     let dir = TempDir::new().unwrap();
     let registry = registry_in(&dir);
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let added = add_storage(
         &ctx,
@@ -87,7 +103,13 @@ async fn export_config_masks_by_default() {
         serde_json::json!({"token": "secret", "region": "us-east-1"}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let out = export_config(
         &ctx,
@@ -111,7 +133,13 @@ async fn import_config_rename_conflict_appends_suffix() {
         serde_json::json!({"root": "/tmp/one"}),
     );
     registry.save_all_atomic(&[existing]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let out = import_config(
         &ctx,
@@ -153,7 +181,13 @@ async fn validate_storage_local_root_succeeds() {
         serde_json::json!({"root": local_root}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let out = validate_storage(
         &ctx,
@@ -181,7 +215,13 @@ async fn validate_storage_invalid_root_returns_valid_false() {
         serde_json::json!({"root": invalid_root}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let out = validate_storage(
         &ctx,
@@ -200,7 +240,13 @@ async fn validate_storage_invalid_root_returns_valid_false() {
 async fn remove_storage_missing_returns_not_found() {
     let dir = TempDir::new().unwrap();
     let registry = registry_in(&dir);
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let err = remove_storage(
         &ctx,

@@ -62,6 +62,12 @@ export interface McpToolDefinition {
   description: string;
 }
 
+export interface StorageCapabilities {
+  list_with_versions: boolean;
+  read_with_version: boolean;
+  delete_with_version: boolean;
+}
+
 export interface FileItem {
   id: string;
   name: string;
@@ -70,4 +76,5 @@ export interface FileItem {
   modified: Date | null;
   owner?: string;
   extension?: string;
+  capabilities?: StorageCapabilities;
 }

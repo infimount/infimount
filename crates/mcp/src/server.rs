@@ -19,10 +19,13 @@ use crate::errors::{err_with_details, wrap_json, McpErrorCode, McpResult};
 use crate::prompts;
 use crate::resources;
 use crate::schemas;
+use crate::session::{SessionCreateInput, SessionCreateOutput, SessionEndInput, SessionEndOutput};
+#[allow(unused_imports)]
 use crate::tools_fs::{
-    self, CopyPathInput, CopyPathOutput, DeletePathInput, DeletePathOutput, FsToolsContext,
-    GenerateDownloadLinkInput, GenerateDownloadLinkOutput, ListDirInput, ListDirOutput, MkdirInput,
-    MkdirOutput, MovePathInput, MovePathOutput, ReadFileInput, ReadFileOutput, SearchPathsInput,
+    self, CopyPathInput, CopyPathOutput, DeletePathInput, DeletePathOutput, DeleteVersionInput,
+    DeleteVersionOutput, FsToolsContext, GenerateDownloadLinkInput, GenerateDownloadLinkOutput,
+    ListDirInput, ListDirOutput, ListVersionsInput, MkdirInput, MkdirOutput, MovePathInput,
+    MovePathOutput, ReadFileInput, ReadFileOutput, ReadFileVersionInput, SearchPathsInput,
     SearchPathsOutput, StatPathInput, StatPathOutput, WriteFileInput, WriteFileOutput,
 };
 use crate::tools_storage::{
@@ -126,6 +129,32 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
             description: "Validate a storage configuration and return backend capabilities.",
             input_schema: schemas::schema_validate_storage(),
         },
+        ToolDefinition {
+            name: "session_create",
+            description:
+                "Create a scoped session with restricted access to specific storages and paths.",
+            input_schema: schemas::schema_session_create(),
+        },
+        ToolDefinition {
+            name: "session_end",
+            description: "Terminate an active session.",
+            input_schema: schemas::schema_session_end(),
+        },
+        ToolDefinition {
+            name: "list_versions",
+            description: "List all available versions of a file.",
+            input_schema: schemas::schema_list_versions(),
+        },
+        ToolDefinition {
+            name: "read_file_version",
+            description: "Read a specific version of a file.",
+            input_schema: schemas::schema_read_file_version(),
+        },
+        ToolDefinition {
+            name: "delete_version",
+            description: "Delete a specific version of a file.",
+            input_schema: schemas::schema_delete_version(),
+        },
     ]
 }
 
@@ -213,7 +242,30 @@ impl InfimountMcpServer {
             return Err(ErrorData::method_not_found::<CallToolRequestMethod>());
         }
 
-        let raw_input = serde_json::Value::Object(arguments.unwrap_or_default());
+        let raw_input = serde_json::Value::Object(arguments.clone().unwrap_or_default());
+
+        if !self.ctx.allow_insecure {
+            if let Some(expected_token) = &self.ctx.auth_token {
+                let provided_token = raw_input
+                    .get("auth_token")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| {
+                        arguments
+                            .as_ref()
+                            .and_then(|args| args.get("auth_token"))
+                            .and_then(|v| v.as_str())
+                    });
+                if provided_token != Some(expected_token.as_str()) {
+                    return Err(ErrorData::invalid_params(
+                        "unauthorized: invalid or missing auth_token",
+                        Some(json!({
+                            "code": "ERR_UNAUTHORIZED",
+                            "details": "valid token required for this endpoint"
+                        })),
+                    ));
+                }
+            }
+        }
 
         let result = match name {
             "list_dir" => invoke_list_dir_json(&self.ctx, raw_input).await,
@@ -235,6 +287,11 @@ impl InfimountMcpServer {
             "import_config" => invoke_import_config_json(&self.ctx, raw_input).await,
             "export_config" => invoke_export_config_json(&self.ctx, raw_input).await,
             "validate_storage" => invoke_validate_storage_json(&self.ctx, raw_input).await,
+            "session_create" => invoke_session_create_json(&self.ctx, raw_input).await,
+            "session_end" => invoke_session_end_json(&self.ctx, raw_input).await,
+            "list_versions" => invoke_list_versions_json(&self.ctx, raw_input).await,
+            "read_file_version" => invoke_read_file_version_json(&self.ctx, raw_input).await,
+            "delete_version" => invoke_delete_version_json(&self.ctx, raw_input).await,
             _ => {
                 return Err(ErrorData::method_not_found::<CallToolRequestMethod>());
             }
@@ -572,6 +629,99 @@ pub async fn invoke_validate_storage_json(
     wrap_json(
         invoke_typed(raw_input, |input: ValidateStorageInput| async move {
             tools_storage::validate_storage(ctx, input).await
+        })
+        .await,
+    )
+}
+
+pub async fn invoke_session_create_json(
+    ctx: &FsToolsContext,
+    raw_input: serde_json::Value,
+) -> serde_json::Value {
+    wrap_json(
+        invoke_typed(raw_input, |input: SessionCreateInput| async move {
+            let session = ctx
+                .sessions
+                .create_session(
+                    input.allowed_storages,
+                    input.allowed_prefixes,
+                    input.read_only,
+                    input.ttl_seconds,
+                )
+                .await?;
+            Ok(SessionCreateOutput {
+                session_id: session.id,
+            })
+        })
+        .await,
+    )
+}
+
+pub async fn invoke_session_end_json(
+    ctx: &FsToolsContext,
+    raw_input: serde_json::Value,
+) -> serde_json::Value {
+    wrap_json(
+        invoke_typed(raw_input, |input: SessionEndInput| async move {
+            let ended = ctx.sessions.end_session(&input.session_id).await?;
+            Ok(SessionEndOutput {
+                session_id: input.session_id,
+                ended,
+            })
+        })
+        .await,
+    )
+}
+
+pub async fn invoke_list_versions_json(
+    ctx: &FsToolsContext,
+    raw_input: serde_json::Value,
+) -> serde_json::Value {
+    wrap_json(
+        invoke_typed(raw_input, |input: ListVersionsInput| async move {
+            let input_with_session = tools_fs::ListVersionsInput {
+                path: input.path,
+                limit: input.limit,
+                cursor: input.cursor,
+            };
+            tools_fs::list_versions(ctx, input_with_session).await
+        })
+        .await,
+    )
+}
+
+pub async fn invoke_read_file_version_json(
+    ctx: &FsToolsContext,
+    raw_input: serde_json::Value,
+) -> serde_json::Value {
+    wrap_json(
+        invoke_typed(raw_input, |input: ReadFileVersionInput| async move {
+            let input_with_session = tools_fs::ReadFileVersionInput {
+                path: input.path,
+                version: input.version,
+                offset_bytes: input.offset_bytes,
+                max_bytes: input.max_bytes,
+                as_text: input.as_text,
+                encoding: input.encoding,
+            };
+            tools_fs::read_file_version(ctx, input_with_session).await
+        })
+        .await,
+    )
+}
+
+pub async fn invoke_delete_version_json(
+    ctx: &FsToolsContext,
+    raw_input: serde_json::Value,
+) -> serde_json::Value {
+    wrap_json(
+        invoke_typed(raw_input, |input: DeleteVersionInput| async move {
+            let input_with_session = tools_fs::DeleteVersionInput {
+                path: input.path,
+                version: input.version,
+                session_id: input.session_id,
+            };
+            tools_fs::delete_version(ctx, input_with_session).await
         })
         .await,
     )

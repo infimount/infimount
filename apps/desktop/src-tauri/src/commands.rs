@@ -3,6 +3,7 @@
 use chrono::Utc;
 use infimount_core::{operations, schema::StorageKindSchema, CoreError, Entry};
 use infimount_mcp::errors::{err_with_details, McpError, McpErrorCode, McpResult};
+use infimount_mcp::opendal_adapter::{get_capabilities, StorageBackendCapabilities};
 use infimount_mcp::registry::{ensure_unique_name, validate_storage_name, StorageRecord};
 use infimount_mcp::server::ToolDefinition;
 use infimount_mcp::settings::McpSettings;
@@ -276,6 +277,15 @@ pub fn list_storage_schemas() -> Result<Vec<StorageKindSchema>, CoreError> {
 }
 
 #[tauri::command]
+pub async fn get_storage_capabilities(
+    state: State<'_, AppState>,
+    storageId: String,
+) -> Result<StorageBackendCapabilities, CoreError> {
+    let op = state.operator_for_storage_id(&storageId)?;
+    Ok(get_capabilities(&op))
+}
+
+#[tauri::command]
 pub fn get_mcp_settings(state: State<'_, AppState>) -> Result<McpSettings, McpError> {
     state.settings_store.load()
 }
@@ -313,6 +323,43 @@ pub async fn get_mcp_client_snippets(
     state: State<'_, AppState>,
 ) -> Result<McpClientSnippets, McpError> {
     state.client_snippets().await
+}
+
+#[tauri::command]
+pub async fn list_versions(
+    state: State<'_, AppState>,
+    sourceId: String,
+    path: String,
+    limit: Option<u32>,
+    cursor: Option<String>,
+) -> Result<Value, CoreError> {
+    let op = state.operator_for_storage_id(&sourceId)?;
+    let result =
+        operations::list_file_versions(&op, &path, limit.unwrap_or(100), cursor.as_deref()).await?;
+    Ok(serde_json::to_value(result).unwrap_or(Value::Null))
+}
+
+#[tauri::command]
+pub async fn read_file_version(
+    state: State<'_, AppState>,
+    sourceId: String,
+    path: String,
+    version: String,
+) -> Result<Vec<u8>, CoreError> {
+    let op = state.operator_for_storage_id(&sourceId)?;
+    operations::read_file_version(&op, &path, &version).await
+}
+
+#[tauri::command]
+pub async fn delete_version(
+    state: State<'_, AppState>,
+    sourceId: String,
+    path: String,
+    version: String,
+) -> Result<Value, CoreError> {
+    let op = state.operator_for_storage_id(&sourceId)?;
+    operations::delete_file_version(&op, &path, &version).await?;
+    Ok(serde_json::json!({ "deleted": true, "path": path, "version": version }))
 }
 
 fn validate_storage_draft(storage: &StorageDraft) -> McpResult<()> {

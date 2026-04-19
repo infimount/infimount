@@ -7,11 +7,15 @@ pub mod resources;
 pub mod runtime;
 pub mod schemas;
 pub mod server;
+pub mod session;
 pub mod settings;
+pub mod telemetry;
 pub mod tools_fs;
 pub mod tools_storage;
 
 pub use errors::{McpError, McpErrorCode, McpResult};
 pub use path::{parse_mcp_path, FsOp, ParsedPath};
 pub use registry::{StorageRecord, StorageRegistry};
+pub use session::SessionManager;
 pub use settings::{McpSettings, McpSettingsStore, McpTransport};
+pub use telemetry::init_telemetry;

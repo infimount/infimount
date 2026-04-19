@@ -72,6 +72,7 @@ fn main() {
             commands::upload_dropped_files,
             commands::transfer_entries,
             commands::list_storage_schemas,
+            commands::get_storage_capabilities,
             commands::get_mcp_settings,
             commands::list_mcp_tools,
             commands::update_mcp_settings,
@@ -79,6 +80,9 @@ fn main() {
             commands::start_mcp_http,
             commands::stop_mcp_http,
             commands::get_mcp_client_snippets,
+            commands::list_versions,
+            commands::read_file_version,
+            commands::delete_version,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

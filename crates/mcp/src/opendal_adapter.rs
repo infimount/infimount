@@ -3,6 +3,36 @@ use crate::registry::StorageRecord;
 use opendal::services::{Azblob, Fs, Gcs, Webdav, S3};
 use opendal::Operator;
 
+#[derive(Debug, Clone, Default)]
+pub struct StorageBackendCapabilities {
+    pub list_with_versions: bool,
+    pub read_with_version: bool,
+    pub delete_with_version: bool,
+    pub versioning_disabled: bool,
+}
+
+pub fn get_capabilities(op: &Operator) -> StorageBackendCapabilities {
+    let info = op.info();
+    let full = info.full_capability();
+    StorageBackendCapabilities {
+        list_with_versions: full.list && full.read,
+        read_with_version: full.read,
+        delete_with_version: full.delete,
+        versioning_disabled: false,
+    }
+}
+
+pub fn check_versioning_disabled(storage: &StorageRecord) -> Option<bool> {
+    match storage.backend.as_str() {
+        "webdav" | "webdavs" => storage
+            .config
+            .get("versioning")
+            .and_then(|v| v.as_bool())
+            .map(|enabled| !enabled),
+        _ => None,
+    }
+}
+
 pub fn build_operator(storage: &StorageRecord) -> McpResult<Operator> {
     match storage.backend.as_str() {
         "local" | "fs" => build_fs_operator(storage),

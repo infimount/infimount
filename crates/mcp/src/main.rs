@@ -14,6 +14,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .try_init();
 
     let transport = arg_value("--transport").unwrap_or_else(|| "stdio".to_string());
+    let allow_insecure = arg_present("--allow-insecure");
+    let auth_token = arg_value("--auth-token");
     let registry = StorageRegistry::new(None);
     let settings = McpSettingsStore::new(None).load().unwrap_or_else(|error| {
         eprintln!(
@@ -22,6 +24,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         McpSettings::default()
     });
+
+    let effective_auth_token = auth_token.or_else(|| settings.auth_token.clone());
+    let require_auth = effective_auth_token.is_some();
+    let allow_insecure = allow_insecure && !require_auth;
 
     match transport.as_str() {
         "stdio" => serve_stdio(registry, settings.enabled_tools.clone())
@@ -32,8 +38,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let port = arg_value("--port")
                 .and_then(|value| value.parse::<u16>().ok())
                 .unwrap_or(DEFAULT_HTTP_PORT);
-            let server =
-                start_http_server(registry, &bind, port, settings.enabled_tools.clone()).await?;
+            let server = start_http_server(
+                registry,
+                &bind,
+                port,
+                settings.enabled_tools.clone(),
+                allow_insecure,
+                effective_auth_token,
+            )
+            .await?;
             eprintln!(
                 "Infimount MCP HTTP server listening at {}",
                 server.endpoint()
@@ -58,4 +71,8 @@ fn arg_value(name: &str) -> Option<String> {
             None
         }
     })
+}
+
+fn arg_present(name: &str) -> bool {
+    std::env::args().skip(1).any(|arg| arg == name)
 }

@@ -7,7 +7,8 @@ pub fn schema_list_dir() -> serde_json::Value {
         "path": { "type": "string", "description": "Absolute path, e.g. '/' or '/PhotosS3/trips'." },
         "recursive": { "type": "boolean", "default": false },
         "limit": { "type": "integer", "default": 200, "minimum": 1, "maximum": 1000 },
-        "cursor": { "type": "string" }
+        "cursor": { "type": "string" },
+        "session_id": { "type": "string", "description": "Session ID for scoped access." }
       },
       "required": ["path"],
       "additionalProperties": false
@@ -18,7 +19,8 @@ pub fn schema_stat_path() -> serde_json::Value {
     json!({
       "type": "object",
       "properties": {
-        "path": { "type": "string", "description": "Absolute path, e.g. '/' or '/PhotosS3/trips/a.txt'." }
+        "path": { "type": "string", "description": "Absolute path, e.g. '/' or '/PhotosS3/trips/a.txt'." },
+        "session_id": { "type": "string", "description": "Session ID for scoped access." }
       },
       "required": ["path"],
       "additionalProperties": false
@@ -33,7 +35,8 @@ pub fn schema_read_file() -> serde_json::Value {
         "offset_bytes": { "type": "integer", "default": 0, "minimum": 0 },
         "max_bytes": { "type": "integer", "default": 262144, "minimum": 1, "maximum": 2097152 },
         "as_text": { "type": "boolean", "default": true },
-        "encoding": { "type": "string", "default": "utf-8", "description": "Text encoding. Only utf-8 is supported in v1." }
+        "encoding": { "type": "string", "default": "utf-8", "description": "Text encoding. Only utf-8 is supported in v1." },
+        "session_id": { "type": "string", "description": "Session ID for scoped access." }
       },
       "required": ["path"],
       "additionalProperties": false
@@ -46,7 +49,8 @@ pub fn schema_mkdir() -> serde_json::Value {
       "properties": {
         "path": { "type": "string", "description": "Absolute directory path." },
         "parents": { "type": "boolean", "default": true },
-        "exist_ok": { "type": "boolean", "default": true }
+        "exist_ok": { "type": "boolean", "default": true },
+        "session_id": { "type": "string", "description": "Session ID for scoped access." }
       },
       "required": ["path"],
       "additionalProperties": false
@@ -61,7 +65,8 @@ pub fn schema_write_file() -> serde_json::Value {
         "content": { "type": "string", "description": "Text content. Only utf-8 encoding is supported in v1." },
         "encoding": { "type": "string", "default": "utf-8", "description": "Text encoding. Only utf-8 is supported in v1." },
         "overwrite": { "type": "boolean", "default": true },
-        "create_parents": { "type": "boolean", "default": false }
+        "create_parents": { "type": "boolean", "default": false },
+        "session_id": { "type": "string", "description": "Session ID for scoped access." }
       },
       "required": ["path", "content"],
       "additionalProperties": false
@@ -73,7 +78,8 @@ pub fn schema_delete_path() -> serde_json::Value {
       "type": "object",
       "properties": {
         "path": { "type": "string", "description": "Absolute file or directory path." },
-        "recursive": { "type": "boolean", "default": false }
+        "recursive": { "type": "boolean", "default": false },
+        "session_id": { "type": "string", "description": "Session ID for scoped access." }
       },
       "required": ["path"],
       "additionalProperties": false
@@ -220,6 +226,75 @@ pub fn schema_validate_storage() -> serde_json::Value {
         "name": { "type": "string" }
       },
       "required": ["name"],
+      "additionalProperties": false
+    })
+}
+
+pub fn schema_session_create() -> serde_json::Value {
+    json!({
+      "type": "object",
+      "properties": {
+        "allowed_storages": { "type": "array", "items": { "type": "string" }, "description": "List of storage names to allow." },
+        "allowed_prefixes": { "type": "array", "items": { "type": "string" }, "description": "List of path prefixes to allow." },
+        "read_only": { "type": "boolean", "default": false, "description": "If true, session cannot modify files." },
+        "ttl_seconds": { "type": "integer", "default": 3600, "minimum": 1, "maximum": 86400, "description": "Session lifetime in seconds." }
+      },
+      "required": ["allowed_storages"],
+      "additionalProperties": false
+    })
+}
+
+pub fn schema_session_end() -> serde_json::Value {
+    json!({
+      "type": "object",
+      "properties": {
+        "session_id": { "type": "string", "description": "Session ID to terminate." }
+      },
+      "required": ["session_id"],
+      "additionalProperties": false
+    })
+}
+
+pub fn schema_list_versions() -> serde_json::Value {
+    json!({
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Absolute file path." },
+        "limit": { "type": "integer", "default": 100, "minimum": 1, "maximum": 1000 },
+        "cursor": { "type": "string", "description": "Pagination cursor." },
+        "session_id": { "type": "string", "description": "Session ID for scoped access." }
+      },
+      "required": ["path"],
+      "additionalProperties": false
+    })
+}
+
+pub fn schema_read_file_version() -> serde_json::Value {
+    json!({
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Absolute file path." },
+        "version": { "type": "string", "description": "Version identifier to read." },
+        "offset_bytes": { "type": "integer", "default": 0, "minimum": 0 },
+        "max_bytes": { "type": "integer", "default": 262144, "minimum": 1, "maximum": 2097152 },
+        "as_text": { "type": "boolean", "default": true },
+        "encoding": { "type": "string", "default": "utf-8", "description": "Text encoding." },
+        "session_id": { "type": "string", "description": "Session ID for scoped access." }
+      },
+      "required": ["path", "version"],
+      "additionalProperties": false
+    })
+}
+
+pub fn schema_delete_version() -> serde_json::Value {
+    json!({
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Absolute file path." },
+        "version": { "type": "string", "description": "Version identifier to delete." },
+        "session_id": { "type": "string", "description": "Session ID for authorization." }
+      },
+      "required": ["path", "version"],
       "additionalProperties": false
     })
 }

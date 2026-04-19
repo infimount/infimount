@@ -159,12 +159,17 @@ pub async fn read_resource(ctx: &FsToolsContext, uri: &str) -> McpResult<ReadRes
 mod tests {
     use super::*;
     use crate::registry::StorageRecord;
+    use crate::session::SessionManager;
     use crate::tools_fs::FsToolsContext;
     use serde_json::json;
     use tempfile::TempDir;
 
     fn registry_in(dir: &TempDir) -> crate::registry::StorageRegistry {
         crate::registry::StorageRegistry::new(Some(dir.path().join("storages.json")))
+    }
+
+    fn sessions_in() -> SessionManager {
+        SessionManager::new()
     }
 
     #[test]
@@ -188,7 +193,13 @@ mod tests {
             json!({"root": dir.path()}),
         );
         registry.save_all_atomic(&[storage]).unwrap();
-        let ctx = FsToolsContext { registry };
+        let sessions = sessions_in();
+        let ctx = FsToolsContext {
+            registry,
+            sessions,
+            allow_insecure: true,
+            auth_token: None,
+        };
 
         let result = read_resource(&ctx, "infimount:///").await.unwrap();
         assert_eq!(result.contents.len(), 1);

@@ -30,6 +30,8 @@ pub struct McpSettings {
     pub port: u16,
     #[serde(default = "default_enabled_tool_names")]
     pub enabled_tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
 }
 
 impl Default for McpSettings {
@@ -40,6 +42,7 @@ impl Default for McpSettings {
             bind_address: DEFAULT_HTTP_BIND_ADDRESS.to_string(),
             port: DEFAULT_HTTP_PORT,
             enabled_tools: default_enabled_tool_names(),
+            auth_token: None,
         }
     }
 }
@@ -208,7 +211,8 @@ mod tests {
             transport: McpTransport::Http,
             bind_address: "127.0.0.1".to_string(),
             port: 0,
-            enabled_tools: vec!["list_dir".to_string(), "export_config".to_string()],
+            enabled_tools: vec!["export_config".to_string(), "list_dir".to_string()],
+            auth_token: None,
         };
         store.save_atomic(&updated).expect("save settings");
 

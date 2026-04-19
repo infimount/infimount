@@ -6,12 +6,42 @@ use std::collections::HashSet;
 
 use crate::errors::{err_with_details, map_opendal_error, McpErrorCode, McpResult};
 use crate::registry::StorageRegistry;
+use crate::session::SessionManager;
 
 pub const COPY_CHUNK_SIZE: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug)]
 pub struct FsToolsContext {
     pub registry: StorageRegistry,
+    pub sessions: SessionManager,
+    pub allow_insecure: bool,
+    pub auth_token: Option<String>,
+}
+
+pub struct SessionAccess {
+    pub read_only: bool,
+}
+
+impl FsToolsContext {
+    pub async fn validate_session(
+        &self,
+        session_id: Option<&str>,
+        storage_name: &str,
+        backend_path: Option<&str>,
+    ) -> McpResult<SessionAccess> {
+        let Some(session_id) = session_id else {
+            return Ok(SessionAccess { read_only: false });
+        };
+
+        let can_write = self
+            .sessions
+            .validate_access(session_id, storage_name, backend_path)
+            .await?;
+
+        Ok(SessionAccess {
+            read_only: !can_write,
+        })
+    }
 }
 
 #[derive(Debug, Serialize, Clone)]

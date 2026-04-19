@@ -8,6 +8,10 @@ fn registry_in(dir: &TempDir) -> crate::registry::StorageRegistry {
     crate::registry::StorageRegistry::new(Some(dir.path().join("storages.json")))
 }
 
+fn sessions_in() -> crate::session::SessionManager {
+    crate::session::SessionManager::new()
+}
+
 #[tokio::test]
 async fn list_dir_root_is_sorted_and_filtered() {
     let dir = TempDir::new().unwrap();
@@ -38,7 +42,13 @@ async fn list_dir_root_is_sorted_and_filtered() {
 
     registry.save_all_atomic(&[a, hidden, b]).unwrap();
 
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
     let out = list_dir(
         &ctx,
         ListDirInput {
@@ -75,7 +85,13 @@ async fn list_dir_storage_dirs_first_then_files() {
     );
     registry.save_all_atomic(&[storage]).unwrap();
 
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
     let out = list_dir(
         &ctx,
         ListDirInput {
@@ -113,7 +129,13 @@ async fn list_dir_recursive_is_flat_and_sorted_by_full_path() {
     );
     registry.save_all_atomic(&[storage]).unwrap();
 
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
     let out = list_dir(
         &ctx,
         ListDirInput {
@@ -158,7 +180,13 @@ async fn list_dir_cursor_offset_applies_after_sorting() {
         json!({"root": "/tmp"}),
     );
     registry.save_all_atomic(&[s1, s2, s3]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let first = list_dir(
         &ctx,
@@ -192,7 +220,13 @@ async fn list_dir_cursor_offset_applies_after_sorting() {
 async fn malformed_cursor_returns_invalid_path() {
     let dir = TempDir::new().unwrap();
     let registry = registry_in(&dir);
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let err = list_dir(
         &ctx,
@@ -213,7 +247,13 @@ async fn malformed_cursor_returns_invalid_path() {
 async fn stat_path_root_special_case() {
     let dir = TempDir::new().unwrap();
     let registry = registry_in(&dir);
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let out = stat_path(
         &ctx,
@@ -233,7 +273,13 @@ async fn stat_path_root_special_case() {
 async fn read_file_root_is_rejected() {
     let dir = TempDir::new().unwrap();
     let registry = registry_in(&dir);
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let err = read_file(
         &ctx,
@@ -264,7 +310,13 @@ async fn read_file_stat_checks_missing_and_directory() {
         json!({"root": local_root}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let missing_err = read_file(
         &ctx,
@@ -309,7 +361,13 @@ async fn read_file_caps_bytes_and_sets_truncated() {
         json!({"root": local_root}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let out = read_file(
         &ctx,
@@ -343,7 +401,13 @@ async fn read_file_binary_base64_mode() {
         json!({"root": local_root}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let out = read_file(
         &ctx,
@@ -377,7 +441,13 @@ async fn read_file_text_decode_failure_has_hint() {
         json!({"root": local_root}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let err = read_file(
         &ctx,
@@ -400,7 +470,13 @@ async fn read_file_text_decode_failure_has_hint() {
 async fn read_file_rejects_invalid_max_bytes() {
     let dir = TempDir::new().unwrap();
     let registry = registry_in(&dir);
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let err = read_file(
         &ctx,
@@ -445,7 +521,13 @@ async fn mkdir_rejects_read_only_storage() {
     );
     storage.read_only = true;
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let err = mkdir(
         &ctx,
@@ -474,7 +556,13 @@ async fn mkdir_requires_parent_when_parents_false() {
         json!({"root": local_root}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let err = mkdir(
         &ctx,
@@ -503,7 +591,13 @@ async fn mkdir_creates_nested_directories_when_parents_true() {
         json!({"root": local_root.clone()}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let out = mkdir(
         &ctx,
@@ -533,7 +627,13 @@ async fn mkdir_exist_ok_false_returns_already_exists() {
         json!({"root": local_root}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let err = mkdir(
         &ctx,
@@ -562,7 +662,13 @@ async fn mkdir_existing_dir_with_exist_ok_true_returns_not_created() {
         json!({"root": local_root}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let out = mkdir(
         &ctx,
@@ -592,7 +698,13 @@ async fn write_file_rejects_read_only_storage() {
     );
     storage.read_only = true;
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let err = write_file(
         &ctx,
@@ -623,7 +735,13 @@ async fn write_file_requires_parent_when_create_parents_false() {
         json!({"root": local_root}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let err = write_file(
         &ctx,
@@ -654,7 +772,13 @@ async fn write_file_creates_parents_when_requested() {
         json!({"root": local_root.clone()}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let out = write_file(
         &ctx,
@@ -690,7 +814,13 @@ async fn write_file_respects_overwrite_flag() {
         json!({"root": local_root.clone()}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let err = write_file(
         &ctx,
@@ -738,7 +868,13 @@ async fn write_file_rejects_directory_target_and_non_utf8_encoding() {
         json!({"root": local_root}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let dir_err = write_file(
         &ctx,
@@ -786,7 +922,13 @@ fn write_file_input_defaults_are_applied() {
 async fn delete_path_root_is_rejected() {
     let dir = TempDir::new().unwrap();
     let registry = registry_in(&dir);
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let err = delete_path(
         &ctx,
@@ -816,7 +958,13 @@ async fn delete_path_rejects_read_only_storage() {
     );
     storage.read_only = true;
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let err = delete_path(
         &ctx,
@@ -845,7 +993,13 @@ async fn delete_path_file_success_and_missing_returns_not_found() {
         json!({"root": local_root.clone()}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let out = delete_path(
         &ctx,
@@ -884,7 +1038,13 @@ async fn delete_path_directory_requires_recursive() {
         json!({"root": local_root}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let err = delete_path(
         &ctx,
@@ -914,7 +1074,13 @@ async fn delete_path_recursive_deletes_nested_structure() {
         json!({"root": local_root.clone()}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let out = delete_path(
         &ctx,
@@ -952,7 +1118,13 @@ async fn copy_path_rejects_read_only_destination() {
     );
     dst.read_only = true;
     registry.save_all_atomic(&[src, dst]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let err = copy_path(
         &ctx,
@@ -989,7 +1161,13 @@ async fn copy_path_rejects_directory_without_recursive() {
         json!({"root": dst_root}),
     );
     registry.save_all_atomic(&[src, dst]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let err = copy_path(
         &ctx,
@@ -1028,7 +1206,13 @@ async fn copy_path_overwrite_false_rejects_existing_destination() {
         json!({"root": dst_root}),
     );
     registry.save_all_atomic(&[src, dst]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let err = copy_path(
         &ctx,
@@ -1059,7 +1243,13 @@ async fn copy_path_same_storage_file_success() {
         json!({"root": root.clone()}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let out = copy_path(
         &ctx,
@@ -1102,7 +1292,13 @@ async fn copy_path_cross_storage_streams_large_file() {
         json!({"root": dst_root.clone()}),
     );
     registry.save_all_atomic(&[src, dst]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let out = copy_path(
         &ctx,
@@ -1142,7 +1338,13 @@ async fn copy_path_recursive_preserves_structure() {
         json!({"root": dst_root.clone()}),
     );
     registry.save_all_atomic(&[src, dst]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let out = copy_path(
         &ctx,
@@ -1181,7 +1383,13 @@ async fn move_path_same_storage_file_success() {
         json!({"root": root.clone()}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let out = move_path(
         &ctx,
@@ -1223,7 +1431,13 @@ async fn move_path_cross_storage_success() {
         json!({"root": dst_root.clone()}),
     );
     registry.save_all_atomic(&[src, dst]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let out = move_path(
         &ctx,
@@ -1266,7 +1480,13 @@ async fn move_path_overwrite_false_rejects_existing_destination() {
         json!({"root": dst_root}),
     );
     registry.save_all_atomic(&[src, dst]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let err = move_path(
         &ctx,
@@ -1304,7 +1524,13 @@ async fn move_path_overwrite_true_replaces_existing_destination() {
         json!({"root": dst_root.clone()}),
     );
     registry.save_all_atomic(&[src, dst]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let out = move_path(
         &ctx,
@@ -1345,7 +1571,13 @@ async fn move_path_missing_source_returns_not_found() {
         json!({"root": dst_root}),
     );
     registry.save_all_atomic(&[src, dst]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let err = move_path(
         &ctx,
@@ -1383,7 +1615,13 @@ async fn move_path_rejects_read_only_source_or_destination() {
         json!({"root": dst_root.clone()}),
     );
     registry.save_all_atomic(&[src, dst]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let src_err = move_path(
         &ctx,
@@ -1410,7 +1648,13 @@ async fn move_path_rejects_read_only_source_or_destination() {
     );
     dst.read_only = true;
     registry.save_all_atomic(&[src, dst]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let dst_err = move_path(
         &ctx,
@@ -1445,7 +1689,13 @@ async fn move_path_rejects_directory_source() {
         json!({"root": dst_root}),
     );
     registry.save_all_atomic(&[src, dst]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let err = move_path(
         &ctx,
@@ -1481,7 +1731,13 @@ async fn search_paths_returns_lexicographic_matches() {
         json!({"root": local_root}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let out = search_paths(
         &ctx,
@@ -1517,7 +1773,13 @@ async fn generate_download_link_local_backend_returns_presign_not_supported() {
         json!({"root": local_root}),
     );
     registry.save_all_atomic(&[storage]).unwrap();
-    let ctx = FsToolsContext { registry };
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
 
     let err = generate_download_link(
         &ctx,

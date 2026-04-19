@@ -26,6 +26,9 @@ pub struct StorageCapabilities {
     pub rename: bool,
     pub presign_read: bool,
     pub create_dir: bool,
+    pub list_with_versions: bool,
+    pub read_with_version: bool,
+    pub delete_with_version: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -46,6 +49,8 @@ pub async fn validate_storage(
 pub async fn validate_storage_record(storage: &StorageRecord) -> McpResult<ValidateStorageOutput> {
     let op = opendal_adapter::build_operator(storage)?;
     let caps = op.info().full_capability();
+
+    let versioning_caps = check_versioning_capabilities(storage);
 
     if matches!(storage.backend.as_str(), "local" | "fs") {
         let root = storage
@@ -78,6 +83,9 @@ pub async fn validate_storage_record(storage: &StorageRecord) -> McpResult<Valid
                         rename: caps.rename,
                         presign_read: caps.presign_read,
                         create_dir: caps.create_dir,
+                        list_with_versions: versioning_caps.0,
+                        read_with_version: versioning_caps.1,
+                        delete_with_version: versioning_caps.2,
                     },
                 });
             }
@@ -111,6 +119,9 @@ pub async fn validate_storage_record(storage: &StorageRecord) -> McpResult<Valid
                 rename: caps.rename,
                 presign_read: caps.presign_read,
                 create_dir: caps.create_dir,
+                list_with_versions: versioning_caps.0,
+                read_with_version: versioning_caps.1,
+                delete_with_version: versioning_caps.2,
             },
         }),
         Ok(Err(_err)) => Ok(ValidateStorageOutput {
@@ -126,6 +137,9 @@ pub async fn validate_storage_record(storage: &StorageRecord) -> McpResult<Valid
                 rename: caps.rename,
                 presign_read: caps.presign_read,
                 create_dir: caps.create_dir,
+                list_with_versions: versioning_caps.0,
+                read_with_version: versioning_caps.1,
+                delete_with_version: versioning_caps.2,
             },
         }),
         Err(_) => Ok(ValidateStorageOutput {
@@ -141,7 +155,27 @@ pub async fn validate_storage_record(storage: &StorageRecord) -> McpResult<Valid
                 rename: caps.rename,
                 presign_read: caps.presign_read,
                 create_dir: caps.create_dir,
+                list_with_versions: versioning_caps.0,
+                read_with_version: versioning_caps.1,
+                delete_with_version: versioning_caps.2,
             },
         }),
+    }
+}
+
+fn check_versioning_capabilities(storage: &StorageRecord) -> (bool, bool, bool) {
+    match storage.backend.as_str() {
+        "s3" => (true, true, true),
+        "azblob" | "azure_blob" => (true, true, true),
+        "gcs" => (true, true, true),
+        "webdav" => {
+            let versioned = storage
+                .config
+                .get("versioning")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            (versioned, versioned, versioned)
+        }
+        _ => (false, false, false),
     }
 }
