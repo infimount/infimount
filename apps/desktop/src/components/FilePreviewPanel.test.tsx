@@ -2,10 +2,11 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FilePreviewPanel } from "./FilePreviewPanel";
-import { readFile, statEntry, writeFile } from "@/lib/api";
+import { getStorageCapabilities, readFile, statEntry, writeFile } from "@/lib/api";
 import type { FileItem } from "@/types/storage";
 
 vi.mock("@/lib/api", () => ({
+  getStorageCapabilities: vi.fn(),
   readFile: vi.fn(),
   statEntry: vi.fn(),
   writeFile: vi.fn(),
@@ -18,6 +19,12 @@ vi.mock("@/hooks/use-toast", () => ({
 describe("FilePreviewPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getStorageCapabilities).mockResolvedValue({
+      list_with_versions: false,
+      read_with_version: false,
+      delete_with_version: false,
+      versioning_disabled: false,
+    });
   });
 
   it("shows a large file error without attempting to preview", async () => {
