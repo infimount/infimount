@@ -1,3 +1,7 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static TELEMETRY_ENABLED: AtomicBool = AtomicBool::new(false);
+
 pub fn init_telemetry() -> bool {
     let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT");
 
@@ -10,45 +14,60 @@ pub fn init_telemetry() -> bool {
         return false;
     }
 
-    eprintln!("OTEL initialized with endpoint: {}", endpoint);
+    let service_name = std::env::var("OTEL_SERVICE_NAME")
+        .unwrap_or_else(|_| "infimount_mcp".to_string());
+
+    TELEMETRY_ENABLED.store(true, Ordering::SeqCst);
+    eprintln!(
+        "[OTEL] Telemetry configured with endpoint: {}, service: {}",
+        endpoint, service_name
+    );
     true
 }
 
-pub struct TelemetryContext {
-    enabled: bool,
+pub fn is_enabled() -> bool {
+    TELEMETRY_ENABLED.load(Ordering::SeqCst)
 }
 
-impl TelemetryContext {
-    pub fn new(enabled: bool) -> Self {
-        Self { enabled }
+#[derive(Debug)]
+pub struct TelemetryState;
+
+impl TelemetryState {
+    pub fn new() -> Self {
+        Self
     }
 
-    #[allow(dead_code)]
-    pub fn start_span(&self, name: &str) -> Option<ToolSpan> {
-        if !self.enabled {
-            return None;
+    pub fn record_tool_call(&self, _tool_name: &str) {
+        if is_enabled() {
+            // OTLP metrics would be recorded here
+            // Counter: mcp.tool.calls
         }
-        Some(ToolSpan::new(name.to_string()))
+    }
+
+    pub fn record_error(&self, _error_code: &str) {
+        if is_enabled() {
+            // OTLP metrics would be recorded here
+            // Counter: mcp.tool.errors
+        }
+    }
+
+    pub fn record_latency(&self, _tool_name: &str, _elapsed_ms: f64) {
+        if is_enabled() {
+            // OTLP metrics would be recorded here
+            // Histogram: mcp.tool.latency.ms
+        }
     }
 }
 
-pub struct ToolSpan {
-    #[allow(dead_code)]
-    name: String,
+impl Default for TelemetryState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
+
+pub struct ToolSpan;
 
 impl ToolSpan {
-    pub fn new(name: String) -> Self {
-        Self { name }
-    }
-
-    #[allow(dead_code)]
-    pub fn set_attribute(&mut self, _key: &str, _value: impl std::fmt::Display) {
-        // TODO: emit to OTEL
-    }
-
-    #[allow(dead_code)]
-    pub fn set_status(&mut self, _code: &str, _message: &str) {
-        // TODO: emit to OTEL
-    }
+    pub fn set_attribute(&self, _key: &str, _value: impl std::fmt::Display) {}
+    pub fn set_status(&self, _code: &str, _message: &str) {}
 }

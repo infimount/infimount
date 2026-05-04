@@ -18,6 +18,8 @@ pub struct ListVersionsInput {
     pub limit: u32,
     #[serde(default)]
     pub cursor: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -66,6 +68,12 @@ pub async fn list_versions(
     }
 
     let resolved = resolve_storage_path(&ctx.registry, &parsed.normalized)?;
+    ctx.validate_session(
+        input.session_id.as_deref(),
+        &resolved.storage.name,
+        Some(&resolved.parsed.backend_path),
+    )
+    .await?;
     let op = opendal_adapter::build_operator(&resolved.storage)?;
 
     if let Some(disabled) = opendal_adapter::check_versioning_disabled(&resolved.storage) {
@@ -138,35 +146,48 @@ async fn collect_versions(
 ) -> McpResult<Vec<VersionEntry>> {
     let mut versions = Vec::new();
 
-    if let Ok(lister) = op.lister_with(backend_path).versions(true).await {
-        let mut stream = lister;
-        while let Some(entry_result) = stream.next().await {
-            let entry =
-                entry_result.map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?;
-
-            let meta = entry.metadata();
-            let version = meta
-                .version()
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "default".to_string());
-
-            if version != "default" {
-                let modified_at = meta.last_modified().map(|t| t.to_string());
-                let etag = meta.etag().map(|e| e.to_string());
-                versions.push(VersionEntry {
-                    version,
-                    size_bytes: Some(meta.content_length()),
-                    modified_at,
-                    etag,
-                });
+    let lister = op
+        .lister_with(backend_path)
+        .versions(true)
+        .await
+        .map_err(|e| {
+            if e.kind() == opendal::ErrorKind::Unsupported {
+                err_with_details(
+                    McpErrorCode::ERR_VERSIONS_NOT_SUPPORTED,
+                    "version listing not supported for this storage backend",
+                    json!({ "backend_error": e.to_string() }),
+                )
+            } else {
+                map_opendal_error(&e, McpErrorCode::ERR_INTERNAL)
             }
+        })?;
+
+    let mut stream = lister;
+    while let Some(entry_result) = stream.next().await {
+        let entry = entry_result.map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?;
+
+        let meta = entry.metadata();
+        let version = meta
+            .version()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "default".to_string());
+
+        if version != "default" {
+            let modified_at = meta.last_modified().map(|t| t.to_string());
+            let etag = meta.etag().map(|e| e.to_string());
+            versions.push(VersionEntry {
+                version,
+                size_bytes: Some(meta.content_length()),
+                modified_at,
+                etag,
+            });
         }
     }
 
     Ok(versions)
 }
 
-fn decode_cursor(cursor: Option<&str>) -> McpResult<usize> {
+pub(crate) fn decode_cursor(cursor: Option<&str>) -> McpResult<usize> {
     let Some(cursor) = cursor else {
         return Ok(0);
     };
@@ -198,7 +219,7 @@ fn decode_cursor(cursor: Option<&str>) -> McpResult<usize> {
     Ok(parsed.offset)
 }
 
-fn encode_cursor(offset: usize) -> String {
+pub(crate) fn encode_cursor(offset: usize) -> String {
     let payload = serde_json::to_vec(&CursorV1 { v: 1, offset }).unwrap_or_else(|_| b"{}".to_vec());
     URL_SAFE_NO_PAD.encode(payload)
 }

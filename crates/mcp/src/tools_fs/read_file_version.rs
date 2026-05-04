@@ -22,6 +22,8 @@ pub struct ReadFileVersionInput {
     pub as_text: bool,
     #[serde(default = "default_encoding")]
     pub encoding: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -57,6 +59,12 @@ pub async fn read_file_version(
     }
 
     let resolved = resolve_storage_path(&ctx.registry, &parsed.normalized)?;
+    ctx.validate_session(
+        input.session_id.as_deref(),
+        &resolved.storage.name,
+        Some(&resolved.parsed.backend_path),
+    )
+    .await?;
     let op = opendal_adapter::build_operator(&resolved.storage)?;
 
     if let Some(disabled) = opendal_adapter::check_versioning_disabled(&resolved.storage) {

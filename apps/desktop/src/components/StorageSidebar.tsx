@@ -467,12 +467,22 @@ export function StorageSidebar({
                   <ContextMenuTrigger asChild>
                     <div
                       className={cn(
-                        "group flex w-full items-center gap-2 overflow-hidden rounded-lg px-3 py-2.5 transition-colors",
+                        "group flex w-full items-center gap-2 overflow-hidden rounded-lg px-3 py-2.5 transition-colors outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40",
                         selectedStorage === storage.id
                           ? "bg-primary/20 text-sidebar-foreground font-medium"
                           : "text-sidebar-foreground hover:bg-black/5 dark:hover:bg-white/5",
                         isDragTarget && selectedStorage !== storage.id && "bg-primary/10 ring-1 ring-primary/30",
                       )}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={storage.name}
+                      onClick={() => onSelectStorage(storage.id)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          onSelectStorage(storage.id);
+                        }
+                      }}
                       onContextMenu={() => onSelectStorage(storage.id)}
                       onDragOver={(event) => {
                         if (!isLikelyInternalTransferDrag(event.dataTransfer)) return;
@@ -493,10 +503,7 @@ export function StorageSidebar({
                         void handleInternalDrop(storage.id, payload);
                       }}
                     >
-                      <button
-                        onClick={() => onSelectStorage(storage.id)}
-                        className="flex w-full flex-1 items-center gap-2 overflow-hidden text-left text-sm font-normal min-w-0"
-                      >
+                      <div className="flex w-full flex-1 items-center gap-2 overflow-hidden text-left text-sm font-normal min-w-0">
                         <img
                           src={iconSrc}
                           alt=""
@@ -509,7 +516,7 @@ export function StorageSidebar({
                             {storage.name}
                           </span>
                         </div>
-                      </button>
+                      </div>
                     </div>
                   </ContextMenuTrigger>
                   <ContextMenuContent className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md">

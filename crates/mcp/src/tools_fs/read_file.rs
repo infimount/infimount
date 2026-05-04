@@ -21,6 +21,8 @@ pub struct ReadFileInput {
     pub as_text: bool,
     #[serde(default = "default_encoding")]
     pub encoding: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -43,6 +45,12 @@ pub async fn read_file(ctx: &FsToolsContext, input: ReadFileInput) -> McpResult<
     let parsed = parse_mcp_path(&input.path)?;
     enforce_root_operation(FsOp::ReadFile, &parsed)?;
     let resolved = resolve_storage_path(&ctx.registry, &parsed.normalized)?;
+    ctx.validate_session(
+        input.session_id.as_deref(),
+        &resolved.storage.name,
+        Some(&resolved.parsed.backend_path),
+    )
+    .await?;
     let op = opendal_adapter::build_operator(&resolved.storage)?;
 
     if parsed.backend_path.is_empty() {

@@ -277,7 +277,7 @@ pub fn list_storage_schemas() -> Result<Vec<StorageKindSchema>, CoreError> {
 }
 
 #[tauri::command]
-pub async fn get_storage_capabilities(
+pub fn get_storage_capabilities(
     state: State<'_, AppState>,
     storageId: String,
 ) -> Result<StorageBackendCapabilities, CoreError> {

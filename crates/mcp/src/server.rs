@@ -20,6 +20,7 @@ use crate::prompts;
 use crate::resources;
 use crate::schemas;
 use crate::session::{SessionCreateInput, SessionCreateOutput, SessionEndInput, SessionEndOutput};
+use crate::telemetry::TelemetryState;
 #[allow(unused_imports)]
 use crate::tools_fs::{
     self, CopyPathInput, CopyPathOutput, DeletePathInput, DeletePathOutput, DeleteVersionInput,
@@ -219,6 +220,7 @@ fn normalize_enabled_tools(enabled_tools: Vec<String>) -> HashSet<String> {
 pub struct InfimountMcpServer {
     ctx: FsToolsContext,
     enabled_tools: HashSet<String>,
+    telemetry: TelemetryState,
 }
 
 impl InfimountMcpServer {
@@ -226,6 +228,7 @@ impl InfimountMcpServer {
         Self {
             ctx,
             enabled_tools: normalize_enabled_tools(enabled_tools),
+            telemetry: TelemetryState::new(),
         }
     }
 
@@ -243,29 +246,6 @@ impl InfimountMcpServer {
         }
 
         let raw_input = serde_json::Value::Object(arguments.clone().unwrap_or_default());
-
-        if !self.ctx.allow_insecure {
-            if let Some(expected_token) = &self.ctx.auth_token {
-                let provided_token = raw_input
-                    .get("auth_token")
-                    .and_then(|v| v.as_str())
-                    .or_else(|| {
-                        arguments
-                            .as_ref()
-                            .and_then(|args| args.get("auth_token"))
-                            .and_then(|v| v.as_str())
-                    });
-                if provided_token != Some(expected_token.as_str()) {
-                    return Err(ErrorData::invalid_params(
-                        "unauthorized: invalid or missing auth_token",
-                        Some(json!({
-                            "code": "ERR_UNAUTHORIZED",
-                            "details": "valid token required for this endpoint"
-                        })),
-                    ));
-                }
-            }
-        }
 
         let result = match name {
             "list_dir" => invoke_list_dir_json(&self.ctx, raw_input).await,
@@ -356,41 +336,72 @@ impl ServerHandler for InfimountMcpServer {
         let normalized_path = normalized_path_log_ref(&tool_name, request.arguments.as_ref());
         let storage_ref = storage_log_ref(&tool_name, request.arguments.as_ref());
         let started = Instant::now();
+
+        self.telemetry.record_tool_call(&tool_name);
+
         let result = self
             .dispatch_tool_json(request.name.as_ref(), request.arguments)
-            .await?;
+            .await;
 
-        let is_error = result
-            .get("ok")
-            .and_then(|value| value.as_bool())
-            .map(|ok| !ok)
-            .unwrap_or(true);
-        let latency_ms = started.elapsed().as_millis() as u64;
+        let latency_ms = started.elapsed().as_millis() as f64;
+        self.telemetry.record_latency(&tool_name, latency_ms);
 
-        if is_error {
-            let error_code = result
-                .get("error")
-                .and_then(|error| error.get("code"))
-                .and_then(|code| code.as_str())
-                .unwrap_or("ERR_INTERNAL");
-            info!(
-                tool = tool_name.as_str(),
-                path = normalized_path.as_deref().unwrap_or("-"),
-                storage = storage_ref.as_deref().unwrap_or("-"),
-                error_code,
-                latency_ms,
-                "mcp tool failed"
-            );
-            Ok(CallToolResult::structured_error(result))
-        } else {
-            info!(
-                tool = tool_name.as_str(),
-                path = normalized_path.as_deref().unwrap_or("-"),
-                storage = storage_ref.as_deref().unwrap_or("-"),
-                latency_ms,
-                "mcp tool succeeded"
-            );
-            Ok(CallToolResult::structured(result))
+        match result {
+            Err(e) => {
+                let error_code = "ERR_INTERNAL";
+                self.telemetry.record_error(error_code);
+                info!(
+                    tool = tool_name.as_str(),
+                    path = normalized_path.as_deref().unwrap_or("-"),
+                    storage = storage_ref.as_deref().unwrap_or("-"),
+                    error_code,
+                    latency_ms,
+                    "mcp tool failed"
+                );
+                let error_result = json!({
+                    "ok": false,
+                    "error": {
+                        "code": error_code,
+                        "message": e.message,
+                        "details": e.data.clone().unwrap_or(json!({}))
+                    }
+                });
+                Ok(CallToolResult::structured_error(error_result))
+            }
+            Ok(result) => {
+                let is_error = result
+                    .get("ok")
+                    .and_then(|value| value.as_bool())
+                    .map(|ok| !ok)
+                    .unwrap_or(true);
+
+                if is_error {
+                    let error_code = result
+                        .get("error")
+                        .and_then(|error| error.get("code"))
+                        .and_then(|code| code.as_str())
+                        .unwrap_or("ERR_INTERNAL");
+                    self.telemetry.record_error(error_code);
+                    info!(
+                        tool = tool_name.as_str(),
+                        path = normalized_path.as_deref().unwrap_or("-"),
+                        storage = storage_ref.as_deref().unwrap_or("-"),
+                        error_code,
+                        latency_ms,
+                        "mcp tool failed"
+                    );
+                    Ok(CallToolResult::structured_error(result))
+                } else {
+                    info!(
+                        tool = tool_name.as_str(),
+                        path = normalized_path.as_deref().unwrap_or("-"),
+                        storage = storage_ref.as_deref().unwrap_or("-"),
+                        latency_ms,
+                        "mcp tool succeeded"
+                    );
+                    Ok(CallToolResult::structured(result))
+                }
+            }
         }
     }
 
@@ -683,6 +694,7 @@ pub async fn invoke_list_versions_json(
                 path: input.path,
                 limit: input.limit,
                 cursor: input.cursor,
+                session_id: input.session_id,
             };
             tools_fs::list_versions(ctx, input_with_session).await
         })
@@ -703,6 +715,7 @@ pub async fn invoke_read_file_version_json(
                 max_bytes: input.max_bytes,
                 as_text: input.as_text,
                 encoding: input.encoding,
+                session_id: input.session_id,
             };
             tools_fs::read_file_version(ctx, input_with_session).await
         })

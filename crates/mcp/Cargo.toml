@@ -19,8 +19,6 @@ tokio-util = "0.7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["v4", "serde"] }
-opentelemetry = "0.31"
-opentelemetry-otlp = "0.31"
 
 [dev-dependencies]
 tempfile = "3"

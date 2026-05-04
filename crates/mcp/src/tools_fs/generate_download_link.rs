@@ -19,6 +19,8 @@ pub struct GenerateDownloadLinkInput {
     pub path: String,
     #[serde(default = "default_expires_seconds")]
     pub expires_seconds: u64,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -43,6 +45,12 @@ pub async fn generate_download_link(
     let parsed = parse_mcp_path(&input.path)?;
     enforce_root_operation(FsOp::GenerateDownloadLink, &parsed)?;
     let resolved = resolve_storage_path(&ctx.registry, &parsed.normalized)?;
+    ctx.validate_session(
+        input.session_id.as_deref(),
+        &resolved.storage.name,
+        Some(&resolved.parsed.backend_path),
+    )
+    .await?;
     let op = opendal_adapter::build_operator(&resolved.storage)?;
 
     if parsed.backend_path.is_empty() {

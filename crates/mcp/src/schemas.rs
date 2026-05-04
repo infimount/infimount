@@ -93,7 +93,8 @@ pub fn schema_copy_path() -> serde_json::Value {
         "src": { "type": "string", "description": "Absolute source path." },
         "dst": { "type": "string", "description": "Absolute destination path." },
         "overwrite": { "type": "boolean", "default": false },
-        "recursive": { "type": "boolean", "default": false }
+        "recursive": { "type": "boolean", "default": false },
+        "session_id": { "type": "string", "description": "Session ID for scoped access." }
       },
       "required": ["src", "dst"],
       "additionalProperties": false
@@ -106,7 +107,8 @@ pub fn schema_move_path() -> serde_json::Value {
       "properties": {
         "src": { "type": "string", "description": "Absolute source file path." },
         "dst": { "type": "string", "description": "Absolute destination file path." },
-        "overwrite": { "type": "boolean", "default": false }
+        "overwrite": { "type": "boolean", "default": false },
+        "session_id": { "type": "string", "description": "Session ID for scoped access." }
       },
       "required": ["src", "dst"],
       "additionalProperties": false
@@ -119,7 +121,8 @@ pub fn schema_search_paths() -> serde_json::Value {
       "properties": {
         "path": { "type": "string", "description": "Absolute directory path." },
         "pattern": { "type": "string", "description": "Case-sensitive substring match." },
-        "max_results": { "type": "integer", "default": 200, "minimum": 1, "maximum": 2000 }
+        "max_results": { "type": "integer", "default": 200, "minimum": 1, "maximum": 2000 },
+        "session_id": { "type": "string", "description": "Session ID for scoped access." }
       },
       "required": ["path", "pattern"],
       "additionalProperties": false
@@ -131,7 +134,8 @@ pub fn schema_generate_download_link() -> serde_json::Value {
       "type": "object",
       "properties": {
         "path": { "type": "string", "description": "Absolute file path." },
-        "expires_seconds": { "type": "integer", "default": 900, "minimum": 60, "maximum": 86400 }
+        "expires_seconds": { "type": "integer", "default": 900, "minimum": 60, "maximum": 86400 },
+        "session_id": { "type": "string", "description": "Session ID for scoped access." }
       },
       "required": ["path"],
       "additionalProperties": false
@@ -278,7 +282,7 @@ pub fn schema_read_file_version() -> serde_json::Value {
         "offset_bytes": { "type": "integer", "default": 0, "minimum": 0 },
         "max_bytes": { "type": "integer", "default": 262144, "minimum": 1, "maximum": 2097152 },
         "as_text": { "type": "boolean", "default": true },
-        "encoding": { "type": "string", "default": "utf-8", "description": "Text encoding." },
+        "encoding": { "type": "string", "default": "utf-8", "description": "Text encoding. Only utf-8 is supported in v1." },
         "session_id": { "type": "string", "description": "Session ID for scoped access." }
       },
       "required": ["path", "version"],

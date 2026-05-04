@@ -49,8 +49,13 @@ pub async fn validate_storage(
 pub async fn validate_storage_record(storage: &StorageRecord) -> McpResult<ValidateStorageOutput> {
     let op = opendal_adapter::build_operator(storage)?;
     let caps = op.info().full_capability();
-
-    let versioning_caps = check_versioning_capabilities(storage);
+    let mut versioning_caps = opendal_adapter::get_capabilities(&op);
+    if opendal_adapter::check_versioning_disabled(storage) == Some(true) {
+        versioning_caps.list_with_versions = false;
+        versioning_caps.read_with_version = false;
+        versioning_caps.delete_with_version = false;
+        versioning_caps.versioning_disabled = true;
+    }
 
     if matches!(storage.backend.as_str(), "local" | "fs") {
         let root = storage
@@ -83,9 +88,9 @@ pub async fn validate_storage_record(storage: &StorageRecord) -> McpResult<Valid
                         rename: caps.rename,
                         presign_read: caps.presign_read,
                         create_dir: caps.create_dir,
-                        list_with_versions: versioning_caps.0,
-                        read_with_version: versioning_caps.1,
-                        delete_with_version: versioning_caps.2,
+                        list_with_versions: versioning_caps.list_with_versions,
+                        read_with_version: versioning_caps.read_with_version,
+                        delete_with_version: versioning_caps.delete_with_version,
                     },
                 });
             }
@@ -119,9 +124,9 @@ pub async fn validate_storage_record(storage: &StorageRecord) -> McpResult<Valid
                 rename: caps.rename,
                 presign_read: caps.presign_read,
                 create_dir: caps.create_dir,
-                list_with_versions: versioning_caps.0,
-                read_with_version: versioning_caps.1,
-                delete_with_version: versioning_caps.2,
+                list_with_versions: versioning_caps.list_with_versions,
+                read_with_version: versioning_caps.read_with_version,
+                delete_with_version: versioning_caps.delete_with_version,
             },
         }),
         Ok(Err(_err)) => Ok(ValidateStorageOutput {
@@ -137,9 +142,9 @@ pub async fn validate_storage_record(storage: &StorageRecord) -> McpResult<Valid
                 rename: caps.rename,
                 presign_read: caps.presign_read,
                 create_dir: caps.create_dir,
-                list_with_versions: versioning_caps.0,
-                read_with_version: versioning_caps.1,
-                delete_with_version: versioning_caps.2,
+                list_with_versions: versioning_caps.list_with_versions,
+                read_with_version: versioning_caps.read_with_version,
+                delete_with_version: versioning_caps.delete_with_version,
             },
         }),
         Err(_) => Ok(ValidateStorageOutput {
@@ -155,27 +160,10 @@ pub async fn validate_storage_record(storage: &StorageRecord) -> McpResult<Valid
                 rename: caps.rename,
                 presign_read: caps.presign_read,
                 create_dir: caps.create_dir,
-                list_with_versions: versioning_caps.0,
-                read_with_version: versioning_caps.1,
-                delete_with_version: versioning_caps.2,
+                list_with_versions: versioning_caps.list_with_versions,
+                read_with_version: versioning_caps.read_with_version,
+                delete_with_version: versioning_caps.delete_with_version,
             },
         }),
-    }
-}
-
-fn check_versioning_capabilities(storage: &StorageRecord) -> (bool, bool, bool) {
-    match storage.backend.as_str() {
-        "s3" => (true, true, true),
-        "azblob" | "azure_blob" => (true, true, true),
-        "gcs" => (true, true, true),
-        "webdav" => {
-            let versioned = storage
-                .config
-                .get("versioning")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            (versioned, versioned, versioned)
-        }
-        _ => (false, false, false),
     }
 }

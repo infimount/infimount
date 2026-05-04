@@ -88,7 +88,14 @@ pub async fn read_resource(ctx: &FsToolsContext, uri: &str) -> McpResult<ReadRes
         crate::errors::err(crate::errors::McpErrorCode::ERR_INVALID_PATH, message)
     })?;
 
-    let stat = tools_fs::stat_path(ctx, StatPathInput { path: path.clone() }).await?;
+    let stat = tools_fs::stat_path(
+        ctx,
+        StatPathInput {
+            path: path.clone(),
+            session_id: None,
+        },
+    )
+    .await?;
 
     let contents = if stat.entry_type == tools_fs::EntryType::Dir {
         let listing = tools_fs::list_dir(
@@ -98,6 +105,7 @@ pub async fn read_resource(ctx: &FsToolsContext, uri: &str) -> McpResult<ReadRes
                 recursive: false,
                 limit: RESOURCE_LIST_LIMIT,
                 cursor: None,
+                session_id: None,
             },
         )
         .await?;
@@ -116,6 +124,7 @@ pub async fn read_resource(ctx: &FsToolsContext, uri: &str) -> McpResult<ReadRes
                 max_bytes: RESOURCE_FILE_MAX_BYTES,
                 as_text: true,
                 encoding: "utf-8".to_string(),
+                session_id: None,
             },
         )
         .await
@@ -137,6 +146,7 @@ pub async fn read_resource(ctx: &FsToolsContext, uri: &str) -> McpResult<ReadRes
                         max_bytes: RESOURCE_FILE_MAX_BYTES,
                         as_text: false,
                         encoding: "utf-8".to_string(),
+                        session_id: None,
                     },
                 )
                 .await?;

@@ -52,6 +52,7 @@ async fn list_dir_root_is_sorted_and_filtered() {
     let out = list_dir(
         &ctx,
         ListDirInput {
+            session_id: None,
             path: "/".to_string(),
             recursive: false,
             limit: 200,
@@ -95,6 +96,7 @@ async fn list_dir_storage_dirs_first_then_files() {
     let out = list_dir(
         &ctx,
         ListDirInput {
+            session_id: None,
             path: "/Local".to_string(),
             recursive: false,
             limit: 200,
@@ -139,6 +141,7 @@ async fn list_dir_recursive_is_flat_and_sorted_by_full_path() {
     let out = list_dir(
         &ctx,
         ListDirInput {
+            session_id: None,
             path: "/Local".to_string(),
             recursive: true,
             limit: 200,
@@ -191,6 +194,7 @@ async fn list_dir_cursor_offset_applies_after_sorting() {
     let first = list_dir(
         &ctx,
         ListDirInput {
+            session_id: None,
             path: "/".to_string(),
             recursive: false,
             limit: 1,
@@ -205,6 +209,7 @@ async fn list_dir_cursor_offset_applies_after_sorting() {
     let second = list_dir(
         &ctx,
         ListDirInput {
+            session_id: None,
             path: "/".to_string(),
             recursive: false,
             limit: 1,
@@ -231,6 +236,7 @@ async fn malformed_cursor_returns_invalid_path() {
     let err = list_dir(
         &ctx,
         ListDirInput {
+            session_id: None,
             path: "/".to_string(),
             recursive: false,
             limit: 10,
@@ -258,6 +264,7 @@ async fn stat_path_root_special_case() {
     let out = stat_path(
         &ctx,
         StatPathInput {
+            session_id: None,
             path: "/".to_string(),
         },
     )
@@ -284,6 +291,7 @@ async fn read_file_root_is_rejected() {
     let err = read_file(
         &ctx,
         ReadFileInput {
+            session_id: None,
             path: "/".to_string(),
             offset_bytes: 0,
             max_bytes: 262_144,
@@ -321,6 +329,7 @@ async fn read_file_stat_checks_missing_and_directory() {
     let missing_err = read_file(
         &ctx,
         ReadFileInput {
+            session_id: None,
             path: "/Local/missing.txt".to_string(),
             offset_bytes: 0,
             max_bytes: 262_144,
@@ -335,6 +344,7 @@ async fn read_file_stat_checks_missing_and_directory() {
     let dir_err = read_file(
         &ctx,
         ReadFileInput {
+            session_id: None,
             path: "/Local/docs".to_string(),
             offset_bytes: 0,
             max_bytes: 262_144,
@@ -372,6 +382,7 @@ async fn read_file_caps_bytes_and_sets_truncated() {
     let out = read_file(
         &ctx,
         ReadFileInput {
+            session_id: None,
             path: "/Local/hello.txt".to_string(),
             offset_bytes: 0,
             max_bytes: 5,
@@ -412,6 +423,7 @@ async fn read_file_binary_base64_mode() {
     let out = read_file(
         &ctx,
         ReadFileInput {
+            session_id: None,
             path: "/Local/bin.dat".to_string(),
             offset_bytes: 0,
             max_bytes: 262_144,
@@ -452,6 +464,7 @@ async fn read_file_text_decode_failure_has_hint() {
     let err = read_file(
         &ctx,
         ReadFileInput {
+            session_id: None,
             path: "/Local/bad.txt".to_string(),
             offset_bytes: 0,
             max_bytes: 262_144,
@@ -481,6 +494,7 @@ async fn read_file_rejects_invalid_max_bytes() {
     let err = read_file(
         &ctx,
         ReadFileInput {
+            session_id: None,
             path: "/Local/file.txt".to_string(),
             offset_bytes: 0,
             max_bytes: 2_097_153,
@@ -532,6 +546,7 @@ async fn mkdir_rejects_read_only_storage() {
     let err = mkdir(
         &ctx,
         MkdirInput {
+            session_id: None,
             path: "/Local/newdir".to_string(),
             parents: true,
             exist_ok: true,
@@ -567,6 +582,7 @@ async fn mkdir_requires_parent_when_parents_false() {
     let err = mkdir(
         &ctx,
         MkdirInput {
+            session_id: None,
             path: "/Local/missing/child".to_string(),
             parents: false,
             exist_ok: true,
@@ -602,6 +618,7 @@ async fn mkdir_creates_nested_directories_when_parents_true() {
     let out = mkdir(
         &ctx,
         MkdirInput {
+            session_id: None,
             path: "/Local/a/b".to_string(),
             parents: true,
             exist_ok: true,
@@ -638,6 +655,7 @@ async fn mkdir_exist_ok_false_returns_already_exists() {
     let err = mkdir(
         &ctx,
         MkdirInput {
+            session_id: None,
             path: "/Local/docs".to_string(),
             parents: true,
             exist_ok: false,
@@ -673,6 +691,7 @@ async fn mkdir_existing_dir_with_exist_ok_true_returns_not_created() {
     let out = mkdir(
         &ctx,
         MkdirInput {
+            session_id: None,
             path: "/Local/docs".to_string(),
             parents: true,
             exist_ok: true,
@@ -709,6 +728,7 @@ async fn write_file_rejects_read_only_storage() {
     let err = write_file(
         &ctx,
         WriteFileInput {
+            session_id: None,
             path: "/Local/file.txt".to_string(),
             content: "hello".to_string(),
             encoding: "utf-8".to_string(),
@@ -746,6 +766,7 @@ async fn write_file_requires_parent_when_create_parents_false() {
     let err = write_file(
         &ctx,
         WriteFileInput {
+            session_id: None,
             path: "/Local/missing/file.txt".to_string(),
             content: "hello".to_string(),
             encoding: "utf-8".to_string(),
@@ -783,6 +804,7 @@ async fn write_file_creates_parents_when_requested() {
     let out = write_file(
         &ctx,
         WriteFileInput {
+            session_id: None,
             path: "/Local/a/b/file.txt".to_string(),
             content: "hello".to_string(),
             encoding: "utf-8".to_string(),
@@ -825,6 +847,7 @@ async fn write_file_respects_overwrite_flag() {
     let err = write_file(
         &ctx,
         WriteFileInput {
+            session_id: None,
             path: "/Local/file.txt".to_string(),
             content: "new".to_string(),
             encoding: "utf-8".to_string(),
@@ -839,6 +862,7 @@ async fn write_file_respects_overwrite_flag() {
     let out = write_file(
         &ctx,
         WriteFileInput {
+            session_id: None,
             path: "/Local/file.txt".to_string(),
             content: "new".to_string(),
             encoding: "utf-8".to_string(),
@@ -879,6 +903,7 @@ async fn write_file_rejects_directory_target_and_non_utf8_encoding() {
     let dir_err = write_file(
         &ctx,
         WriteFileInput {
+            session_id: None,
             path: "/Local/docs".to_string(),
             content: "hello".to_string(),
             encoding: "utf-8".to_string(),
@@ -893,6 +918,7 @@ async fn write_file_rejects_directory_target_and_non_utf8_encoding() {
     let encoding_err = write_file(
         &ctx,
         WriteFileInput {
+            session_id: None,
             path: "/Local/file.txt".to_string(),
             content: "hello".to_string(),
             encoding: "utf-16".to_string(),
@@ -933,6 +959,7 @@ async fn delete_path_root_is_rejected() {
     let err = delete_path(
         &ctx,
         DeletePathInput {
+            session_id: None,
             path: "/".to_string(),
             recursive: false,
         },
@@ -969,6 +996,7 @@ async fn delete_path_rejects_read_only_storage() {
     let err = delete_path(
         &ctx,
         DeletePathInput {
+            session_id: None,
             path: "/Local/file.txt".to_string(),
             recursive: false,
         },
@@ -1004,6 +1032,7 @@ async fn delete_path_file_success_and_missing_returns_not_found() {
     let out = delete_path(
         &ctx,
         DeletePathInput {
+            session_id: None,
             path: "/Local/file.txt".to_string(),
             recursive: false,
         },
@@ -1016,6 +1045,7 @@ async fn delete_path_file_success_and_missing_returns_not_found() {
     let err = delete_path(
         &ctx,
         DeletePathInput {
+            session_id: None,
             path: "/Local/file.txt".to_string(),
             recursive: false,
         },
@@ -1049,6 +1079,7 @@ async fn delete_path_directory_requires_recursive() {
     let err = delete_path(
         &ctx,
         DeletePathInput {
+            session_id: None,
             path: "/Local/docs".to_string(),
             recursive: false,
         },
@@ -1085,6 +1116,7 @@ async fn delete_path_recursive_deletes_nested_structure() {
     let out = delete_path(
         &ctx,
         DeletePathInput {
+            session_id: None,
             path: "/Local/docs".to_string(),
             recursive: true,
         },
@@ -1129,6 +1161,7 @@ async fn copy_path_rejects_read_only_destination() {
     let err = copy_path(
         &ctx,
         CopyPathInput {
+            session_id: None,
             src: "/Src/file.txt".to_string(),
             dst: "/Dst/file.txt".to_string(),
             overwrite: false,
@@ -1172,6 +1205,7 @@ async fn copy_path_rejects_directory_without_recursive() {
     let err = copy_path(
         &ctx,
         CopyPathInput {
+            session_id: None,
             src: "/Src/docs".to_string(),
             dst: "/Dst/docs".to_string(),
             overwrite: false,
@@ -1217,6 +1251,7 @@ async fn copy_path_overwrite_false_rejects_existing_destination() {
     let err = copy_path(
         &ctx,
         CopyPathInput {
+            session_id: None,
             src: "/Src/file.txt".to_string(),
             dst: "/Dst/file.txt".to_string(),
             overwrite: false,
@@ -1254,6 +1289,7 @@ async fn copy_path_same_storage_file_success() {
     let out = copy_path(
         &ctx,
         CopyPathInput {
+            session_id: None,
             src: "/Local/file.txt".to_string(),
             dst: "/Local/out/file.txt".to_string(),
             overwrite: false,
@@ -1303,6 +1339,7 @@ async fn copy_path_cross_storage_streams_large_file() {
     let out = copy_path(
         &ctx,
         CopyPathInput {
+            session_id: None,
             src: "/Src/large.bin".to_string(),
             dst: "/Dst/large.bin".to_string(),
             overwrite: false,
@@ -1349,6 +1386,7 @@ async fn copy_path_recursive_preserves_structure() {
     let out = copy_path(
         &ctx,
         CopyPathInput {
+            session_id: None,
             src: "/Src/docs".to_string(),
             dst: "/Dst/copied".to_string(),
             overwrite: false,
@@ -1394,6 +1432,7 @@ async fn move_path_same_storage_file_success() {
     let out = move_path(
         &ctx,
         MovePathInput {
+            session_id: None,
             src: "/Local/file.txt".to_string(),
             dst: "/Local/out/file.txt".to_string(),
             overwrite: false,
@@ -1442,6 +1481,7 @@ async fn move_path_cross_storage_success() {
     let out = move_path(
         &ctx,
         MovePathInput {
+            session_id: None,
             src: "/Src/file.txt".to_string(),
             dst: "/Dst/file.txt".to_string(),
             overwrite: false,
@@ -1491,6 +1531,7 @@ async fn move_path_overwrite_false_rejects_existing_destination() {
     let err = move_path(
         &ctx,
         MovePathInput {
+            session_id: None,
             src: "/Src/file.txt".to_string(),
             dst: "/Dst/file.txt".to_string(),
             overwrite: false,
@@ -1535,6 +1576,7 @@ async fn move_path_overwrite_true_replaces_existing_destination() {
     let out = move_path(
         &ctx,
         MovePathInput {
+            session_id: None,
             src: "/Src/file.txt".to_string(),
             dst: "/Dst/file.txt".to_string(),
             overwrite: true,
@@ -1582,6 +1624,7 @@ async fn move_path_missing_source_returns_not_found() {
     let err = move_path(
         &ctx,
         MovePathInput {
+            session_id: None,
             src: "/Src/file.txt".to_string(),
             dst: "/Dst/file.txt".to_string(),
             overwrite: false,
@@ -1626,6 +1669,7 @@ async fn move_path_rejects_read_only_source_or_destination() {
     let src_err = move_path(
         &ctx,
         MovePathInput {
+            session_id: None,
             src: "/Src/file.txt".to_string(),
             dst: "/Dst/file.txt".to_string(),
             overwrite: false,
@@ -1659,6 +1703,7 @@ async fn move_path_rejects_read_only_source_or_destination() {
     let dst_err = move_path(
         &ctx,
         MovePathInput {
+            session_id: None,
             src: "/Src/file.txt".to_string(),
             dst: "/Dst/file.txt".to_string(),
             overwrite: false,
@@ -1700,6 +1745,7 @@ async fn move_path_rejects_directory_source() {
     let err = move_path(
         &ctx,
         MovePathInput {
+            session_id: None,
             src: "/Src/docs".to_string(),
             dst: "/Dst/docs".to_string(),
             overwrite: false,
@@ -1742,6 +1788,7 @@ async fn search_paths_returns_lexicographic_matches() {
     let out = search_paths(
         &ctx,
         SearchPathsInput {
+            session_id: None,
             path: "/Local/docs".to_string(),
             pattern: "alpha".to_string(),
             max_results: 10,
@@ -1784,6 +1831,7 @@ async fn generate_download_link_local_backend_returns_presign_not_supported() {
     let err = generate_download_link(
         &ctx,
         GenerateDownloadLinkInput {
+            session_id: None,
             path: "/Local/file.txt".to_string(),
             expires_seconds: 900,
         },
@@ -1792,4 +1840,106 @@ async fn generate_download_link_local_backend_returns_presign_not_supported() {
     .unwrap_err();
 
     assert_eq!(err.code, McpErrorCode::ERR_PRESIGN_NOT_SUPPORTED);
+}
+
+#[tokio::test]
+async fn list_versions_cursor_stability() {
+    use crate::tools_fs::list_versions::{decode_cursor, encode_cursor};
+
+    let versions = vec![
+        VersionEntry {
+            version: "v3".to_string(),
+            size_bytes: Some(300),
+            modified_at: Some("2024-01-03T10:00:00Z".to_string()),
+            etag: None,
+        },
+        VersionEntry {
+            version: "v1".to_string(),
+            size_bytes: Some(100),
+            modified_at: Some("2024-01-01T10:00:00Z".to_string()),
+            etag: None,
+        },
+        VersionEntry {
+            version: "v2".to_string(),
+            size_bytes: Some(200),
+            modified_at: Some("2024-01-02T10:00:00Z".to_string()),
+            etag: None,
+        },
+    ];
+
+    let mut sorted = versions.clone();
+    sorted.sort_by(|a, b| {
+        let a_time = a.modified_at.as_deref().unwrap_or("");
+        let b_time = b.modified_at.as_deref().unwrap_or("");
+        b_time.cmp(a_time).then_with(|| a.version.cmp(&b.version))
+    });
+
+    assert_eq!(sorted[0].version, "v3");
+    assert_eq!(sorted[1].version, "v2");
+    assert_eq!(sorted[2].version, "v1");
+
+    let limit = 2;
+
+    let page1_start = 0;
+    let page1_end = limit.min(sorted.len());
+    let page1 = sorted[page1_start..page1_end].to_vec();
+    let next_cursor = if page1_end < sorted.len() {
+        Some(encode_cursor(page1_end))
+    } else {
+        None
+    };
+
+    assert_eq!(page1[0].version, "v3");
+    assert_eq!(page1[1].version, "v2");
+    assert!(next_cursor.is_some());
+
+    let offset = decode_cursor(next_cursor.as_deref()).unwrap();
+    let page2_start = offset;
+    let page2_end = (page2_start + limit).min(sorted.len());
+    let page2 = sorted[page2_start..page2_end].to_vec();
+
+    assert_eq!(page2[0].version, "v1");
+    assert!(
+        page2.is_empty()
+            || page1
+                .iter()
+                .all(|v| !page2.iter().any(|p| p.version == v.version))
+    );
+}
+
+#[tokio::test]
+async fn list_versions_local_backend_returns_not_supported() {
+    let dir = TempDir::new().unwrap();
+    let local_root = dir.path().join("local");
+    std::fs::create_dir_all(&local_root).unwrap();
+    std::fs::write(local_root.join("file.txt"), "hello").unwrap();
+
+    let registry = registry_in(&dir);
+    let storage = StorageRecord::new(
+        "Local".to_string(),
+        "local".to_string(),
+        json!({"root": local_root}),
+    );
+    registry.save_all_atomic(&[storage]).unwrap();
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
+
+    let err = list_versions(
+        &ctx,
+        ListVersionsInput {
+            path: "/Local/file.txt".to_string(),
+            limit: 100,
+            cursor: None,
+            session_id: None,
+        },
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code, McpErrorCode::ERR_VERSIONS_NOT_SUPPORTED);
 }

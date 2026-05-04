@@ -19,6 +19,8 @@ pub struct CopyPathInput {
     pub overwrite: bool,
     #[serde(default)]
     pub recursive: bool,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -36,12 +38,32 @@ pub async fn copy_path(ctx: &FsToolsContext, input: CopyPathInput) -> McpResult<
 
     let src_resolved = resolve_storage_path(&ctx.registry, &src_parsed.normalized)?;
     let dst_resolved = resolve_storage_path(&ctx.registry, &dst_parsed.normalized)?;
+    ctx.validate_session(
+        input.session_id.as_deref(),
+        &src_resolved.storage.name,
+        Some(&src_resolved.parsed.backend_path),
+    )
+    .await?;
+    let dst_session_access = ctx
+        .validate_session(
+            input.session_id.as_deref(),
+            &dst_resolved.storage.name,
+            Some(&dst_resolved.parsed.backend_path),
+        )
+        .await?;
 
     if dst_resolved.storage.read_only {
         return Err(err_with_details(
             McpErrorCode::ERR_STORAGE_READ_ONLY,
             format!("Storage '{}' is read-only", dst_resolved.storage.name),
             json!({ "storage_name": dst_resolved.storage.name, "path": dst_parsed.normalized }),
+        ));
+    }
+    if dst_session_access.read_only {
+        return Err(err_with_details(
+            McpErrorCode::ERR_SESSION_FORBIDDEN,
+            "session is read-only",
+            json!({ "session_id": input.session_id }),
         ));
     }
 

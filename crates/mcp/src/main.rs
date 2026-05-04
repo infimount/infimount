@@ -3,6 +3,7 @@ use infimount_mcp::runtime::{serve_stdio, start_http_server};
 use infimount_mcp::settings::{
     McpSettings, McpSettingsStore, DEFAULT_HTTP_BIND_ADDRESS, DEFAULT_HTTP_PORT,
 };
+use infimount_mcp::telemetry::init_telemetry;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -12,6 +13,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .with_writer(std::io::stderr)
         .try_init();
+
+    let _ = init_telemetry();
 
     let transport = arg_value("--transport").unwrap_or_else(|| "stdio".to_string());
     let allow_insecure = arg_present("--allow-insecure");

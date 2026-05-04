@@ -2,8 +2,9 @@ use crate::errors::{err_with_details, McpErrorCode, McpResult};
 use crate::registry::StorageRecord;
 use opendal::services::{Azblob, Fs, Gcs, Webdav, S3};
 use opendal::Operator;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StorageBackendCapabilities {
     pub list_with_versions: bool,
     pub read_with_version: bool,
@@ -15,16 +16,26 @@ pub fn get_capabilities(op: &Operator) -> StorageBackendCapabilities {
     let info = op.info();
     let full = info.full_capability();
     StorageBackendCapabilities {
-        list_with_versions: full.list && full.read,
-        read_with_version: full.read,
-        delete_with_version: full.delete,
+        list_with_versions: full.list_with_versions,
+        read_with_version: full.read_with_version,
+        delete_with_version: full.delete_with_version,
         versioning_disabled: false,
     }
 }
 
 pub fn check_versioning_disabled(storage: &StorageRecord) -> Option<bool> {
     match storage.backend.as_str() {
-        "webdav" | "webdavs" => storage
+        "s3" => storage
+            .config
+            .get("versioning")
+            .and_then(|v| v.as_bool())
+            .map(|enabled| !enabled),
+        "azblob" | "azure_blob" => storage
+            .config
+            .get("versioning")
+            .and_then(|v| v.as_bool())
+            .map(|enabled| !enabled),
+        "gcs" => storage
             .config
             .get("versioning")
             .and_then(|v| v.as_bool())

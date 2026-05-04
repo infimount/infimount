@@ -10,6 +10,8 @@ use super::common::{EntryType, FsToolsContext};
 #[serde(deny_unknown_fields)]
 pub struct StatPathInput {
     pub path: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -39,6 +41,12 @@ pub async fn stat_path(ctx: &FsToolsContext, input: StatPathInput) -> McpResult<
     }
 
     let resolved = resolve_storage_path(&ctx.registry, &parsed.normalized)?;
+    ctx.validate_session(
+        input.session_id.as_deref(),
+        &resolved.storage.name,
+        Some(&resolved.parsed.backend_path),
+    )
+    .await?;
     let op = opendal_adapter::build_operator(&resolved.storage)?;
 
     if parsed.backend_path.is_empty() {

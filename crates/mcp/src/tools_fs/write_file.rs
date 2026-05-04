@@ -20,6 +20,8 @@ pub struct WriteFileInput {
     pub overwrite: bool,
     #[serde(default)]
     pub create_parents: bool,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -33,12 +35,26 @@ pub async fn write_file(ctx: &FsToolsContext, input: WriteFileInput) -> McpResul
     enforce_root_operation(FsOp::WriteFile, &parsed)?;
     let resolved = resolve_storage_path(&ctx.registry, &parsed.normalized)?;
     let storage = resolved.storage;
+    let session_access = ctx
+        .validate_session(
+            input.session_id.as_deref(),
+            &storage.name,
+            Some(&resolved.parsed.backend_path),
+        )
+        .await?;
 
     if storage.read_only {
         return Err(err_with_details(
             McpErrorCode::ERR_STORAGE_READ_ONLY,
             format!("Storage '{}' is read-only", storage.name),
             json!({ "storage_name": storage.name, "path": parsed.normalized }),
+        ));
+    }
+    if session_access.read_only {
+        return Err(err_with_details(
+            McpErrorCode::ERR_SESSION_FORBIDDEN,
+            "session is read-only",
+            json!({ "session_id": input.session_id }),
         ));
     }
 

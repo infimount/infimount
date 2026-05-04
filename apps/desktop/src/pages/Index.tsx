@@ -164,17 +164,18 @@ const Index = () => {
         typeof window === "undefined"
           ? null
           : window.localStorage.getItem(SELECTED_STORAGE_KEY);
-      let nextSelection = selectedStorage;
-      if (nextSelection && mapped.find((storage) => storage.id === nextSelection)) {
-        // keep current selection
-      } else if (storedSelection && mapped.find((storage) => storage.id === storedSelection)) {
-        nextSelection = storedSelection;
-      } else {
-        nextSelection = mapped[0]?.id ?? null;
-      }
-      if (nextSelection !== selectedStorage) {
-        setSelectedStorage(nextSelection);
-      }
+      setSelectedStorage((currentSelection) => {
+        if (
+          currentSelection &&
+          mapped.find((storage) => storage.id === currentSelection)
+        ) {
+          return currentSelection;
+        }
+        if (storedSelection && mapped.find((storage) => storage.id === storedSelection)) {
+          return storedSelection;
+        }
+        return mapped[0]?.id ?? null;
+      });
     } catch (error: unknown) {
       toast({
         title: "Failed to load storages",
@@ -184,7 +185,7 @@ const Index = () => {
     } finally {
       setIsStoragesLoading(false);
     }
-  }, [selectedStorage]);
+  }, []);
 
   useEffect(() => {
     void reloadStorages();

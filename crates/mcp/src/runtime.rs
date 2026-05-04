@@ -1,7 +1,13 @@
 use std::io;
 use std::net::SocketAddr;
 
+use axum::body::Body;
+use axum::extract::State;
+use axum::http::{header::AUTHORIZATION, Request, StatusCode};
+use axum::middleware::{from_fn_with_state, Next};
+use axum::response::{IntoResponse, Response};
 use axum::Router;
+use serde_json::json;
 use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
 };
@@ -16,6 +22,50 @@ use crate::settings::McpSettings;
 use crate::tools_fs::FsToolsContext;
 
 pub const HTTP_ENDPOINT_PATH: &str = "/mcp";
+
+#[derive(Clone)]
+struct HttpAuthConfig {
+    allow_insecure: bool,
+    auth_token: Option<String>,
+}
+
+async fn enforce_http_auth(
+    State(auth): State<HttpAuthConfig>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    if auth.allow_insecure {
+        return next.run(request).await;
+    }
+
+    let Some(expected_token) = auth.auth_token.as_deref() else {
+        return unauthorized_response();
+    };
+
+    let provided_token = request
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "));
+
+    if provided_token == Some(expected_token) {
+        return next.run(request).await;
+    }
+
+    unauthorized_response()
+}
+
+fn unauthorized_response() -> Response {
+    let body = json!({
+        "ok": false,
+        "error": {
+            "code": "ERR_UNAUTHORIZED",
+            "message": "unauthorized: missing or invalid bearer token",
+            "details": {}
+        }
+    });
+    (StatusCode::UNAUTHORIZED, axum::Json(body)).into_response()
+}
 
 pub struct McpHttpServerHandle {
     endpoint: String,
@@ -73,6 +123,17 @@ pub async fn start_http_server(
     allow_insecure: bool,
     auth_token: Option<String>,
 ) -> io::Result<McpHttpServerHandle> {
+    if allow_insecure {
+        eprintln!("[WARNING] HTTP server running in INSECURE mode (no authentication). Use only for local development.");
+    }
+
+    if !allow_insecure && auth_token.is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "HTTP transport requires INFIMOUNT_AUTH_TOKEN or --allow-insecure",
+        ));
+    }
+
     let cancellation_token = CancellationToken::new();
     let config = StreamableHttpServerConfig {
         cancellation_token: cancellation_token.child_token(),
@@ -99,7 +160,14 @@ pub async fn start_http_server(
             config,
         );
 
-    let router = Router::new().nest_service(HTTP_ENDPOINT_PATH, service);
+    let auth = HttpAuthConfig {
+        allow_insecure,
+        auth_token: auth_token.clone(),
+    };
+
+    let router = Router::new()
+        .nest_service(HTTP_ENDPOINT_PATH, service)
+        .layer(from_fn_with_state(auth, enforce_http_auth));
     let listener = tokio::net::TcpListener::bind(format!("{bind_address}:{port}")).await?;
     let addr = listener.local_addr()?;
     let endpoint = format!(

@@ -21,6 +21,8 @@ pub struct ListDirInput {
     pub limit: u32,
     #[serde(default)]
     pub cursor: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -73,6 +75,12 @@ pub async fn list_dir(ctx: &FsToolsContext, input: ListDirInput) -> McpResult<Li
     }
 
     let resolved = resolve_storage_path(&ctx.registry, &parsed.normalized)?;
+    ctx.validate_session(
+        input.session_id.as_deref(),
+        &resolved.storage.name,
+        Some(&resolved.parsed.backend_path),
+    )
+    .await?;
     let op = opendal_adapter::build_operator(&resolved.storage)?;
 
     if !parsed.backend_path.is_empty() {

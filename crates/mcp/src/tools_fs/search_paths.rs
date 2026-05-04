@@ -18,6 +18,8 @@ pub struct SearchPathsInput {
     pub pattern: String,
     #[serde(default = "default_max_results")]
     pub max_results: u32,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -41,6 +43,12 @@ pub async fn search_paths(
     let parsed = parse_mcp_path(&input.path)?;
     enforce_root_operation(FsOp::SearchPaths, &parsed)?;
     let resolved = resolve_storage_path(&ctx.registry, &parsed.normalized)?;
+    ctx.validate_session(
+        input.session_id.as_deref(),
+        &resolved.storage.name,
+        Some(&resolved.parsed.backend_path),
+    )
+    .await?;
     let op = opendal_adapter::build_operator(&resolved.storage)?;
 
     if parsed.backend_path.is_empty() {
