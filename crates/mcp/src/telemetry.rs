@@ -14,8 +14,8 @@ pub fn init_telemetry() -> bool {
         return false;
     }
 
-    let service_name = std::env::var("OTEL_SERVICE_NAME")
-        .unwrap_or_else(|_| "infimount_mcp".to_string());
+    let service_name =
+        std::env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| "infimount_mcp".to_string());
 
     TELEMETRY_ENABLED.store(true, Ordering::SeqCst);
     eprintln!(
