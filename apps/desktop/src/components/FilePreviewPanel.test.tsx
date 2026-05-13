@@ -23,7 +23,6 @@ describe("FilePreviewPanel", () => {
       list_with_versions: false,
       read_with_version: false,
       delete_with_version: false,
-      versioning_disabled: false,
     });
   });
 
