@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="infimount-text.png" alt="Infimount"/>
+  <img src="docs/assets/infimount-logo-text.png" alt="Infimount" width="520"/>
 </p>
 
 <p align="center">
@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/screenshot-infimount.png" alt="Infimount app screenshot" width="900" />
+  <img src="docs/assets/infimount-banner.png" alt="Infimount - one surface for every storage" width="900" />
 </p>
 
 > 🔐 **LOCAL-FIRST BY DEFAULT**
