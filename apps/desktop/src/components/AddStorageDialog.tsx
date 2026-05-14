@@ -41,6 +41,9 @@ const STORAGE_TYPE_ICONS: Record<string, string> = {
   "local-fs": folderNetworkIcon,
 };
 
+const FIELD_FOCUS_CLASS =
+  "focus-visible:border-ring focus-visible:ring-0 focus-visible:ring-offset-0";
+
 interface AddStorageDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -132,7 +135,9 @@ export function AddStorageDialog({
       setEnabled(initialStorage.enabled);
       setMcpExposed(initialStorage.mcpExposed);
       setReadOnly(initialStorage.readOnly);
-      setRevealSecrets(!(schema?.fields.some((field) => field.secret && nextFieldValues[field.name]) ?? false));
+      setRevealSecrets(
+        !(schema?.fields.some((field) => field.secret && nextFieldValues[field.name]) ?? false),
+      );
       return;
     }
 
@@ -183,6 +188,12 @@ export function AddStorageDialog({
       return null;
     }
 
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setFormError("Storage Name is required.");
+      return null;
+    }
+
     const config: Record<string, unknown> = { ...extraConfig };
 
     for (const field of currentSchema.fields) {
@@ -198,7 +209,7 @@ export function AddStorageDialog({
 
     setFormError(null);
     return {
-      name: name.trim(),
+      name: trimmedName,
       backend: mapStorageTypeToBackend(type),
       config,
       enabled,
@@ -252,7 +263,8 @@ export function AddStorageDialog({
             {isEditing ? "Edit Storage" : "Add New Storage"}
           </DialogTitle>
           <DialogDescription className="text-left text-xs text-muted-foreground">
-            Configure the storage with the guided form. Full registry JSON editing is available from the storage menu.
+            Configure the storage with the guided form. Full registry JSON editing is available from
+            the storage menu.
           </DialogDescription>
         </DialogHeader>
 
@@ -268,7 +280,7 @@ export function AddStorageDialog({
                 onChange={(event) => setName(event.target.value)}
                 placeholder="Research Bucket"
                 required
-                className="border border-border bg-[hsl(var(--card))] text-sm text-[hsl(var(--card-foreground))] focus-visible:border-border/60 focus-visible:ring-0 focus-visible:ring-offset-0"
+                className={`border border-border bg-[hsl(var(--card))] text-sm text-[hsl(var(--card-foreground))] ${FIELD_FOCUS_CLASS}`}
               />
             </div>
 
@@ -276,10 +288,13 @@ export function AddStorageDialog({
               <Label htmlFor="storage-type" className="text-xs font-normal text-muted-foreground">
                 Storage Type
               </Label>
-              <Select value={type} onValueChange={(value) => handleTypeChange(value as StorageType)}>
+              <Select
+                value={type}
+                onValueChange={(value) => handleTypeChange(value as StorageType)}
+              >
                 <SelectTrigger
                   id="storage-type"
-                  className="border border-border bg-[hsl(var(--card))] text-sm text-[hsl(var(--card-foreground))] focus:border-border focus:ring-0 focus:ring-offset-0 focus-visible:border-border focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=open]:border-border"
+                  className={`border border-border bg-[hsl(var(--card))] text-sm text-[hsl(var(--card-foreground))] focus:border-ring focus:ring-0 focus:ring-offset-0 data-[state=open]:border-ring ${FIELD_FOCUS_CLASS}`}
                 >
                   <SelectValue>
                     {(() => {
@@ -288,7 +303,9 @@ export function AddStorageDialog({
                       if (!current) return null;
                       return (
                         <span className="flex items-center gap-2">
-                          {icon ? <img src={icon} alt="" aria-hidden="true" className="h-4 w-4" /> : null}
+                          {icon ? (
+                            <img src={icon} alt="" aria-hidden="true" className="h-4 w-4" />
+                          ) : null}
                           <span>{current.label}</span>
                         </span>
                       );
@@ -344,14 +361,12 @@ export function AddStorageDialog({
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <Label className="text-xs font-normal text-muted-foreground">
-                  Backend Fields
-                </Label>
+                <Label className="text-xs font-normal text-muted-foreground">Backend Fields</Label>
                 <p className="mt-1 text-[11px] text-muted-foreground">
                   Use the guided form for the selected backend configuration.
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 <Button
                   type="button"
                   variant="outline"
@@ -398,7 +413,8 @@ export function AddStorageDialog({
 
             {Object.keys(extraConfig).length > 0 ? (
               <p className="text-[11px] text-muted-foreground">
-                This storage includes {Object.keys(extraConfig).length} advanced config field(s) not shown in the form. They will be preserved when you save.
+                This storage includes {Object.keys(extraConfig).length} advanced config field(s) not
+                shown in the form. They will be preserved when you save.
               </p>
             ) : null}
 
@@ -441,7 +457,7 @@ export function AddStorageDialog({
               variant="outline"
               className="border border-border hover:bg-sidebar-accent/30 hover:text-foreground"
               onClick={handleVerify}
-              disabled={isVerifying || !name.trim()}
+              disabled={isVerifying || !onVerify}
             >
               {isVerifying ? "Validating..." : "Validate"}
             </Button>
@@ -495,7 +511,7 @@ function StorageFieldInput({
           onChange={(event) => onChange(event.target.value)}
           rows={6}
           required={field.required}
-          className="border border-border bg-[hsl(var(--card))] font-mono text-xs leading-6 text-[hsl(var(--card-foreground))] focus-visible:border-border/60 focus-visible:ring-0 focus-visible:ring-offset-0"
+          className={`border border-border bg-[hsl(var(--card))] font-mono text-xs leading-6 text-[hsl(var(--card-foreground))] ${FIELD_FOCUS_CLASS}`}
         />
       ) : (
         <Input
@@ -504,7 +520,7 @@ function StorageFieldInput({
           type={inputType}
           required={field.required}
           onChange={(event) => onChange(event.target.value)}
-          className="border border-border bg-[hsl(var(--card))] text-sm text-[hsl(var(--card-foreground))] focus-visible:border-border/60 focus-visible:ring-0 focus-visible:ring-offset-0"
+          className={`border border-border bg-[hsl(var(--card))] text-sm text-[hsl(var(--card-foreground))] ${FIELD_FOCUS_CLASS}`}
         />
       )}
     </div>

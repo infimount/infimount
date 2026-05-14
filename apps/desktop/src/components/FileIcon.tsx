@@ -1,94 +1,104 @@
 import { FileItem } from "@/types/storage";
 import { cn } from "@/lib/utils";
 import { DEFAULT_ICON_THEME, type IconTheme, useIconTheme } from "@/hooks/use-icon-theme";
+import { ICON_KEYS } from "./file-icon-themes/icon-keys";
+import { useEffect, useState } from "react";
 
-const classicModules = import.meta.glob("../assets/file-icons-classic/*.svg", {
-  eager: true,
-  import: "default",
-}) as Record<string, string>;
+const EMPTY_ICON =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3C/svg%3E";
 
-const modernModules = import.meta.glob("../assets/file-icons-modern/*.svg", {
-  eager: true,
-  import: "default",
-}) as Record<string, string>;
+type IconThemeMap = Map<string, string>;
 
-const vividModules = import.meta.glob("../assets/file-icons-vivid/*.svg", {
-  eager: true,
-  import: "default",
-}) as Record<string, string>;
+const themeLoaders: Record<IconTheme, () => Promise<{ default: IconThemeMap }>> = {
+  classic: () => import("./file-icon-themes/classic"),
+  modern: () => import("./file-icon-themes/modern"),
+  vivid: () => import("./file-icon-themes/vivid"),
+  square: () => import("./file-icon-themes/square"),
+};
 
-const squareModules = import.meta.glob("../assets/file-cons-square/*.svg", {
-  eager: true,
-  import: "default",
-}) as Record<string, string>;
+const themeCache = new Map<IconTheme, IconThemeMap | Promise<IconThemeMap>>();
+const iconUrlCache = new Map<string, string>();
 
-const buildIconMap = (modules: Record<string, string>) => {
-  const map = new Map<string, string>();
-  Object.entries(modules).forEach(([path, url]) => {
-    const name = path.split("/").pop()?.replace(".svg", "").toLowerCase();
-    if (name) {
-      map.set(name, url);
-    }
+const loadThemeMap = async (theme: IconTheme): Promise<IconThemeMap> => {
+  const cached = themeCache.get(theme);
+  if (cached instanceof Map) return cached;
+  if (cached) return cached;
+
+  const loader = themeLoaders[theme] ?? themeLoaders[DEFAULT_ICON_THEME];
+  const promise = loader().then((module) => {
+    themeCache.set(theme, module.default);
+    return module.default;
   });
-  return map;
-};
-
-const iconMaps: Record<IconTheme, Map<string, string>> = {
-  classic: buildIconMap(classicModules),
-  modern: buildIconMap(modernModules),
-  vivid: buildIconMap(vividModules),
-  square: buildIconMap(squareModules),
-};
-
-const iconNameSet = new Set<string>();
-(Object.keys(iconMaps) as IconTheme[]).forEach((theme) => {
-  iconMaps[theme].forEach((_value, key) => iconNameSet.add(key));
-});
-
-const defaultThemeMap = iconMaps[DEFAULT_ICON_THEME];
-const defaultFallbackIcon = defaultThemeMap.get("default") ?? "";
-
-const getIconForTheme = (theme: IconTheme, key: string) => {
-  const themeMap = iconMaps[theme] ?? defaultThemeMap;
-  return themeMap.get(key)
-    ?? themeMap.get("default")
-    ?? defaultThemeMap.get(key)
-    ?? defaultFallbackIcon;
+  themeCache.set(theme, promise);
+  return promise;
 };
 
 export const getFileIconKey = (item: FileItem): string => {
   if (item.type === "folder") return "folder";
 
   const ext = item.extension?.toLowerCase();
-  if (ext && iconNameSet.has(ext)) return ext;
+  if (ext && ICON_KEYS.has(ext)) return ext;
 
   const name = item.name.toLowerCase();
   const stripped = name.startsWith(".") ? name.slice(1) : name;
-  if (iconNameSet.has(stripped)) return stripped;
+  if (ICON_KEYS.has(stripped)) return stripped;
 
   return "default";
 };
 
-export const getFileIconPath = (
-  item: FileItem,
+const getFileIconPathByKey = async (
+  key: string,
   theme: IconTheme = DEFAULT_ICON_THEME,
-): string => {
-  const key = getFileIconKey(item);
-  return getIconForTheme(theme, key);
+): Promise<string> => {
+  const cacheKey = `${theme}:${key}`;
+  const cached = iconUrlCache.get(cacheKey);
+  if (cached) return cached;
+
+  const themeMap = await loadThemeMap(theme);
+  let url = themeMap.get(key) ?? themeMap.get("default");
+  if (!url && theme !== DEFAULT_ICON_THEME) {
+    const defaultMap = await loadThemeMap(DEFAULT_ICON_THEME);
+    url = defaultMap.get(key) ?? defaultMap.get("default");
+  }
+  url ??= EMPTY_ICON;
+  iconUrlCache.set(cacheKey, url);
+  return url;
 };
 
-export const FileTypeIcon = ({
-  item,
-  className,
-}: {
-  item: FileItem;
-  className?: string;
-}) => {
+export const getFileIconPath = async (
+  item: FileItem,
+  theme: IconTheme = DEFAULT_ICON_THEME,
+): Promise<string> => getFileIconPathByKey(getFileIconKey(item), theme);
+
+const useFileIconPath = (item: FileItem, theme: IconTheme) => {
+  const key = getFileIconKey(item);
+  const cacheKey = `${theme}:${key}`;
+  const [loadedIcon, setLoadedIcon] = useState<{ cacheKey: string; path: string }>(() => ({
+    cacheKey: "",
+    path: EMPTY_ICON,
+  }));
+
+  useEffect(() => {
+    let active = true;
+    void getFileIconPathByKey(key, theme).then((nextPath) => {
+      if (!active) return;
+      setLoadedIcon({ cacheKey, path: nextPath });
+    });
+    return () => {
+      active = false;
+    };
+  }, [cacheKey, key, theme]);
+
+  return loadedIcon.cacheKey === cacheKey ? loadedIcon.path : EMPTY_ICON;
+};
+
+export const FileTypeIcon = ({ item, className }: { item: FileItem; className?: string }) => {
   const { theme } = useIconTheme();
+  const iconPath = useFileIconPath(item, theme);
 
   return (
     <img
-      src={getFileIconPath(item, theme)}
+      src={iconPath}
       alt=""
       aria-hidden="true"
       draggable={false}

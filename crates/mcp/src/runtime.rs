@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 use crate::registry::StorageRegistry;
 use crate::server::InfimountMcpServer;
 use crate::session::SessionManager;
-use crate::settings::McpSettings;
+use crate::settings::{normalize_auth_token, McpSettings};
 use crate::tools_fs::FsToolsContext;
 
 pub const HTTP_ENDPOINT_PATH: &str = "/mcp";
@@ -123,6 +123,8 @@ pub async fn start_http_server(
     allow_insecure: bool,
     auth_token: Option<String>,
 ) -> io::Result<McpHttpServerHandle> {
+    let auth_token = normalize_auth_token(auth_token);
+
     if allow_insecure {
         eprintln!("[WARNING] HTTP server running in INSECURE mode (no authentication). Use only for local development.");
     }
@@ -143,13 +145,14 @@ pub async fn start_http_server(
     let enabled_tools_for_factory = enabled_tools.clone();
     let allow_insecure_for_factory = allow_insecure;
     let auth_token_for_factory = auth_token.clone();
+    let sessions_for_factory = SessionManager::new();
     let service: StreamableHttpService<InfimountMcpServer, LocalSessionManager> =
         StreamableHttpService::new(
             move || {
                 Ok(InfimountMcpServer::new(
                     FsToolsContext {
                         registry: registry_for_factory.clone(),
-                        sessions: SessionManager::new(),
+                        sessions: sessions_for_factory.clone(),
                         allow_insecure: allow_insecure_for_factory,
                         auth_token: auth_token_for_factory.clone(),
                     },
@@ -217,5 +220,84 @@ fn display_host(addr: SocketAddr) -> String {
     match addr {
         SocketAddr::V4(v4) => v4.ip().to_string(),
         SocketAddr::V6(v6) => format!("[{}]", v6.ip()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::server::all_tool_names;
+
+    fn temp_registry(temp_dir: &TempDir) -> StorageRegistry {
+        StorageRegistry::new(Some(temp_dir.path().join("storages.json")))
+    }
+
+    #[tokio::test]
+    async fn http_server_requires_auth_without_insecure_override() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let result = start_http_server(
+            temp_registry(&temp_dir),
+            "127.0.0.1",
+            0,
+            all_tool_names(),
+            false,
+            None,
+        )
+        .await;
+
+        let error = match result {
+            Ok(server) => {
+                let _ = server.stop().await;
+                panic!("server should reject missing auth token");
+            }
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().contains("INFIMOUNT_AUTH_TOKEN"));
+    }
+
+    #[tokio::test]
+    async fn http_server_allows_port_zero_and_reports_actual_endpoint_in_insecure_mode() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let server = start_http_server(
+            temp_registry(&temp_dir),
+            "127.0.0.1",
+            0,
+            all_tool_names(),
+            true,
+            None,
+        )
+        .await
+        .expect("start insecure test server");
+
+        assert!(server.endpoint().starts_with("http://127.0.0.1:"));
+        assert!(server.endpoint().ends_with(HTTP_ENDPOINT_PATH));
+
+        server.stop().await.expect("stop test server");
+    }
+
+    #[tokio::test]
+    async fn http_server_rejects_whitespace_auth_token_as_missing() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let result = start_http_server(
+            temp_registry(&temp_dir),
+            "127.0.0.1",
+            0,
+            all_tool_names(),
+            false,
+            Some("   ".to_string()),
+        )
+        .await;
+
+        let error = match result {
+            Ok(server) => {
+                let _ = server.stop().await;
+                panic!("server should reject whitespace auth token");
+            }
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
     }
 }

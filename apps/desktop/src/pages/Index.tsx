@@ -1,15 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 
-import { AddStorageDialog } from "@/components/AddStorageDialog";
 import { FileBrowser } from "@/components/FileBrowser";
-import { McpSettingsDialog } from "@/components/McpSettingsDialog";
-import { StorageConfigEditorDialog } from "@/components/StorageConfigEditorDialog";
 import { StorageSidebar } from "@/components/StorageSidebar";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { toast } from "@/hooks/use-toast";
 import {
   addStorage as apiAddStorage,
@@ -40,6 +33,22 @@ import type {
 } from "@/types/storage";
 
 const SELECTED_STORAGE_KEY = "infimount.selectedStorageId";
+
+const AddStorageDialog = lazy(() =>
+  import("@/components/AddStorageDialog").then((module) => ({
+    default: module.AddStorageDialog,
+  })),
+);
+const McpSettingsDialog = lazy(() =>
+  import("@/components/McpSettingsDialog").then((module) => ({
+    default: module.McpSettingsDialog,
+  })),
+);
+const StorageConfigEditorDialog = lazy(() =>
+  import("@/components/StorageConfigEditorDialog").then((module) => ({
+    default: module.StorageConfigEditorDialog,
+  })),
+);
 
 const BACKEND_TO_TYPE: Record<StorageBackend, StorageType> = {
   local: "local-fs",
@@ -155,20 +164,13 @@ const Index = () => {
     setIsStoragesLoading(true);
     try {
       const items = await listStorages();
-      const mapped = items.map((item) =>
-        mapWireStorage(item as unknown as StorageRecordWire),
-      );
+      const mapped = items.map((item) => mapWireStorage(item as unknown as StorageRecordWire));
       setStorages(mapped);
 
       const storedSelection =
-        typeof window === "undefined"
-          ? null
-          : window.localStorage.getItem(SELECTED_STORAGE_KEY);
+        typeof window === "undefined" ? null : window.localStorage.getItem(SELECTED_STORAGE_KEY);
       setSelectedStorage((currentSelection) => {
-        if (
-          currentSelection &&
-          mapped.find((storage) => storage.id === currentSelection)
-        ) {
+        if (currentSelection && mapped.find((storage) => storage.id === currentSelection)) {
           return currentSelection;
         }
         if (storedSelection && mapped.find((storage) => storage.id === storedSelection)) {
@@ -189,8 +191,12 @@ const Index = () => {
 
   useEffect(() => {
     void reloadStorages();
+  }, [reloadStorages]);
+
+  useEffect(() => {
+    if (!isMcpDialogOpen) return;
     void reloadMcpStatus();
-  }, [reloadMcpStatus, reloadStorages]);
+  }, [isMcpDialogOpen, reloadMcpStatus]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -546,35 +552,43 @@ const Index = () => {
         </ResizablePanel>
       </ResizablePanelGroup>
 
-      <AddStorageDialog
-        open={isAddDialogOpen}
-        onOpenChange={(open) => {
-          setIsAddDialogOpen(open);
-          if (!open) setEditingStorage(null);
-        }}
-        onAdd={handleAddStorage}
-        onUpdate={handleUpdateStorage}
-        onVerify={handleVerifyStorage}
-        initialStorage={editingStorage ?? undefined}
-      />
+      <Suspense fallback={null}>
+        {isAddDialogOpen ? (
+          <AddStorageDialog
+            open={isAddDialogOpen}
+            onOpenChange={(open) => {
+              setIsAddDialogOpen(open);
+              if (!open) setEditingStorage(null);
+            }}
+            onAdd={handleAddStorage}
+            onUpdate={handleUpdateStorage}
+            onVerify={handleVerifyStorage}
+            initialStorage={editingStorage ?? undefined}
+          />
+        ) : null}
 
-      <McpSettingsDialog
-        open={isMcpDialogOpen}
-        onOpenChange={setIsMcpDialogOpen}
-        status={mcpStatus}
-        snippets={mcpSnippets}
-        tools={mcpTools}
-        onSave={handleSaveMcpSettings}
-        onStartHttp={handleStartMcpHttp}
-        onStopHttp={handleStopMcpHttp}
-      />
+        {isMcpDialogOpen ? (
+          <McpSettingsDialog
+            open={isMcpDialogOpen}
+            onOpenChange={setIsMcpDialogOpen}
+            status={mcpStatus}
+            snippets={mcpSnippets}
+            tools={mcpTools}
+            onSave={handleSaveMcpSettings}
+            onStartHttp={handleStartMcpHttp}
+            onStopHttp={handleStopMcpHttp}
+          />
+        ) : null}
 
-      <StorageConfigEditorDialog
-        open={isStorageConfigEditorOpen}
-        onOpenChange={setIsStorageConfigEditorOpen}
-        onLoad={loadStorageConfigJson}
-        onSave={handleSaveStorageConfigJson}
-      />
+        {isStorageConfigEditorOpen ? (
+          <StorageConfigEditorDialog
+            open={isStorageConfigEditorOpen}
+            onOpenChange={setIsStorageConfigEditorOpen}
+            onLoad={loadStorageConfigJson}
+            onSave={handleSaveStorageConfigJson}
+          />
+        ) : null}
+      </Suspense>
     </div>
   );
 };

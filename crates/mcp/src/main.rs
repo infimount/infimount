@@ -1,7 +1,8 @@
 use infimount_mcp::registry::StorageRegistry;
 use infimount_mcp::runtime::{serve_stdio, start_http_server};
 use infimount_mcp::settings::{
-    McpSettings, McpSettingsStore, DEFAULT_HTTP_BIND_ADDRESS, DEFAULT_HTTP_PORT,
+    normalize_auth_token, McpSettings, McpSettingsStore, DEFAULT_HTTP_BIND_ADDRESS,
+    DEFAULT_HTTP_PORT,
 };
 use infimount_mcp::telemetry::init_telemetry;
 
@@ -18,7 +19,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let transport = arg_value("--transport").unwrap_or_else(|| "stdio".to_string());
     let allow_insecure = arg_present("--allow-insecure");
-    let auth_token = arg_value("--auth-token");
+    let auth_token = normalize_auth_token(arg_value("--auth-token"))
+        .or_else(|| env_value("INFIMOUNT_AUTH_TOKEN"));
     let registry = StorageRegistry::new(None);
     let settings = McpSettingsStore::new(None).load().unwrap_or_else(|error| {
         eprintln!(
@@ -78,4 +80,8 @@ fn arg_value(name: &str) -> Option<String> {
 
 fn arg_present(name: &str) -> bool {
     std::env::args().skip(1).any(|arg| arg == name)
+}
+
+fn env_value(name: &str) -> Option<String> {
+    normalize_auth_token(std::env::var(name).ok())
 }

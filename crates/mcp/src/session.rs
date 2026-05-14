@@ -24,7 +24,7 @@ pub struct SessionWithMeta {
     pub expires_instant: Instant,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SessionManager {
     sessions: Arc<RwLock<HashMap<String, SessionWithMeta>>>,
 }

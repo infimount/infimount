@@ -15,6 +15,9 @@ permissions:
   contents: write
   pull-requests: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   sync-version:
     name: Sync app manifests from release tag

@@ -175,7 +175,14 @@ fn ensure_parent(path: &Path) -> McpResult<()> {
 
 fn normalize_settings(mut settings: McpSettings) -> McpSettings {
     settings.enabled_tools = sanitize_enabled_tools(settings.enabled_tools);
+    settings.auth_token = normalize_auth_token(settings.auth_token);
     settings
+}
+
+pub fn normalize_auth_token(value: Option<String>) -> Option<String> {
+    value
+        .map(|token| token.trim().to_string())
+        .filter(|token| !token.is_empty())
 }
 
 fn sanitize_enabled_tools(enabled_tools: Vec<String>) -> Vec<String> {
@@ -226,5 +233,20 @@ mod tests {
             vec!["export_config".to_string(), "list_dir".to_string()]
         );
         assert!(path.exists());
+    }
+
+    #[test]
+    fn settings_store_normalizes_empty_and_whitespace_auth_tokens() {
+        let settings = normalize_settings(McpSettings {
+            auth_token: Some("   ".to_string()),
+            ..McpSettings::default()
+        });
+        assert!(settings.auth_token.is_none());
+
+        let settings = normalize_settings(McpSettings {
+            auth_token: Some("  secret-token  ".to_string()),
+            ..McpSettings::default()
+        });
+        assert_eq!(settings.auth_token.as_deref(), Some("secret-token"));
     }
 }

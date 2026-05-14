@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getVersion as getAppVersion } from "@tauri-apps/api/app";
-import { check as checkUpdater } from "@tauri-apps/plugin-updater";
 import {
   Menu,
   Plus,
@@ -67,20 +65,26 @@ interface StorageSidebarProps {
   isLoading?: boolean;
 }
 
+interface PendingUpdate {
+  version: string;
+  currentVersion: string;
+  downloadAndInstall: () => Promise<void>;
+}
+
 const RELEASES_PAGE_URL = "https://github.com/infimount/infimount/releases/latest";
 const normalizeVersion = (value: string): string => value.trim().replace(/^v/i, "");
 
 const getStorageIcon = (type: string) => {
   switch (type) {
-    case 'aws-s3':
+    case "aws-s3":
       return s3Icon;
-    case 'azure-blob':
+    case "azure-blob":
       return azureIcon;
-    case 'gcs':
+    case "gcs":
       return gcsIcon;
-    case 'webdav':
+    case "webdav":
       return webdavIcon;
-    case 'local-fs':
+    case "local-fs":
       return folderNetworkIcon;
     default:
       return folderIcon;
@@ -108,6 +112,7 @@ export function StorageSidebar({
   const [dragTargetId, setDragTargetId] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState<string | null | undefined>(undefined);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
+  const [pendingUpdate, setPendingUpdate] = useState<PendingUpdate | null>(null);
   const hasAutoCheckedUpdatesRef = useRef(false);
   const [dropConflict, setDropConflict] = useState<{
     fromSourceId: string;
@@ -120,9 +125,7 @@ export function StorageSidebar({
   const INTERNAL_TRANSFER_MIME = "application/x-infimount-transfer";
 
   const parseInternalTransfer = (dt: DataTransfer) => {
-    const raw =
-      dt.getData(INTERNAL_TRANSFER_MIME)
-      || dt.getData("text/plain");
+    const raw = dt.getData(INTERNAL_TRANSFER_MIME) || dt.getData("text/plain");
     if (!raw) return null;
 
     try {
@@ -225,7 +228,8 @@ export function StorageSidebar({
       }
 
       try {
-        const update = await checkUpdater();
+        const { check } = await import("@tauri-apps/plugin-updater");
+        const update = await check();
         if (!update) {
           if (!silent) {
             toast({
@@ -244,22 +248,10 @@ export function StorageSidebar({
           return;
         }
 
-        const shouldInstall = window.confirm(
-          `Update v${update.version} is available (current: v${update.currentVersion}).\n\nDownload and install now?`,
-        );
-        if (!shouldInstall) {
-          return;
-        }
-
-        toast({
-          title: `Downloading update v${update.version}...`,
-          description: "Please wait while Infimount installs the update package.",
-        });
-        await update.downloadAndInstall();
-        setAppVersion(normalizeVersion(update.version));
-        toast({
-          title: "Update installed",
-          description: "Restart Infimount to apply the new version.",
+        setPendingUpdate({
+          version: update.version,
+          currentVersion: update.currentVersion,
+          downloadAndInstall: update.downloadAndInstall.bind(update),
         });
       } catch (error) {
         if (!silent) {
@@ -279,13 +271,44 @@ export function StorageSidebar({
     [appVersion, isCheckingUpdates, toast],
   );
 
+  const installPendingUpdate = async () => {
+    if (!pendingUpdate) return;
+
+    setIsCheckingUpdates(true);
+    try {
+      toast({
+        title: `Downloading update v${pendingUpdate.version}...`,
+        description: "Please wait while Infimount installs the update package.",
+      });
+      await pendingUpdate.downloadAndInstall();
+      setAppVersion(normalizeVersion(pendingUpdate.version));
+      setPendingUpdate(null);
+      toast({
+        title: "Update installed",
+        description: "Restart Infimount to apply the new version.",
+      });
+    } catch (error) {
+      toast({
+        title: "Update install failed",
+        description:
+          error instanceof Error
+            ? `${error.message}. You can download manually: ${RELEASES_PAGE_URL}`
+            : `Unable to install update. Visit ${RELEASES_PAGE_URL}`,
+        variant: "destructive",
+      });
+    } finally {
+      setIsCheckingUpdates(false);
+    }
+  };
+
   const handleCheckUpdate = () => {
     void checkForUpdates(false);
   };
 
   useEffect(() => {
     let active = true;
-    void getAppVersion()
+    void import("@tauri-apps/api/app")
+      .then(({ getVersion }) => getVersion())
       .then((version) => {
         if (!active) return;
         setAppVersion(normalizeVersion(version));
@@ -443,9 +466,7 @@ export function StorageSidebar({
 
       <ScrollArea className="flex-1 p-2">
         {isLoading && storages.length > 0 && (
-          <div className="px-3 py-2 text-xs text-muted-foreground">
-            Loading…
-          </div>
+          <div className="px-3 py-2 text-xs text-muted-foreground">Loading…</div>
         )}
         {visibleStorages.length === 0 ? (
           isLoading ? (
@@ -471,7 +492,9 @@ export function StorageSidebar({
                         selectedStorage === storage.id
                           ? "bg-primary/20 text-sidebar-foreground font-medium"
                           : "text-sidebar-foreground hover:bg-black/5 dark:hover:bg-white/5",
-                        isDragTarget && selectedStorage !== storage.id && "bg-primary/10 ring-1 ring-primary/30",
+                        isDragTarget &&
+                          selectedStorage !== storage.id &&
+                          "bg-primary/10 ring-1 ring-primary/30",
                       )}
                       role="button"
                       tabIndex={0}
@@ -547,7 +570,9 @@ export function StorageSidebar({
         <div className="flex items-center gap-2 overflow-hidden">
           <img src={logo} alt="" className="h-7 w-7 shrink-0 object-contain" draggable={false} />
           <div className="flex items-center gap-1.5 overflow-hidden">
-            <span className="text-xs font-semibold text-sidebar-foreground truncate">Infimount</span>
+            <span className="text-xs font-semibold text-sidebar-foreground truncate">
+              Infimount
+            </span>
             <span className="text-[10px] text-muted-foreground shrink-0">
               {appVersion ? `v${appVersion}` : "v-"}
             </span>
@@ -575,7 +600,8 @@ export function StorageSidebar({
           <AlertDialogHeader>
             <AlertDialogTitle>Item already exists</AlertDialogTitle>
             <AlertDialogDescription>
-              One or more items with the same name already exist in this destination. Do you want to overwrite them or discard this transfer?
+              One or more items with the same name already exist in this destination. Do you want to
+              overwrite them or discard this transfer?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -619,6 +645,35 @@ export function StorageSidebar({
               }}
             >
               Overwrite
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={!!pendingUpdate}
+        onOpenChange={(open) => {
+          if (!open) setPendingUpdate(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-md rounded-2xl border border-border bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] shadow-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Install update?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Infimount v{pendingUpdate?.version} is available. Current version: v
+              {pendingUpdate?.currentVersion}. The update will download now and apply after restart.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isCheckingUpdates}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+              disabled={isCheckingUpdates}
+              onClick={() => {
+                void installPendingUpdate();
+              }}
+            >
+              {isCheckingUpdates ? "Installing..." : "Download & Install"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
