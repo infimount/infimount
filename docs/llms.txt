@@ -11,6 +11,7 @@ and agent workflows.
 - Repository: https://github.com/infimount/infimount
 - Releases: https://github.com/infimount/infimount/releases/latest
 - Homebrew tap: https://github.com/infimount/homebrew-infimount
+- LinkedIn: https://www.linkedin.com/company/infimount
 - MCP setup: https://github.com/infimount/infimount/blob/main/docs/mcp-client-setup.md
 - Security model: https://github.com/infimount/infimount/blob/main/docs/security.md
 - Backend capability matrix: https://github.com/infimount/infimount/blob/main/docs/backend-capabilities.md
