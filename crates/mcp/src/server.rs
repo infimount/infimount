@@ -333,6 +333,10 @@ impl ServerHandler for InfimountMcpServer {
         _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let tool_name = request.name.to_string();
+        if !self.is_tool_enabled(&tool_name) {
+            return Err(ErrorData::method_not_found::<CallToolRequestMethod>());
+        }
+
         let normalized_path = normalized_path_log_ref(&tool_name, request.arguments.as_ref());
         let storage_ref = storage_log_ref(&tool_name, request.arguments.as_ref());
         let started = Instant::now();
@@ -999,6 +1003,19 @@ fn normalize_logged_path(path: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
+
+    use crate::registry::StorageRegistry;
+    use crate::session::SessionManager;
+
+    fn test_context(temp_dir: &TempDir) -> FsToolsContext {
+        FsToolsContext {
+            registry: StorageRegistry::new(Some(temp_dir.path().join("storages.json"))),
+            sessions: SessionManager::new(),
+            allow_insecure: true,
+            auth_token: None,
+        }
+    }
 
     #[test]
     fn default_enabled_tools_match_all_tool_names() {
@@ -1019,5 +1036,38 @@ mod tests {
 
         assert!(normalized.contains("list_dir"));
         assert_eq!(normalized.len(), 1);
+    }
+
+    #[test]
+    fn filtered_tool_definitions_hides_disabled_tools() {
+        let enabled = normalize_enabled_tools(vec!["list_dir".to_string()]);
+        let definitions = filtered_tool_definitions(&enabled);
+        let names = definitions
+            .into_iter()
+            .map(|definition| definition.name)
+            .collect::<Vec<_>>();
+
+        assert_eq!(names, vec!["list_dir"]);
+    }
+
+    #[test]
+    fn get_tool_returns_none_for_disabled_tools() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let server = InfimountMcpServer::new(test_context(&temp_dir), vec!["list_dir".into()]);
+
+        assert!(server.get_tool("list_dir").is_some());
+        assert!(server.get_tool("export_config").is_none());
+    }
+
+    #[tokio::test]
+    async fn dispatch_rejects_disabled_tool_without_running_handler() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let server = InfimountMcpServer::new(test_context(&temp_dir), vec!["list_dir".into()]);
+
+        let result = server
+            .dispatch_tool_json("export_config", Some(JsonObject::new()))
+            .await;
+
+        assert!(result.is_err());
     }
 }

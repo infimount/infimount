@@ -29,7 +29,6 @@ const tools: McpToolDefinition[] = [
 describe("McpSettingsDialog integration", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    vi.stubGlobal("confirm", vi.fn(() => true));
     Object.assign(navigator, {
       clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
     });
@@ -65,7 +64,9 @@ describe("McpSettingsDialog integration", () => {
       expect(onStartHttp).toHaveBeenCalled();
     });
 
-    expect(onSave.mock.invocationCallOrder[0]).toBeLessThan(onStartHttp.mock.invocationCallOrder[0]);
+    expect(onSave.mock.invocationCallOrder[0]).toBeLessThan(
+      onStartHttp.mock.invocationCallOrder[0],
+    );
   });
 
   it("shows a non-loopback warning before starting HTTP", async () => {
@@ -92,8 +93,21 @@ describe("McpSettingsDialog integration", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Save & Start HTTP Server/i }));
 
+    expect(await screen.findByText(/Expose MCP beyond this machine/i)).toBeInTheDocument();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onStartHttp).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Start Server$/i }));
+
     await waitFor(() => {
-      expect(global.confirm).toHaveBeenCalled();
+      expect(onSave).toHaveBeenCalledWith({
+        enabled: true,
+        transport: "http",
+        bindAddress: "0.0.0.0",
+        port: 7331,
+        enabledTools: ["list_dir", "export_config"],
+      });
+      expect(onStartHttp).toHaveBeenCalled();
     });
   });
 });

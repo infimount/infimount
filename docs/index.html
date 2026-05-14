@@ -3,229 +3,715 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Infimount Downloads</title>
+    <title>Infimount - Unified Storage Browser</title>
     <meta
       name="description"
-      content="Download Infimount for Linux, macOS, and Windows."
+      content="Infimount is a local-first desktop app for browsing local files, S3, Azure Blob, Google Cloud Storage, WebDAV, and MCP-enabled storage workflows."
     />
+    <meta name="theme-color" content="#28251f" />
+    <link rel="canonical" href="https://infimount.github.io/infimount/" />
+    <link rel="icon" href="./assets/logo.png" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Infimount" />
+    <meta property="og:title" content="Infimount - Unified Storage Browser" />
+    <meta
+      property="og:description"
+      content="Browse local files, S3, Azure Blob, Google Cloud Storage, WebDAV, and MCP-enabled storage workflows from one local-first desktop app."
+    />
+    <meta property="og:url" content="https://infimount.github.io/infimount/" />
+    <meta
+      property="og:image"
+      content="https://infimount.github.io/infimount/assets/screenshot-infimount.png"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Infimount - Unified Storage Browser" />
+    <meta
+      name="twitter:description"
+      content="A local-first desktop app for local files, cloud storage, and MCP-enabled agent workflows."
+    />
+    <meta
+      name="twitter:image"
+      content="https://infimount.github.io/infimount/assets/screenshot-infimount.png"
+    />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Infimount",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Linux, macOS, Windows",
+        "description": "Local-first desktop app for browsing local files, cloud storage, and MCP-enabled storage workflows.",
+        "downloadUrl": "https://github.com/infimount/infimount/releases/latest",
+        "softwareVersion": "latest",
+        "codeRepository": "https://github.com/infimount/infimount",
+        "license": "https://github.com/infimount/infimount/blob/main/LICENSE"
+      }
+    </script>
     <style>
       @import url("https://fonts.googleapis.com/css2?family=Ubuntu:wght@400;500;700&display=swap");
 
       :root {
-        --bg: #f7f7f7;
-        --surface: #ffffff;
-        --surface-soft: #f2f2f2;
-        --text: #3d3d3d;
-        --text-soft: #666666;
-        --border: #e8e8e8;
-        --accent: #4a4a4a;
-        --accent-soft: #efefef;
-        --radius: 14px;
+        --bg: #f5f2ea;
+        --paper: #fffdf7;
+        --panel: #ffffff;
+        --ink: #2f2c27;
+        --muted: #6e675e;
+        --line: #e4ddd1;
+        --line-strong: #d6cbbb;
+        --sidebar: #28251f;
+        --sidebar-soft: #343027;
+        --gold: #c9962d;
+        --gold-soft: #f6e7bf;
+        --green: #476a52;
+        --shadow: 0 22px 70px rgba(49, 43, 34, 0.14);
+        --radius-lg: 28px;
+        --radius-md: 18px;
+        --radius-sm: 12px;
       }
 
       * {
         box-sizing: border-box;
       }
 
+      html {
+        scroll-behavior: smooth;
+      }
+
       body {
         margin: 0;
-        font-family: "Ubuntu", system-ui, -apple-system, "Segoe UI", sans-serif;
-        color: var(--text);
+        font-family:
+          "Ubuntu",
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+        color: var(--ink);
         background:
-          radial-gradient(1200px 520px at 50% -80px, #ffffff 0%, #f4f4f4 55%, #f7f7f7 100%),
-          var(--bg);
+          radial-gradient(
+            circle at 12% 0%,
+            rgba(201, 150, 45, 0.22),
+            transparent 34rem
+          ),
+          radial-gradient(
+            circle at 86% 12%,
+            rgba(71, 106, 82, 0.2),
+            transparent 30rem
+          ),
+          linear-gradient(135deg, #fbf7ed 0%, var(--bg) 48%, #eee8dc 100%);
+      }
+
+      a {
+        color: inherit;
       }
 
       .shell {
-        max-width: 1040px;
+        width: min(1180px, calc(100% - 32px));
         margin: 0 auto;
-        padding: 2rem 1rem 3rem;
+        padding: 24px 0 42px;
       }
 
       .topbar {
+        position: sticky;
+        top: 16px;
+        z-index: 10;
         display: flex;
         align-items: center;
-        gap: 0.85rem;
-        padding: 0.85rem 1rem;
-        border: 1px solid var(--border);
-        background: rgba(255, 255, 255, 0.82);
-        backdrop-filter: blur(6px);
-        border-radius: var(--radius);
+        justify-content: space-between;
+        gap: 18px;
+        padding: 12px 14px;
+        border: 1px solid rgba(228, 221, 209, 0.86);
+        background: rgba(255, 253, 247, 0.78);
+        backdrop-filter: blur(18px);
+        border-radius: 999px;
+        box-shadow: 0 10px 30px rgba(49, 43, 34, 0.08);
+      }
+
+      .brand-lockup {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        text-decoration: none;
       }
 
       .logo {
-        width: 36px;
-        height: 36px;
-        border-radius: 9px;
+        width: 42px;
+        height: 42px;
+        border-radius: 13px;
         object-fit: cover;
-        border: 1px solid #dddddd;
-      }
-
-      .brand {
-        line-height: 1.1;
+        border: 1px solid rgba(47, 44, 39, 0.14);
+        box-shadow: 0 8px 18px rgba(49, 43, 34, 0.12);
       }
 
       .brand h1 {
         margin: 0;
-        font-size: 1.04rem;
-        font-weight: 700;
-        letter-spacing: -0.01em;
+        font-size: 1.05rem;
+        letter-spacing: -0.02em;
       }
 
       .brand p {
-        margin: 0.18rem 0 0;
-        font-size: 0.82rem;
-        color: var(--text-soft);
+        margin: 2px 0 0;
+        color: var(--muted);
+        font-size: 0.78rem;
+      }
+
+      .nav {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .nav a {
+        padding: 9px 12px;
+        border-radius: 999px;
+        color: var(--muted);
+        font-size: 0.87rem;
+        font-weight: 500;
+        text-decoration: none;
+      }
+
+      .nav a:hover {
+        color: var(--ink);
+        background: rgba(47, 44, 39, 0.06);
+      }
+
+      .nav .download-link {
+        color: #fffdf7;
+        background: var(--sidebar);
+      }
+
+      .nav .download-link:hover {
+        color: #fffdf7;
+        background: var(--sidebar-soft);
+      }
+
+      .mobile-jumps {
+        display: none;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .mobile-jumps a {
+        min-height: 40px;
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(255, 253, 247, 0.72);
+        color: var(--muted);
+        font-size: 0.84rem;
+        font-weight: 700;
+        text-align: center;
+        text-decoration: none;
+      }
+
+      .mobile-jumps a:focus-visible,
+      .mobile-jumps a:hover {
+        border-color: var(--line-strong);
+        color: var(--ink);
+        background: var(--paper);
       }
 
       .hero {
-        margin-top: 1rem;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        background: var(--surface);
-        padding: 1.2rem;
-        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.04);
+        position: relative;
+        display: grid;
+        grid-template-columns: minmax(0, 0.9fr) minmax(420px, 1.1fr);
+        gap: 28px;
+        margin-top: 28px;
+        padding: 28px;
+        overflow: hidden;
+        border: 1px solid rgba(214, 203, 187, 0.88);
+        border-radius: var(--radius-lg);
+        background:
+          linear-gradient(
+            135deg,
+            rgba(255, 253, 247, 0.94),
+            rgba(247, 239, 224, 0.88)
+          ),
+          var(--paper);
+        box-shadow: var(--shadow);
+      }
+
+      .hero::before {
+        content: "";
+        position: absolute;
+        inset: auto -120px -180px auto;
+        width: 420px;
+        height: 420px;
+        border-radius: 50%;
+        background: radial-gradient(
+          circle,
+          rgba(201, 150, 45, 0.28),
+          transparent 68%
+        );
+      }
+
+      .hero-copy,
+      .hero-media {
+        position: relative;
+        z-index: 1;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 18px;
+        padding: 8px 11px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.7);
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-weight: 500;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--green);
+        box-shadow: 0 0 0 5px rgba(71, 106, 82, 0.12);
       }
 
       .hero h2 {
+        max-width: 11ch;
         margin: 0;
-        font-size: clamp(1.3rem, 2.6vw, 1.9rem);
-        font-weight: 700;
-        letter-spacing: -0.015em;
+        font-size: clamp(3.1rem, 8vw, 6.4rem);
+        line-height: 0.88;
+        letter-spacing: -0.075em;
       }
 
-      .hero p {
-        margin: 0.42rem 0 0;
-        color: var(--text-soft);
-        font-size: 0.95rem;
+      .hero .lead {
+        max-width: 570px;
+        margin: 22px 0 0;
+        color: var(--muted);
+        font-size: clamp(1rem, 2vw, 1.22rem);
+        line-height: 1.58;
       }
 
-      .grid {
-        margin-top: 1rem;
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-        gap: 0.9rem;
-      }
-
-      .card {
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        padding: 1rem;
-      }
-
-      .card h3 {
-        margin: 0;
-        font-size: 1rem;
-        font-weight: 700;
-      }
-
-      .card p {
-        margin: 0.45rem 0 0.85rem;
-        color: var(--text-soft);
-        font-size: 0.88rem;
-      }
-
-      .actions {
+      .cta-row {
         display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 26px;
       }
 
       .btn {
-        display: block;
-        text-align: center;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 44px;
+        padding: 12px 16px;
+        border: 1px solid var(--line-strong);
+        border-radius: 999px;
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.72);
+        font-size: 0.93rem;
+        font-weight: 700;
         text-decoration: none;
-        font-size: 0.88rem;
-        font-weight: 500;
-        color: var(--text);
-        background: var(--accent-soft);
-        border: 1px solid #e2e2e2;
-        border-radius: 10px;
-        padding: 0.55rem 0.75rem;
-        transition: background-color 120ms ease;
+        transition:
+          transform 140ms ease,
+          border-color 140ms ease,
+          background-color 140ms ease;
       }
 
       .btn:hover {
-        background: #e7e7e7;
+        transform: translateY(-1px);
+        border-color: rgba(47, 44, 39, 0.28);
+        background: #fff;
       }
 
-      .footer {
-        margin-top: 1rem;
-        border: 1px solid var(--border);
-        background: var(--surface);
-        border-radius: var(--radius);
-        padding: 0.85rem 1rem;
-        font-size: 0.88rem;
-        color: var(--text-soft);
+      .btn.primary {
+        color: #fffdf7;
+        border-color: var(--sidebar);
+        background: var(--sidebar);
+        box-shadow: 0 14px 30px rgba(47, 44, 39, 0.18);
       }
 
-      .footer a {
-        color: var(--accent);
-        font-weight: 500;
-        text-decoration: none;
+      .btn.primary:hover {
+        background: var(--sidebar-soft);
       }
 
-      .steps {
-        margin-top: 1rem;
-        border: 1px solid var(--border);
-        background: var(--surface);
-        border-radius: var(--radius);
-        padding: 1rem;
+      .trust-row {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 28px;
       }
 
-      .steps h3 {
-        margin: 0 0 0.5rem;
-        font-size: 1rem;
+      .trust-pill {
+        padding: 12px;
+        border: 1px solid rgba(228, 221, 209, 0.9);
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.64);
       }
 
-      .steps ul {
-        margin: 0;
-        padding-left: 1.1rem;
-        color: var(--text-soft);
+      .trust-pill strong {
+        display: block;
         font-size: 0.9rem;
+      }
+
+      .trust-pill span {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 0.78rem;
+        line-height: 1.35;
+      }
+
+      .app-frame {
+        position: relative;
+        margin-top: 28px;
+        padding: 11px;
+        border: 1px solid rgba(47, 44, 39, 0.12);
+        border-radius: 24px;
+        background: rgba(255, 255, 255, 0.72);
+        box-shadow: 0 22px 54px rgba(49, 43, 34, 0.16);
+      }
+
+      .window-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 6px 9px;
+        color: var(--muted);
+        font-size: 0.75rem;
+      }
+
+      .traffic {
+        display: flex;
+        gap: 6px;
+      }
+
+      .traffic span {
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: #d8d0c3;
+      }
+
+      .app-frame img {
+        display: block;
+        width: 100%;
+        height: auto;
+        border: 1px solid rgba(47, 44, 39, 0.12);
+        border-radius: 17px;
+      }
+
+      .floating-card {
+        position: absolute;
+        right: 24px;
+        bottom: 24px;
+        max-width: 260px;
+        padding: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.24);
+        border-radius: 18px;
+        color: #f8f2e8;
+        background: rgba(40, 37, 31, 0.9);
+        box-shadow: 0 18px 50px rgba(47, 44, 39, 0.28);
+      }
+
+      .floating-card strong {
+        display: block;
+        font-size: 0.9rem;
+      }
+
+      .floating-card span {
+        display: block;
+        margin-top: 5px;
+        color: rgba(248, 242, 232, 0.78);
+        font-size: 0.78rem;
         line-height: 1.45;
       }
 
-      .steps li {
-        margin-bottom: 0.45rem;
+      .section {
+        margin-top: 24px;
       }
 
-      .steps code {
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-        background: #f1f1f1;
-        border: 1px solid #e3e3e3;
-        border-radius: 6px;
-        padding: 0.1rem 0.35rem;
-        color: #333;
+      .section-head {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 18px;
+        margin-bottom: 14px;
       }
 
-      .preview {
-        margin-top: 1rem;
-        border: 1px solid var(--border);
-        background: var(--surface);
-        border-radius: var(--radius);
-        padding: 0.75rem;
+      .section-head h3 {
+        margin: 0;
+        font-size: clamp(1.45rem, 2.6vw, 2.2rem);
+        letter-spacing: -0.04em;
       }
 
-      .preview img {
-        width: 100%;
-        height: auto;
+      .section-head p {
+        max-width: 560px;
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .feature-grid,
+      .download-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .feature-card,
+      .download-card,
+      .info-card {
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-md);
+        background: rgba(255, 253, 247, 0.78);
+        box-shadow: 0 12px 34px rgba(49, 43, 34, 0.07);
+      }
+
+      .feature-card {
+        padding: 20px;
+      }
+
+      .feature-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 38px;
+        height: 38px;
+        margin-bottom: 18px;
+        border-radius: 13px;
+        color: var(--sidebar);
+        background: var(--gold-soft);
+        font-weight: 700;
+      }
+
+      .feature-card h4,
+      .download-card h4,
+      .info-card h4 {
+        margin: 0;
+        font-size: 1.02rem;
+      }
+
+      .feature-card p,
+      .download-card p,
+      .info-card p {
+        margin: 10px 0 0;
+        color: var(--muted);
+        font-size: 0.92rem;
+        line-height: 1.5;
+      }
+
+      .download-card {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        padding: 18px;
+      }
+
+      .download-actions {
+        display: grid;
+        gap: 9px;
+        margin-top: auto;
+      }
+
+      .download-actions a {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 11px 12px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fff;
+        font-size: 0.9rem;
+        font-weight: 700;
+        text-decoration: none;
+      }
+
+      .download-actions a:hover {
+        border-color: var(--gold);
+      }
+
+      .split {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+
+      .info-card {
+        padding: 20px;
+      }
+
+      .code-block {
+        max-width: 100%;
+        margin-top: 12px;
+        padding: 14px;
+        overflow-x: auto;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 14px;
+        color: #f4eddf;
+        background: var(--sidebar);
+        font-family:
+          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", monospace;
+        font-size: 0.84rem;
+        line-height: 1.6;
+        white-space: pre;
+        overflow-wrap: normal;
+      }
+
+      .info-card ul {
+        margin: 12px 0 0;
+        padding: 0;
+        list-style: none;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .info-card li {
+        display: flex;
+        gap: 9px;
+        margin-top: 9px;
+        line-height: 1.45;
+      }
+
+      .info-card li::before {
+        content: "";
+        flex: 0 0 auto;
+        width: 7px;
+        height: 7px;
+        margin-top: 0.48em;
+        border-radius: 999px;
+        background: var(--gold);
+      }
+
+      .install-steps {
+        display: grid;
+        gap: 10px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .install-steps li {
         display: block;
-        border-radius: 10px;
-        border: 1px solid #e6e6e6;
+        padding: 13px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.66);
+        color: var(--muted);
+        line-height: 1.45;
       }
 
-      @media (max-width: 640px) {
-        .shell {
-          padding: 1rem 0.75rem 2rem;
+      .install-steps li::before {
+        display: none;
+      }
+
+      .install-steps strong {
+        color: var(--ink);
+      }
+
+      .install-steps code {
+        overflow-wrap: anywhere;
+      }
+
+      code {
+        font-family:
+          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", monospace;
+        color: #332b1d;
+        background: #f4ead5;
+        border: 1px solid #eadbbf;
+        border-radius: 6px;
+        padding: 0.08rem 0.35rem;
+      }
+
+      .footer {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 14px;
+        margin-top: 24px;
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-md);
+        color: var(--muted);
+        background: rgba(255, 253, 247, 0.74);
+        font-size: 0.9rem;
+      }
+
+      .footer a,
+      .section-link {
+        color: var(--ink);
+        font-weight: 700;
+        text-decoration: none;
+      }
+
+      .footer a:hover,
+      .section-link:hover {
+        text-decoration: underline;
+      }
+
+      @media (max-width: 980px) {
+        .hero,
+        .split {
+          grid-template-columns: 1fr;
         }
 
-        .topbar,
-        .hero,
-        .card,
-        .footer {
-          border-radius: 12px;
+        .hero h2 {
+          max-width: 12ch;
+        }
+
+        .feature-grid,
+        .download-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .floating-card {
+          position: static;
+          max-width: none;
+          margin-top: 12px;
+        }
+      }
+
+      @media (max-width: 680px) {
+        .shell {
+          width: min(100% - 22px, 1180px);
+          padding-top: 12px;
+        }
+
+        .topbar {
+          position: static;
+          align-items: flex-start;
+          border-radius: 22px;
+        }
+
+        .nav {
+          display: none;
+        }
+
+        .mobile-jumps {
+          display: grid;
+        }
+
+        .hero {
+          margin-top: 14px;
+          padding: 18px;
+          border-radius: 24px;
+        }
+
+        .hero h2 {
+          font-size: clamp(2.6rem, 17vw, 4rem);
+        }
+
+        .trust-row {
+          grid-template-columns: 1fr;
+        }
+
+        .section-head {
+          display: block;
+        }
+
+        .section-head p {
+          margin-top: 8px;
         }
       }
     </style>
@@ -233,86 +719,300 @@
   <body>
     <main class="shell">
       <header class="topbar">
-        <img class="logo" src="./assets/logo.png" alt="Infimount logo" />
-        <div class="brand">
-          <h1>Infimount</h1>
-          <p>Unified Storage Browser</p>
-        </div>
+        <a
+          class="brand-lockup"
+          href="https://github.com/infimount/infimount"
+          aria-label="Infimount GitHub repository"
+        >
+          <img class="logo" src="./assets/logo.png" alt="Infimount logo" />
+          <div class="brand">
+            <h1>Infimount</h1>
+            <p>Unified Storage Browser</p>
+          </div>
+        </a>
+        <nav class="nav" aria-label="Primary navigation">
+          <a href="#features">Features</a>
+          <a href="#mcp">MCP</a>
+          <a href="#install">Install</a>
+          <a href="https://github.com/infimount/infimount">GitHub</a>
+          <a class="download-link" href="#downloads">Download</a>
+        </nav>
       </header>
 
+      <nav class="mobile-jumps" aria-label="Mobile navigation">
+        <a href="#features">Features</a>
+        <a href="#mcp">MCP</a>
+        <a href="#downloads">Download</a>
+      </nav>
+
       <section class="hero">
-        <h2>Downloads</h2>
-        <p>Current stable release: <a href="https://github.com/infimount/infimount/releases/latest"><strong>Latest on GitHub Releases</strong></a></p>
-      </section>
-
-      <section class="preview">
-        <img src="./assets/screenshot-infimount.png" alt="Infimount desktop application screenshot" />
-      </section>
-
-      <section class="grid">
-        <article class="card">
-          <h3>Linux</h3>
-          <p>Debian/Ubuntu, Fedora/RHEL, and AppImage.</p>
-          <div class="actions">
-            <a class="btn" href="https://github.com/infimount/infimount/releases/latest/download/Infimount-amd64.deb">Download .deb</a>
-            <a class="btn" href="https://github.com/infimount/infimount/releases/latest/download/Infimount-x86_64.rpm">Download .rpm</a>
-            <a class="btn" href="https://github.com/infimount/infimount/releases/latest/download/Infimount-x86_64.AppImage">Download .AppImage</a>
+        <div class="hero-copy">
+          <div class="eyebrow">
+            <span class="dot"></span>Local-first storage browser for desktop and
+            agents
           </div>
-        </article>
-
-        <article class="card">
-          <h3>macOS</h3>
-          <p>Installer image for Apple Silicon and Intel Macs.</p>
-          <div class="actions">
-            <a class="btn" href="https://github.com/infimount/infimount/releases/latest/download/Infimount.dmg">Download .dmg</a>
+          <h2>One app for every storage.</h2>
+          <p class="lead">
+            Browse local folders, S3, Azure Blob, Google Cloud Storage, and
+            WebDAV from one native desktop app. Expose only the storages and MCP
+            tools you trust to local AI clients.
+          </p>
+          <div class="cta-row">
+            <a class="btn primary" href="#downloads">Download latest</a>
+            <a class="btn" href="https://github.com/infimount/infimount"
+              >View on GitHub</a
+            >
+            <a
+              class="btn"
+              href="https://github.com/infimount/infimount/releases/latest"
+              >Release notes</a
+            >
           </div>
-        </article>
-
-        <article class="card">
-          <h3>Windows</h3>
-          <p>Installer packages for standard Windows setup.</p>
-          <div class="actions">
-            <a class="btn" href="https://github.com/infimount/infimount/releases/latest/download/Infimount.msi">Download .msi</a>
-            <a class="btn" href="https://github.com/infimount/infimount/releases/latest/download/Infimount-setup.exe">Download .exe</a>
+          <div class="trust-row" aria-label="Key product qualities">
+            <div class="trust-pill">
+              <strong>Local-first</strong>
+              <span>Storage config stays on your machine.</span>
+            </div>
+            <div class="trust-pill">
+              <strong>Cross-platform</strong>
+              <span>Linux, macOS, and Windows builds.</span>
+            </div>
+            <div class="trust-pill">
+              <strong>MCP-ready</strong>
+              <span>Stdio and local HTTP for agents.</span>
+            </div>
           </div>
+        </div>
+        <div class="hero-media">
+          <div class="app-frame">
+            <div class="window-bar">
+              <div class="traffic"><span></span><span></span><span></span></div>
+              <span>Infimount Desktop</span>
+            </div>
+            <img
+              src="./assets/screenshot-infimount.png"
+              alt="Infimount desktop app showing storage browser UI"
+            />
+            <div class="floating-card">
+              <strong>Your storage, your machine.</strong>
+              <span
+                >No hosted Infimount backend is required. Credentials and
+                registry files live under <code>~/.infimount</code>.</span
+              >
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="features" class="section">
+        <div class="section-head">
+          <h3>Built for people who move between storage systems.</h3>
+          <p>
+            Infimount keeps the daily file-browser workflow simple while using
+            OpenDAL underneath for backend reach.
+          </p>
+        </div>
+        <div class="feature-grid">
+          <article class="feature-card">
+            <div class="feature-icon">01</div>
+            <h4>Unified browser</h4>
+            <p>
+              Use grid and list views, previews, navigation, and drag-and-drop
+              across local and cloud-backed storage sources.
+            </p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon">02</div>
+            <h4>Local-first control</h4>
+            <p>
+              Storage registry and MCP settings are stored locally. Mark
+              storages as read-only or hide them from MCP exposure.
+            </p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon">03</div>
+            <h4>Agent-safe MCP</h4>
+            <p>
+              Expose filesystem-style MCP tools over stdio or local HTTP, with
+              bearer auth, scoped sessions, and tool-level controls.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="downloads" class="section">
+        <div class="section-head">
+          <h3>Download the latest stable release.</h3>
+          <p>
+            These links always point to the latest GitHub Release assets, not
+            temporary CI artifacts.
+          </p>
+        </div>
+        <div class="download-grid">
+          <article class="download-card">
+            <div>
+              <h4>Linux</h4>
+              <p>
+                Use a native package for your distro, or the AppImage for a
+                portable install.
+              </p>
+            </div>
+            <div class="download-actions">
+              <a
+                href="https://github.com/infimount/infimount/releases/latest/download/Infimount-amd64.deb"
+                ><span>Download DEB</span><span>.deb</span></a
+              >
+              <a
+                href="https://github.com/infimount/infimount/releases/latest/download/Infimount-x86_64.rpm"
+                ><span>Download RPM</span><span>.rpm</span></a
+              >
+              <a
+                href="https://github.com/infimount/infimount/releases/latest/download/Infimount-x86_64.AppImage"
+                ><span>Download AppImage</span><span>.AppImage</span></a
+              >
+            </div>
+          </article>
+          <article class="download-card">
+            <div>
+              <h4>macOS</h4>
+              <p>
+                Install using the DMG, or use the Homebrew cask if you prefer
+                terminal-based upgrades.
+              </p>
+            </div>
+            <div class="download-actions">
+              <a
+                href="https://github.com/infimount/infimount/releases/latest/download/Infimount.dmg"
+                ><span>Download DMG</span><span>.dmg</span></a
+              >
+              <a href="#homebrew"
+                ><span>Homebrew cask</span><span>brew</span></a
+              >
+            </div>
+          </article>
+          <article class="download-card">
+            <div>
+              <h4>Windows</h4>
+              <p>
+                Use the MSI installer or NSIS setup executable. Unsigned
+                releases can trigger SmartScreen.
+              </p>
+            </div>
+            <div class="download-actions">
+              <a
+                href="https://github.com/infimount/infimount/releases/latest/download/Infimount.msi"
+                ><span>Download MSI</span><span>.msi</span></a
+              >
+              <a
+                href="https://github.com/infimount/infimount/releases/latest/download/Infimount-setup.exe"
+                ><span>Download Setup</span><span>.exe</span></a
+              >
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="mcp" class="section split">
+        <article class="info-card">
+          <h4>MCP for local AI workflows</h4>
+          <p>
+            Connect clients to the same storage sources you use in the desktop
+            app, with explicit control over what is exposed.
+          </p>
+          <ul>
+            <li>Stdio and Streamable HTTP transport.</li>
+            <li>Bearer-token auth for headless HTTP mode.</li>
+            <li>Disable sensitive storage-management tools when not needed.</li>
+            <li>
+              Version-aware tools where the backend supports object versions.
+            </li>
+          </ul>
+          <p>
+            <a
+              class="section-link"
+              href="https://github.com/infimount/infimount/blob/main/docs/mcp-client-setup.md"
+              >Read MCP setup guide</a
+            >
+            |
+            <a
+              class="section-link"
+              href="https://github.com/infimount/infimount/blob/main/docs/security.md"
+              >Security model</a
+            >
+          </p>
+        </article>
+        <article class="info-card">
+          <h4>Client snippet</h4>
+          <p>
+            For local HTTP mode, keep the server bound to loopback unless you
+            intentionally expose it.
+          </p>
+          <pre class="code-block">
+{
+  "mcpServers": {
+    "infimount": {
+      "url": "http://127.0.0.1:7331/mcp"
+    }
+  }
+}</pre
+          >
         </article>
       </section>
 
-      <section class="steps">
-        <h3>Install with Homebrew (macOS and Linux)</h3>
-        <ul>
-          <li><code>brew tap infimount/infimount</code></li>
-          <li><code>brew install infimount</code> (Linux formula)</li>
-          <li><code>brew install --cask infimount</code> (macOS cask)</li>
-          <li><code>brew update</code> then <code>brew upgrade infimount</code> / <code>brew upgrade --cask infimount</code> (upgrade)</li>
-        </ul>
-      </section>
-
-      <section class="steps">
-        <h3>Upgrade to Latest Release</h3>
-        <ul>
-          <li><strong>Linux DEB:</strong> <code>sudo apt install ./Infimount-amd64.deb</code></li>
-          <li><strong>Linux RPM:</strong> <code>sudo rpm -Uvh ./Infimount-x86_64.rpm</code></li>
-          <li><strong>Linux AppImage:</strong> replace old file, then run <code>chmod +x Infimount-*.AppImage && ./Infimount-*.AppImage</code></li>
-          <li><strong>macOS DMG:</strong> download latest DMG and replace <code>Infimount.app</code> in Applications.</li>
-          <li><strong>Windows MSI/EXE:</strong> run the latest installer to upgrade your existing install.</li>
-        </ul>
-      </section>
-
-      <section class="steps">
-        <h3>After Download (First Run)</h3>
-        <ul>
-          <li><strong>Linux AppImage:</strong> <code>chmod +x Infimount-*.AppImage && ./Infimount-*.AppImage</code></li>
-          <li><strong>Linux DEB:</strong> <code>sudo apt install ./Infimount-amd64.deb</code></li>
-          <li><strong>Linux RPM:</strong> <code>sudo rpm -i Infimount-x86_64.rpm</code></li>
-          <li><strong>macOS DMG:</strong> Open DMG, drag app to Applications, then right-click <code>Infimount</code> -> <code>Open</code> on first launch.</li>
-          <li><strong>Windows MSI/EXE:</strong> If SmartScreen appears, choose <code>More info</code> -> <code>Run anyway</code>.</li>
-        </ul>
+      <section id="install" class="section split">
+        <article id="homebrew" class="info-card">
+          <h4>Install with Homebrew</h4>
+          <pre class="code-block">
+brew tap infimount/infimount
+brew install infimount
+brew install --cask infimount</pre
+          >
+          <p>
+            Linux uses the formula. macOS can use the cask. Upgrade with
+            <code>brew update</code> and <code>brew upgrade</code>.
+          </p>
+        </article>
+        <article class="info-card">
+          <h4>First run notes</h4>
+          <ul class="install-steps">
+            <li>
+              <strong>Linux AppImage:</strong> run
+              <code>chmod +x Infimount-*.AppImage</code> before launch.
+            </li>
+            <li>
+              <strong>macOS:</strong> drag the app to Applications, then
+              right-click and choose <code>Open</code> on first launch if
+              Gatekeeper warns.
+            </li>
+            <li>
+              <strong>Windows:</strong> if SmartScreen appears, choose
+              <code>More info</code> then <code>Run anyway</code>.
+            </li>
+          </ul>
+        </article>
       </section>
 
       <section class="footer">
-        Integrity files (`SHA256SUMS.txt` and `.sha256`) are available in the same release.
-        See all releases: <a href="https://github.com/infimount/infimount/releases">github.com/infimount/infimount/releases</a>
+        <span
+          >Integrity files are published with every release:
+          <code>SHA256SUMS.txt</code> and per-file
+          <code>.sha256</code> assets.</span
+        >
+        <span
+          ><a href="https://github.com/infimount/infimount/releases"
+            >All releases</a
+          >
+          |
+          <a
+            href="https://github.com/infimount/infimount/blob/main/docs/backend-capabilities.md"
+            >Backend capabilities</a
+          >
+          |
+          <a
+            href="https://github.com/infimount/infimount/blob/main/docs/security.md"
+            >Security</a
+          ></span
+        >
       </section>
     </main>
   </body>

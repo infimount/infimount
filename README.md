@@ -11,11 +11,11 @@
   <img src="docs/assets/screenshot-infimount.png" alt="Infimount app screenshot" width="900" />
 </p>
 
-
 > 🔐 **LOCAL-FIRST BY DEFAULT**
 >
 > Infimount stores your storage sources, app config, and credentials on your own machine.
-> Default path: `~/.infimount/config.json` (or override via `INFIMOUNT_CONFIG`).
+> Default storage registry: `~/.infimount/storages.json`.
+> MCP runtime settings: `~/.infimount/mcp_settings.json`.
 > No Infimount-hosted backend is required.
 
 <p align="center">
@@ -35,6 +35,7 @@
 - 🖼️ **Rich Previews** — View images, text files, and documents inline
 - 📁 **Grid & List Views** — Switch between visual layouts
 - 🔄 **Drag & Drop** — Upload files by dropping them into any storage
+- 🤖 **MCP for AI Assistants** — Expose selected storages and tools over stdio or local HTTP
 - ⚡ **Fast & Native** — Built with Tauri + Rust for minimal resource usage
 - 🎨 **Modern UI** — Dark mode, keyboard shortcuts, and polished UX
 
@@ -49,14 +50,14 @@ Pre-built binaries for **Linux**, **macOS**, and **Windows** are available on:
 
 **Current stable release:** [Latest Release](https://github.com/infimount/infimount/releases/latest)
 
-| Platform | Download Link (`latest stable`) | Format |
-|----------|----------------------|--------|
-| Linux (Debian/Ubuntu) | [Infimount-amd64.deb](https://github.com/infimount/infimount/releases/latest/download/Infimount-amd64.deb) | `.deb` |
-| Linux (Fedora/RHEL) | [Infimount-x86_64.rpm](https://github.com/infimount/infimount/releases/latest/download/Infimount-x86_64.rpm) | `.rpm` |
-| Linux (Universal) | [Infimount-x86_64.AppImage](https://github.com/infimount/infimount/releases/latest/download/Infimount-x86_64.AppImage) | `.AppImage` |
-| macOS | [Infimount.dmg](https://github.com/infimount/infimount/releases/latest/download/Infimount.dmg) | `.dmg` |
-| Windows (Installer) | [Infimount.msi](https://github.com/infimount/infimount/releases/latest/download/Infimount.msi) | `.msi` |
-| Windows (NSIS) | [Infimount-setup.exe](https://github.com/infimount/infimount/releases/latest/download/Infimount-setup.exe) | `.exe` |
+| Platform              | Download Link (`latest stable`)                                                                                        | Format      |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------- |
+| Linux (Debian/Ubuntu) | [Infimount-amd64.deb](https://github.com/infimount/infimount/releases/latest/download/Infimount-amd64.deb)             | `.deb`      |
+| Linux (Fedora/RHEL)   | [Infimount-x86_64.rpm](https://github.com/infimount/infimount/releases/latest/download/Infimount-x86_64.rpm)           | `.rpm`      |
+| Linux (Universal)     | [Infimount-x86_64.AppImage](https://github.com/infimount/infimount/releases/latest/download/Infimount-x86_64.AppImage) | `.AppImage` |
+| macOS                 | [Infimount.dmg](https://github.com/infimount/infimount/releases/latest/download/Infimount.dmg)                         | `.dmg`      |
+| Windows (Installer)   | [Infimount.msi](https://github.com/infimount/infimount/releases/latest/download/Infimount.msi)                         | `.msi`      |
+| Windows (NSIS)        | [Infimount-setup.exe](https://github.com/infimount/infimount/releases/latest/download/Infimount-setup.exe)             | `.exe`      |
 
 > ℹ️ **Tip:** Use assets from the **GitHub Release page**.
 > The `linux-artifacts.zip` from Actions is a temporary CI artifact and is not the canonical public download link.
@@ -123,15 +124,32 @@ If you installed from release binaries (not Homebrew), upgrade like this:
 
 ## 📦 Supported Storage Backends
 
-| Backend | Status | Notes |
-|---------|--------|-------|
-| **Local Filesystem** | ✅ Stable | Full read/write support |
-| **Amazon S3** | ✅ Stable | Any S3-compatible service |
-| **Azure Blob Storage** | ✅ Stable | Container/account key auth |
-| **Google Cloud Storage** | ✅ Stable | Service account JSON |
-| **WebDAV** | ✅ Stable | Nextcloud, ownCloud, etc. |
-| **SFTP** | 🔜 Planned | Coming soon |
-| **FTP** | 🔜 Planned | Coming soon |
+| Backend                  | Status     | Notes                                                                       |
+| ------------------------ | ---------- | --------------------------------------------------------------------------- |
+| **Local Filesystem**     | ✅ Stable  | Full read/write support                                                     |
+| **Amazon S3**            | ✅ Stable  | Any S3-compatible service; versioning depends on bucket support             |
+| **Azure Blob Storage**   | ✅ Stable  | Container/account key auth; advanced capabilities depend on account support |
+| **Google Cloud Storage** | ✅ Stable  | Service account JSON; advanced capabilities depend on bucket support        |
+| **WebDAV**               | ✅ Stable  | Nextcloud, ownCloud, etc.; no object versioning                             |
+| **SFTP**                 | 🔜 Planned | Coming soon                                                                 |
+| **FTP**                  | 🔜 Planned | Coming soon                                                                 |
+
+For MCP/versioning details, see [Backend Capability Matrix](docs/backend-capabilities.md).
+
+---
+
+## 🤖 MCP Integration
+
+Infimount includes a Rust MCP server for local AI clients and agent workflows.
+
+- Transports: stdio and Streamable HTTP
+- HTTP auth: bearer token required for headless HTTP unless explicitly started in insecure dev mode
+- Scoped access: expose only selected storages, mark storages read-only, and disable individual MCP tools
+- Version-aware tools: supported where the backend and storage configuration support object versions
+
+Setup guide: [MCP Client Setup](docs/mcp-client-setup.md)
+
+Security model: [Security Model](docs/security.md)
 
 ---
 
@@ -167,29 +185,35 @@ pnpm tauri build    # Bundle native app
 ```
 
 Outputs:
+
 - **Linux**: `target/release/bundle/deb/`, `bundle/rpm/`, `bundle/appimage/`
 - **macOS**: `target/release/bundle/dmg/`, `bundle/macos/`
 - **Windows**: `target/release/bundle/msi/`, `bundle/nsis/`
 
 > 📖 For detailed platform-specific instructions, see [build.md](build.md).
 > For release operations and checklist, see [docs/releasing.md](docs/releasing.md).
+> To verify public download links before announcing a release, run `scripts/check-release-links.sh`.
 
 ---
 
 ## 🎯 Roadmap
 
-### Current Focus (v0.1.x)
+### Current Focus (v0.2.x)
+
 - [x] Local filesystem browsing
 - [x] S3/Azure/GCS/WebDAV backends
 - [x] Grid and list views
 - [x] File preview panel
 - [x] Drag-and-drop uploads
+- [x] MCP support for integration with AI assistants
+- [x] Version-aware MCP tools where supported by the backend
+- [x] Tool-level MCP exposure controls
 - [ ] Multi-tab browsing
 - [ ] Keyboard navigation
 
 ### Future Plans
+
 - [ ] Additional storage backends (SFTP, FTP, etc.)
-- [ ] MCP support for integration with AI assistants
 - [ ] Improved performance for large directories
 - [ ] CLI companion (`infimount-cli`)
 - [ ] Mobile app (iOS/Android)
@@ -235,6 +259,7 @@ If Infimount is useful to you, consider supporting its development:
 </p>
 
 Your sponsorship helps:
+
 - Maintain and improve the codebase
 - Add new storage backends
 - Keep Infimount free and open source
@@ -244,17 +269,22 @@ Your sponsorship helps:
 ## 📝 Installation Notes
 
 ### macOS
+
 Binaries may be unsigned/not notarized in some releases. To open:
+
 1. Open the `.dmg`
 2. Drag `Infimount.app` to `Applications`
 3. Right-click the app and select `Open`
 4. Click `Open` in the dialog
 
 ### Windows
+
 SmartScreen may block the installer. Click `More info` -> `Run anyway`.
 
 ### Linux
+
 AppImage needs executable permission:
+
 ```bash
 chmod +x Infimount-*.AppImage
 ./Infimount-*.AppImage
