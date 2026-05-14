@@ -11,6 +11,10 @@
   <img src="docs/assets/infimount-banner.png" alt="Infimount - one surface for every storage" width="900" />
 </p>
 
+<p align="center">
+  <img src="docs/assets/screenshot-infimount.png" alt="Infimount desktop app screenshot" width="900" />
+</p>
+
 > 🔐 **LOCAL-FIRST BY DEFAULT**
 >
 > Infimount stores your storage sources, app config, and credentials on your own machine.
