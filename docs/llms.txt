@@ -1,0 +1,31 @@
+# Infimount
+
+Infimount is a local-first desktop app for browsing and managing local files,
+Amazon S3, Azure Blob Storage, Google Cloud Storage, and WebDAV from one native
+interface. It also exposes selected storages through MCP for local AI assistants
+and agent workflows.
+
+## Useful Links
+
+- Website: https://infimount.github.io/infimount/
+- Repository: https://github.com/infimount/infimount
+- Releases: https://github.com/infimount/infimount/releases/latest
+- Homebrew tap: https://github.com/infimount/homebrew-infimount
+- MCP setup: https://github.com/infimount/infimount/blob/main/docs/mcp-client-setup.md
+- Security model: https://github.com/infimount/infimount/blob/main/docs/security.md
+- Backend capability matrix: https://github.com/infimount/infimount/blob/main/docs/backend-capabilities.md
+
+## Supported Storage Backends
+
+- Local filesystem
+- Amazon S3 and S3-compatible storage
+- Azure Blob Storage
+- Google Cloud Storage
+- WebDAV
+
+## Key Properties
+
+- Local-first: storage configuration and credentials remain on the user's machine.
+- Cross-platform: Linux, macOS, and Windows builds are published on GitHub Releases.
+- MCP-ready: stdio and local HTTP transport are supported, with tool-level exposure controls.
+- Built with Tauri, Rust, React, and Apache OpenDAL.
