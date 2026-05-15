@@ -137,10 +137,10 @@
         inset: 0;
         z-index: -2;
         background-image: url("./assets/infimount-mountain-banner.png");
-        background-position: top center;
+        background-position: center 118px;
         background-repeat: no-repeat;
-        background-size: min(1800px, 150vw) auto;
-        opacity: 0.18;
+        background-size: min(1960px, 142vw) auto;
+        opacity: 0.3;
       }
 
       body::after {
@@ -150,8 +150,8 @@
         z-index: -1;
         pointer-events: none;
         background:
-          linear-gradient(90deg, rgba(7, 10, 13, 0.2), rgba(7, 10, 13, 0.72)),
-          linear-gradient(180deg, rgba(7, 10, 13, 0.08), #07090b 76%);
+          linear-gradient(90deg, rgba(7, 10, 13, 0.12), rgba(7, 10, 13, 0.58)),
+          linear-gradient(180deg, rgba(7, 10, 13, 0.04), #07090b 88%);
       }
 
       a {
@@ -159,7 +159,7 @@
       }
 
       .page {
-        width: min(1180px, calc(100% - 36px));
+        width: min(1360px, calc(100% - 32px));
         margin: 0 auto;
       }
 
@@ -275,8 +275,8 @@
 
       .hero-grid {
         display: grid;
-        grid-template-columns: minmax(0, 0.82fr) minmax(520px, 1.18fr);
-        gap: 36px;
+        grid-template-columns: minmax(360px, 0.75fr) minmax(620px, 1.25fr);
+        gap: 48px;
         align-items: center;
       }
 
@@ -396,39 +396,6 @@
         position: relative;
       }
 
-      .connector-orbit {
-        position: absolute;
-        inset: -116px 16px auto auto;
-        display: grid;
-        grid-template-columns: repeat(4, 72px);
-        gap: 26px;
-        justify-content: end;
-        pointer-events: none;
-        opacity: 0.82;
-      }
-
-      .orb {
-        display: grid;
-        place-items: center;
-        width: 70px;
-        height: 70px;
-        border: 1px solid rgba(235, 241, 249, 0.12);
-        border-radius: 50%;
-        color: #dce3ec;
-        background:
-          radial-gradient(
-            circle at 34% 26%,
-            rgba(255, 255, 255, 0.14),
-            transparent 34%
-          ),
-          rgba(20, 26, 33, 0.78);
-        box-shadow:
-          inset 0 0 0 10px rgba(255, 255, 255, 0.025),
-          0 22px 50px rgba(0, 0, 0, 0.34);
-        font-size: 1.55rem;
-        font-weight: 700;
-      }
-
       .app-window {
         position: relative;
         overflow: hidden;
@@ -542,24 +509,10 @@
       }
 
       .feature-card {
-        min-height: 200px;
-        padding: 20px 18px;
+        min-height: 154px;
+        padding: 24px 20px;
         border-radius: 18px;
-        text-align: center;
-      }
-
-      .feature-icon {
-        display: grid;
-        place-items: center;
-        width: 48px;
-        height: 48px;
-        margin: 0 auto 18px;
-        border: 1px solid rgba(235, 241, 249, 0.18);
-        border-radius: 15px;
-        color: var(--silver);
-        background: rgba(255, 255, 255, 0.045);
-        font-size: 1.45rem;
-        font-weight: 700;
+        text-align: left;
       }
 
       .feature-card h2,
@@ -607,6 +560,10 @@
         padding-top: 4px;
       }
 
+      .install-section {
+        margin-top: 18px;
+      }
+
       .connector-rail {
         display: grid;
         grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -626,11 +583,19 @@
         font-weight: 700;
       }
 
-      .connector span:first-child {
+      .connector img {
         display: grid;
         place-items: center;
         width: 32px;
         height: 32px;
+        object-fit: contain;
+      }
+
+      .connector-icon {
+        display: grid;
+        place-items: center;
+        width: 42px;
+        height: 42px;
         border-radius: 10px;
         background: rgba(255, 255, 255, 0.06);
       }
@@ -728,15 +693,16 @@
 
       .download-grid {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(3, minmax(300px, 1fr));
         gap: 16px;
+        align-items: stretch;
       }
 
       .download-card {
         display: flex;
         flex-direction: column;
         gap: 18px;
-        min-height: 312px;
+        min-height: 284px;
         padding: 22px;
         border-radius: 20px;
       }
@@ -773,7 +739,7 @@
 
       .install-grid {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 16px;
       }
 
@@ -920,10 +886,6 @@
           grid-template-columns: 1fr;
         }
 
-        .connector-orbit {
-          display: none;
-        }
-
         .privacy-panel {
           right: 16px;
         }
@@ -966,7 +928,7 @@
 
       @media (max-width: 780px) {
         .page {
-          width: min(100% - 26px, 1180px);
+          width: min(100% - 24px, 1360px);
         }
 
         .topbar {
@@ -1003,8 +965,9 @@
 
         body::before {
           background-image: url("./assets/infimount-mountain.png");
-          background-size: min(720px, 150vw) auto;
-          opacity: 0.12;
+          background-position: center 120px;
+          background-size: min(760px, 156vw) auto;
+          opacity: 0.22;
         }
 
         .hero-subtitle {
@@ -1102,19 +1065,12 @@
           </div>
 
           <div class="hero-media">
-            <div class="connector-orbit" aria-hidden="true">
-              <div class="orb">S3</div>
-              <div class="orb">DB</div>
-              <div class="orb">API</div>
-              <div class="orb">AI</div>
-            </div>
             <div class="app-window">
               <div class="app-chrome">
                 <div class="chrome-left">
                   <div class="traffic">
                     <span></span><span></span><span></span>
                   </div>
-                  <span>s3://my-bucket/datasets/mountains</span>
                 </div>
                 <span>Local-first</span>
               </div>
@@ -1137,34 +1093,28 @@
 
       <section id="features" class="feature-strip" aria-label="Key features">
         <article class="feature-card">
-          <div class="feature-icon">01</div>
           <h2>Multi-cloud access</h2>
           <p>Connect to S3, Azure Blob, GCS, WebDAV, and more in minutes.</p>
         </article>
         <article class="feature-card">
-          <div class="feature-icon">02</div>
           <h2>Local and cloud storage</h2>
           <p>
             Browse and manage local files alongside cloud backends seamlessly.
           </p>
         </article>
         <article class="feature-card">
-          <div class="feature-icon">03</div>
           <h2>MCP and agent-ready</h2>
           <p>Built for AI agents with MCP support and tool integrations.</p>
         </article>
         <article class="feature-card">
-          <div class="feature-icon">04</div>
           <h2>Read-only or read-write</h2>
           <p>Fine-grained access controls for safe collaboration.</p>
         </article>
         <article class="feature-card">
-          <div class="feature-icon">05</div>
           <h2>Unified browsing</h2>
           <p>One consistent experience for all your storage and data.</p>
         </article>
         <article class="feature-card">
-          <div class="feature-icon">06</div>
           <h2>Open-source and extensible</h2>
           <p>MIT licensed. Extend with custom connectors and plugins.</p>
         </article>
@@ -1180,13 +1130,39 @@
           <p>Plug into the storage you already use.</p>
         </div>
         <div class="connector-rail">
-          <div class="connector"><span>S3</span><span>Amazon S3</span></div>
-          <div class="connector"><span>Az</span><span>Azure Blob</span></div>
           <div class="connector">
-            <span>GC</span><span>Google Cloud Storage</span>
+            <span class="connector-icon"
+              ><img src="./assets/amazon-s3.svg" alt="" aria-hidden="true"
+            /></span>
+            <span>Amazon S3</span>
           </div>
-          <div class="connector"><span>W</span><span>WebDAV</span></div>
-          <div class="connector"><span>FS</span><span>Local FS</span></div>
+          <div class="connector">
+            <span class="connector-icon"
+              ><img
+                src="./assets/azure-storage-blob.svg"
+                alt=""
+                aria-hidden="true"
+            /></span>
+            <span>Azure Blob</span>
+          </div>
+          <div class="connector">
+            <span class="connector-icon"
+              ><img src="./assets/google-cloud.svg" alt="" aria-hidden="true"
+            /></span>
+            <span>Google Cloud Storage</span>
+          </div>
+          <div class="connector">
+            <span class="connector-icon"
+              ><img src="./assets/webdav.svg" alt="" aria-hidden="true"
+            /></span>
+            <span>WebDAV</span>
+          </div>
+          <div class="connector">
+            <span class="connector-icon"
+              ><img src="./assets/folder-network.svg" alt="" aria-hidden="true"
+            /></span>
+            <span>Local FS</span>
+          </div>
         </div>
       </section>
 
