@@ -5,6 +5,8 @@ use serde_json::json;
 use std::collections::HashSet;
 
 use crate::errors::{err_with_details, map_opendal_error, McpErrorCode, McpResult};
+use crate::policy::{evaluate_storage_policy, McpOperation, PolicyDecision};
+use crate::registry::StorageRecord;
 use crate::registry::StorageRegistry;
 use crate::session::SessionManager;
 
@@ -41,6 +43,24 @@ impl FsToolsContext {
         Ok(SessionAccess {
             read_only: !can_write,
         })
+    }
+}
+
+pub(super) fn enforce_storage_policy(
+    storage: &StorageRecord,
+    backend_path: &str,
+    operation: McpOperation,
+    overwrite: bool,
+    cross_storage: bool,
+) -> McpResult<()> {
+    match evaluate_storage_policy(storage, backend_path, operation, overwrite, cross_storage)? {
+        PolicyDecision::Allow => Ok(()),
+        PolicyDecision::RequireConfirmation { .. } => {
+            // Confirmation execution is wired in the next P0 step. Until pending operation
+            // replay exists, path/access policy is enforced while risky operation prompts
+            // remain feature-gated by the confirmation manager.
+            Ok(())
+        }
     }
 }
 

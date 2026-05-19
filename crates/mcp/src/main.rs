@@ -1,3 +1,4 @@
+use infimount_mcp::confirmation::ConfirmationManager;
 use infimount_mcp::registry::StorageRegistry;
 use infimount_mcp::runtime::{serve_stdio, start_http_server};
 use infimount_mcp::settings::{
@@ -50,6 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 settings.enabled_tools.clone(),
                 allow_insecure,
                 effective_auth_token,
+                ConfirmationManager::new(),
             )
             .await?;
             eprintln!(

@@ -6,8 +6,9 @@ use std::time::Duration;
 use crate::errors::{err_with_details, map_opendal_error, McpErrorCode, McpResult};
 use crate::opendal_adapter;
 use crate::path::{enforce_root_operation, parse_mcp_path, resolve_storage_path, FsOp};
+use crate::policy::McpOperation;
 
-use super::common::FsToolsContext;
+use super::common::{enforce_storage_policy, FsToolsContext};
 
 fn default_expires_seconds() -> u64 {
     900
@@ -21,6 +22,8 @@ pub struct GenerateDownloadLinkInput {
     pub expires_seconds: u64,
     #[serde(default)]
     pub session_id: Option<String>,
+    #[serde(default)]
+    pub confirmation_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -51,6 +54,13 @@ pub async fn generate_download_link(
         Some(&resolved.parsed.backend_path),
     )
     .await?;
+    enforce_storage_policy(
+        &resolved.storage,
+        &resolved.parsed.backend_path,
+        McpOperation::PresignDownloadLink,
+        false,
+        false,
+    )?;
     let op = opendal_adapter::build_operator(&resolved.storage)?;
 
     if parsed.backend_path.is_empty() {

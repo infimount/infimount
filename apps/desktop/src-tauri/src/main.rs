@@ -3,6 +3,7 @@
     windows_subsystem = "windows"
 )]
 
+mod app_settings;
 mod commands;
 mod state;
 
@@ -66,6 +67,7 @@ fn main() {
             commands::add_storage,
             commands::remove_storage,
             commands::update_storage,
+            commands::update_mcp_storage_policy,
             commands::verify_storage,
             commands::import_storage_config,
             commands::export_storage_config,
@@ -73,6 +75,15 @@ fn main() {
             commands::transfer_entries,
             commands::list_storage_schemas,
             commands::get_storage_capabilities,
+            commands::generate_download_link,
+            commands::get_app_settings,
+            commands::complete_onboarding,
+            commands::skip_onboarding,
+            commands::list_mcp_audit_events,
+            commands::clear_mcp_audit_events,
+            commands::list_pending_mcp_confirmations,
+            commands::approve_mcp_confirmation,
+            commands::deny_mcp_confirmation,
             commands::get_mcp_settings,
             commands::list_mcp_tools,
             commands::update_mcp_settings,

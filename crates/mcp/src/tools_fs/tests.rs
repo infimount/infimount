@@ -1,5 +1,6 @@
 use super::*;
 use crate::errors::McpErrorCode;
+use crate::policy::McpStoragePolicy;
 use crate::registry::StorageRecord;
 use serde_json::json;
 use tempfile::TempDir;
@@ -10,6 +11,65 @@ fn registry_in(dir: &TempDir) -> crate::registry::StorageRegistry {
 
 fn sessions_in() -> crate::session::SessionManager {
     crate::session::SessionManager::new()
+}
+
+#[tokio::test]
+async fn path_policy_denies_reads_and_writes_before_backend_operation() {
+    let dir = TempDir::new().unwrap();
+    let local_root = dir.path().join("local");
+    std::fs::create_dir_all(local_root.join("private")).unwrap();
+    std::fs::write(local_root.join("private").join("secret.txt"), b"secret").unwrap();
+
+    let registry = registry_in(&dir);
+    let mut storage = StorageRecord::new(
+        "Local".to_string(),
+        "local".to_string(),
+        json!({"root": local_root}),
+    );
+    storage.mcp_policy = McpStoragePolicy {
+        denied_paths: vec!["private".to_string()],
+        ..Default::default()
+    };
+    registry.save_all_atomic(&[storage]).unwrap();
+
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+
+    let read_error = read_file(
+        &ctx,
+        ReadFileInput {
+            path: "/Local/private/secret.txt".to_string(),
+            offset_bytes: 0,
+            max_bytes: 1024,
+            as_text: true,
+            encoding: "utf-8".to_string(),
+            session_id: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(read_error.code, McpErrorCode::ERR_MCP_POLICY_DENIED);
+
+    let write_error = write_file(
+        &ctx,
+        WriteFileInput {
+            path: "/Local/private/new.txt".to_string(),
+            content: "nope".to_string(),
+            encoding: "utf-8".to_string(),
+            overwrite: true,
+            create_parents: false,
+            confirmation_id: None,
+            session_id: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(write_error.code, McpErrorCode::ERR_MCP_POLICY_DENIED);
+    assert!(!dir.path().join("local/private/new.txt").exists());
 }
 
 #[tokio::test]
@@ -547,6 +607,7 @@ async fn mkdir_rejects_read_only_storage() {
         &ctx,
         MkdirInput {
             session_id: None,
+            confirmation_id: None,
             path: "/Local/newdir".to_string(),
             parents: true,
             exist_ok: true,
@@ -583,6 +644,7 @@ async fn mkdir_requires_parent_when_parents_false() {
         &ctx,
         MkdirInput {
             session_id: None,
+            confirmation_id: None,
             path: "/Local/missing/child".to_string(),
             parents: false,
             exist_ok: true,
@@ -619,6 +681,7 @@ async fn mkdir_creates_nested_directories_when_parents_true() {
         &ctx,
         MkdirInput {
             session_id: None,
+            confirmation_id: None,
             path: "/Local/a/b".to_string(),
             parents: true,
             exist_ok: true,
@@ -656,6 +719,7 @@ async fn mkdir_exist_ok_false_returns_already_exists() {
         &ctx,
         MkdirInput {
             session_id: None,
+            confirmation_id: None,
             path: "/Local/docs".to_string(),
             parents: true,
             exist_ok: false,
@@ -692,6 +756,7 @@ async fn mkdir_existing_dir_with_exist_ok_true_returns_not_created() {
         &ctx,
         MkdirInput {
             session_id: None,
+            confirmation_id: None,
             path: "/Local/docs".to_string(),
             parents: true,
             exist_ok: true,
@@ -729,6 +794,7 @@ async fn write_file_rejects_read_only_storage() {
         &ctx,
         WriteFileInput {
             session_id: None,
+            confirmation_id: None,
             path: "/Local/file.txt".to_string(),
             content: "hello".to_string(),
             encoding: "utf-8".to_string(),
@@ -767,6 +833,7 @@ async fn write_file_requires_parent_when_create_parents_false() {
         &ctx,
         WriteFileInput {
             session_id: None,
+            confirmation_id: None,
             path: "/Local/missing/file.txt".to_string(),
             content: "hello".to_string(),
             encoding: "utf-8".to_string(),
@@ -805,6 +872,7 @@ async fn write_file_creates_parents_when_requested() {
         &ctx,
         WriteFileInput {
             session_id: None,
+            confirmation_id: None,
             path: "/Local/a/b/file.txt".to_string(),
             content: "hello".to_string(),
             encoding: "utf-8".to_string(),
@@ -848,6 +916,7 @@ async fn write_file_respects_overwrite_flag() {
         &ctx,
         WriteFileInput {
             session_id: None,
+            confirmation_id: None,
             path: "/Local/file.txt".to_string(),
             content: "new".to_string(),
             encoding: "utf-8".to_string(),
@@ -863,6 +932,7 @@ async fn write_file_respects_overwrite_flag() {
         &ctx,
         WriteFileInput {
             session_id: None,
+            confirmation_id: None,
             path: "/Local/file.txt".to_string(),
             content: "new".to_string(),
             encoding: "utf-8".to_string(),
@@ -904,6 +974,7 @@ async fn write_file_rejects_directory_target_and_non_utf8_encoding() {
         &ctx,
         WriteFileInput {
             session_id: None,
+            confirmation_id: None,
             path: "/Local/docs".to_string(),
             content: "hello".to_string(),
             encoding: "utf-8".to_string(),
@@ -919,6 +990,7 @@ async fn write_file_rejects_directory_target_and_non_utf8_encoding() {
         &ctx,
         WriteFileInput {
             session_id: None,
+            confirmation_id: None,
             path: "/Local/file.txt".to_string(),
             content: "hello".to_string(),
             encoding: "utf-16".to_string(),
@@ -960,6 +1032,7 @@ async fn delete_path_root_is_rejected() {
         &ctx,
         DeletePathInput {
             session_id: None,
+            confirmation_id: None,
             path: "/".to_string(),
             recursive: false,
         },
@@ -997,6 +1070,7 @@ async fn delete_path_rejects_read_only_storage() {
         &ctx,
         DeletePathInput {
             session_id: None,
+            confirmation_id: None,
             path: "/Local/file.txt".to_string(),
             recursive: false,
         },
@@ -1033,6 +1107,7 @@ async fn delete_path_file_success_and_missing_returns_not_found() {
         &ctx,
         DeletePathInput {
             session_id: None,
+            confirmation_id: None,
             path: "/Local/file.txt".to_string(),
             recursive: false,
         },
@@ -1046,6 +1121,7 @@ async fn delete_path_file_success_and_missing_returns_not_found() {
         &ctx,
         DeletePathInput {
             session_id: None,
+            confirmation_id: None,
             path: "/Local/file.txt".to_string(),
             recursive: false,
         },
@@ -1080,6 +1156,7 @@ async fn delete_path_directory_requires_recursive() {
         &ctx,
         DeletePathInput {
             session_id: None,
+            confirmation_id: None,
             path: "/Local/docs".to_string(),
             recursive: false,
         },
@@ -1117,6 +1194,7 @@ async fn delete_path_recursive_deletes_nested_structure() {
         &ctx,
         DeletePathInput {
             session_id: None,
+            confirmation_id: None,
             path: "/Local/docs".to_string(),
             recursive: true,
         },
@@ -1162,6 +1240,7 @@ async fn copy_path_rejects_read_only_destination() {
         &ctx,
         CopyPathInput {
             session_id: None,
+            confirmation_id: None,
             src: "/Src/file.txt".to_string(),
             dst: "/Dst/file.txt".to_string(),
             overwrite: false,
@@ -1206,6 +1285,7 @@ async fn copy_path_rejects_directory_without_recursive() {
         &ctx,
         CopyPathInput {
             session_id: None,
+            confirmation_id: None,
             src: "/Src/docs".to_string(),
             dst: "/Dst/docs".to_string(),
             overwrite: false,
@@ -1252,6 +1332,7 @@ async fn copy_path_overwrite_false_rejects_existing_destination() {
         &ctx,
         CopyPathInput {
             session_id: None,
+            confirmation_id: None,
             src: "/Src/file.txt".to_string(),
             dst: "/Dst/file.txt".to_string(),
             overwrite: false,
@@ -1290,6 +1371,7 @@ async fn copy_path_same_storage_file_success() {
         &ctx,
         CopyPathInput {
             session_id: None,
+            confirmation_id: None,
             src: "/Local/file.txt".to_string(),
             dst: "/Local/out/file.txt".to_string(),
             overwrite: false,
@@ -1340,6 +1422,7 @@ async fn copy_path_cross_storage_streams_large_file() {
         &ctx,
         CopyPathInput {
             session_id: None,
+            confirmation_id: None,
             src: "/Src/large.bin".to_string(),
             dst: "/Dst/large.bin".to_string(),
             overwrite: false,
@@ -1387,6 +1470,7 @@ async fn copy_path_recursive_preserves_structure() {
         &ctx,
         CopyPathInput {
             session_id: None,
+            confirmation_id: None,
             src: "/Src/docs".to_string(),
             dst: "/Dst/copied".to_string(),
             overwrite: false,
@@ -1433,6 +1517,7 @@ async fn move_path_same_storage_file_success() {
         &ctx,
         MovePathInput {
             session_id: None,
+            confirmation_id: None,
             src: "/Local/file.txt".to_string(),
             dst: "/Local/out/file.txt".to_string(),
             overwrite: false,
@@ -1482,6 +1567,7 @@ async fn move_path_cross_storage_success() {
         &ctx,
         MovePathInput {
             session_id: None,
+            confirmation_id: None,
             src: "/Src/file.txt".to_string(),
             dst: "/Dst/file.txt".to_string(),
             overwrite: false,
@@ -1532,6 +1618,7 @@ async fn move_path_overwrite_false_rejects_existing_destination() {
         &ctx,
         MovePathInput {
             session_id: None,
+            confirmation_id: None,
             src: "/Src/file.txt".to_string(),
             dst: "/Dst/file.txt".to_string(),
             overwrite: false,
@@ -1577,6 +1664,7 @@ async fn move_path_overwrite_true_replaces_existing_destination() {
         &ctx,
         MovePathInput {
             session_id: None,
+            confirmation_id: None,
             src: "/Src/file.txt".to_string(),
             dst: "/Dst/file.txt".to_string(),
             overwrite: true,
@@ -1625,6 +1713,7 @@ async fn move_path_missing_source_returns_not_found() {
         &ctx,
         MovePathInput {
             session_id: None,
+            confirmation_id: None,
             src: "/Src/file.txt".to_string(),
             dst: "/Dst/file.txt".to_string(),
             overwrite: false,
@@ -1670,6 +1759,7 @@ async fn move_path_rejects_read_only_source_or_destination() {
         &ctx,
         MovePathInput {
             session_id: None,
+            confirmation_id: None,
             src: "/Src/file.txt".to_string(),
             dst: "/Dst/file.txt".to_string(),
             overwrite: false,
@@ -1704,6 +1794,7 @@ async fn move_path_rejects_read_only_source_or_destination() {
         &ctx,
         MovePathInput {
             session_id: None,
+            confirmation_id: None,
             src: "/Src/file.txt".to_string(),
             dst: "/Dst/file.txt".to_string(),
             overwrite: false,
@@ -1746,6 +1837,7 @@ async fn move_path_rejects_directory_source() {
         &ctx,
         MovePathInput {
             session_id: None,
+            confirmation_id: None,
             src: "/Src/docs".to_string(),
             dst: "/Dst/docs".to_string(),
             overwrite: false,
@@ -1832,6 +1924,7 @@ async fn generate_download_link_local_backend_returns_presign_not_supported() {
         &ctx,
         GenerateDownloadLinkInput {
             session_id: None,
+            confirmation_id: None,
             path: "/Local/file.txt".to_string(),
             expires_seconds: 900,
         },

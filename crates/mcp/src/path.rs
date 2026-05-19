@@ -43,12 +43,56 @@ pub fn normalize_absolute_path(input: &str) -> McpResult<String> {
         ));
     }
 
-    let parts: Vec<&str> = trimmed.split('/').filter(|s| !s.is_empty()).collect();
+    let decoded = decode_path_controls(trimmed);
+    let mut parts = Vec::new();
+    for part in decoded.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            value => parts.push(value),
+        }
+    }
     if parts.is_empty() {
         return Ok("/".to_string());
     }
 
     Ok(format!("/{}", parts.join("/")))
+}
+
+fn decode_path_controls(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    let bytes = path.as_bytes();
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let code = &path[index + 1..index + 3].to_ascii_lowercase();
+            match code.as_str() {
+                "2f" | "5c" => {
+                    out.push('/');
+                    index += 3;
+                    continue;
+                }
+                "2e" => {
+                    out.push('.');
+                    index += 3;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+
+        if bytes[index] == b'\\' {
+            out.push('/');
+        } else {
+            out.push(bytes[index] as char);
+        }
+        index += 1;
+    }
+
+    out
 }
 
 pub fn parse_mcp_path(input: &str) -> McpResult<ParsedPath> {
@@ -127,6 +171,16 @@ mod tests {
     fn normalize_collapses_slashes_and_trailing() {
         let got = normalize_absolute_path("//photos///2026//").unwrap();
         assert_eq!(got, "/photos/2026");
+    }
+
+    #[test]
+    fn normalize_collapses_dot_segments_and_encoded_separators() {
+        let got = normalize_absolute_path("/Storage/projects/./public/../secrets/%2e%2e/file.txt")
+            .unwrap();
+        assert_eq!(got, "/Storage/projects/file.txt");
+
+        let got = normalize_absolute_path("/Storage/projects%2fsecrets/token.txt").unwrap();
+        assert_eq!(got, "/Storage/projects/secrets/token.txt");
     }
 
     #[test]

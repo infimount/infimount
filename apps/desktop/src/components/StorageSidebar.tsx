@@ -11,6 +11,7 @@ import {
   Sparkles,
   Cable,
   Braces,
+  LifeBuoy,
 } from "lucide-react";
 import s3Icon from "@/assets/amazon-s3.svg";
 import azureIcon from "@/assets/azure-storage-blob.svg";
@@ -62,6 +63,7 @@ interface StorageSidebarProps {
   onEditStorageConfig?: () => void;
   onExportStorages?: () => void;
   onOpenMcpSettings?: () => void;
+  onOpenOnboarding?: () => void;
   isLoading?: boolean;
 }
 
@@ -103,6 +105,7 @@ export function StorageSidebar({
   onEditStorageConfig,
   onExportStorages,
   onOpenMcpSettings,
+  onOpenOnboarding,
   isLoading = false,
 }: StorageSidebarProps) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -422,6 +425,12 @@ export function StorageSidebar({
                     MCP Settings
                   </DropdownMenuItem>
                 </>
+              )}
+              {onOpenOnboarding && (
+                <DropdownMenuItem onClick={onOpenOnboarding}>
+                  <LifeBuoy className="mr-2 h-4 w-4" />
+                  Setup Guide
+                </DropdownMenuItem>
               )}
             </DropdownMenuContent>
           </DropdownMenu>

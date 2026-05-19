@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { StorageSidebar } from "./StorageSidebar";
-import type { StorageConfig } from "@/types/storage";
+import type { McpStoragePolicy, StorageConfig } from "@/types/storage";
 
 vi.mock("@tauri-apps/api/app", () => ({
   getVersion: vi.fn().mockResolvedValue("0.1.0"),
@@ -28,6 +28,20 @@ vi.mock("@/hooks/use-toast", () => ({
   useToast: () => ({ toast }),
 }));
 
+const mcpPolicy: McpStoragePolicy = {
+  default_access: "read_write",
+  allowed_paths: [],
+  denied_paths: [],
+  confirmation_rules: {
+    require_for_write: true,
+    require_for_overwrite: true,
+    require_for_delete: true,
+    require_for_version_delete: true,
+    require_for_presign: true,
+    require_for_cross_storage_copy: true,
+  },
+};
+
 const storages: StorageConfig[] = [
   {
     id: "local",
@@ -41,6 +55,7 @@ const storages: StorageConfig[] = [
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     config: {},
+    mcpPolicy,
   },
   {
     id: "gcs",
@@ -54,6 +69,7 @@ const storages: StorageConfig[] = [
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     config: {},
+    mcpPolicy,
   },
 ];
 

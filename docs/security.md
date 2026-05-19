@@ -33,6 +33,44 @@ MCP settings also include an enabled-tool list. Disable tools such as `export_co
 
 Tool exposure changes apply after restarting the MCP HTTP server.
 
+## Path Policies and Confirmations
+
+Each storage can define a local MCP policy:
+
+- access mode: no access, read-only, or read/write
+- allowed path prefixes
+- denied path prefixes
+- confirmation rules for risky operations
+
+Denied prefixes always win over allowed prefixes. Prefix matching is segment-aware and paths are normalized before policy checks so repeated slashes, trailing slashes, `.` / `..`, and URL-encoded-looking control segments such as `%2e` and `%2f` cannot bypass a deny rule. Matching remains case-sensitive because backend case behavior is not globally consistent.
+
+Risky operations can return `requires_confirmation` instead of executing. The pending operation includes an immutable request fingerprint. Approval is valid once, expires after a bounded TTL, and cannot be replayed for a modified request. Pending approvals are in-memory runtime state and are cleared by an app/server restart.
+
+By default, confirmations are required for:
+
+- writes and overwrites
+- deletes
+- version deletes
+- presigned/download-link generation
+- cross-storage copy
+- rename/move operations that may behave like copy plus delete
+
+Desktop notifications, when enabled by the user, are attention signals only. They do not approve or deny operations and do not include tokens, secrets, or presigned URLs.
+
+## MCP Audit Log
+
+Infimount stores a bounded local MCP audit log at `~/.infimount/mcp_audit.json`.
+
+Audit events include tool name, storage metadata when available, operation, path, decision, confirmation ID, duration, and error code. The audit log records allowed, denied, confirmation-required, confirmed, and failed operations.
+
+Safety rules:
+
+- auth tokens are not logged
+- storage secrets are not logged
+- file contents are not logged
+- presigned URLs have query strings redacted before persistence
+- sensitive headers are not logged
+
 ## HTTP Transport
 
 For desktop and local development, keep HTTP bound to loopback:

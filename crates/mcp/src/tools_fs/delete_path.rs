@@ -4,10 +4,11 @@ use serde_json::json;
 use crate::errors::{err_with_details, map_opendal_error, McpErrorCode, McpResult};
 use crate::opendal_adapter;
 use crate::path::{enforce_root_operation, parse_mcp_path, resolve_storage_path, FsOp};
+use crate::policy::McpOperation;
 
 use super::common::{
-    backend_path_from_virtual, collect_entries, normalize_list_prefix, path_depth, sort_entries,
-    EntryType, FsToolsContext,
+    backend_path_from_virtual, collect_entries, enforce_storage_policy, normalize_list_prefix,
+    path_depth, sort_entries, EntryType, FsToolsContext,
 };
 
 #[derive(Debug, Deserialize)]
@@ -18,6 +19,8 @@ pub struct DeletePathInput {
     pub recursive: bool,
     #[serde(default)]
     pub session_id: Option<String>,
+    #[serde(default)]
+    pub confirmation_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -56,6 +59,13 @@ pub async fn delete_path(
             json!({ "session_id": input.session_id }),
         ));
     }
+    enforce_storage_policy(
+        &storage,
+        &resolved.parsed.backend_path,
+        McpOperation::Delete,
+        false,
+        false,
+    )?;
 
     let op = opendal_adapter::build_operator(&storage)?;
     let target_meta = if parsed.backend_path.is_empty() {

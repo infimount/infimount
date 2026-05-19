@@ -1,6 +1,9 @@
+pub mod audit;
+pub mod confirmation;
 pub mod errors;
 pub mod opendal_adapter;
 pub mod path;
+pub mod policy;
 pub mod prompts;
 pub mod registry;
 pub mod resources;

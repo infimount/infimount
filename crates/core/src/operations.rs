@@ -536,7 +536,7 @@ async fn upload_path_recursive(op: &Operator, src: &Path, target_dir: &str) -> R
     let meta = fs::metadata(src).await.map_err(|e| {
         opendal::Error::new(
             ErrorKind::Unexpected,
-            &format!("Failed to stat local path {}: {}", src.display(), e),
+            format!("Failed to stat local path {}: {}", src.display(), e),
         )
     })?;
 
@@ -553,7 +553,7 @@ async fn upload_path_recursive(op: &Operator, src: &Path, target_dir: &str) -> R
         let data = fs::read(src).await.map_err(|e| {
             opendal::Error::new(
                 ErrorKind::Unexpected,
-                &format!("Failed to read local file {}: {}", src.display(), e),
+                format!("Failed to read local file {}: {}", src.display(), e),
             )
         })?;
 
@@ -566,21 +566,21 @@ async fn upload_path_recursive(op: &Operator, src: &Path, target_dir: &str) -> R
             let mut entries = fs::read_dir(&dir_path).await.map_err(|e| {
                 opendal::Error::new(
                     ErrorKind::Unexpected,
-                    &format!("Failed to read directory {}: {}", dir_path.display(), e),
+                    format!("Failed to read directory {}: {}", dir_path.display(), e),
                 )
             })?;
 
             while let Some(entry) = entries.next_entry().await.map_err(|e| {
                 opendal::Error::new(
                     ErrorKind::Unexpected,
-                    &format!("Failed to iterate directory {}: {}", dir_path.display(), e),
+                    format!("Failed to iterate directory {}: {}", dir_path.display(), e),
                 )
             })? {
                 let child_path = entry.path();
                 let child_meta = fs::metadata(&child_path).await.map_err(|e| {
                     opendal::Error::new(
                         ErrorKind::Unexpected,
-                        &format!("Failed to stat local path {}: {}", child_path.display(), e),
+                        format!("Failed to stat local path {}: {}", child_path.display(), e),
                     )
                 })?;
 
@@ -590,7 +590,7 @@ async fn upload_path_recursive(op: &Operator, src: &Path, target_dir: &str) -> R
                     let data = fs::read(&child_path).await.map_err(|e| {
                         opendal::Error::new(
                             ErrorKind::Unexpected,
-                            &format!("Failed to read local file {}: {}", child_path.display(), e),
+                            format!("Failed to read local file {}: {}", child_path.display(), e),
                         )
                     })?;
                     op.write(&target_path, data).await?;

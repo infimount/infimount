@@ -15,6 +15,7 @@ use serde_json::json;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use crate::confirmation::ConfirmationManager;
 use crate::registry::StorageRegistry;
 use crate::server::InfimountMcpServer;
 use crate::session::SessionManager;
@@ -122,6 +123,7 @@ pub async fn start_http_server(
     enabled_tools: Vec<String>,
     allow_insecure: bool,
     auth_token: Option<String>,
+    confirmations: ConfirmationManager,
 ) -> io::Result<McpHttpServerHandle> {
     let auth_token = normalize_auth_token(auth_token);
 
@@ -146,10 +148,11 @@ pub async fn start_http_server(
     let allow_insecure_for_factory = allow_insecure;
     let auth_token_for_factory = auth_token.clone();
     let sessions_for_factory = SessionManager::new();
+    let confirmations_for_factory = confirmations.clone();
     let service: StreamableHttpService<InfimountMcpServer, LocalSessionManager> =
         StreamableHttpService::new(
             move || {
-                Ok(InfimountMcpServer::new(
+                Ok(InfimountMcpServer::with_confirmation_manager(
                     FsToolsContext {
                         registry: registry_for_factory.clone(),
                         sessions: sessions_for_factory.clone(),
@@ -157,6 +160,7 @@ pub async fn start_http_server(
                         auth_token: auth_token_for_factory.clone(),
                     },
                     enabled_tools_for_factory.clone(),
+                    confirmations_for_factory.clone(),
                 ))
             },
             Default::default(),
@@ -201,6 +205,7 @@ pub async fn start_http_server_from_settings(
     registry: StorageRegistry,
     settings: &McpSettings,
     allow_insecure: bool,
+    confirmations: ConfirmationManager,
 ) -> io::Result<McpHttpServerHandle> {
     let effective_auth_token = settings.auth_token.clone();
     let require_auth = effective_auth_token.is_some();
@@ -212,6 +217,7 @@ pub async fn start_http_server_from_settings(
         settings.enabled_tools.clone(),
         allow,
         effective_auth_token,
+        confirmations,
     )
     .await
 }
@@ -244,6 +250,7 @@ mod tests {
             all_tool_names(),
             false,
             None,
+            ConfirmationManager::new(),
         )
         .await;
 
@@ -268,6 +275,7 @@ mod tests {
             all_tool_names(),
             true,
             None,
+            ConfirmationManager::new(),
         )
         .await
         .expect("start insecure test server");
@@ -288,6 +296,7 @@ mod tests {
             all_tool_names(),
             false,
             Some("   ".to_string()),
+            ConfirmationManager::new(),
         )
         .await;
 

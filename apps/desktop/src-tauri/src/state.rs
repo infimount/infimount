@@ -1,4 +1,5 @@
 use infimount_core::{config, CoreError, Source, SourceKind};
+use infimount_mcp::confirmation::ConfirmationManager;
 use infimount_mcp::errors::{err_with_details, McpError, McpErrorCode, McpResult};
 use infimount_mcp::opendal_adapter::build_operator;
 use infimount_mcp::registry::{StorageRecord, StorageRegistry};
@@ -13,9 +14,13 @@ use serde::Serialize;
 use serde_json::{json, Map, Value};
 use tokio::sync::Mutex;
 
+use crate::app_settings::AppSettingsStore;
+
 pub struct AppState {
     pub registry: StorageRegistry,
     pub settings_store: McpSettingsStore,
+    pub app_settings_store: AppSettingsStore,
+    pub confirmations: ConfirmationManager,
     http_runtime: Mutex<Option<McpHttpServerHandle>>,
 }
 
@@ -42,6 +47,8 @@ impl AppState {
         Ok(Self {
             registry,
             settings_store: McpSettingsStore::new(None),
+            app_settings_store: AppSettingsStore::new(None),
+            confirmations: ConfirmationManager::new(),
             http_runtime: Mutex::new(None),
         })
     }
@@ -98,10 +105,14 @@ impl AppState {
 
         self.stop_http_server_inner().await?;
         let allow_insecure = settings.auth_token.is_none();
-        let server =
-            start_http_server_from_settings(self.registry.clone(), &settings, allow_insecure)
-                .await
-                .map_err(map_runtime_io_error)?;
+        let server = start_http_server_from_settings(
+            self.registry.clone(),
+            &settings,
+            allow_insecure,
+            self.confirmations.clone(),
+        )
+        .await
+        .map_err(map_runtime_io_error)?;
         let endpoint = server.endpoint().to_string();
 
         let mut guard = self.http_runtime.lock().await;

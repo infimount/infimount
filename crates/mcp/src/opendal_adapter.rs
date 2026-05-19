@@ -9,6 +9,7 @@ pub struct StorageBackendCapabilities {
     pub list_with_versions: bool,
     pub read_with_version: bool,
     pub delete_with_version: bool,
+    pub presign_read: bool,
     pub versioning_disabled: bool,
 }
 
@@ -19,6 +20,7 @@ pub fn get_capabilities(op: &Operator) -> StorageBackendCapabilities {
         list_with_versions: full.list_with_versions,
         read_with_version: full.read_with_version,
         delete_with_version: full.delete_with_version,
+        presign_read: full.presign_read,
         versioning_disabled: false,
     }
 }

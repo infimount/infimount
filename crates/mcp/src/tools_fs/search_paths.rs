@@ -4,8 +4,9 @@ use serde_json::json;
 use crate::errors::{err_with_details, map_opendal_error, McpErrorCode, McpResult};
 use crate::opendal_adapter;
 use crate::path::{enforce_root_operation, parse_mcp_path, resolve_storage_path, FsOp};
+use crate::policy::McpOperation;
 
-use super::common::{collect_entries, FsToolsContext};
+use super::common::{collect_entries, enforce_storage_policy, FsToolsContext};
 
 fn default_max_results() -> u32 {
     200
@@ -49,6 +50,13 @@ pub async fn search_paths(
         Some(&resolved.parsed.backend_path),
     )
     .await?;
+    enforce_storage_policy(
+        &resolved.storage,
+        &resolved.parsed.backend_path,
+        McpOperation::Search,
+        false,
+        false,
+    )?;
     let op = opendal_adapter::build_operator(&resolved.storage)?;
 
     if parsed.backend_path.is_empty() {

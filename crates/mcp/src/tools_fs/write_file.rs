@@ -4,9 +4,11 @@ use serde_json::json;
 use crate::errors::{err_with_details, map_opendal_error, McpErrorCode, McpResult};
 use crate::opendal_adapter;
 use crate::path::{enforce_root_operation, parse_mcp_path, resolve_storage_path, FsOp};
+use crate::policy::McpOperation;
 
 use super::common::{
-    create_dir_chain, default_encoding, default_true, parent_path, FsToolsContext,
+    create_dir_chain, default_encoding, default_true, enforce_storage_policy, parent_path,
+    FsToolsContext,
 };
 
 #[derive(Debug, Deserialize)]
@@ -22,6 +24,8 @@ pub struct WriteFileInput {
     pub create_parents: bool,
     #[serde(default)]
     pub session_id: Option<String>,
+    #[serde(default)]
+    pub confirmation_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -57,6 +61,13 @@ pub async fn write_file(ctx: &FsToolsContext, input: WriteFileInput) -> McpResul
             json!({ "session_id": input.session_id }),
         ));
     }
+    enforce_storage_policy(
+        &storage,
+        &resolved.parsed.backend_path,
+        McpOperation::Write,
+        input.overwrite,
+        false,
+    )?;
 
     if !input.encoding.eq_ignore_ascii_case("utf-8") {
         return Err(err_with_details(

@@ -1,4 +1,5 @@
 use crate::errors::{err, err_with_details, map_io_error, McpErrorCode, McpResult};
+use crate::policy::McpStoragePolicy;
 use chrono::Utc;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
@@ -20,6 +21,8 @@ pub struct StorageRecord {
     pub enabled: bool,
     pub mcp_exposed: bool,
     pub read_only: bool,
+    #[serde(default)]
+    pub mcp_policy: McpStoragePolicy,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -35,6 +38,7 @@ impl StorageRecord {
             enabled: true,
             mcp_exposed: true,
             read_only: false,
+            mcp_policy: McpStoragePolicy::default(),
             created_at: now.clone(),
             updated_at: now,
         }

@@ -15,7 +15,10 @@ use serde::Serialize;
 use serde_json::json;
 use tracing::info;
 
+use crate::audit::{AuditDecision, AuditEvent, AuditStore};
+use crate::confirmation::{ConfirmationManager, ConfirmationRequest, ConfirmationRequiredResponse};
 use crate::errors::{err_with_details, wrap_json, McpErrorCode, McpResult};
+use crate::policy::{evaluate_storage_policy, McpOperation, McpRiskType, PolicyDecision};
 use crate::prompts;
 use crate::resources;
 use crate::schemas;
@@ -221,6 +224,8 @@ pub struct InfimountMcpServer {
     ctx: FsToolsContext,
     enabled_tools: HashSet<String>,
     telemetry: TelemetryState,
+    audit: AuditStore,
+    confirmations: ConfirmationManager,
 }
 
 impl InfimountMcpServer {
@@ -229,6 +234,22 @@ impl InfimountMcpServer {
             ctx,
             enabled_tools: normalize_enabled_tools(enabled_tools),
             telemetry: TelemetryState::new(),
+            audit: AuditStore::new(None),
+            confirmations: ConfirmationManager::new(),
+        }
+    }
+
+    pub fn with_confirmation_manager(
+        ctx: FsToolsContext,
+        enabled_tools: Vec<String>,
+        confirmations: ConfirmationManager,
+    ) -> Self {
+        Self {
+            ctx,
+            enabled_tools: normalize_enabled_tools(enabled_tools),
+            telemetry: TelemetryState::new(),
+            audit: AuditStore::new(None),
+            confirmations,
         }
     }
 
@@ -246,6 +267,11 @@ impl InfimountMcpServer {
         }
 
         let raw_input = serde_json::Value::Object(arguments.clone().unwrap_or_default());
+        if let Some(arguments) = arguments.as_ref() {
+            if let Some(response) = self.confirmation_gate(name, arguments).await? {
+                return Ok(wrap_json(Ok(response)));
+            }
+        }
 
         let result = match name {
             "list_dir" => invoke_list_dir_json(&self.ctx, raw_input).await,
@@ -278,6 +304,57 @@ impl InfimountMcpServer {
         };
 
         Ok(result)
+    }
+
+    async fn confirmation_gate(
+        &self,
+        tool_name: &str,
+        arguments: &JsonObject,
+    ) -> Result<Option<ConfirmationRequiredResponse>, ErrorData> {
+        let Some(check) =
+            confirmation_check(&self.ctx, tool_name, arguments).map_err(mcp_to_rmcp_error)?
+        else {
+            return Ok(None);
+        };
+
+        let fingerprint = request_fingerprint(tool_name, arguments);
+        if let Some(confirmation_id) = arguments
+            .get("confirmation_id")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty())
+        {
+            self.confirmations
+                .consume_approved(confirmation_id, &fingerprint)
+                .await
+                .map_err(mcp_to_rmcp_error)?;
+            return Ok(None);
+        }
+
+        let pending = self
+            .confirmations
+            .require_confirmation(ConfirmationRequest {
+                tool_name: tool_name.to_string(),
+                operation: check.operation,
+                risk_type: check.risk_type,
+                storage_id: check.storage_id,
+                storage_name: check.storage_name,
+                path: check.path.clone(),
+                summary: check.summary,
+                request_fingerprint: fingerprint,
+            })
+            .await;
+
+        self.audit_tool_call(AuditToolCall {
+            tool_name,
+            normalized_path: Some(&check.path),
+            storage_name: Some(&pending.storage_name),
+            decision: AuditDecision::RequiresConfirmation,
+            error_code: None,
+            confirmation_id: Some(&pending.operation_id),
+            duration_ms: 0,
+        });
+
+        Ok(Some(pending.into()))
     }
 }
 
@@ -339,6 +416,7 @@ impl ServerHandler for InfimountMcpServer {
 
         let normalized_path = normalized_path_log_ref(&tool_name, request.arguments.as_ref());
         let storage_ref = storage_log_ref(&tool_name, request.arguments.as_ref());
+        let confirmation_id = confirmation_id_log_ref(request.arguments.as_ref());
         let started = Instant::now();
 
         self.telemetry.record_tool_call(&tool_name);
@@ -352,8 +430,17 @@ impl ServerHandler for InfimountMcpServer {
 
         match result {
             Err(e) => {
-                let error_code = "ERR_INTERNAL";
+                let error_code = error_code_from_error_data(&e);
                 self.telemetry.record_error(error_code);
+                self.audit_tool_call(AuditToolCall {
+                    tool_name: &tool_name,
+                    normalized_path: normalized_path.as_deref(),
+                    storage_name: storage_ref.as_deref(),
+                    decision: audit_decision_for_error(error_code),
+                    error_code: Some(error_code),
+                    confirmation_id: confirmation_id.as_deref(),
+                    duration_ms: latency_ms as u64,
+                });
                 info!(
                     tool = tool_name.as_str(),
                     path = normalized_path.as_deref().unwrap_or("-"),
@@ -386,6 +473,15 @@ impl ServerHandler for InfimountMcpServer {
                         .and_then(|code| code.as_str())
                         .unwrap_or("ERR_INTERNAL");
                     self.telemetry.record_error(error_code);
+                    self.audit_tool_call(AuditToolCall {
+                        tool_name: &tool_name,
+                        normalized_path: normalized_path.as_deref(),
+                        storage_name: storage_ref.as_deref(),
+                        decision: audit_decision_for_error(error_code),
+                        error_code: Some(error_code),
+                        confirmation_id: confirmation_id.as_deref(),
+                        duration_ms: latency_ms as u64,
+                    });
                     info!(
                         tool = tool_name.as_str(),
                         path = normalized_path.as_deref().unwrap_or("-"),
@@ -396,6 +492,23 @@ impl ServerHandler for InfimountMcpServer {
                     );
                     Ok(CallToolResult::structured_error(result))
                 } else {
+                    if is_confirmation_required_response(&result) {
+                        return Ok(CallToolResult::structured(result));
+                    }
+                    let decision = if confirmation_id.is_some() {
+                        AuditDecision::Confirmed
+                    } else {
+                        AuditDecision::Allowed
+                    };
+                    self.audit_tool_call(AuditToolCall {
+                        tool_name: &tool_name,
+                        normalized_path: normalized_path.as_deref(),
+                        storage_name: storage_ref.as_deref(),
+                        decision,
+                        error_code: None,
+                        confirmation_id: confirmation_id.as_deref(),
+                        duration_ms: latency_ms as u64,
+                    });
                     info!(
                         tool = tool_name.as_str(),
                         path = normalized_path.as_deref().unwrap_or("-"),
@@ -443,6 +556,46 @@ impl ServerHandler for InfimountMcpServer {
     ) -> Result<GetPromptResult, ErrorData> {
         prompts::get_prompt(request).map_err(|message| ErrorData::invalid_params(message, None))
     }
+}
+
+impl InfimountMcpServer {
+    fn audit_tool_call(&self, call: AuditToolCall<'_>) {
+        let mut event = AuditEvent::new(call.tool_name, operation_for_tool(call.tool_name));
+        event.path = call.normalized_path.map(ToString::to_string);
+        event.storage_name = call.storage_name.map(ToString::to_string);
+        if let Some(storage_name) = call.storage_name {
+            if let Ok(storages) = self.ctx.registry.load_all() {
+                if let Some(storage) = storages
+                    .into_iter()
+                    .find(|storage| storage.name == storage_name)
+                {
+                    event.storage_id = Some(storage.id);
+                    event.backend = Some(storage.backend);
+                }
+            }
+        }
+        event.decision = call.decision;
+        event.error_code = call.error_code.map(ToString::to_string);
+        event.confirmation_id = call.confirmation_id.map(ToString::to_string);
+        event.duration_ms = Some(call.duration_ms);
+        if let Err(error) = self.audit.append(event) {
+            info!(
+                tool = call.tool_name,
+                error_code = ?error.code,
+                "failed to write MCP audit event"
+            );
+        }
+    }
+}
+
+struct AuditToolCall<'a> {
+    tool_name: &'a str,
+    normalized_path: Option<&'a str>,
+    storage_name: Option<&'a str>,
+    decision: AuditDecision,
+    error_code: Option<&'a str>,
+    confirmation_id: Option<&'a str>,
+    duration_ms: u64,
 }
 
 pub async fn invoke_list_dir_json(
@@ -737,6 +890,7 @@ pub async fn invoke_delete_version_json(
                 path: input.path,
                 version: input.version,
                 session_id: input.session_id,
+                confirmation_id: input.confirmation_id,
             };
             tools_fs::delete_version(ctx, input_with_session).await
         })
@@ -932,9 +1086,10 @@ fn storage_log_ref(name: &str, arguments: Option<&JsonObject>) -> Option<String>
         | "mkdir"
         | "delete_path"
         | "search_paths"
-        | "generate_download_link" => {
-            path_storage_name(args.get("path").and_then(|value| value.as_str()))
-        }
+        | "generate_download_link"
+        | "list_versions"
+        | "read_file_version"
+        | "delete_version" => path_storage_name(args.get("path").and_then(|value| value.as_str())),
         "copy_path" | "move_path" => {
             let src = path_storage_name(args.get("src").and_then(|value| value.as_str()));
             let dst = path_storage_name(args.get("dst").and_then(|value| value.as_str()));
@@ -970,7 +1125,10 @@ fn normalized_path_log_ref(name: &str, arguments: Option<&JsonObject>) -> Option
         | "mkdir"
         | "delete_path"
         | "search_paths"
-        | "generate_download_link" => {
+        | "generate_download_link"
+        | "list_versions"
+        | "read_file_version"
+        | "delete_version" => {
             normalize_logged_path(args.get("path").and_then(|value| value.as_str()))
         }
         "copy_path" | "move_path" => {
@@ -1000,12 +1158,265 @@ fn normalize_logged_path(path: Option<&str>) -> Option<String> {
         .map(|parsed| parsed.normalized)
 }
 
+#[derive(Debug)]
+struct ConfirmationCheck {
+    operation: McpOperation,
+    risk_type: McpRiskType,
+    storage_id: String,
+    storage_name: String,
+    path: String,
+    summary: String,
+}
+
+fn confirmation_check(
+    ctx: &FsToolsContext,
+    tool_name: &str,
+    arguments: &JsonObject,
+) -> McpResult<Option<ConfirmationCheck>> {
+    match tool_name {
+        "write_file" => check_single_path_confirmation(
+            ctx,
+            tool_name,
+            arguments,
+            "path",
+            McpOperation::Write,
+            bool_arg(arguments, "overwrite", true),
+            false,
+        ),
+        "mkdir" => check_single_path_confirmation(
+            ctx,
+            tool_name,
+            arguments,
+            "path",
+            McpOperation::Mkdir,
+            false,
+            false,
+        ),
+        "delete_path" => check_single_path_confirmation(
+            ctx,
+            tool_name,
+            arguments,
+            "path",
+            McpOperation::Delete,
+            false,
+            false,
+        ),
+        "generate_download_link" => check_single_path_confirmation(
+            ctx,
+            tool_name,
+            arguments,
+            "path",
+            McpOperation::PresignDownloadLink,
+            false,
+            false,
+        ),
+        "delete_version" => check_single_path_confirmation(
+            ctx,
+            tool_name,
+            arguments,
+            "path",
+            McpOperation::DeleteVersion,
+            false,
+            false,
+        ),
+        "copy_path" => check_transfer_confirmation(
+            ctx,
+            tool_name,
+            arguments,
+            McpOperation::Copy,
+            bool_arg(arguments, "overwrite", false),
+        ),
+        "move_path" => check_transfer_confirmation(
+            ctx,
+            tool_name,
+            arguments,
+            McpOperation::Move,
+            bool_arg(arguments, "overwrite", false),
+        ),
+        _ => Ok(None),
+    }
+}
+
+fn check_single_path_confirmation(
+    ctx: &FsToolsContext,
+    tool_name: &str,
+    arguments: &JsonObject,
+    path_key: &str,
+    operation: McpOperation,
+    overwrite: bool,
+    cross_storage: bool,
+) -> McpResult<Option<ConfirmationCheck>> {
+    let Some(path) = arguments.get(path_key).and_then(|value| value.as_str()) else {
+        return Ok(None);
+    };
+    let parsed = crate::path::parse_mcp_path(path)?;
+    if parsed.is_root {
+        return Ok(None);
+    }
+    let resolved = crate::path::resolve_storage_path(&ctx.registry, &parsed.normalized)?;
+    match evaluate_storage_policy(
+        &resolved.storage,
+        &resolved.parsed.backend_path,
+        operation,
+        overwrite,
+        cross_storage,
+    )? {
+        PolicyDecision::Allow => Ok(None),
+        PolicyDecision::RequireConfirmation { risk_type } => Ok(Some(ConfirmationCheck {
+            operation,
+            risk_type,
+            storage_id: resolved.storage.id,
+            storage_name: resolved.storage.name,
+            path: parsed.normalized.clone(),
+            summary: format!("{tool_name} on {}", parsed.normalized),
+        })),
+    }
+}
+
+fn check_transfer_confirmation(
+    ctx: &FsToolsContext,
+    tool_name: &str,
+    arguments: &JsonObject,
+    operation: McpOperation,
+    overwrite: bool,
+) -> McpResult<Option<ConfirmationCheck>> {
+    let Some(src) = arguments.get("src").and_then(|value| value.as_str()) else {
+        return Ok(None);
+    };
+    let Some(dst) = arguments.get("dst").and_then(|value| value.as_str()) else {
+        return Ok(None);
+    };
+    let src_parsed = crate::path::parse_mcp_path(src)?;
+    let dst_parsed = crate::path::parse_mcp_path(dst)?;
+    if src_parsed.is_root || dst_parsed.is_root {
+        return Ok(None);
+    }
+    let src_resolved = crate::path::resolve_storage_path(&ctx.registry, &src_parsed.normalized)?;
+    let dst_resolved = crate::path::resolve_storage_path(&ctx.registry, &dst_parsed.normalized)?;
+    let cross_storage = src_resolved.storage.id != dst_resolved.storage.id;
+
+    let src_decision = evaluate_storage_policy(
+        &src_resolved.storage,
+        &src_resolved.parsed.backend_path,
+        operation,
+        false,
+        cross_storage,
+    )?;
+    if let PolicyDecision::RequireConfirmation { risk_type } = src_decision {
+        return Ok(Some(ConfirmationCheck {
+            operation,
+            risk_type,
+            storage_id: src_resolved.storage.id,
+            storage_name: src_resolved.storage.name,
+            path: src_parsed.normalized.clone(),
+            summary: format!(
+                "{tool_name} from {} to {}",
+                src_parsed.normalized, dst_parsed.normalized
+            ),
+        }));
+    }
+
+    match evaluate_storage_policy(
+        &dst_resolved.storage,
+        &dst_resolved.parsed.backend_path,
+        operation,
+        overwrite,
+        cross_storage,
+    )? {
+        PolicyDecision::Allow => Ok(None),
+        PolicyDecision::RequireConfirmation { risk_type } => Ok(Some(ConfirmationCheck {
+            operation,
+            risk_type,
+            storage_id: dst_resolved.storage.id,
+            storage_name: dst_resolved.storage.name,
+            path: dst_parsed.normalized.clone(),
+            summary: format!(
+                "{tool_name} from {} to {}",
+                src_parsed.normalized, dst_parsed.normalized
+            ),
+        })),
+    }
+}
+
+fn bool_arg(arguments: &JsonObject, key: &str, default: bool) -> bool {
+    arguments
+        .get(key)
+        .and_then(|value| value.as_bool())
+        .unwrap_or(default)
+}
+
+fn confirmation_id_log_ref(arguments: Option<&JsonObject>) -> Option<String> {
+    arguments?
+        .get("confirmation_id")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(ToString::to_string)
+}
+
+fn error_code_from_error_data(error: &ErrorData) -> &str {
+    error
+        .data
+        .as_ref()
+        .and_then(|data| data.get("code"))
+        .and_then(|code| code.as_str())
+        .unwrap_or("ERR_INTERNAL")
+}
+
+fn audit_decision_for_error(error_code: &str) -> AuditDecision {
+    match error_code {
+        "ERR_MCP_POLICY_DENIED"
+        | "ERR_STORAGE_DISABLED"
+        | "ERR_STORAGE_NOT_EXPOSED"
+        | "ERR_STORAGE_READ_ONLY"
+        | "ERR_SESSION_FORBIDDEN"
+        | "ERR_UNAUTHORIZED" => AuditDecision::Denied,
+        _ => AuditDecision::Failed,
+    }
+}
+
+fn is_confirmation_required_response(result: &serde_json::Value) -> bool {
+    result
+        .get("data")
+        .and_then(|data| data.get("status"))
+        .and_then(|status| status.as_str())
+        == Some("requires_confirmation")
+}
+
+fn request_fingerprint(tool_name: &str, arguments: &JsonObject) -> String {
+    let mut cloned = arguments.clone();
+    cloned.remove("confirmation_id");
+    let payload = serde_json::json!({
+        "tool": tool_name,
+        "arguments": cloned
+    });
+    serde_json::to_string(&payload).unwrap_or_else(|_| tool_name.to_string())
+}
+
+fn operation_for_tool(tool_name: &str) -> McpOperation {
+    match tool_name {
+        "list_dir" => McpOperation::List,
+        "stat_path" => McpOperation::Metadata,
+        "read_file" => McpOperation::Read,
+        "mkdir" => McpOperation::Mkdir,
+        "write_file" => McpOperation::Write,
+        "delete_path" => McpOperation::Delete,
+        "copy_path" => McpOperation::Copy,
+        "move_path" => McpOperation::Move,
+        "search_paths" => McpOperation::Search,
+        "generate_download_link" => McpOperation::PresignDownloadLink,
+        "list_versions" => McpOperation::ListVersions,
+        "read_file_version" => McpOperation::ReadFileVersion,
+        "delete_version" => McpOperation::DeleteVersion,
+        _ => McpOperation::Metadata,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    use crate::registry::StorageRegistry;
+    use crate::registry::{StorageRecord, StorageRegistry};
     use crate::session::SessionManager;
 
     fn test_context(temp_dir: &TempDir) -> FsToolsContext {
@@ -1069,5 +1480,152 @@ mod tests {
             .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn dispatch_requires_confirmation_then_approved_operation_executes_once() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let root = temp_dir.path().join("local");
+        std::fs::create_dir_all(&root).expect("create local root");
+        std::fs::write(root.join("file.txt"), "secret").expect("write test file");
+
+        let ctx = test_context(&temp_dir);
+        let storage = StorageRecord::new(
+            "Local".to_string(),
+            "local".to_string(),
+            json!({ "root": root.clone() }),
+        );
+        ctx.registry
+            .save_all_atomic(&[storage])
+            .expect("save registry");
+
+        let confirmations = ConfirmationManager::new();
+        let server = InfimountMcpServer::with_confirmation_manager(
+            ctx,
+            default_enabled_tool_names(),
+            confirmations.clone(),
+        );
+
+        let mut args = JsonObject::new();
+        args.insert("path".to_string(), json!("/Local/file.txt"));
+        args.insert("recursive".to_string(), json!(false));
+
+        let response = server
+            .dispatch_tool_json("delete_path", Some(args.clone()))
+            .await
+            .expect("confirmation response");
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["data"]["status"], "requires_confirmation");
+        assert!(root.join("file.txt").exists());
+
+        let operation_id = response["data"]["operation_id"]
+            .as_str()
+            .expect("operation id")
+            .to_string();
+        confirmations
+            .approve(&operation_id)
+            .await
+            .expect("approve operation");
+
+        args.insert("confirmation_id".to_string(), json!(operation_id));
+        let delete_response = server
+            .dispatch_tool_json("delete_path", Some(args.clone()))
+            .await
+            .expect("delete response");
+        assert_eq!(delete_response["ok"], true);
+        assert_eq!(delete_response["data"]["deleted"], true);
+        assert!(!root.join("file.txt").exists());
+
+        let replay = server.dispatch_tool_json("delete_path", Some(args)).await;
+        assert!(replay.is_err());
+    }
+
+    #[tokio::test]
+    async fn approved_confirmation_cannot_be_used_for_modified_request() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let root = temp_dir.path().join("local");
+        std::fs::create_dir_all(&root).expect("create local root");
+        std::fs::write(root.join("a.txt"), "a").expect("write file a");
+        std::fs::write(root.join("b.txt"), "b").expect("write file b");
+
+        let ctx = test_context(&temp_dir);
+        let storage = StorageRecord::new(
+            "Local".to_string(),
+            "local".to_string(),
+            json!({ "root": root.clone() }),
+        );
+        ctx.registry
+            .save_all_atomic(&[storage])
+            .expect("save registry");
+
+        let confirmations = ConfirmationManager::new();
+        let server = InfimountMcpServer::with_confirmation_manager(
+            ctx,
+            default_enabled_tool_names(),
+            confirmations.clone(),
+        );
+
+        let mut args = JsonObject::new();
+        args.insert("path".to_string(), json!("/Local/a.txt"));
+        args.insert("recursive".to_string(), json!(false));
+
+        let response = server
+            .dispatch_tool_json("delete_path", Some(args))
+            .await
+            .expect("confirmation response");
+        let operation_id = response["data"]["operation_id"]
+            .as_str()
+            .expect("operation id")
+            .to_string();
+        confirmations
+            .approve(&operation_id)
+            .await
+            .expect("approve operation");
+
+        let mut modified_args = JsonObject::new();
+        modified_args.insert("path".to_string(), json!("/Local/b.txt"));
+        modified_args.insert("recursive".to_string(), json!(false));
+        modified_args.insert("confirmation_id".to_string(), json!(operation_id));
+
+        let result = server
+            .dispatch_tool_json("delete_path", Some(modified_args))
+            .await;
+
+        assert!(result.is_err());
+        assert!(root.join("a.txt").exists());
+        assert!(root.join("b.txt").exists());
+    }
+
+    #[test]
+    fn audit_helpers_classify_confirmation_and_policy_events() {
+        assert_eq!(
+            audit_decision_for_error("ERR_MCP_POLICY_DENIED"),
+            AuditDecision::Denied
+        );
+        assert_eq!(
+            audit_decision_for_error("ERR_STORAGE_NOT_EXPOSED"),
+            AuditDecision::Denied
+        );
+        assert_eq!(
+            audit_decision_for_error("ERR_CONFIRMATION_REQUIRED"),
+            AuditDecision::Failed
+        );
+
+        let response = json!({
+            "ok": true,
+            "data": {
+                "status": "requires_confirmation",
+                "operation_id": "op-1"
+            }
+        });
+        assert!(is_confirmation_required_response(&response));
+
+        let response = json!({
+            "ok": true,
+            "data": {
+                "deleted": true
+            }
+        });
+        assert!(!is_confirmation_required_response(&response));
     }
 }

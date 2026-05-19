@@ -6,8 +6,12 @@ use serde_json::json;
 use crate::errors::{err_with_details, map_opendal_error, McpErrorCode, McpResult};
 use crate::opendal_adapter;
 use crate::path::{enforce_root_operation, parse_mcp_path, resolve_storage_path, FsOp};
+use crate::policy::McpOperation;
 
-use super::common::{default_as_text, default_encoding, default_read_max_bytes, FsToolsContext};
+use super::common::{
+    default_as_text, default_encoding, default_read_max_bytes, enforce_storage_policy,
+    FsToolsContext,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -51,6 +55,13 @@ pub async fn read_file(ctx: &FsToolsContext, input: ReadFileInput) -> McpResult<
         Some(&resolved.parsed.backend_path),
     )
     .await?;
+    enforce_storage_policy(
+        &resolved.storage,
+        &resolved.parsed.backend_path,
+        McpOperation::Read,
+        false,
+        false,
+    )?;
     let op = opendal_adapter::build_operator(&resolved.storage)?;
 
     if parsed.backend_path.is_empty() {

@@ -7,8 +7,9 @@ use serde_json::json;
 use crate::errors::{err_with_details, map_opendal_error, McpErrorCode, McpResult};
 use crate::opendal_adapter;
 use crate::path::{enforce_root_operation, parse_mcp_path, resolve_storage_path, FsOp};
+use crate::policy::McpOperation;
 
-use super::common::{default_limit, FsToolsContext};
+use super::common::{default_limit, enforce_storage_policy, FsToolsContext};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -74,6 +75,13 @@ pub async fn list_versions(
         Some(&resolved.parsed.backend_path),
     )
     .await?;
+    enforce_storage_policy(
+        &resolved.storage,
+        &resolved.parsed.backend_path,
+        McpOperation::ListVersions,
+        false,
+        false,
+    )?;
     let op = opendal_adapter::build_operator(&resolved.storage)?;
 
     if let Some(disabled) = opendal_adapter::check_versioning_disabled(&resolved.storage) {

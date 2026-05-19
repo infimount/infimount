@@ -4,7 +4,11 @@ import type {
   McpClientSnippets,
   McpRuntimeStatus,
   McpSettings,
+  McpStoragePolicy,
   McpToolDefinition,
+  PendingMcpConfirmation,
+  AppSettings,
+  McpAuditEvent,
   StorageCapabilities,
   StorageConfig,
   StorageDraft,
@@ -204,6 +208,17 @@ export async function removeStorage(storageId: string): Promise<void> {
   }
 }
 
+export async function updateMcpStoragePolicy(
+  storageId: string,
+  policy: McpStoragePolicy,
+): Promise<StorageConfig> {
+  try {
+    return await tauriInvoke<StorageConfig>("update_mcp_storage_policy", { storageId, policy });
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
 export async function verifyStorage(storage: StorageDraft): Promise<StorageValidationResult> {
   try {
     return await tauriInvoke<StorageValidationResult>("verify_storage", { storage });
@@ -255,6 +270,88 @@ export async function getStorageCapabilities(
     return await tauriInvoke<StorageCapabilities>("get_storage_capabilities", {
       storageId,
     });
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function generateDownloadLink(
+  sourceId: string,
+  path: string,
+  expiresSeconds = 900,
+): Promise<string> {
+  try {
+    return await tauriInvoke<string>("generate_download_link", {
+      sourceId,
+      path,
+      expiresSeconds,
+    });
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function getAppSettings(): Promise<AppSettings> {
+  try {
+    return await tauriInvoke<AppSettings>("get_app_settings");
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function completeOnboarding(): Promise<AppSettings> {
+  try {
+    return await tauriInvoke<AppSettings>("complete_onboarding");
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function skipOnboarding(): Promise<AppSettings> {
+  try {
+    return await tauriInvoke<AppSettings>("skip_onboarding");
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function listMcpAuditEvents(limit = 200): Promise<McpAuditEvent[]> {
+  try {
+    return await tauriInvoke<McpAuditEvent[]>("list_mcp_audit_events", { limit });
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function clearMcpAuditEvents(): Promise<void> {
+  try {
+    return await tauriInvoke("clear_mcp_audit_events");
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function listPendingMcpConfirmations(): Promise<PendingMcpConfirmation[]> {
+  try {
+    return await tauriInvoke<PendingMcpConfirmation[]>("list_pending_mcp_confirmations");
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function approveMcpConfirmation(
+  operationId: string,
+): Promise<PendingMcpConfirmation> {
+  try {
+    return await tauriInvoke<PendingMcpConfirmation>("approve_mcp_confirmation", { operationId });
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+export async function denyMcpConfirmation(operationId: string): Promise<PendingMcpConfirmation> {
+  try {
+    return await tauriInvoke<PendingMcpConfirmation>("deny_mcp_confirmation", { operationId });
   } catch (error) {
     return handleError(error);
   }

@@ -3,8 +3,9 @@ use serde::{Deserialize, Serialize};
 use crate::errors::{map_opendal_error, McpErrorCode, McpResult};
 use crate::opendal_adapter;
 use crate::path::{enforce_root_operation, parse_mcp_path, resolve_storage_path, FsOp};
+use crate::policy::McpOperation;
 
-use super::common::{EntryType, FsToolsContext};
+use super::common::{enforce_storage_policy, EntryType, FsToolsContext};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -47,6 +48,13 @@ pub async fn stat_path(ctx: &FsToolsContext, input: StatPathInput) -> McpResult<
         Some(&resolved.parsed.backend_path),
     )
     .await?;
+    enforce_storage_policy(
+        &resolved.storage,
+        &resolved.parsed.backend_path,
+        McpOperation::Metadata,
+        false,
+        false,
+    )?;
     let op = opendal_adapter::build_operator(&resolved.storage)?;
 
     if parsed.backend_path.is_empty() {

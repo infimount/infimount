@@ -2,8 +2,11 @@
 
 use chrono::Utc;
 use infimount_core::{operations, schema::StorageKindSchema, CoreError, Entry};
+use infimount_mcp::audit::{AuditDecision, AuditEvent, AuditStore};
+use infimount_mcp::confirmation::PendingConfirmation;
 use infimount_mcp::errors::{err_with_details, McpError, McpErrorCode, McpResult};
 use infimount_mcp::opendal_adapter::{get_capabilities, StorageBackendCapabilities};
+use infimount_mcp::policy::McpStoragePolicy;
 use infimount_mcp::registry::{ensure_unique_name, validate_storage_name, StorageRecord};
 use infimount_mcp::server::ToolDefinition;
 use infimount_mcp::settings::McpSettings;
@@ -13,8 +16,10 @@ use infimount_mcp::tools_storage::{
 };
 use serde::Deserialize;
 use serde_json::Value;
+use std::time::Duration;
 use tauri::State;
 
+use crate::app_settings::AppSettings;
 use crate::state::{AppState, McpClientSnippets, McpRuntimeStatus};
 
 #[derive(Debug, Deserialize)]
@@ -231,6 +236,61 @@ pub fn remove_storage(state: State<'_, AppState>, storageId: String) -> Result<(
 }
 
 #[tauri::command]
+pub fn update_mcp_storage_policy(
+    state: State<'_, AppState>,
+    storageId: String,
+    policy: McpStoragePolicy,
+) -> Result<StorageRecord, McpError> {
+    state.registry.with_locked_mutation(|storages| {
+        let storage = storages
+            .iter_mut()
+            .find(|item| item.id == storageId)
+            .ok_or_else(|| {
+                err_with_details(
+                    McpErrorCode::ERR_STORAGE_NOT_FOUND,
+                    format!("storage '{}' not found", storageId),
+                    serde_json::json!({ "storage_id": storageId }),
+                )
+            })?;
+
+        storage.mcp_policy = normalize_mcp_policy(policy);
+        storage.updated_at = Utc::now().to_rfc3339();
+        Ok(storage.clone())
+    })
+}
+
+fn normalize_mcp_policy(mut policy: McpStoragePolicy) -> McpStoragePolicy {
+    policy.allowed_paths = normalize_policy_prefixes(policy.allowed_paths);
+    policy.denied_paths = normalize_policy_prefixes(policy.denied_paths);
+    policy
+}
+
+fn normalize_policy_prefixes(prefixes: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    prefixes
+        .into_iter()
+        .map(|prefix| normalize_policy_prefix(&prefix))
+        .filter(|prefix| !prefix.is_empty())
+        .filter(|prefix| seen.insert(prefix.clone()))
+        .collect()
+}
+
+fn normalize_policy_prefix(prefix: &str) -> String {
+    let mut segments = Vec::new();
+    let normalized = prefix.trim().replace('\\', "/");
+    for segment in normalized.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            value => segments.push(value.to_string()),
+        }
+    }
+    segments.join("/")
+}
+
+#[tauri::command]
 pub async fn verify_storage(storage: StorageDraft) -> Result<ValidateStorageOutput, McpError> {
     validate_storage_draft(&storage)?;
     let name = validate_storage_name(&storage.name)?;
@@ -283,6 +343,106 @@ pub fn get_storage_capabilities(
 ) -> Result<StorageBackendCapabilities, CoreError> {
     let op = state.operator_for_storage_id(&storageId)?;
     Ok(get_capabilities(&op))
+}
+
+#[tauri::command]
+pub async fn generate_download_link(
+    state: State<'_, AppState>,
+    sourceId: String,
+    path: String,
+    expiresSeconds: u64,
+) -> Result<String, CoreError> {
+    if !(60..=86_400).contains(&expiresSeconds) {
+        return Err(CoreError::Config(
+            "expiresSeconds must be between 60 and 86400".to_string(),
+        ));
+    }
+
+    let op = state.operator_for_storage_id(&sourceId)?;
+    let caps = op.info().full_capability();
+    if !caps.presign_read {
+        return Err(CoreError::Config(
+            "storage backend does not support presigned download links".to_string(),
+        ));
+    }
+
+    let metadata = op.stat(&path).await?;
+    if metadata.is_dir() {
+        return Err(CoreError::Config(
+            "download links can only be created for files".to_string(),
+        ));
+    }
+
+    let presigned = op
+        .presign_read(&path, Duration::from_secs(expiresSeconds))
+        .await?;
+    Ok(presigned.uri().to_string())
+}
+
+#[tauri::command]
+pub fn get_app_settings(state: State<'_, AppState>) -> Result<AppSettings, McpError> {
+    state.app_settings_store.load()
+}
+
+#[tauri::command]
+pub fn complete_onboarding(state: State<'_, AppState>) -> Result<AppSettings, McpError> {
+    state.app_settings_store.mark_onboarding_completed()
+}
+
+#[tauri::command]
+pub fn skip_onboarding(state: State<'_, AppState>) -> Result<AppSettings, McpError> {
+    state.app_settings_store.mark_onboarding_skipped()
+}
+
+#[tauri::command]
+pub fn list_mcp_audit_events(limit: Option<usize>) -> Result<Vec<AuditEvent>, McpError> {
+    AuditStore::new(None).list_recent(limit.unwrap_or(200).min(1000))
+}
+
+#[tauri::command]
+pub fn clear_mcp_audit_events() -> Result<(), McpError> {
+    AuditStore::new(None).clear()
+}
+
+#[tauri::command]
+pub async fn list_pending_mcp_confirmations(
+    state: State<'_, AppState>,
+) -> Result<Vec<PendingConfirmation>, McpError> {
+    Ok(state.confirmations.list_pending().await)
+}
+
+#[tauri::command]
+pub async fn approve_mcp_confirmation(
+    state: State<'_, AppState>,
+    operationId: String,
+) -> Result<PendingConfirmation, McpError> {
+    let pending = state.confirmations.approve(&operationId).await?;
+    append_confirmation_audit(&pending, AuditDecision::Confirmed)?;
+    Ok(pending)
+}
+
+#[tauri::command]
+pub async fn deny_mcp_confirmation(
+    state: State<'_, AppState>,
+    operationId: String,
+) -> Result<PendingConfirmation, McpError> {
+    let pending = state.confirmations.deny(&operationId).await?;
+    append_confirmation_audit(&pending, AuditDecision::Denied)?;
+    Ok(pending)
+}
+
+fn append_confirmation_audit(
+    pending: &PendingConfirmation,
+    decision: AuditDecision,
+) -> Result<(), McpError> {
+    let mut event = AuditEvent::new(&pending.tool_name, pending.operation);
+    event.actor_type = "desktop".to_string();
+    event.storage_id = Some(pending.storage_id.clone());
+    event.storage_name = Some(pending.storage_name.clone());
+    event.path = Some(pending.path.clone());
+    event.decision = decision;
+    event.confirmation_id = Some(pending.operation_id.clone());
+    AuditStore::new(None).append(event)
 }
 
 #[tauri::command]
@@ -383,4 +543,22 @@ fn validate_storage_draft(storage: &StorageDraft) -> McpResult<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_policy_prefixes_deduplicates_and_collapses_segments() {
+        let prefixes = normalize_policy_prefixes(vec![
+            " /docs/ ".to_string(),
+            "docs".to_string(),
+            "./shared/".to_string(),
+            "shared/tmp/../public".to_string(),
+            "".to_string(),
+        ]);
+
+        assert_eq!(prefixes, vec!["docs", "shared", "shared/public"]);
+    }
 }

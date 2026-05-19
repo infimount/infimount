@@ -4,9 +4,11 @@ use serde_json::json;
 use crate::errors::{err_with_details, map_opendal_error, McpErrorCode, McpResult};
 use crate::opendal_adapter;
 use crate::path::{enforce_root_operation, parse_mcp_path, resolve_storage_path, FsOp};
+use crate::policy::McpOperation;
 
 use super::common::{
-    copy_file_chunked, delete_existing_on_operator, ensure_parent_exists_for_copy, FsToolsContext,
+    copy_file_chunked, delete_existing_on_operator, enforce_storage_policy,
+    ensure_parent_exists_for_copy, FsToolsContext,
 };
 
 #[derive(Debug, Deserialize)]
@@ -18,6 +20,8 @@ pub struct MovePathInput {
     pub overwrite: bool,
     #[serde(default)]
     pub session_id: Option<String>,
+    #[serde(default)]
+    pub confirmation_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -71,6 +75,21 @@ pub async fn move_path(ctx: &FsToolsContext, input: MovePathInput) -> McpResult<
             json!({ "session_id": input.session_id }),
         ));
     }
+    let cross_storage = src_resolved.storage.id != dst_resolved.storage.id;
+    enforce_storage_policy(
+        &src_resolved.storage,
+        &src_resolved.parsed.backend_path,
+        McpOperation::Move,
+        false,
+        cross_storage,
+    )?;
+    enforce_storage_policy(
+        &dst_resolved.storage,
+        &dst_resolved.parsed.backend_path,
+        McpOperation::Move,
+        input.overwrite,
+        cross_storage,
+    )?;
 
     if src_resolved.storage.id == dst_resolved.storage.id
         && src_parsed.backend_path == dst_parsed.backend_path

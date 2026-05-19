@@ -2,6 +2,7 @@ use chrono::Utc;
 use serde_json::{json, Value};
 
 use crate::errors::{err, err_with_details, McpErrorCode, McpResult};
+use crate::policy::McpStoragePolicy;
 use crate::registry::{mask_storage_record, validate_storage_name, StorageRecord};
 
 pub(super) fn ensure_backend_supported(backend: &str) -> McpResult<()> {
@@ -73,6 +74,7 @@ impl ImportedStorage {
             enabled: self.enabled,
             mcp_exposed: self.mcp_exposed,
             read_only: self.read_only,
+            mcp_policy: McpStoragePolicy::default(),
             created_at: self.created_at.unwrap_or_else(|| now.clone()),
             updated_at: self.updated_at.unwrap_or(now),
         })

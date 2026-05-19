@@ -6,9 +6,11 @@ use serde_json::json;
 use crate::errors::{err_with_details, map_opendal_error, McpErrorCode, McpResult};
 use crate::opendal_adapter;
 use crate::path::{enforce_root_operation, parse_mcp_path, resolve_storage_path, FsOp};
+use crate::policy::McpOperation;
 
 use super::common::{
-    collect_entries, default_limit, sort_entries, EntryType, FsToolsContext, ListDirEntry,
+    collect_entries, default_limit, enforce_storage_policy, sort_entries, EntryType,
+    FsToolsContext, ListDirEntry,
 };
 
 #[derive(Debug, Deserialize)]
@@ -81,6 +83,13 @@ pub async fn list_dir(ctx: &FsToolsContext, input: ListDirInput) -> McpResult<Li
         Some(&resolved.parsed.backend_path),
     )
     .await?;
+    enforce_storage_policy(
+        &resolved.storage,
+        &resolved.parsed.backend_path,
+        McpOperation::List,
+        false,
+        false,
+    )?;
     let op = opendal_adapter::build_operator(&resolved.storage)?;
 
     if !parsed.backend_path.is_empty() {

@@ -18,8 +18,42 @@ Open **MCP Settings** in the desktop app to configure:
 - bind address and port for HTTP
 - exposed tool list
 - generated client snippets
+- per-storage path policies and confirmation rules
+- pending approval queue and MCP audit viewer
 
 Tool exposure changes are applied after restarting the HTTP server. The settings panel shows when a restart is required.
+
+## What the Agent Can Access
+
+MCP access is the intersection of several local controls:
+
+1. The storage must be enabled.
+2. The storage must be exposed to MCP.
+3. The requested tool must be enabled.
+4. The storage policy must allow the requested path.
+5. Read-only storage or read-only policy must allow the operation type.
+6. Risky operations may require approval before execution.
+
+Use the **What the agent can access** summary in MCP Settings before connecting a client. Denied path prefixes override allowed prefixes. Empty allowed prefixes mean all paths are allowed unless a denied prefix blocks them.
+
+## Risky Operation Approval
+
+When a tool call requires approval, the MCP response contains `status: "requires_confirmation"` and an operation ID. The operation is not executed until it is approved in Infimount.
+
+The approval queue shows:
+
+- tool name
+- operation and risk type
+- storage
+- path
+- exact action summary
+- expiry time
+
+Approvals are single-use and tied to the original request fingerprint. A client cannot approve one operation and then reuse the ID for a different path, storage, or tool. Pending approvals are in-memory and are cleared by app/server restart.
+
+## Audit Viewer
+
+MCP Settings includes a local audit viewer for recent MCP activity. It records allowed, denied, confirmation-required, confirmed, and failed tool calls. The audit log is bounded and local-only. Secrets, auth tokens, file contents, and presigned URL query signatures are not stored.
 
 ## Claude Desktop / Stdio
 

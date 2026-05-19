@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import { FileBrowser } from "@/components/FileBrowser";
 import { StorageSidebar } from "@/components/StorageSidebar";
@@ -6,25 +6,44 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/componen
 import { toast } from "@/hooks/use-toast";
 import {
   addStorage as apiAddStorage,
+  approveMcpConfirmation,
+  completeOnboarding,
+  denyMcpConfirmation,
   exportStorageConfig,
+  getAppSettings,
   getMcpClientSnippets,
   getMcpStatus,
+  listPendingMcpConfirmations,
+  listMcpAuditEvents,
   listMcpTools,
   importStorageConfig,
   listStorages,
   removeStorage as apiRemoveStorage,
+  clearMcpAuditEvents,
+  skipOnboarding,
   startMcpHttp,
   stopMcpHttp,
   updateMcpSettings,
+  updateMcpStoragePolicy,
   updateStorage as apiUpdateStorage,
   verifyStorage as apiVerifyStorage,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import {
+  getMcpNotificationPermission,
+  notifyPendingMcpConfirmation,
+  requestMcpNotificationPermission,
+  type McpNotificationPermission,
+} from "@/lib/mcpNotifications";
 import type {
+  AppSettings,
   McpClientSnippets,
+  McpAuditEvent,
   McpRuntimeStatus,
   McpSettings,
+  McpStoragePolicy,
   McpToolDefinition,
+  PendingMcpConfirmation,
   StorageBackend,
   StorageConfig,
   StorageDraft,
@@ -42,6 +61,11 @@ const AddStorageDialog = lazy(() =>
 const McpSettingsDialog = lazy(() =>
   import("@/components/McpSettingsDialog").then((module) => ({
     default: module.McpSettingsDialog,
+  })),
+);
+const FirstRunOnboardingDialog = lazy(() =>
+  import("@/components/FirstRunOnboardingDialog").then((module) => ({
+    default: module.FirstRunOnboardingDialog,
   })),
 );
 const StorageConfigEditorDialog = lazy(() =>
@@ -71,6 +95,7 @@ function mapWireStorage(storage: StorageRecordWire): StorageConfig {
     connected: true,
     createdAt: storage.created_at,
     updatedAt: storage.updated_at,
+    mcpPolicy: mapPolicyWire(storage.mcp_policy),
   };
 }
 
@@ -100,6 +125,70 @@ function mapDraftForBackend(draft: StorageDraft): StorageDraft {
   };
 }
 
+function defaultMcpPolicy(): McpStoragePolicy {
+  return {
+    default_access: "read_write",
+    allowed_paths: [],
+    denied_paths: [],
+    confirmation_rules: {
+      require_for_write: true,
+      require_for_overwrite: true,
+      require_for_delete: true,
+      require_for_version_delete: true,
+      require_for_presign: true,
+      require_for_cross_storage_copy: true,
+    },
+  };
+}
+
+function mapPolicyWire(value: unknown): McpStoragePolicy {
+  if (!isRecord(value)) return defaultMcpPolicy();
+  const fallback = defaultMcpPolicy();
+  const confirmationRules = isRecord(value.confirmation_rules)
+    ? value.confirmation_rules
+    : fallback.confirmation_rules;
+  return {
+    default_access:
+      value.default_access === "none" ||
+      value.default_access === "read_only" ||
+      value.default_access === "read_write"
+        ? value.default_access
+        : fallback.default_access,
+    allowed_paths: Array.isArray(value.allowed_paths)
+      ? value.allowed_paths.filter((path): path is string => typeof path === "string")
+      : [],
+    denied_paths: Array.isArray(value.denied_paths)
+      ? value.denied_paths.filter((path): path is string => typeof path === "string")
+      : [],
+    confirmation_rules: {
+      require_for_write:
+        typeof confirmationRules.require_for_write === "boolean"
+          ? confirmationRules.require_for_write
+          : true,
+      require_for_overwrite:
+        typeof confirmationRules.require_for_overwrite === "boolean"
+          ? confirmationRules.require_for_overwrite
+          : true,
+      require_for_delete:
+        typeof confirmationRules.require_for_delete === "boolean"
+          ? confirmationRules.require_for_delete
+          : true,
+      require_for_version_delete:
+        typeof confirmationRules.require_for_version_delete === "boolean"
+          ? confirmationRules.require_for_version_delete
+          : true,
+      require_for_presign:
+        typeof confirmationRules.require_for_presign === "boolean"
+          ? confirmationRules.require_for_presign
+          : true,
+      require_for_cross_storage_copy:
+        typeof confirmationRules.require_for_cross_storage_copy === "boolean"
+          ? confirmationRules.require_for_cross_storage_copy
+          : true,
+    },
+  };
+}
+
 interface StorageRecordWire {
   id: string;
   name: string;
@@ -108,6 +197,7 @@ interface StorageRecordWire {
   enabled: boolean;
   mcp_exposed: boolean;
   read_only: boolean;
+  mcp_policy?: unknown;
   created_at: string;
   updated_at: string;
 }
@@ -142,6 +232,15 @@ const Index = () => {
   const [mcpStatus, setMcpStatus] = useState<McpRuntimeStatus | null>(null);
   const [mcpSnippets, setMcpSnippets] = useState<McpClientSnippets | null>(null);
   const [mcpTools, setMcpTools] = useState<McpToolDefinition[]>([]);
+  const [mcpAuditEvents, setMcpAuditEvents] = useState<McpAuditEvent[]>([]);
+  const [pendingMcpConfirmations, setPendingMcpConfirmations] = useState<
+    PendingMcpConfirmation[]
+  >([]);
+  const notifiedMcpConfirmationIds = useRef<Set<string>>(new Set());
+  const [mcpNotificationPermission, setMcpNotificationPermission] =
+    useState<McpNotificationPermission>(() => getMcpNotificationPermission());
+  const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [isPreviewVisible, setIsPreviewVisible] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
@@ -155,6 +254,12 @@ const Index = () => {
       setMcpStatus(status);
       setMcpSnippets(snippets);
       setMcpTools(tools);
+      const [auditEvents, pendingConfirmations] = await Promise.all([
+        listMcpAuditEvents(200),
+        listPendingMcpConfirmations(),
+      ]);
+      setMcpAuditEvents(auditEvents);
+      setPendingMcpConfirmations(pendingConfirmations);
     } catch (error) {
       console.error("Failed to load MCP status", error);
     }
@@ -194,9 +299,63 @@ const Index = () => {
   }, [reloadStorages]);
 
   useEffect(() => {
+    void (async () => {
+      try {
+        setAppSettings(await getAppSettings());
+      } catch (error) {
+        console.error("Failed to load app settings", error);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (isStoragesLoading || !appSettings) return;
+    const onboardingDone = appSettings.onboardingCompleted || appSettings.onboardingSkipped;
+    setIsOnboardingOpen(!onboardingDone && storages.length === 0);
+  }, [appSettings, isStoragesLoading, storages.length]);
+
+  useEffect(() => {
     if (!isMcpDialogOpen) return;
     void reloadMcpStatus();
   }, [isMcpDialogOpen, reloadMcpStatus]);
+
+  useEffect(() => {
+    if (!mcpStatus?.runningHttp) return;
+
+    let cancelled = false;
+    const refreshPendingConfirmations = async () => {
+      try {
+        const pendingConfirmations = await listPendingMcpConfirmations();
+        if (!cancelled) {
+          setPendingMcpConfirmations(pendingConfirmations);
+        }
+      } catch (error) {
+        console.error("Failed to refresh pending MCP confirmations", error);
+      }
+    };
+
+    void refreshPendingConfirmations();
+    const interval = window.setInterval(() => void refreshPendingConfirmations(), 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [mcpStatus?.runningHttp]);
+
+  useEffect(() => {
+    for (const pending of pendingMcpConfirmations) {
+      if (notifiedMcpConfirmationIds.current.has(pending.operation_id)) {
+        continue;
+      }
+
+      notifiedMcpConfirmationIds.current.add(pending.operation_id);
+      notifyPendingMcpConfirmation(pending, () => setIsMcpDialogOpen(true));
+      toast({
+        title: "MCP approval needed",
+        description: `${pending.tool_name} wants ${pending.risk_type} access on ${pending.storage_name}.`,
+      });
+    }
+  }, [pendingMcpConfirmations]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -459,6 +618,90 @@ const Index = () => {
     }
   };
 
+  const handleCompleteOnboarding = async () => {
+    const next = await completeOnboarding();
+    setAppSettings(next);
+    setIsOnboardingOpen(false);
+  };
+
+  const handleSkipOnboarding = async () => {
+    const next = await skipOnboarding();
+    setAppSettings(next);
+    setIsOnboardingOpen(false);
+  };
+
+  const handleTestMcpConnection = async () => {
+    await reloadMcpStatus();
+    const exposedCount = storages.filter((storage) => storage.enabled && storage.mcpExposed).length;
+    toast({
+      title: "MCP setup check",
+      description: `${mcpTools.length} function(s) available. ${exposedCount} storage(s) currently exposed.`,
+    });
+  };
+
+  const handleClearMcpAudit = async () => {
+    await clearMcpAuditEvents();
+    setMcpAuditEvents([]);
+    toast({
+      title: "Audit log cleared",
+      description: "Local MCP audit events have been removed.",
+    });
+  };
+
+  const refreshMcpActivity = async () => {
+    const [auditEvents, pendingConfirmations] = await Promise.all([
+      listMcpAuditEvents(200),
+      listPendingMcpConfirmations(),
+    ]);
+    setMcpAuditEvents(auditEvents);
+    setPendingMcpConfirmations(pendingConfirmations);
+  };
+
+  const handleApproveMcpConfirmation = async (operationId: string) => {
+    await approveMcpConfirmation(operationId);
+    await refreshMcpActivity();
+    toast({
+      title: "MCP operation approved",
+      description: "The waiting agent can retry with the approved operation ID.",
+    });
+  };
+
+  const handleDenyMcpConfirmation = async (operationId: string) => {
+    await denyMcpConfirmation(operationId);
+    await refreshMcpActivity();
+    toast({
+      title: "MCP operation denied",
+      description: "The pending operation was removed from the approval queue.",
+    });
+  };
+
+  const handleEnableMcpNotifications = async () => {
+    const permission = await requestMcpNotificationPermission();
+    setMcpNotificationPermission(permission);
+    toast({
+      title:
+        permission === "granted" ? "Desktop notifications enabled" : "Notifications unavailable",
+      description:
+        permission === "granted"
+          ? "Infimount will notify you when risky MCP operations need approval."
+          : "Infimount could not enable desktop notifications in this environment.",
+      variant: permission === "granted" ? "success" : "destructive",
+    });
+  };
+
+  const handleUpdateMcpStoragePolicy = async (
+    storageId: string,
+    policy: McpStoragePolicy,
+  ) => {
+    const updated = await updateMcpStoragePolicy(storageId, policy);
+    const mapped = mapWireStorage(updated as unknown as StorageRecordWire);
+    setStorages((current) => current.map((storage) => (storage.id === storageId ? mapped : storage)));
+    toast({
+      title: "MCP policy updated",
+      description: "Path rules will apply to new MCP requests immediately.",
+    });
+  };
+
   const currentStorage = storages.find((storage) => storage.id === selectedStorage);
 
   const toggleSidebar = () => setIsSidebarOpen((current) => !current);
@@ -493,6 +736,7 @@ const Index = () => {
                 onEditStorageConfig={() => setIsStorageConfigEditorOpen(true)}
                 onExportStorages={handleExportStorages}
                 onOpenMcpSettings={() => setIsMcpDialogOpen(true)}
+                onOpenOnboarding={() => setIsOnboardingOpen(true)}
                 isLoading={isStoragesLoading}
               />
             </ResizablePanel>
@@ -528,6 +772,7 @@ const Index = () => {
             onEditStorageConfig={() => setIsStorageConfigEditorOpen(true)}
             onExportStorages={handleExportStorages}
             onOpenMcpSettings={() => setIsMcpDialogOpen(true)}
+            onOpenOnboarding={() => setIsOnboardingOpen(true)}
             isLoading={isStoragesLoading}
           />
         </div>
@@ -553,6 +798,24 @@ const Index = () => {
       </ResizablePanelGroup>
 
       <Suspense fallback={null}>
+        {isOnboardingOpen ? (
+          <FirstRunOnboardingDialog
+            open={isOnboardingOpen}
+            onOpenChange={setIsOnboardingOpen}
+            onAddStorage={() => {
+              setIsOnboardingOpen(false);
+              setIsAddDialogOpen(true);
+            }}
+            onOpenMcpSettings={() => {
+              setIsOnboardingOpen(false);
+              setIsMcpDialogOpen(true);
+            }}
+            onTestConnection={handleTestMcpConnection}
+            onComplete={handleCompleteOnboarding}
+            onSkip={handleSkipOnboarding}
+          />
+        ) : null}
+
         {isAddDialogOpen ? (
           <AddStorageDialog
             open={isAddDialogOpen}
@@ -574,9 +837,20 @@ const Index = () => {
             status={mcpStatus}
             snippets={mcpSnippets}
             tools={mcpTools}
+            storages={storages}
+            auditEvents={mcpAuditEvents}
+            pendingConfirmations={pendingMcpConfirmations}
+            notificationPermission={mcpNotificationPermission}
             onSave={handleSaveMcpSettings}
             onStartHttp={handleStartMcpHttp}
             onStopHttp={handleStopMcpHttp}
+            onTestServer={handleTestMcpConnection}
+            onRefreshAudit={refreshMcpActivity}
+            onClearAudit={handleClearMcpAudit}
+            onApproveConfirmation={handleApproveMcpConfirmation}
+            onDenyConfirmation={handleDenyMcpConfirmation}
+            onEnableNotifications={handleEnableMcpNotifications}
+            onUpdateStoragePolicy={handleUpdateMcpStoragePolicy}
           />
         ) : null}
 

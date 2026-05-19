@@ -50,7 +50,8 @@ pub fn schema_mkdir() -> serde_json::Value {
         "path": { "type": "string", "description": "Absolute directory path." },
         "parents": { "type": "boolean", "default": true },
         "exist_ok": { "type": "boolean", "default": true },
-        "session_id": { "type": "string", "description": "Session ID for scoped access." }
+        "session_id": { "type": "string", "description": "Session ID for scoped access." },
+        "confirmation_id": { "type": "string", "description": "Approved operation ID for risky MCP operations." }
       },
       "required": ["path"],
       "additionalProperties": false
@@ -66,7 +67,8 @@ pub fn schema_write_file() -> serde_json::Value {
         "encoding": { "type": "string", "default": "utf-8", "description": "Text encoding. Only utf-8 is supported in v1." },
         "overwrite": { "type": "boolean", "default": true },
         "create_parents": { "type": "boolean", "default": false },
-        "session_id": { "type": "string", "description": "Session ID for scoped access." }
+        "session_id": { "type": "string", "description": "Session ID for scoped access." },
+        "confirmation_id": { "type": "string", "description": "Approved operation ID for risky MCP operations." }
       },
       "required": ["path", "content"],
       "additionalProperties": false
@@ -79,7 +81,8 @@ pub fn schema_delete_path() -> serde_json::Value {
       "properties": {
         "path": { "type": "string", "description": "Absolute file or directory path." },
         "recursive": { "type": "boolean", "default": false },
-        "session_id": { "type": "string", "description": "Session ID for scoped access." }
+        "session_id": { "type": "string", "description": "Session ID for scoped access." },
+        "confirmation_id": { "type": "string", "description": "Approved operation ID for risky MCP operations." }
       },
       "required": ["path"],
       "additionalProperties": false
@@ -94,7 +97,8 @@ pub fn schema_copy_path() -> serde_json::Value {
         "dst": { "type": "string", "description": "Absolute destination path." },
         "overwrite": { "type": "boolean", "default": false },
         "recursive": { "type": "boolean", "default": false },
-        "session_id": { "type": "string", "description": "Session ID for scoped access." }
+        "session_id": { "type": "string", "description": "Session ID for scoped access." },
+        "confirmation_id": { "type": "string", "description": "Approved operation ID for risky MCP operations." }
       },
       "required": ["src", "dst"],
       "additionalProperties": false
@@ -108,7 +112,8 @@ pub fn schema_move_path() -> serde_json::Value {
         "src": { "type": "string", "description": "Absolute source file path." },
         "dst": { "type": "string", "description": "Absolute destination file path." },
         "overwrite": { "type": "boolean", "default": false },
-        "session_id": { "type": "string", "description": "Session ID for scoped access." }
+        "session_id": { "type": "string", "description": "Session ID for scoped access." },
+        "confirmation_id": { "type": "string", "description": "Approved operation ID for risky MCP operations." }
       },
       "required": ["src", "dst"],
       "additionalProperties": false
@@ -135,7 +140,8 @@ pub fn schema_generate_download_link() -> serde_json::Value {
       "properties": {
         "path": { "type": "string", "description": "Absolute file path." },
         "expires_seconds": { "type": "integer", "default": 900, "minimum": 60, "maximum": 86400 },
-        "session_id": { "type": "string", "description": "Session ID for scoped access." }
+        "session_id": { "type": "string", "description": "Session ID for scoped access." },
+        "confirmation_id": { "type": "string", "description": "Approved operation ID for risky MCP operations." }
       },
       "required": ["path"],
       "additionalProperties": false
@@ -296,7 +302,8 @@ pub fn schema_delete_version() -> serde_json::Value {
       "properties": {
         "path": { "type": "string", "description": "Absolute file path." },
         "version": { "type": "string", "description": "Version identifier to delete." },
-        "session_id": { "type": "string", "description": "Session ID for authorization." }
+        "session_id": { "type": "string", "description": "Session ID for authorization." },
+        "confirmation_id": { "type": "string", "description": "Approved operation ID for risky MCP operations." }
       },
       "required": ["path", "version"],
       "additionalProperties": false

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileItem } from "@/types/storage";
-import { X, Download, Edit3, Save, Undo2, Clock, Eye } from "lucide-react";
+import { X, Download, Edit3, Save, Undo2, Clock, Eye, Link2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -15,7 +15,14 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { FileTypeIcon } from "./FileIcon";
-import { getStorageCapabilities, readFile, readFileVersion, statEntry, writeFile } from "@/lib/api";
+import {
+  generateDownloadLink,
+  getStorageCapabilities,
+  readFile,
+  readFileVersion,
+  statEntry,
+  writeFile,
+} from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
 import infinityLoader from "@/assets/loading-infinity.apng";
 import { FileVersionsTab } from "./FileVersionsTab";
@@ -189,6 +196,9 @@ export function FilePreviewPanel({
 
   const [prevFileId, setPrevFileId] = useState<string | null>(null);
   const [versionsCapable, setVersionsCapable] = useState(false);
+  const [presignCapable, setPresignCapable] = useState(false);
+  const [linkExpirySeconds, setLinkExpirySeconds] = useState(900);
+  const [isGeneratingLink, setIsGeneratingLink] = useState(false);
 
   if (file?.id !== prevFileId) {
     setPrevFileId(file?.id ?? null);
@@ -227,9 +237,21 @@ export function FilePreviewPanel({
       return;
     }
 
-    if (mode === "unsupported") return;
-
     const ext = (file.extension || file.name.split(".").pop() || "").toLowerCase();
+    const isKnownBinary = BINARY_EXTENSIONS.has(ext);
+    if (file.size && file.size > MAX_PREVIEW_BYTES) {
+      setLoading(false);
+      setMode("unsupported");
+      setError(`File is too large to preview (${formatFileSize(file.size)}).`);
+      return;
+    }
+    if (isKnownBinary) {
+      setLoading(false);
+      setMode("unsupported");
+      setError("Preview not available for this file type.");
+      return;
+    }
+
     const isImage = ["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext);
     const isPdf = ext === "pdf";
     const lowerName = file.name.toLowerCase();
@@ -296,15 +318,50 @@ export function FilePreviewPanel({
   useEffect(() => {
     if (!sourceId) return;
     setVersionsCapable(false);
+    setPresignCapable(false);
     getStorageCapabilities(sourceId)
-      .then((caps) => setVersionsCapable(caps.list_with_versions))
-      .catch(() => setVersionsCapable(false));
+      .then((caps) => {
+        setVersionsCapable(caps.list_with_versions);
+        setPresignCapable(caps.presign_read);
+      })
+      .catch(() => {
+        setVersionsCapable(false);
+        setPresignCapable(false);
+      });
   }, [sourceId]);
 
   const showVersionsTab = versionsCapable;
 
   const isDirty = isEditing && draftContent !== originalContent;
   const canEdit = mode === "text" && !loading && !error;
+
+  const handleCreateDownloadLink = useCallback(async () => {
+    if (!file || file.type !== "file" || isGeneratingLink) return;
+    setIsGeneratingLink(true);
+
+    try {
+      const url = await generateDownloadLink(sourceId, file.id, linkExpirySeconds);
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("Clipboard access is not available.");
+      }
+
+      await navigator.clipboard.writeText(url);
+      toast({
+        title: "Download link copied",
+        description: `Link expires in ${formatExpiry(linkExpirySeconds)}. Anyone with the link may access the file until it expires.`,
+        variant: "success",
+        duration: 3000,
+      });
+    } catch (err: unknown) {
+      toast({
+        title: "Link creation failed",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    } finally {
+      setIsGeneratingLink(false);
+    }
+  }, [file, sourceId, linkExpirySeconds, isGeneratingLink]);
 
   useEffect(() => {
     if (startInEditMode && !loading && !canEdit) {
@@ -508,10 +565,10 @@ export function FilePreviewPanel({
                     a.click();
                     document.body.removeChild(a);
                     URL.revokeObjectURL(url);
-                  } catch (err: any) {
+                  } catch (err: unknown) {
                     toast({
                       title: "Download failed",
-                      description: err.message,
+                      description: err instanceof Error ? err.message : String(err),
                       variant: "destructive",
                     });
                   }
@@ -624,6 +681,40 @@ export function FilePreviewPanel({
             </div>
           </div>
 
+          {presignCapable && file.type === "file" && !isEditing && (
+            <div className="rounded-lg border border-border/70 bg-muted/20 p-3 text-xs">
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <label className="sr-only" htmlFor="download-link-expiry">
+                  Link expiry
+                </label>
+                <select
+                  id="download-link-expiry"
+                  value={linkExpirySeconds}
+                  onChange={(event) => setLinkExpirySeconds(Number(event.target.value))}
+                  className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-xs outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                >
+                  <option value={300}>5 minutes</option>
+                  <option value={900}>15 minutes</option>
+                  <option value={3600}>1 hour</option>
+                  <option value={86400}>24 hours</option>
+                </select>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void handleCreateDownloadLink()}
+                  disabled={isGeneratingLink}
+                  className="shrink-0"
+                >
+                  <Link2 className="mr-2 h-4 w-4" />
+                  {isGeneratingLink ? "Creating..." : "Create link"}
+                </Button>
+              </div>
+              <p className="mt-2 text-muted-foreground">
+                Anyone with the copied link may access this file until it expires.
+              </p>
+            </div>
+          )}
+
           {/* Action Buttons */}
           <div className="flex gap-2">
             {canEdit && !isEditing && (
@@ -721,4 +812,14 @@ const formatFileSize = (bytes: number) => {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+};
+
+const formatExpiry = (seconds: number) => {
+  if (seconds < 3600) {
+    return `${Math.round(seconds / 60)} minutes`;
+  }
+  if (seconds === 3600) {
+    return "1 hour";
+  }
+  return `${Math.round(seconds / 3600)} hours`;
 };

@@ -1853,6 +1853,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-updater",
+ "tempfile",
  "tokio",
 ]
 
