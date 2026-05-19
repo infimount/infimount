@@ -1,3 +1,5 @@
+/* eslint-disable react-refresh/only-export-components */
+
 import { FileItem } from "@/types/storage";
 import { cn } from "@/lib/utils";
 import { DEFAULT_ICON_THEME, type IconTheme, useIconTheme } from "@/hooks/use-icon-theme";

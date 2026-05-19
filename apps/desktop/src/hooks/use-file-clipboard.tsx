@@ -1,3 +1,5 @@
+/* eslint-disable react-refresh/only-export-components */
+
 import * as React from "react";
 
 export type FileClipboardOperation = "copy" | "move";
@@ -40,4 +42,3 @@ export function FileClipboardProvider({ children }: { children: React.ReactNode 
 export function useFileClipboard() {
   return React.useContext(FileClipboardContext);
 }
-

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -51,7 +51,7 @@ function RestoreSharpIcon(props: React.SVGProps<SVGSVGElement>) {
 
 export function WindowControls() {
     const [isMaximized, setIsMaximized] = useState(false);
-    const appWindow = getCurrentWindow();
+    const appWindow = useMemo(() => getCurrentWindow(), []);
 
     useEffect(() => {
         appWindow.isMaximized().then(setIsMaximized).catch(() => { });
@@ -61,7 +61,7 @@ export function WindowControls() {
         return () => {
             unlisten.then((f) => f());
         };
-    }, []);
+    }, [appWindow]);
 
     return (
         <div className="flex items-center gap-1 tauri-no-drag relative z-50">

@@ -40,9 +40,9 @@ export function FileVersionsTab({ sourceId, path, onVersionDownload }: FileVersi
         if (!cancelled) {
           setVersions(res.versions || []);
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (!cancelled) {
-          setError(err.message || "Failed to load versions");
+          setError(err instanceof Error ? err.message : "Failed to load versions");
         }
       } finally {
         if (!cancelled) {

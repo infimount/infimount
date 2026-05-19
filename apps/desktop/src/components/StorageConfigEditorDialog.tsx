@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Braces, RefreshCw } from "lucide-react";
 
 import {
@@ -29,7 +29,7 @@ export function StorageConfigEditorDialog({
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  const loadJson = async () => {
+  const loadJson = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
@@ -40,12 +40,12 @@ export function StorageConfigEditorDialog({
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [onLoad]);
 
   useEffect(() => {
     if (!open) return;
     void loadJson();
-  }, [open]);
+  }, [loadJson, open]);
 
   const handleFormat = () => {
     try {

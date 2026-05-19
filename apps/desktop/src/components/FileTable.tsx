@@ -153,6 +153,8 @@ export function FileTable({
     y: number;
   } | null>(null);
 
+  // TanStack Virtual returns imperative helpers that React Compiler intentionally skips.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const rowVirtualizer = useVirtualizer({
     count: files.length,
     getScrollElement: () => parentRef.current,

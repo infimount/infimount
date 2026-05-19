@@ -63,10 +63,9 @@ export const UploadZone = forwardRef<UploadZoneRef, UploadZoneProps>(
         if (!rawFiles.length) return;
 
         const fileLikes: UploadFileLike[] = rawFiles.map((file) => {
-          const anyFile = file as any;
           const relPath: string =
-            typeof anyFile.webkitRelativePath === "string" && anyFile.webkitRelativePath.length > 0
-              ? anyFile.webkitRelativePath
+            typeof file.webkitRelativePath === "string" && file.webkitRelativePath.length > 0
+              ? file.webkitRelativePath
               : file.name;
 
           return {

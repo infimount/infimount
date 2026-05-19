@@ -178,6 +178,8 @@ export function FileGrid({
 
   const rowCount = Math.ceil(files.length / columns);
 
+  // TanStack Virtual returns imperative helpers that React Compiler intentionally skips.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const rowVirtualizer = useVirtualizer({
     count: rowCount,
     getScrollElement: () => parentRef.current,

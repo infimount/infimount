@@ -37,7 +37,7 @@ describe("FileBrowser Error Handling", () => {
     });
 
     it("displays user-friendly message for NOT_FOUND error", async () => {
-        (listEntries as any)
+        vi.mocked(listEntries)
             .mockResolvedValueOnce([])
             .mockRejectedValueOnce(new TauriApiError("Raw error", "NOT_FOUND"));
 
@@ -65,7 +65,7 @@ describe("FileBrowser Error Handling", () => {
     });
 
     it("displays user-friendly message for PERMISSION_DENIED error", async () => {
-        (listEntries as any).mockRejectedValue(new TauriApiError("Raw error", "PERMISSION_DENIED"));
+        vi.mocked(listEntries).mockRejectedValue(new TauriApiError("Raw error", "PERMISSION_DENIED"));
 
         render(
             <AppZoomProvider>
@@ -82,7 +82,7 @@ describe("FileBrowser Error Handling", () => {
     });
 
     it("displays raw message for unknown errors", async () => {
-        (listEntries as any).mockRejectedValue(new TauriApiError("Something went wrong", "UNKNOWN"));
+        vi.mocked(listEntries).mockRejectedValue(new TauriApiError("Something went wrong", "UNKNOWN"));
 
         render(
             <AppZoomProvider>
@@ -100,8 +100,8 @@ describe("FileBrowser Error Handling", () => {
 describe("FileBrowser shortcuts and creation", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        (listEntries as any).mockResolvedValue([]);
-        (createDirectory as any).mockResolvedValue(undefined);
+        vi.mocked(listEntries).mockResolvedValue([]);
+        vi.mocked(createDirectory).mockResolvedValue(undefined);
     });
 
     it("focuses search on Ctrl/Cmd+F", async () => {

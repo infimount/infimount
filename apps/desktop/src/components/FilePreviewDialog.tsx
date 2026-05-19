@@ -238,10 +238,10 @@ export const FilePreviewDialog: React.FC<FilePreviewDialogProps> = ({
         setContent(text);
         setMode("text");
       })
-      .catch((e: any) => {
+      .catch((e: unknown) => {
         if (cancelled) return;
         setMode("unsupported");
-        setError(e?.message || String(e));
+        setError(e instanceof Error ? e.message : String(e));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -251,6 +251,8 @@ export const FilePreviewDialog: React.FC<FilePreviewDialogProps> = ({
       cancelled = true;
       setLoading(false);
     };
+  // mode is intentionally checked only when the preview request starts.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, file, sourceId]);
 
   useEffect(() => {

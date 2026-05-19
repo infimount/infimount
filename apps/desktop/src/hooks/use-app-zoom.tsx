@@ -1,3 +1,5 @@
+/* eslint-disable react-refresh/only-export-components */
+
 import React from "react";
 
 const ZOOM_STORAGE_KEY = "infimount.zoom";
@@ -93,8 +95,7 @@ export function AppZoomProvider({ children }: { children: React.ReactNode }) {
 
     // Capture ensures we still see the shortcut even if a child stops propagation.
     window.addEventListener("keydown", onKeyDown, { capture: true });
-    return () =>
-      window.removeEventListener("keydown", onKeyDown, { capture: true } as any);
+    return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
   }, [resetZoom, zoomIn, zoomOut]);
 
   React.useEffect(() => {
@@ -115,8 +116,7 @@ export function AppZoomProvider({ children }: { children: React.ReactNode }) {
     };
 
     window.addEventListener("wheel", onWheel, { passive: false, capture: true });
-    return () =>
-      window.removeEventListener("wheel", onWheel, { capture: true } as any);
+    return () => window.removeEventListener("wheel", onWheel, { capture: true });
   }, []);
 
   const value = React.useMemo<AppZoomContextValue>(

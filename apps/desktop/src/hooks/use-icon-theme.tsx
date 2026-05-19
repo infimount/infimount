@@ -1,3 +1,5 @@
+/* eslint-disable react-refresh/only-export-components */
+
 import * as React from "react";
 
 export type IconTheme = "classic" | "modern" | "vivid" | "square";

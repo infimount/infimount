@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef, type CSSProperties } from "react";
 import {
   Search,
   LayoutGrid,
@@ -73,6 +73,26 @@ import { useAppZoom } from "@/hooks/use-app-zoom";
 import infinityLoader from "@/assets/loading-infinity.apng";
 
 // Helper to extract file-like objects (including from dropped folders, where supported)
+interface WebkitFileSystemEntry {
+  name: string;
+  isFile: boolean;
+  isDirectory: boolean;
+  file?: (
+    successCallback: (file: File) => void,
+    errorCallback?: (error: unknown) => void,
+  ) => void;
+  createReader?: () => {
+    readEntries: (
+      successCallback: (entries: WebkitFileSystemEntry[]) => void,
+      errorCallback?: (error: unknown) => void,
+    ) => void;
+  };
+}
+
+type DataTransferItemWithWebkitEntry = Omit<DataTransferItem, "webkitGetAsEntry"> & {
+  webkitGetAsEntry?: () => WebkitFileSystemEntry | null;
+};
+
 async function collectFilesFromDataTransfer(
   dt: DataTransfer
 ): Promise<UploadFileLike[]> {
@@ -89,14 +109,15 @@ async function collectFilesFromDataTransfer(
 
   // Non-standard folder support via webkitGetAsEntry (where available).
   const walkEntry = async (
-    entry: any,
+    entry: WebkitFileSystemEntry,
     parentPath: string,
   ): Promise<UploadFileLike[]> => {
     if (!entry) return [];
 
-    if (entry.isFile) {
+    if (entry.isFile && typeof entry.file === "function") {
+      const fileEntry = entry.file;
       const file: File = await new Promise((resolve, reject) => {
-        entry.file(
+        fileEntry(
           (f: File) => resolve(f),
           (err: unknown) => reject(err)
         );
@@ -110,14 +131,14 @@ async function collectFilesFromDataTransfer(
       ];
     }
 
-    if (entry.isDirectory) {
+    if (entry.isDirectory && typeof entry.createReader === "function") {
       const reader = entry.createReader();
-      const entries: any[] = [];
+      const entries: WebkitFileSystemEntry[] = [];
 
       await new Promise<void>((resolve, reject) => {
         const readBatch = () => {
           reader.readEntries(
-            (batch: any[]) => {
+            (batch) => {
               if (!batch.length) {
                 resolve();
                 return;
@@ -151,9 +172,9 @@ async function collectFilesFromDataTransfer(
     const item = items[i];
     if (item.kind !== "file") continue;
 
-    const anyItem = item as any;
-    if (typeof anyItem.webkitGetAsEntry === "function") {
-      const entry = anyItem.webkitGetAsEntry();
+    const itemWithEntry = item as DataTransferItemWithWebkitEntry;
+    if (typeof itemWithEntry.webkitGetAsEntry === "function") {
+      const entry = itemWithEntry.webkitGetAsEntry();
       if (entry) {
         entryPromises.push(walkEntry(entry, ""));
         continue;
@@ -680,6 +701,8 @@ export function FileBrowser({
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
+  // pasteInto and setClipboardFromSelection are intentionally captured from the current render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clipboard, currentPath, selectedFiles, setClipboard, sourceId]);
 
   useEffect(() => {
@@ -730,10 +753,10 @@ export function FileBrowser({
         title: "Download started",
         description: `Downloading "${file.name}"`,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Download failed",
-        description: error?.message || String(error),
+        description: error instanceof Error ? error.message : String(error),
         variant: "destructive",
       });
     }
@@ -1091,7 +1114,7 @@ export function FileBrowser({
                     <div
                       className="flex-1 overflow-hidden infimount-zoom-shell bg-white dark:bg-background"
                       data-infimount-zoom-region="true"
-                      style={{ ["--infimount-zoom" as any]: zoom }}
+                      style={{ "--infimount-zoom": zoom } as CSSProperties}
                     >
                       <div className="infimount-zoom-inner">
                         {loading ? (
@@ -1270,7 +1293,7 @@ export function FileBrowser({
                   <div
                     className="h-full w-full infimount-zoom-shell bg-white dark:bg-background"
                     data-infimount-zoom-region="true"
-                    style={{ ["--infimount-zoom" as any]: zoom }}
+                    style={{ "--infimount-zoom": zoom } as CSSProperties}
                   >
                     <div className="infimount-zoom-inner">
                       <FilePreviewPanel
