@@ -5,6 +5,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createDirectory, listEntries, TauriApiError } from "@/lib/api";
 import { AppZoomProvider } from "@/hooks/use-app-zoom";
 
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((promiseResolve, promiseReject) => {
+        resolve = promiseResolve;
+        reject = promiseReject;
+    });
+    return { promise, resolve, reject };
+}
+
 // Mock the api module
 vi.mock("@/lib/api", () => ({
     listEntries: vi.fn(),
@@ -94,6 +104,45 @@ describe("FileBrowser Error Handling", () => {
             expect(screen.getByText("Could not connect to this storage")).toBeInTheDocument();
             expect(screen.getByText("Something went wrong")).toBeInTheDocument();
         });
+    });
+
+    it("ignores errors from a storage load after switching to another storage", async () => {
+        const slowLoad = deferred<Awaited<ReturnType<typeof listEntries>>>();
+
+        vi.mocked(listEntries).mockImplementation((sourceId) => {
+            if (sourceId === "slow") {
+                return slowLoad.promise;
+            }
+            return Promise.resolve([]);
+        });
+
+        const { rerender } = render(
+            <AppZoomProvider>
+                <FileBrowser sourceId="slow" storageName="Slow Storage" />
+            </AppZoomProvider>,
+        );
+
+        await waitFor(() => {
+            expect(listEntries).toHaveBeenCalledWith("slow", "/");
+        });
+
+        rerender(
+            <AppZoomProvider>
+                <FileBrowser sourceId="fast" storageName="Fast Storage" />
+            </AppZoomProvider>,
+        );
+
+        await waitFor(() => {
+            expect(listEntries).toHaveBeenCalledWith("fast", "/");
+        });
+
+        slowLoad.reject(new TauriApiError("Slow storage failed", "PERMISSION_DENIED"));
+
+        await waitFor(() => {
+            expect(screen.getByText("This folder is empty")).toBeInTheDocument();
+        });
+        expect(screen.queryByText("Access denied")).not.toBeInTheDocument();
+        expect(screen.queryByText("You don't have permission to view this location.")).not.toBeInTheDocument();
     });
 });
 

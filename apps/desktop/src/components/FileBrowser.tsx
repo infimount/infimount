@@ -262,6 +262,7 @@ export function FileBrowser({
   const [createTargetType, setCreateTargetType] = useState<"file" | "folder" | null>(null);
   const [newEntryName, setNewEntryName] = useState("");
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const loadRequestIdRef = useRef(0);
 
   const describeLoadError = (err: TauriApiError): LoadError => {
     const shortMessage = (err.message || "")
@@ -334,16 +335,22 @@ export function FileBrowser({
   });
 
   const loadFiles = async (path: string) => {
+    const requestId = loadRequestIdRef.current + 1;
+    loadRequestIdRef.current = requestId;
     setLoading(true);
     setError(null);
     try {
       const entries = await listEntries(sourceId, path);
+      if (requestId !== loadRequestIdRef.current) return;
+
       const filtered = entries.filter(
         (e) => e.path !== path && e.path !== "" && e.name !== ".",
       );
       setAllFiles(filtered.map(mapEntryToFileItem));
       setSelectedFiles(new Set());
     } catch (err) {
+      if (requestId !== loadRequestIdRef.current) return;
+
       if (err instanceof TauriApiError) {
         setError(describeLoadError(err));
       } else {
@@ -354,12 +361,17 @@ export function FileBrowser({
       }
       setAllFiles([]); // Clear files on error to prevent showing stale data
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
+    loadRequestIdRef.current += 1;
     setCurrentPath("/");
+    setError(null);
+    setLoading(false);
     setAllFiles([]); // Clear files when switching sources
     setSelectedFiles(new Set());
     setHistory(["/"]);
