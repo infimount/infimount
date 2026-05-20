@@ -1,7 +1,13 @@
 import { expect, test } from "@playwright/experimental-ct-react";
 
 import { McpSettingsDialog } from "@/components/McpSettingsDialog";
-import type { McpClientSnippets, McpRuntimeStatus, McpToolDefinition } from "@/types/storage";
+import type {
+  McpClientSnippets,
+  McpRuntimeStatus,
+  McpStoragePolicy,
+  McpToolDefinition,
+  StorageConfig,
+} from "@/types/storage";
 
 const status: McpRuntimeStatus = {
   settings: {
@@ -39,6 +45,37 @@ const tools: McpToolDefinition[] = [
   { name: "export_config", description: "Export the storage registry as JSON." },
 ];
 
+const mcpPolicy: McpStoragePolicy = {
+  default_access: "read_write",
+  allowed_paths: [],
+  denied_paths: [],
+  confirmation_rules: {
+    require_for_write: true,
+    require_for_overwrite: true,
+    require_for_delete: true,
+    require_for_version_delete: true,
+    require_for_presign: true,
+    require_for_cross_storage_copy: true,
+  },
+};
+
+const storages: StorageConfig[] = [
+  {
+    id: "local",
+    name: "Local",
+    backend: "local",
+    type: "local-fs",
+    config: {},
+    enabled: true,
+    mcpExposed: true,
+    readOnly: false,
+    connected: true,
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    mcpPolicy,
+  },
+];
+
 test("renders the MCP settings dialog", async ({ mount, page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(window, "confirm", {
@@ -61,9 +98,20 @@ test("renders the MCP settings dialog", async ({ mount, page }) => {
         status={status}
         snippets={snippets}
         tools={tools}
+        storages={storages}
+        auditEvents={[]}
+        pendingConfirmations={[]}
+        notificationPermission="default"
         onSave={async () => undefined}
         onStartHttp={async () => undefined}
         onStopHttp={async () => undefined}
+        onTestServer={async () => undefined}
+        onRefreshAudit={async () => undefined}
+        onClearAudit={async () => undefined}
+        onApproveConfirmation={async () => undefined}
+        onDenyConfirmation={async () => undefined}
+        onEnableNotifications={async () => undefined}
+        onUpdateStoragePolicy={async () => undefined}
       />
     </div>,
   );
