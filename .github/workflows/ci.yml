@@ -50,7 +50,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Lint
-        run: pnpm exec eslint . --report-unused-disable-directives
+        run: pnpm lint
 
       - name: Type Check
         run: pnpm tsc --noEmit

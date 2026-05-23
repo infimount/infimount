@@ -44,7 +44,7 @@ fi
 
 if [ "${#md_files[@]}" -gt 0 ]; then
   echo "Running markdownlint..."
-  npx --yes markdownlint-cli --config .markdownlint.yaml "${md_files[@]}"
+  pnpm exec markdownlint --config .markdownlint.yaml "${md_files[@]}"
 fi
 
 if [ "${#workflow_files[@]}" -gt 0 ]; then

@@ -23,6 +23,12 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "json-summary", "lcov"],
       reportsDirectory: "./coverage/frontend",
+      thresholds: {
+        statements: 47,
+        branches: 35,
+        functions: 48,
+        lines: 50,
+      },
       exclude: [
         "src/assets/**",
         "src/test/**",

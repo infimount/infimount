@@ -2,7 +2,45 @@ use opendal::{
     services::{Azblob, Gcs, Webdav, S3},
     Operator,
 };
-use std::error::Error;
+use std::{error::Error, io};
+
+async fn verify_round_trip(op: &Operator, backend: &str, path: &str) -> Result<(), Box<dyn Error>> {
+    let content = format!("Hello {backend}");
+
+    op.write(path, content.clone())
+        .await
+        .map_err(|e| io::Error::other(format!("{backend}: write failed for {path}: {e}")))?;
+
+    let data = op
+        .read(path)
+        .await
+        .map_err(|e| io::Error::other(format!("{backend}: read failed for {path}: {e}")))?;
+
+    let actual = String::from_utf8(data.to_vec()).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{backend}: read returned non-UTF-8 data for {path}: {e}"),
+        )
+    })?;
+
+    if actual != content {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{backend}: round-trip mismatch for {path}"),
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
+async fn verify_list(op: &Operator, backend: &str, path: &str) -> Result<(), Box<dyn Error>> {
+    op.list(path)
+        .await
+        .map_err(|e| io::Error::other(format!("{backend}: list failed for {path}: {e}")))?;
+
+    Ok(())
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -18,10 +56,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .disable_config_load();
 
     let op_gcs = Operator::new(gcs)?.finish();
-    match op_gcs.list("/").await {
-        Ok(_) => println!("✅ GCS: Connection successful (Bucket 'test-bucket' found)"),
-        Err(e) => println!("❌ GCS: Failed - {}", e),
-    }
+    verify_round_trip(&op_gcs, "GCS", "verify-gcs.txt").await?;
+    println!("✅ GCS: read/write round-trip successful");
 
     // 2. Verify S3
     println!("\n--- Verifying S3 ---");
@@ -33,11 +69,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .secret_access_key("password123");
 
     let op_s3 = Operator::new(s3)?.finish();
-
-    match op_s3.write("test_file.txt", "Hello S3").await {
-        Ok(_) => println!("✅ S3: Write successful (Bucket 'test-bucket' accessible)"),
-        Err(e) => println!("❌ S3: Write Failed - {}", e),
-    }
+    verify_round_trip(&op_s3, "S3", "verify-s3.txt").await?;
+    println!("✅ S3: read/write round-trip successful");
 
     // 3. Verify Azure
     println!("\n--- Verifying Azure ---");
@@ -48,14 +81,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .account_key("Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==");
 
     let op_az = Operator::new(az)?.finish();
-
-    match op_az.write("test_file.txt", "Hello Azure").await {
-        Ok(_) => println!("✅ Azure: Write successful"),
-        Err(e) => {
-            println!("⚠️ Azure: Write failed - {}", e);
-            println!("Note: You may need to create the container 'test-container' manually if Azurite doesn't auto-create it.");
-        }
-    }
+    verify_round_trip(&op_az, "Azure", "verify-azure.txt").await?;
+    println!("✅ Azure: read/write round-trip successful");
 
     // 4. Verify WebDAV
     println!("\n--- Verifying WebDAV ---");
@@ -64,10 +91,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .root("/");
 
     let op_webdav = Operator::new(webdav)?.finish();
-    match op_webdav.list("/").await {
-        Ok(_) => println!("✅ WebDAV: Connection successful"),
-        Err(e) => println!("❌ WebDAV: Failed - {}", e),
-    }
+    verify_list(&op_webdav, "WebDAV", "/").await?;
+    println!("✅ WebDAV: list successful");
+
+    println!("\nStorage verification passed.");
 
     Ok(())
 }

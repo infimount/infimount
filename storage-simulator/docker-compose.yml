@@ -59,6 +59,7 @@ services:
   seaweed-nfs:
     image: chrislusf/seaweedfs:latest
     container_name: seaweed-nfs
+    profiles: ["nfs"]
     command: "nfs -filer=seaweed-filer:8888 -port=2049"
     privileged: true
     ports:
