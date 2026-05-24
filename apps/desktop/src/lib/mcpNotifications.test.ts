@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { notifyPendingMcpConfirmation } from "./mcpNotifications";
+import {
+  getMcpNotificationPermission,
+  notifyPendingMcpConfirmation,
+  requestMcpNotificationPermission,
+} from "./mcpNotifications";
 import type { PendingMcpConfirmation } from "@/types/storage";
 
 const pending: PendingMcpConfirmation = {
@@ -16,6 +20,34 @@ const pending: PendingMcpConfirmation = {
 };
 
 describe("mcpNotifications", () => {
+  it("reports unsupported permission state when notifications are unavailable", async () => {
+    const original = globalThis.Notification;
+    Reflect.deleteProperty(globalThis, "Notification");
+
+    expect(getMcpNotificationPermission()).toBe("unsupported");
+    await expect(requestMcpNotificationPermission()).resolves.toBe("unsupported");
+    expect(notifyPendingMcpConfirmation(pending)).toBe(false);
+
+    if (original) {
+      vi.stubGlobal("Notification", original);
+    }
+  });
+
+  it("reads and requests notification permission", async () => {
+    const notification = vi.fn();
+    Object.assign(notification, {
+      permission: "default",
+      requestPermission: vi.fn().mockResolvedValue("granted"),
+    });
+    vi.stubGlobal("Notification", notification);
+
+    expect(getMcpNotificationPermission()).toBe("default");
+    await expect(requestMcpNotificationPermission()).resolves.toBe("granted");
+    expect(notification.requestPermission).toHaveBeenCalled();
+
+    vi.unstubAllGlobals();
+  });
+
   it("does not notify when permission is not granted", () => {
     const notification = vi.fn();
     Object.assign(notification, { permission: "denied" });
@@ -44,6 +76,28 @@ describe("mcpNotifications", () => {
       }),
     );
 
+    vi.unstubAllGlobals();
+  });
+
+  it("focuses the window, runs the click handler, and closes the notification on click", () => {
+    const close = vi.fn();
+    const notification = vi.fn(function MockNotification() {
+      return { close, onclick: null as (() => void) | null };
+    });
+    Object.assign(notification, { permission: "granted" });
+    vi.stubGlobal("Notification", notification);
+    const focus = vi.spyOn(window, "focus").mockImplementation(() => undefined);
+    const onClick = vi.fn();
+
+    expect(notifyPendingMcpConfirmation(pending, onClick)).toBe(true);
+    const createdNotification = notification.mock.results[0].value as { onclick: (() => void) | null };
+    createdNotification.onclick?.();
+
+    expect(focus).toHaveBeenCalled();
+    expect(onClick).toHaveBeenCalled();
+    expect(close).toHaveBeenCalled();
+
+    focus.mockRestore();
     vi.unstubAllGlobals();
   });
 });
