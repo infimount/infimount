@@ -23,13 +23,17 @@ const mockFiles: FileItem[] = [
 
 // Mock @tanstack/react-virtual
 vi.mock("@tanstack/react-virtual", () => ({
-    useVirtualizer: vi.fn().mockReturnValue({
-        getVirtualItems: () => [
-            { index: 0, start: 0, end: 53, size: 53, measureElement: vi.fn() },
-            { index: 1, start: 53, end: 106, size: 53, measureElement: vi.fn() },
-        ],
-        getTotalSize: () => 106,
-    }),
+    useVirtualizer: vi.fn(({ count }: { count: number }) => ({
+        getVirtualItems: () =>
+            Array.from({ length: count }, (_, index) => ({
+                index,
+                start: index * 53,
+                end: (index + 1) * 53,
+                size: 53,
+                measureElement: vi.fn(),
+            })),
+        getTotalSize: () => count * 53,
+    })),
 }));
 
 describe("FileTable", () => {
@@ -169,6 +173,117 @@ describe("FileTable", () => {
         fireEvent.contextMenu(screen.getByText("folder1"));
         fireEvent.click(await screen.findByText("Paste into folder"));
         expect(onPaste).toHaveBeenCalledWith("/folder1");
+    });
+
+    it("formats size and modified-date branches", () => {
+        const now = new Date();
+        const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
+        const old = new Date("2022-02-03T12:00:00Z");
+        const files: FileItem[] = [
+            { id: "/bytes.bin", name: "bytes.bin", type: "file", size: 512, modified: now, extension: "bin" },
+            { id: "/yesterday.bin", name: "yesterday.bin", type: "file", size: 1024, modified: oneDayAgo, extension: "bin" },
+            { id: "/days.bin", name: "days.bin", type: "file", size: 2 * 1024 * 1024, modified: threeDaysAgo, extension: "bin" },
+            { id: "/gb.bin", name: "gb.bin", type: "file", size: 3 * 1024 * 1024 * 1024, modified: old, extension: "bin" },
+            { id: "/unknown", name: "unknown", type: "file", modified: null },
+        ];
+
+        render(
+            <FileTable
+                sourceId="test"
+                files={files}
+                selectedFiles={new Set()}
+                onSelectFile={() => { }}
+            />
+        );
+
+        expect(screen.getByText("512 B")).toBeInTheDocument();
+        expect(screen.getByText("1.0 KB")).toBeInTheDocument();
+        expect(screen.getByText("2.0 MB")).toBeInTheDocument();
+        expect(screen.getByText("3.0 GB")).toBeInTheDocument();
+        expect(screen.getByText("Yesterday")).toBeInTheDocument();
+        expect(screen.getByText("3 days ago")).toBeInTheDocument();
+        expect(screen.getAllByText("-").length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("writes internal drag payloads and selects unselected dragged files", () => {
+        const onSelectFile = vi.fn();
+        const setData = vi.fn();
+        const dataTransfer = {
+            setData,
+            effectAllowed: "",
+        } as unknown as DataTransfer;
+
+        render(
+            <FileTable
+                sourceId="test"
+                files={mockFiles}
+                selectedFiles={new Set()}
+                onSelectFile={onSelectFile}
+            />
+        );
+
+        fireEvent.dragStart(screen.getByText("file1.txt"), { dataTransfer });
+
+        expect(onSelectFile).toHaveBeenCalledWith("/file1.txt");
+        expect(setData).toHaveBeenCalledWith(
+            "application/x-infimount-transfer",
+            JSON.stringify({
+                kind: "infimount-transfer",
+                fromSourceId: "test",
+                paths: ["/file1.txt"],
+                operation: "copy",
+            }),
+        );
+        expect(dataTransfer.effectAllowed).toBe("copyMove");
+    });
+
+    it("ignores external, malformed, and cross-source folder drops", () => {
+        const onMoveToFolder = vi.fn();
+        const malformedTransfer = {
+            types: ["text/plain"],
+            files: [],
+            items: [],
+            dropEffect: "copy",
+            getData: vi.fn(() => "not-json"),
+            setData: vi.fn(),
+        } as unknown as DataTransfer;
+        const crossSourceTransfer = {
+            types: ["application/x-infimount-transfer"],
+            files: [],
+            items: [],
+            dropEffect: "copy",
+            getData: vi.fn(() => JSON.stringify({
+                kind: "infimount-transfer",
+                fromSourceId: "other",
+                paths: ["/file1.txt"],
+            })),
+            setData: vi.fn(),
+        } as unknown as DataTransfer;
+        const externalTransfer = {
+            types: ["Files"],
+            files: [{ name: "local.txt" }],
+            items: [{ kind: "file" }],
+            dropEffect: "copy",
+            getData: vi.fn(() => ""),
+            setData: vi.fn(),
+        } as unknown as DataTransfer;
+
+        render(
+            <FileTable
+                sourceId="test"
+                files={mockFiles}
+                selectedFiles={new Set()}
+                onSelectFile={() => { }}
+                onMoveToFolder={onMoveToFolder}
+            />
+        );
+
+        fireEvent.dragOver(screen.getByText("folder1"), { dataTransfer: externalTransfer });
+        fireEvent.drop(screen.getByText("folder1"), { dataTransfer: malformedTransfer });
+        fireEvent.drop(screen.getByText("folder1"), { dataTransfer: crossSourceTransfer });
+
+        expect(onMoveToFolder).not.toHaveBeenCalled();
     });
 
     it("moves internally dragged files onto folders", () => {

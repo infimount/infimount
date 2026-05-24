@@ -30,10 +30,10 @@ pnpm build
 
 Current frontend coverage gate:
 
-- statements: 47%
-- branches: 35%
-- functions: 48%
-- lines: 50%
+- statements: 75%
+- branches: 60%
+- functions: 75%
+- lines: 80%
 
 ## Latest frontend coverage snapshot
 
@@ -41,40 +41,45 @@ Measured with `pnpm test:coverage:frontend`.
 
 Overall:
 
-- statements: 54.43%
-- branches: 43.56%
-- functions: 56.76%
-- lines: 57.96%
-- tests: 85 passing
+- statements: 76.05%
+- branches: 62.55%
+- functions: 76.44%
+- lines: 80.07%
+- tests: 122 passing in the frontend coverage suite
 
 High-confidence areas:
 
-- `FileVersionsTab.tsx`: ~100% line coverage
-- `McpSettingsDialog.tsx`: 81.25% line coverage
-- `StorageConfigEditorDialog.tsx`: 79.41% line coverage
-- `UploadZone.tsx`: 91.89% line coverage
-- `api.ts`: 71.31% line coverage
+- `FileVersionsTab.tsx`: 100% line coverage
+- `JsonCodeEditor.tsx`: 100% line coverage
+- `api.ts`: 100% line coverage
 - `mcpNotifications.ts`: 100% line coverage
-- `FileGrid.tsx`: 58.53% line coverage
-- `FileTable.tsx`: 54.79% line coverage
+- `FileIcon.tsx`: 96.42% line coverage
+- `use-toast.ts`: 92.15% line coverage
+- `UploadZone.tsx`: 91.89% line coverage
+- `AddStorageDialog.tsx`: 88.27% line coverage
+- `McpSettingsDialog.tsx`: 81.25% line coverage
+- `StorageSidebar.tsx`: 80% line coverage
 
-Low-coverage priority areas:
+Remaining priority areas for the next pass:
 
-- `FileBrowser.tsx`: 44.94% line coverage
-- `StorageSidebar.tsx`: 42.5% line coverage
-- `FilePreviewPanel.tsx`: 48% line coverage
-- `JsonCodeEditor.tsx`: 31.25% line coverage
-- `use-icon-theme.tsx`: 36.84% line coverage
-- `use-toast.ts`: 39.21% line coverage
+- `FileTable.tsx`: 66.43% line coverage
+- `FileGrid.tsx`: 70.12% line coverage
+- `use-app-zoom.tsx`: 71.42% line coverage
+- `FileBrowser.tsx`: 75.87% line coverage
+- `FilePreviewPanel.tsx`: 78% line coverage
+- `StorageConfigEditorDialog.tsx`: 79.41% line coverage
 
 ## Coverage work completed in this pass
 
 - Added tests for notification permission helpers and notification click behavior.
 - Raised `mcpNotifications.ts` from partial coverage to 100% line/function/branch coverage.
-- Added `FileTable` tests for sort callbacks, toggle selection, context-menu actions, and internal drag/drop-to-folder behavior.
-- Added `FileGrid` tests for toggle selection, context-menu actions, and internal drag/drop-to-folder behavior.
-- Raised frontend line coverage from 54.26% to 57.96%.
-- Verified frontend coverage still passes threshold.
+- Added `FileTable` tests for sort callbacks, toggle selection, context-menu actions, internal drag/drop-to-folder behavior, drag payloads, drop rejection paths, and size/date formatting.
+- Added `FileGrid` tests for toggle selection, context-menu actions, internal drag/drop-to-folder behavior, drag payloads, drop rejection paths, size formatting, long-name truncation, and themed icon loading.
+- Added `FileBrowser` orchestration coverage for search, table/grid switching, sort callback wiring, folder navigation, preview open/edit/download/close, delete confirmation, paste conflicts, uploads, and external file/folder drop collection.
+- Added `AddStorageDialog` coverage for add/edit submit paths, validation, secret masking/reveal, reset fields, verification results, and advanced-config preservation.
+- Added `FilePreviewPanel`, `FileIcon`, and `use-toast` coverage for preview modes, icon theme loading/cache behavior, and toast reducer/hook dispatch behavior.
+- Raised frontend line coverage from 54.26% to 80.07% and installed an 80% line coverage gate.
+- Verified frontend coverage, lint, unit tests, and production build pass.
 - Verified Rust coverage gate passes.
 
 ## Path to near-zero manual testing
@@ -83,7 +88,9 @@ True zero manual testing is unrealistic for a cross-platform desktop storage app
 
 ### Phase 1: strengthen core product UI component coverage
 
-Goal: raise frontend line coverage from ~54% to 60%+.
+Status: first target achieved. Frontend line coverage is now 80.07% with an 80% line gate.
+
+Next goal: raise statements/functions to 80%+ and continue reducing component-level pockets below 80%.
 
 Priority tests:
 
@@ -160,4 +167,4 @@ Automate where possible:
 
 ## Recommended next coverage task
 
-Start with `FileBrowser.tsx` because it is the central orchestration surface and remains below 50% line coverage. Add tests for delete confirmation, breadcrumb/path navigation, view mode switching, and upload/drop error handling.
+Focus on `FileTable.tsx` and `FileGrid.tsx` drag-selection geometry plus `use-app-zoom.tsx` keyboard/storage edge cases. These are now the largest remaining low-coverage areas and should move total statements/functions toward 80%+.

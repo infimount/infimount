@@ -98,6 +98,130 @@ describe("FilePreviewPanel", () => {
     expect(screen.getByRole("button", { name: /Edit/i })).toBeInTheDocument();
   });
 
+  it("renders image previews through object URLs", async () => {
+    const file: FileItem = {
+      id: "/image.png",
+      name: "image.png",
+      type: "file",
+      extension: "png",
+      size: 16,
+      modified: new Date(),
+    };
+    const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:image-preview");
+
+    vi.mocked(readFile).mockResolvedValue(new Uint8Array([137, 80, 78, 71]));
+
+    render(
+      <FilePreviewPanel
+        file={file}
+        sourceId="storage-1"
+        onClose={() => undefined}
+        onDownload={() => undefined}
+      />,
+    );
+
+    const image = await screen.findByRole("img", { name: "image.png" });
+    expect(image).toHaveAttribute("src", "blob:image-preview");
+    expect(createObjectURL).toHaveBeenCalled();
+
+    createObjectURL.mockRestore();
+  });
+
+  it("shows unsupported state for known binary files", async () => {
+    const file: FileItem = {
+      id: "/archive.zip",
+      name: "archive.zip",
+      type: "file",
+      extension: "zip",
+      size: 1024,
+      modified: new Date(),
+    };
+
+    render(
+      <FilePreviewPanel
+        file={file}
+        sourceId="storage-1"
+        onClose={() => undefined}
+        onDownload={() => undefined}
+      />,
+    );
+
+    expect(await screen.findByText("Preview not available for this file type.")).toBeInTheDocument();
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it("edits text files and confirms overwrite when the remote file changed", async () => {
+    const file: FileItem = {
+      id: "/notes.txt",
+      name: "notes.txt",
+      type: "file",
+      extension: "txt",
+      size: 128,
+      modified: new Date("2026-03-13T10:00:00Z"),
+    };
+    const onEditModeChange = vi.fn();
+
+    vi.mocked(readFile).mockResolvedValue(new TextEncoder().encode("before"));
+    vi.mocked(statEntry)
+      .mockResolvedValueOnce({
+        path: "/notes.txt",
+        name: "notes.txt",
+        is_dir: false,
+        size: 128,
+        modified_at: "2026-03-13T10:00:00Z",
+      })
+      .mockResolvedValueOnce({
+        path: "/notes.txt",
+        name: "notes.txt",
+        is_dir: false,
+        size: 128,
+        modified_at: "2026-03-13T10:05:00Z",
+      })
+      .mockResolvedValueOnce({
+        path: "/notes.txt",
+        name: "notes.txt",
+        is_dir: false,
+        size: 129,
+        modified_at: "2026-03-13T10:06:00Z",
+      })
+      .mockResolvedValueOnce({
+        path: "/notes.txt",
+        name: "notes.txt",
+        is_dir: false,
+        size: 129,
+        modified_at: "2026-03-13T10:06:00Z",
+      });
+    vi.mocked(writeFile).mockResolvedValue(undefined);
+
+    render(
+      <FilePreviewPanel
+        file={file}
+        sourceId="storage-1"
+        onClose={() => undefined}
+        onDownload={() => undefined}
+        onEditModeChange={onEditModeChange}
+      />,
+    );
+
+    expect(await screen.findByText("before")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Edit/i }));
+    const editor = await screen.findByDisplayValue("before");
+    fireEvent.change(editor, { target: { value: "after" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
+    expect(await screen.findByText("File changed on disk")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Overwrite" }));
+
+    await waitFor(() => {
+      expect(writeFile).toHaveBeenCalledWith(
+        "storage-1",
+        "/notes.txt",
+        new TextEncoder().encode("after"),
+      );
+      expect(onEditModeChange).toHaveBeenCalledWith(false);
+    });
+  });
+
   it("creates and copies a presigned download link when supported", async () => {
     const file: FileItem = {
       id: "/report.txt",

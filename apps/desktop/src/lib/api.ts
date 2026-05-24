@@ -70,6 +70,25 @@ export interface ExportStoragesResult {
   json: string;
 }
 
+export interface FileVersion {
+  version: string;
+  size_bytes: number | null;
+  modified_at: string | null;
+  etag: string | null;
+}
+
+export interface ListVersionsResult {
+  path: string;
+  versions: FileVersion[];
+  next_cursor: string | null;
+}
+
+export interface DeleteVersionResult {
+  path: string;
+  version: string;
+  deleted: boolean;
+}
+
 async function handleError(error: unknown): Promise<never> {
   console.error("API Error:", error);
   if (typeof error === "object" && error !== null && "code" in error && "message" in error) {
@@ -86,72 +105,50 @@ async function handleError(error: unknown): Promise<never> {
   throw new TauriApiError(message);
 }
 
-export async function listEntries(sourceId: string, path: string): Promise<Entry[]> {
+async function invokeOrThrow<T>(command: string): Promise<T>;
+async function invokeOrThrow<T>(command: string, args: Record<string, unknown>): Promise<T>;
+async function invokeOrThrow<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   try {
-    return await tauriInvoke<Entry[]>("list_entries", { sourceId, path });
+    return args === undefined ? await tauriInvoke<T>(command) : await tauriInvoke<T>(command, args);
   } catch (error) {
     return handleError(error);
   }
 }
 
-export async function statEntry(sourceId: string, path: string): Promise<Entry> {
-  try {
-    return await tauriInvoke<Entry>("stat_entry", { sourceId, path });
-  } catch (error) {
-    return handleError(error);
-  }
+export function listEntries(sourceId: string, path: string): Promise<Entry[]> {
+  return invokeOrThrow<Entry[]>("list_entries", { sourceId, path });
+}
+
+export function statEntry(sourceId: string, path: string): Promise<Entry> {
+  return invokeOrThrow<Entry>("stat_entry", { sourceId, path });
 }
 
 export async function readFile(sourceId: string, path: string): Promise<Uint8Array> {
-  try {
-    const data = await tauriInvoke<number[]>("read_file", { sourceId, path });
-    return new Uint8Array(data);
-  } catch (error) {
-    return handleError(error);
-  }
+  const data = await invokeOrThrow<number[]>("read_file", { sourceId, path });
+  return new Uint8Array(data);
 }
 
-export async function writeFile(
-  sourceId: string,
-  path: string,
-  data: Uint8Array,
-): Promise<void> {
-  try {
-    return await tauriInvoke("write_file", { sourceId, path, data: Array.from(data) });
-  } catch (error) {
-    return handleError(error);
-  }
+export function writeFile(sourceId: string, path: string, data: Uint8Array): Promise<void> {
+  return invokeOrThrow<void>("write_file", { sourceId, path, data: Array.from(data) });
 }
 
-export async function createDirectory(sourceId: string, path: string): Promise<void> {
-  try {
-    return await tauriInvoke("create_directory", { sourceId, path });
-  } catch (error) {
-    return handleError(error);
-  }
+export function createDirectory(sourceId: string, path: string): Promise<void> {
+  return invokeOrThrow<void>("create_directory", { sourceId, path });
 }
 
-export async function uploadDroppedFiles(
+export function uploadDroppedFiles(
   sourceId: string,
   paths: string[],
   targetDir: string,
 ): Promise<void> {
-  try {
-    return await tauriInvoke("upload_dropped_files", { sourceId, paths, targetDir });
-  } catch (error) {
-    return handleError(error);
-  }
+  return invokeOrThrow<void>("upload_dropped_files", { sourceId, paths, targetDir });
 }
 
-export async function deletePath(sourceId: string, path: string): Promise<void> {
-  try {
-    return await tauriInvoke("delete_path", { sourceId, path });
-  } catch (error) {
-    return handleError(error);
-  }
+export function deletePath(sourceId: string, path: string): Promise<void> {
+  return invokeOrThrow<void>("delete_path", { sourceId, path });
 }
 
-export async function transferEntries(
+export function transferEntries(
   fromSourceId: string,
   toSourceId: string,
   paths: string[],
@@ -159,289 +156,140 @@ export async function transferEntries(
   operation: TransferOperation,
   conflictPolicy: TransferConflictPolicy,
 ): Promise<void> {
-  try {
-    return await tauriInvoke("transfer_entries", {
-      fromSourceId,
-      toSourceId,
-      paths,
-      targetDir,
-      operation,
-      conflictPolicy,
-    });
-  } catch (error) {
-    return handleError(error);
-  }
+  return invokeOrThrow<void>("transfer_entries", {
+    fromSourceId,
+    toSourceId,
+    paths,
+    targetDir,
+    operation,
+    conflictPolicy,
+  });
 }
 
-export async function listStorages(): Promise<StorageConfig[]> {
-  try {
-    return await tauriInvoke<StorageConfig[]>("list_storages");
-  } catch (error) {
-    return handleError(error);
-  }
+export function listStorages(): Promise<StorageConfig[]> {
+  return invokeOrThrow<StorageConfig[]>("list_storages");
 }
 
-export async function addStorage(storage: StorageDraft): Promise<StorageConfig> {
-  try {
-    return await tauriInvoke<StorageConfig>("add_storage", { storage });
-  } catch (error) {
-    return handleError(error);
-  }
+export function addStorage(storage: StorageDraft): Promise<StorageConfig> {
+  return invokeOrThrow<StorageConfig>("add_storage", { storage });
 }
 
-export async function updateStorage(
-  storageId: string,
-  storage: StorageDraft,
-): Promise<StorageConfig> {
-  try {
-    return await tauriInvoke<StorageConfig>("update_storage", { storageId, storage });
-  } catch (error) {
-    return handleError(error);
-  }
+export function updateStorage(storageId: string, storage: StorageDraft): Promise<StorageConfig> {
+  return invokeOrThrow<StorageConfig>("update_storage", { storageId, storage });
 }
 
-export async function removeStorage(storageId: string): Promise<void> {
-  try {
-    return await tauriInvoke("remove_storage", { storageId });
-  } catch (error) {
-    return handleError(error);
-  }
+export function removeStorage(storageId: string): Promise<void> {
+  return invokeOrThrow<void>("remove_storage", { storageId });
 }
 
-export async function updateMcpStoragePolicy(
+export function updateMcpStoragePolicy(
   storageId: string,
   policy: McpStoragePolicy,
 ): Promise<StorageConfig> {
-  try {
-    return await tauriInvoke<StorageConfig>("update_mcp_storage_policy", { storageId, policy });
-  } catch (error) {
-    return handleError(error);
-  }
+  return invokeOrThrow<StorageConfig>("update_mcp_storage_policy", { storageId, policy });
 }
 
-export async function verifyStorage(storage: StorageDraft): Promise<StorageValidationResult> {
-  try {
-    return await tauriInvoke<StorageValidationResult>("verify_storage", { storage });
-  } catch (error) {
-    return handleError(error);
-  }
+export function verifyStorage(storage: StorageDraft): Promise<StorageValidationResult> {
+  return invokeOrThrow<StorageValidationResult>("verify_storage", { storage });
 }
 
-export async function importStorageConfig(
-  request: ImportStoragesRequest,
-): Promise<ImportStoragesResult> {
-  try {
-    return await tauriInvoke<ImportStoragesResult>("import_storage_config", {
-      request: {
-        json: request.json,
-        mode: request.mode,
-        onConflict: request.onConflict,
-      },
-    });
-  } catch (error) {
-    return handleError(error);
-  }
+export function importStorageConfig(request: ImportStoragesRequest): Promise<ImportStoragesResult> {
+  return invokeOrThrow<ImportStoragesResult>("import_storage_config", {
+    request: {
+      json: request.json,
+      mode: request.mode,
+      onConflict: request.onConflict,
+    },
+  });
 }
 
-export async function exportStorageConfig(
-  includeSecrets: boolean,
-): Promise<ExportStoragesResult> {
-  try {
-    return await tauriInvoke<ExportStoragesResult>("export_storage_config", {
-      includeSecrets,
-    });
-  } catch (error) {
-    return handleError(error);
-  }
+export function exportStorageConfig(includeSecrets: boolean): Promise<ExportStoragesResult> {
+  return invokeOrThrow<ExportStoragesResult>("export_storage_config", { includeSecrets });
 }
 
-export async function listStorageSchemas(): Promise<StorageKindSchema[]> {
-  try {
-    return await tauriInvoke<StorageKindSchema[]>("list_storage_schemas");
-  } catch (error) {
-    return handleError(error);
-  }
+export function listStorageSchemas(): Promise<StorageKindSchema[]> {
+  return invokeOrThrow<StorageKindSchema[]>("list_storage_schemas");
 }
 
-export async function getStorageCapabilities(
-  storageId: string,
-): Promise<StorageCapabilities> {
-  try {
-    return await tauriInvoke<StorageCapabilities>("get_storage_capabilities", {
-      storageId,
-    });
-  } catch (error) {
-    return handleError(error);
-  }
+export function getStorageCapabilities(storageId: string): Promise<StorageCapabilities> {
+  return invokeOrThrow<StorageCapabilities>("get_storage_capabilities", { storageId });
 }
 
-export async function generateDownloadLink(
+export function generateDownloadLink(
   sourceId: string,
   path: string,
   expiresSeconds = 900,
 ): Promise<string> {
-  try {
-    return await tauriInvoke<string>("generate_download_link", {
-      sourceId,
-      path,
-      expiresSeconds,
-    });
-  } catch (error) {
-    return handleError(error);
-  }
+  return invokeOrThrow<string>("generate_download_link", { sourceId, path, expiresSeconds });
 }
 
-export async function getAppSettings(): Promise<AppSettings> {
-  try {
-    return await tauriInvoke<AppSettings>("get_app_settings");
-  } catch (error) {
-    return handleError(error);
-  }
+export function getAppSettings(): Promise<AppSettings> {
+  return invokeOrThrow<AppSettings>("get_app_settings");
 }
 
-export async function completeOnboarding(): Promise<AppSettings> {
-  try {
-    return await tauriInvoke<AppSettings>("complete_onboarding");
-  } catch (error) {
-    return handleError(error);
-  }
+export function completeOnboarding(): Promise<AppSettings> {
+  return invokeOrThrow<AppSettings>("complete_onboarding");
 }
 
-export async function skipOnboarding(): Promise<AppSettings> {
-  try {
-    return await tauriInvoke<AppSettings>("skip_onboarding");
-  } catch (error) {
-    return handleError(error);
-  }
+export function skipOnboarding(): Promise<AppSettings> {
+  return invokeOrThrow<AppSettings>("skip_onboarding");
 }
 
-export async function listMcpAuditEvents(limit = 200): Promise<McpAuditEvent[]> {
-  try {
-    return await tauriInvoke<McpAuditEvent[]>("list_mcp_audit_events", { limit });
-  } catch (error) {
-    return handleError(error);
-  }
+export function listMcpAuditEvents(limit = 200): Promise<McpAuditEvent[]> {
+  return invokeOrThrow<McpAuditEvent[]>("list_mcp_audit_events", { limit });
 }
 
-export async function clearMcpAuditEvents(): Promise<void> {
-  try {
-    return await tauriInvoke("clear_mcp_audit_events");
-  } catch (error) {
-    return handleError(error);
-  }
+export function clearMcpAuditEvents(): Promise<void> {
+  return invokeOrThrow<void>("clear_mcp_audit_events");
 }
 
-export async function listPendingMcpConfirmations(): Promise<PendingMcpConfirmation[]> {
-  try {
-    return await tauriInvoke<PendingMcpConfirmation[]>("list_pending_mcp_confirmations");
-  } catch (error) {
-    return handleError(error);
-  }
+export function listPendingMcpConfirmations(): Promise<PendingMcpConfirmation[]> {
+  return invokeOrThrow<PendingMcpConfirmation[]>("list_pending_mcp_confirmations");
 }
 
-export async function approveMcpConfirmation(
-  operationId: string,
-): Promise<PendingMcpConfirmation> {
-  try {
-    return await tauriInvoke<PendingMcpConfirmation>("approve_mcp_confirmation", { operationId });
-  } catch (error) {
-    return handleError(error);
-  }
+export function approveMcpConfirmation(operationId: string): Promise<PendingMcpConfirmation> {
+  return invokeOrThrow<PendingMcpConfirmation>("approve_mcp_confirmation", { operationId });
 }
 
-export async function denyMcpConfirmation(operationId: string): Promise<PendingMcpConfirmation> {
-  try {
-    return await tauriInvoke<PendingMcpConfirmation>("deny_mcp_confirmation", { operationId });
-  } catch (error) {
-    return handleError(error);
-  }
+export function denyMcpConfirmation(operationId: string): Promise<PendingMcpConfirmation> {
+  return invokeOrThrow<PendingMcpConfirmation>("deny_mcp_confirmation", { operationId });
 }
 
-export async function getMcpSettings(): Promise<McpSettings> {
-  try {
-    return await tauriInvoke<McpSettings>("get_mcp_settings");
-  } catch (error) {
-    return handleError(error);
-  }
+export function getMcpSettings(): Promise<McpSettings> {
+  return invokeOrThrow<McpSettings>("get_mcp_settings");
 }
 
-export async function listMcpTools(): Promise<McpToolDefinition[]> {
-  try {
-    return await tauriInvoke<McpToolDefinition[]>("list_mcp_tools");
-  } catch (error) {
-    return handleError(error);
-  }
+export function listMcpTools(): Promise<McpToolDefinition[]> {
+  return invokeOrThrow<McpToolDefinition[]>("list_mcp_tools");
 }
 
-export async function updateMcpSettings(settings: McpSettings): Promise<McpRuntimeStatus> {
-  try {
-    return await tauriInvoke<McpRuntimeStatus>("update_mcp_settings", { settings });
-  } catch (error) {
-    return handleError(error);
-  }
+export function updateMcpSettings(settings: McpSettings): Promise<McpRuntimeStatus> {
+  return invokeOrThrow<McpRuntimeStatus>("update_mcp_settings", { settings });
 }
 
-export async function getMcpStatus(): Promise<McpRuntimeStatus> {
-  try {
-    return await tauriInvoke<McpRuntimeStatus>("get_mcp_status");
-  } catch (error) {
-    return handleError(error);
-  }
+export function getMcpStatus(): Promise<McpRuntimeStatus> {
+  return invokeOrThrow<McpRuntimeStatus>("get_mcp_status");
 }
 
-export async function startMcpHttp(): Promise<McpRuntimeStatus> {
-  try {
-    return await tauriInvoke<McpRuntimeStatus>("start_mcp_http");
-  } catch (error) {
-    return handleError(error);
-  }
+export function startMcpHttp(): Promise<McpRuntimeStatus> {
+  return invokeOrThrow<McpRuntimeStatus>("start_mcp_http");
 }
 
-export async function stopMcpHttp(): Promise<McpRuntimeStatus> {
-  try {
-    return await tauriInvoke<McpRuntimeStatus>("stop_mcp_http");
-  } catch (error) {
-    return handleError(error);
-  }
+export function stopMcpHttp(): Promise<McpRuntimeStatus> {
+  return invokeOrThrow<McpRuntimeStatus>("stop_mcp_http");
 }
 
-export async function getMcpClientSnippets(): Promise<McpClientSnippets> {
-  try {
-    return await tauriInvoke<McpClientSnippets>("get_mcp_client_snippets");
-  } catch (error) {
-    return handleError(error);
-  }
+export function getMcpClientSnippets(): Promise<McpClientSnippets> {
+  return invokeOrThrow<McpClientSnippets>("get_mcp_client_snippets");
 }
 
-export interface FileVersion {
-  version: string;
-  size_bytes: number | null;
-  modified_at: string | null;
-  etag: string | null;
-}
-
-export interface ListVersionsResult {
-  path: string;
-  versions: FileVersion[];
-  next_cursor: string | null;
-}
-
-export async function listVersions(
+export function listVersions(
   sourceId: string,
   path: string,
   limit?: number,
   cursor?: string,
 ): Promise<ListVersionsResult> {
-  try {
-    return await tauriInvoke<ListVersionsResult>("list_versions", {
-      sourceId,
-      path,
-      limit,
-      cursor,
-    });
-  } catch (error) {
-    return handleError(error);
-  }
+  return invokeOrThrow<ListVersionsResult>("list_versions", { sourceId, path, limit, cursor });
 }
 
 export async function readFileVersion(
@@ -449,36 +297,14 @@ export async function readFileVersion(
   path: string,
   version: string,
 ): Promise<Uint8Array> {
-  try {
-    const data = await tauriInvoke<number[]>("read_file_version", {
-      sourceId,
-      path,
-      version,
-    });
-    return new Uint8Array(data);
-  } catch (error) {
-    return handleError(error);
-  }
+  const data = await invokeOrThrow<number[]>("read_file_version", { sourceId, path, version });
+  return new Uint8Array(data);
 }
 
-export interface DeleteVersionResult {
-  path: string;
-  version: string;
-  deleted: boolean;
-}
-
-export async function deleteFileVersion(
+export function deleteFileVersion(
   sourceId: string,
   path: string,
   version: string,
 ): Promise<DeleteVersionResult> {
-  try {
-    return await tauriInvoke<DeleteVersionResult>("delete_version", {
-      sourceId,
-      path,
-      version,
-    });
-  } catch (error) {
-    return handleError(error);
-  }
+  return invokeOrThrow<DeleteVersionResult>("delete_version", { sourceId, path, version });
 }

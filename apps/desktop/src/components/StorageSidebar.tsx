@@ -386,6 +386,7 @@ export function StorageSidebar({
                 size="icon"
                 variant="ghost"
                 className="h-8 w-8 hover:bg-sidebar-accent/30 hover:text-sidebar-foreground"
+                aria-label="Storage actions"
               >
                 <Menu className="h-4 w-4" />
               </Button>

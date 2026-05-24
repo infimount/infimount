@@ -24,10 +24,10 @@ export default defineConfig({
       reporter: ["text", "json-summary", "lcov"],
       reportsDirectory: "./coverage/frontend",
       thresholds: {
-        statements: 47,
-        branches: 35,
-        functions: 48,
-        lines: 50,
+        statements: 75,
+        branches: 60,
+        functions: 75,
+        lines: 80,
       },
       exclude: [
         "src/assets/**",

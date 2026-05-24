@@ -24,13 +24,17 @@ const mockFiles: FileItem[] = [
 
 // Mock @tanstack/react-virtual
 vi.mock("@tanstack/react-virtual", () => ({
-    useVirtualizer: vi.fn().mockReturnValue({
-        getVirtualItems: () => [
-            { index: 0, start: 0, end: 100, size: 100, measureElement: vi.fn() },
-            { index: 1, start: 100, end: 200, size: 100, measureElement: vi.fn() },
-        ],
-        getTotalSize: () => 200,
-    }),
+    useVirtualizer: vi.fn(({ count }: { count: number }) => ({
+        getVirtualItems: () =>
+            Array.from({ length: count }, (_, index) => ({
+                index,
+                start: index * 112,
+                end: (index + 1) * 112,
+                size: 112,
+                measureElement: vi.fn(),
+            })),
+        getTotalSize: () => count * 112,
+    })),
 }));
 
 describe("FileGrid", () => {
@@ -161,6 +165,149 @@ describe("FileGrid", () => {
         fireEvent.contextMenu(screen.getByText("folder1"));
         fireEvent.click(await screen.findByText("Paste into folder"));
         expect(onPaste).toHaveBeenCalledWith("/folder1");
+    });
+
+    it("formats file sizes and truncates long names", () => {
+        const files: FileItem[] = [
+            { id: "/bytes.bin", name: "bytes.bin", type: "file", size: 512, modified: new Date(), extension: "bin" },
+            { id: "/kb.bin", name: "kb.bin", type: "file", size: 1024, modified: new Date(), extension: "bin" },
+            { id: "/mb.bin", name: "mb.bin", type: "file", size: 2 * 1024 * 1024, modified: new Date(), extension: "bin" },
+            { id: "/gb.bin", name: "gb.bin", type: "file", size: 3 * 1024 * 1024 * 1024, modified: new Date(), extension: "bin" },
+            {
+                id: "/long.json",
+                name: "very-long-file-name-with-many-characters.json",
+                type: "file",
+                size: 0,
+                modified: new Date(),
+                extension: "json",
+            },
+        ];
+
+        render(
+            <FileGrid
+                sourceId="test"
+                files={files}
+                selectedFiles={new Set()}
+                onSelectFile={() => { }}
+            />
+        );
+
+        expect(screen.getByText("512 B")).toBeInTheDocument();
+        expect(screen.getByText("1.0 KB")).toBeInTheDocument();
+        expect(screen.getByText("2.0 MB")).toBeInTheDocument();
+        expect(screen.getByText("3.0 GB")).toBeInTheDocument();
+        expect(screen.getByText("very-long...json")).toBeInTheDocument();
+    });
+
+    it("writes internal drag payloads and selects unselected dragged files", () => {
+        const onSelectFile = vi.fn();
+        const setData = vi.fn();
+        const dataTransfer = {
+            setData,
+            effectAllowed: "",
+        } as unknown as DataTransfer;
+
+        render(
+            <FileGrid
+                sourceId="test"
+                files={mockFiles}
+                selectedFiles={new Set()}
+                onSelectFile={onSelectFile}
+            />
+        );
+
+        fireEvent.dragStart(screen.getByText("file1.txt"), { dataTransfer });
+
+        expect(onSelectFile).toHaveBeenCalledWith("/file1.txt");
+        expect(setData).toHaveBeenCalledWith(
+            "application/x-infimount-transfer",
+            JSON.stringify({
+                kind: "infimount-transfer",
+                fromSourceId: "test",
+                paths: ["/file1.txt"],
+                operation: "copy",
+            }),
+        );
+        expect(dataTransfer.effectAllowed).toBe("copyMove");
+    });
+
+    it("uses the current selection when dragging an already-selected item", () => {
+        const onSelectFile = vi.fn();
+        const setData = vi.fn();
+        const dataTransfer = {
+            setData,
+            effectAllowed: "",
+        } as unknown as DataTransfer;
+
+        render(
+            <FileGrid
+                sourceId="test"
+                files={mockFiles}
+                selectedFiles={new Set(["/folder1", "/file1.txt"])}
+                onSelectFile={onSelectFile}
+            />
+        );
+
+        fireEvent.dragStart(screen.getByText("file1.txt"), { dataTransfer });
+
+        expect(onSelectFile).not.toHaveBeenCalled();
+        expect(setData).toHaveBeenCalledWith(
+            "application/x-infimount-transfer",
+            JSON.stringify({
+                kind: "infimount-transfer",
+                fromSourceId: "test",
+                paths: ["/folder1", "/file1.txt"],
+                operation: "copy",
+            }),
+        );
+    });
+
+    it("ignores external, malformed, and cross-source folder drops", () => {
+        const onMoveToFolder = vi.fn();
+        const malformedTransfer = {
+            types: ["text/plain"],
+            files: [],
+            items: [],
+            dropEffect: "copy",
+            getData: vi.fn(() => "not-json"),
+            setData: vi.fn(),
+        } as unknown as DataTransfer;
+        const crossSourceTransfer = {
+            types: ["application/x-infimount-transfer"],
+            files: [],
+            items: [],
+            dropEffect: "copy",
+            getData: vi.fn(() => JSON.stringify({
+                kind: "infimount-transfer",
+                fromSourceId: "other",
+                paths: ["/file1.txt"],
+            })),
+            setData: vi.fn(),
+        } as unknown as DataTransfer;
+        const externalTransfer = {
+            types: ["Files"],
+            files: [{ name: "local.txt" }],
+            items: [{ kind: "file" }],
+            dropEffect: "copy",
+            getData: vi.fn(() => ""),
+            setData: vi.fn(),
+        } as unknown as DataTransfer;
+
+        render(
+            <FileGrid
+                sourceId="test"
+                files={mockFiles}
+                selectedFiles={new Set()}
+                onSelectFile={() => { }}
+                onMoveToFolder={onMoveToFolder}
+            />
+        );
+
+        fireEvent.dragOver(screen.getByText("folder1"), { dataTransfer: externalTransfer });
+        fireEvent.drop(screen.getByText("folder1"), { dataTransfer: malformedTransfer });
+        fireEvent.drop(screen.getByText("folder1"), { dataTransfer: crossSourceTransfer });
+
+        expect(onMoveToFolder).not.toHaveBeenCalled();
     });
 
     it("moves internally dragged files onto folders", () => {
