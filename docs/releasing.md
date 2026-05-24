@@ -68,7 +68,7 @@ The `Release` workflow is triggered by `v*` tags and will:
 - build Linux, macOS, Windows binaries
 - sign/notarize macOS artifacts if Apple signing secrets are present
 - sign Windows installers if Windows signing secrets are present
-- run artifact smoke checks
+- run artifact smoke checks, including Linux AppImage launch/migration, `.deb` install/launch/migration, and RPM package metadata checks
 - generate SHA256 checksum files
 - generate `SBOM.spdx.json`
 - create GitHub release draft with all assets
@@ -93,7 +93,7 @@ In the release draft:
 2. Confirm the generated release notes are acceptable.
 3. Publish release.
 
-Manual checksum or install sanity checks are optional spot audits only; they are no longer required release tests because the workflow validates checksums and package structure automatically.
+Manual checksum or install sanity checks are optional spot audits only; they are no longer required release tests because the workflow validates checksums, package structure, and Linux artifact launch/install smoke paths automatically.
 
 ## 4. Post-release checks
 

@@ -92,6 +92,7 @@ Remaining priority areas for the next pass:
 - Added a `Release` workflow preflight gate that blocks artifact builds until frontend, UI, Rust, desktop smoke, storage simulator, and zero-manual policy checks pass.
 - Added `pnpm test:release` for local release-gate dry runs, including the storage simulator by default.
 - Added `pnpm test:release:policy` to fail if release artifact jobs stop depending on automated gates.
+- Added Linux release artifact smoke coverage for AppImage launch/migration, `.deb` install/launch/migration, and RPM metadata/listing validation.
 - Verified frontend coverage, lint, unit tests, integration tests, and production build pass.
 - Verified Rust coverage gate passes.
 
@@ -173,8 +174,9 @@ Goal: reduce release manual checks.
 
 Automate where possible:
 
-- Linux AppImage launch smoke
-- `.deb` and `.rpm` install smoke
+- Linux AppImage launch smoke — automated in the release workflow
+- `.deb` install/launch smoke — automated in the release workflow
+- `.rpm` metadata/listing smoke — automated in the release workflow
 - Windows installer smoke in CI
 - macOS DMG smoke where runner support allows
 

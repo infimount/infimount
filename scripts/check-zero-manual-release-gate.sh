@@ -74,6 +74,8 @@ for command in "${required_release_commands[@]}"; do
   require_file_contains "$RELEASE_GATE_SCRIPT" "$command"
 done
 
+require_file_contains "$RELEASE_WORKFLOW" "smoke-linux-release-artifacts.sh"
+
 require_file_contains "$RELEASING_DOC" "Zero manual product test execution"
 require_file_contains "$RELEASING_DOC" "Manual product test execution must not be a release gate"
 

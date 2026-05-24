@@ -233,7 +233,7 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb rpm file
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -328,17 +328,7 @@ jobs:
           fi
 
       - name: Smoke check Linux artifacts
-        run: |
-          set -euo pipefail
-          test -s out/linux/Infimount-amd64.deb
-          test -s out/linux/Infimount-x86_64.rpm
-          test -s out/linux/Infimount-x86_64.AppImage
-          dpkg-deb --info out/linux/Infimount-amd64.deb >/dev/null
-          sudo apt-get update
-          sudo apt-get install -y rpm
-          rpm -qip out/linux/Infimount-x86_64.rpm >/dev/null
-          chmod +x out/linux/Infimount-x86_64.AppImage
-          out/linux/Infimount-x86_64.AppImage --appimage-version
+        run: ./scripts/smoke-linux-release-artifacts.sh out/linux
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v6
