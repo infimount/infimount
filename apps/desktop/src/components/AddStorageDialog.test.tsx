@@ -127,6 +127,7 @@ describe("AddStorageDialog", () => {
     fireEvent.change(await screen.findByLabelText("Storage Name"), {
       target: { value: "Incomplete" },
     });
+    await screen.findByLabelText(/Root path/);
     fireEvent.click(screen.getByRole("button", { name: "Validate" }));
 
     expect(await screen.findByText("Root path is required.")).toBeInTheDocument();
@@ -218,8 +219,8 @@ describe("AddStorageDialog", () => {
     renderDialog({ initialStorage, onUpdate });
 
     expect(await screen.findByText("Edit Storage")).toBeInTheDocument();
-    expect(screen.getByLabelText("Storage Name")).toHaveValue("Existing bucket");
-    expect(screen.getByLabelText(/Bucket/)).toHaveValue("old-bucket");
+    await waitFor(() => expect(screen.getByLabelText("Storage Name")).toHaveValue("Existing bucket"));
+    expect(await screen.findByLabelText(/Bucket/)).toHaveValue("old-bucket");
     expect(screen.getByLabelText(/Secret key/)).toHaveAttribute("type", "password");
     expect(screen.getByText(/advanced config field/)).toBeInTheDocument();
 
