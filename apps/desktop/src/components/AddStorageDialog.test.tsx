@@ -124,13 +124,18 @@ describe("AddStorageDialog", () => {
     const onVerify = vi.fn();
     renderDialog({ onVerify });
 
-    fireEvent.change(await screen.findByLabelText("Storage Name"), {
+    const nameInput = await screen.findByLabelText("Storage Name");
+    fireEvent.change(nameInput, {
       target: { value: "Incomplete" },
     });
     await screen.findByLabelText(/Root path/);
+    await waitFor(() => expect(nameInput).toHaveValue("Incomplete"));
+
     fireEvent.click(screen.getByRole("button", { name: "Validate" }));
 
-    expect(await screen.findByText("Root path is required.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("Root path is required.")).toBeInTheDocument();
+    });
     expect(onVerify).not.toHaveBeenCalled();
   });
 
