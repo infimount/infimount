@@ -4,7 +4,9 @@ This document is the operational checklist for cutting a release.
 
 ## 1. Pre-release checks
 
-Infimount releases are intended to require **zero manual test execution**. Before a tag can produce release artifacts, the `Release` workflow now runs automated release-gate jobs for frontend tests, Playwright UI tests, Rust tests/coverage, desktop smoke, and OpenDAL storage simulator verification.
+### Zero manual product test execution
+
+Infimount releases are intended to require **zero manual product test execution**. Manual product test execution must not be a release gate. Before a tag can produce release artifacts, the `Release` workflow runs automated release-gate jobs for frontend tests, Playwright UI tests, Rust tests/coverage, desktop smoke, OpenDAL storage simulator verification, and a release-policy guard that verifies artifact build jobs still depend on those gates.
 
 Optional local dry run before tagging:
 
@@ -18,6 +20,7 @@ For faster local iteration only, you may skip slow checks with:
 INFIMOUNT_RELEASE_GATE_SKIP_UI=1 \
 INFIMOUNT_RELEASE_GATE_SKIP_DESKTOP_SMOKE=1 \
 INFIMOUNT_RELEASE_GATE_SKIP_RUST_COVERAGE=1 \
+INFIMOUNT_RELEASE_GATE_SKIP_STORAGE_SIMULATOR=1 \
 pnpm test:release
 ```
 
@@ -59,7 +62,8 @@ The `Release` workflow is triggered by `v*` tags and will:
   - Playwright component/UI tests
   - Rust format, clippy, workspace tests, and coverage gate
   - desktop launch/migration smoke test under Xvfb
-  - OpenDAL storage simulator verification
+  - OpenDAL storage simulator verification, including read/write/list/stat/delete round trips where supported and WebDAV list reachability
+  - zero-manual release policy check (`scripts/check-zero-manual-release-gate.sh`)
 - sync app manifest versions from the pushed tag via `scripts/sync-release-version.mjs`
 - build Linux, macOS, Windows binaries
 - sign/notarize macOS artifacts if Apple signing secrets are present

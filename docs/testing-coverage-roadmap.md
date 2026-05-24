@@ -26,6 +26,8 @@ pnpm test:ui
 pnpm test:coverage:frontend
 pnpm lint
 pnpm build
+pnpm --dir ../.. test:release
+pnpm --dir ../.. test:release:policy
 ```
 
 Current frontend coverage gate:
@@ -87,8 +89,9 @@ Remaining priority areas for the next pass:
 - Added a release-zero-manual app-shell integration smoke path for adding local storage and starting MCP through the production page orchestration.
 - Raised frontend line coverage from 54.26% to 85.73% and installed an 80% line coverage gate.
 - Raised frontend statements/functions to 80%+ and increased the coverage gate to 80% statements, 65% branches, 80% functions, and 80% lines.
-- Added a `Release` workflow preflight gate that blocks artifact builds until frontend, UI, Rust, desktop smoke, and storage simulator checks pass.
-- Added `pnpm test:release` for local release-gate dry runs.
+- Added a `Release` workflow preflight gate that blocks artifact builds until frontend, UI, Rust, desktop smoke, storage simulator, and zero-manual policy checks pass.
+- Added `pnpm test:release` for local release-gate dry runs, including the storage simulator by default.
+- Added `pnpm test:release:policy` to fail if release artifact jobs stop depending on automated gates.
 - Verified frontend coverage, lint, unit tests, integration tests, and production build pass.
 - Verified Rust coverage gate passes.
 
@@ -147,10 +150,10 @@ Goal: reduce manual storage backend validation.
 
 Use `storage-simulator` CI to verify:
 
-- S3-compatible read/write/list/delete
-- Azure/Azurite read/write/list/delete
-- GCS emulator read/write/list/delete
-- WebDAV list/read/write
+- S3-compatible read/write/list/stat/delete
+- Azure/Azurite read/write/list/stat/delete
+- GCS emulator read/write/list/stat/delete
+- WebDAV list reachability
 - `validate_storage` capability summary
 
 ### Phase 4: accessibility and visual regression

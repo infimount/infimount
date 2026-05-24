@@ -42,7 +42,7 @@ jobs:
         run: pnpm lint
 
       - name: Type check
-        run: pnpm tsc --noEmit
+        run: pnpm typecheck
 
       - name: Unit tests
         run: pnpm test:unit
@@ -181,28 +181,20 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install simulator CLIs
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ca-certificates curl unzip
-          curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
-          unzip -q /tmp/awscliv2.zip -d /tmp
-          sudo /tmp/aws/install --update
-          curl -fsSL https://aka.ms/InstallAzureCLIDeb -o /tmp/install-azure-cli.sh
-          sudo bash /tmp/install-azure-cli.sh
+        run: ./scripts/install-storage-simulator-clis-linux.sh
 
-      - name: Start storage simulator
-        run: docker compose -f storage-simulator/docker-compose.yml up -d
+      - name: Run storage simulator gate
+        run: ./scripts/storage-simulator-gate.sh
 
-      - name: Bootstrap storage simulator
-        working-directory: storage-simulator
-        run: ./bootstrap.sh
+  release-policy-gate:
+    name: Release Gate / Zero Manual Policy
+    runs-on: ubuntu-latest
 
-      - name: Verify OpenDAL storage simulator
-        run: cargo run -p infimount_core --bin verify_storage
+    steps:
+      - uses: actions/checkout@v6
 
-      - name: Stop storage simulator
-        if: always()
-        run: docker compose -f storage-simulator/docker-compose.yml down -v
+      - name: Verify zero-manual release gate policy
+        run: ./scripts/check-zero-manual-release-gate.sh
 
   build-linux:
     name: Build Linux
@@ -213,6 +205,7 @@ jobs:
       - release-rust-gate
       - release-desktop-smoke
       - release-storage-simulator
+      - release-policy-gate
 
     steps:
       - uses: actions/checkout@v6
@@ -363,6 +356,7 @@ jobs:
       - release-rust-gate
       - release-desktop-smoke
       - release-storage-simulator
+      - release-policy-gate
 
     steps:
       - uses: actions/checkout@v6
@@ -538,6 +532,7 @@ jobs:
       - release-rust-gate
       - release-desktop-smoke
       - release-storage-simulator
+      - release-policy-gate
 
     steps:
       - uses: actions/checkout@v6

@@ -32,6 +32,8 @@ jobs:
         run: |
           go install github.com/rhysd/actionlint/cmd/actionlint@latest
           "$(go env GOPATH)/bin/actionlint"
+      - name: Zero-manual release policy
+        run: ./scripts/check-zero-manual-release-gate.sh
 
   lint-yaml:
     name: YAML Lint

@@ -131,25 +131,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install simulator CLIs
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ca-certificates curl unzip
-          curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
-          unzip -q /tmp/awscliv2.zip -d /tmp
-          sudo /tmp/aws/install --update
-          curl -fsSL https://aka.ms/InstallAzureCLIDeb -o /tmp/install-azure-cli.sh
-          sudo bash /tmp/install-azure-cli.sh
+        run: ./scripts/install-storage-simulator-clis-linux.sh
 
-      - name: Start storage simulator
-        run: docker compose -f storage-simulator/docker-compose.yml up -d
-
-      - name: Bootstrap storage simulator
-        working-directory: storage-simulator
-        run: ./bootstrap.sh
-
-      - name: Verify OpenDAL storage simulator
-        run: cargo run -p infimount_core --bin verify_storage
-
-      - name: Stop storage simulator
-        if: always()
-        run: docker compose -f storage-simulator/docker-compose.yml down -v
+      - name: Run storage simulator gate
+        run: ./scripts/storage-simulator-gate.sh

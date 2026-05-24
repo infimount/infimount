@@ -12,9 +12,10 @@ run() {
 SKIP_UI="${INFIMOUNT_RELEASE_GATE_SKIP_UI:-0}"
 SKIP_DESKTOP_SMOKE="${INFIMOUNT_RELEASE_GATE_SKIP_DESKTOP_SMOKE:-0}"
 SKIP_RUST_COVERAGE="${INFIMOUNT_RELEASE_GATE_SKIP_RUST_COVERAGE:-0}"
+SKIP_STORAGE_SIMULATOR="${INFIMOUNT_RELEASE_GATE_SKIP_STORAGE_SIMULATOR:-0}"
 
 run pnpm --dir "$DESKTOP_DIR" lint
-run pnpm --dir "$DESKTOP_DIR" tsc --noEmit
+run pnpm --dir "$DESKTOP_DIR" typecheck
 run pnpm --dir "$DESKTOP_DIR" test:unit
 run pnpm --dir "$DESKTOP_DIR" test:integration
 run pnpm --dir "$DESKTOP_DIR" test:coverage:frontend
@@ -43,5 +44,13 @@ if [ "$SKIP_DESKTOP_SMOKE" != "1" ]; then
 else
   echo "Skipping desktop smoke because INFIMOUNT_RELEASE_GATE_SKIP_DESKTOP_SMOKE=1"
 fi
+
+if [ "$SKIP_STORAGE_SIMULATOR" != "1" ]; then
+  run "$ROOT_DIR/scripts/storage-simulator-gate.sh"
+else
+  echo "Skipping storage simulator because INFIMOUNT_RELEASE_GATE_SKIP_STORAGE_SIMULATOR=1"
+fi
+
+run "$ROOT_DIR/scripts/check-zero-manual-release-gate.sh"
 
 printf '\n\033[1;32mRelease test gate passed.\033[0m\n'

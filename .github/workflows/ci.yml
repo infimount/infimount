@@ -53,7 +53,7 @@ jobs:
         run: pnpm lint
 
       - name: Type Check
-        run: pnpm tsc --noEmit
+        run: pnpm typecheck
 
       - name: Run Unit Tests
         run: pnpm test:unit

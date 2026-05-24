@@ -4,12 +4,36 @@ use opendal::{
 };
 use std::{error::Error, io};
 
+async fn verify_list(op: &Operator, backend: &str, path: &str) -> Result<(), Box<dyn Error>> {
+    op.list(path)
+        .await
+        .map_err(|e| io::Error::other(format!("{backend}: list failed for {path}: {e}")))?;
+
+    Ok(())
+}
+
 async fn verify_round_trip(op: &Operator, backend: &str, path: &str) -> Result<(), Box<dyn Error>> {
     let content = format!("Hello {backend}");
 
     op.write(path, content.clone())
         .await
         .map_err(|e| io::Error::other(format!("{backend}: write failed for {path}: {e}")))?;
+
+    let metadata = op
+        .stat(path)
+        .await
+        .map_err(|e| io::Error::other(format!("{backend}: stat failed for {path}: {e}")))?;
+    if metadata.content_length() != content.len() as u64 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "{backend}: stat size mismatch for {path}: expected {}, got {}",
+                content.len(),
+                metadata.content_length()
+            ),
+        )
+        .into());
+    }
 
     let data = op
         .read(path)
@@ -31,13 +55,34 @@ async fn verify_round_trip(op: &Operator, backend: &str, path: &str) -> Result<(
         .into());
     }
 
-    Ok(())
-}
-
-async fn verify_list(op: &Operator, backend: &str, path: &str) -> Result<(), Box<dyn Error>> {
-    op.list(path)
+    let listed = op
+        .list("")
         .await
-        .map_err(|e| io::Error::other(format!("{backend}: list failed for {path}: {e}")))?;
+        .map_err(|e| io::Error::other(format!("{backend}: list failed for root: {e}")))?;
+    if !listed
+        .iter()
+        .any(|entry| entry.path().trim_start_matches('/') == path)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("{backend}: list did not include {path}"),
+        )
+        .into());
+    }
+
+    op.delete(path)
+        .await
+        .map_err(|e| io::Error::other(format!("{backend}: delete failed for {path}: {e}")))?;
+
+    if op
+        .exists(path)
+        .await
+        .map_err(|e| io::Error::other(format!("{backend}: exists failed for {path}: {e}")))?
+    {
+        return Err(
+            io::Error::other(format!("{backend}: {path} still exists after delete")).into(),
+        );
+    }
 
     Ok(())
 }
@@ -57,7 +102,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let op_gcs = Operator::new(gcs)?.finish();
     verify_round_trip(&op_gcs, "GCS", "verify-gcs.txt").await?;
-    println!("✅ GCS: read/write round-trip successful");
+    println!("✅ GCS: read/write/list/stat/delete round-trip successful");
 
     // 2. Verify S3
     println!("\n--- Verifying S3 ---");
@@ -70,7 +115,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let op_s3 = Operator::new(s3)?.finish();
     verify_round_trip(&op_s3, "S3", "verify-s3.txt").await?;
-    println!("✅ S3: read/write round-trip successful");
+    println!("✅ S3: read/write/list/stat/delete round-trip successful");
 
     // 3. Verify Azure
     println!("\n--- Verifying Azure ---");
@@ -82,7 +127,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let op_az = Operator::new(az)?.finish();
     verify_round_trip(&op_az, "Azure", "verify-azure.txt").await?;
-    println!("✅ Azure: read/write round-trip successful");
+    println!("✅ Azure: read/write/list/stat/delete round-trip successful");
 
     // 4. Verify WebDAV
     println!("\n--- Verifying WebDAV ---");
