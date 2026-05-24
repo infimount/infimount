@@ -149,6 +149,8 @@ describe("McpSettingsDialog integration", () => {
       target: { value: "0.0.0.0" },
     });
     expect(screen.getByText(/not loopback/i)).toBeInTheDocument();
+    expect(screen.getByText("Review network exposure")).toBeInTheDocument();
+    expect(screen.getByText("Non-loopback bind needs review")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Save & Start HTTP Server/i }));
 
@@ -269,9 +271,12 @@ describe("McpSettingsDialog integration", () => {
       />,
     );
 
+    expect(screen.getByText("Ready: scoped local access")).toBeInTheDocument();
+    expect(screen.getByText("0 write / 1 read-only / 1 no access")).toBeInTheDocument();
     expect(screen.getByText("Allowed for 1 storage")).toBeInTheDocument();
     expect(screen.getAllByText("Blocked by read-only or no-access policies")).toHaveLength(2);
     expect(screen.getByText("Enabled for 1 storage")).toBeInTheDocument();
+    expect(screen.getByText(/writes, deletes, links, cross-storage copy require approval/i)).toBeInTheDocument();
   });
 
   it("edits and saves path policy for an exposed storage", async () => {

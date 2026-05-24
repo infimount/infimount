@@ -220,6 +220,7 @@ export function McpSettingsDialog({
   const endpointDisplay = status?.endpointDisplay ?? "Not configured yet";
   const enabledToolCount = settings.enabledTools.length;
   const exposedStorages = storages.filter((storage) => storage.enabled && storage.mcpExposed);
+  const accessCounts = summarizeStorageAccess(exposedStorages, policyDrafts);
   const readAccessibleStorages = exposedStorages.filter((storage) =>
     storageAllowsRead(storage, policyDrafts[storage.id]),
   );
@@ -252,6 +253,13 @@ export function McpSettingsDialog({
       ? `Enabled for ${formatStorageCount(readAccessibleStorages.length)}`
       : "Blocked by no-access policies"
     : "Disabled";
+  const confirmationSummary = summarizeConfirmationRules(exposedStorages, policyDrafts);
+  const connectAssessment = assessMcpConnectionSafety({
+    exposedStorageCount: exposedStorages.length,
+    enabledToolCount,
+    showNetworkWarning,
+    destructiveAccessEnabled: destructiveToolsEnabled && writeAccessibleStorages.length > 0,
+  });
   const primaryActionLabel =
     settings.transport === "http"
       ? status?.runningHttp
@@ -515,13 +523,32 @@ export function McpSettingsDialog({
                     </p>
                   </div>
                 </div>
+                <div className="rounded-lg border border-border/70 bg-background px-3 py-2 text-xs">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">Safe to connect?</span>
+                    <span className={`text-right font-medium ${connectAssessment.className}`}>
+                      {connectAssessment.label}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+                    {connectAssessment.description}
+                  </p>
+                </div>
                 <div className="space-y-2 text-xs">
                   <SummaryRow label="Exposed storages" value={`${exposedStorages.length}`} />
                   <SummaryRow label="Enabled functions" value={`${enabledToolCount}`} />
+                  <SummaryRow
+                    label="Access levels"
+                    value={`${accessCounts.readWrite} write / ${accessCounts.readOnly} read-only / ${accessCounts.noAccess} no access`}
+                  />
                   <SummaryRow label="Read access" value={readAccessSummary} />
                   <SummaryRow label="Write access" value={writeAccessSummary} />
                   <SummaryRow label="Destructive access" value={destructiveAccessSummary} />
                   <SummaryRow label="Presigned links" value={presignSummary} />
+                  <SummaryRow label="Risk confirmations" value={confirmationSummary} />
+                  {showNetworkWarning ? (
+                    <SummaryRow label="Network exposure" value="Non-loopback bind needs review" />
+                  ) : null}
                 </div>
               </div>
 
@@ -934,6 +961,91 @@ function storageAllowsRead(storage: StorageConfig, draft?: McpStoragePolicy): bo
 function storageAllowsWrite(storage: StorageConfig, draft?: McpStoragePolicy): boolean {
   const policy = effectivePolicy(storage, draft);
   return !storage.readOnly && policy.default_access === "read_write";
+}
+
+function summarizeStorageAccess(
+  storages: StorageConfig[],
+  drafts: Record<string, McpStoragePolicy>,
+): { noAccess: number; readOnly: number; readWrite: number } {
+  return storages.reduce(
+    (counts, storage) => {
+      const policy = effectivePolicy(storage, drafts[storage.id]);
+      if (policy.default_access === "none") {
+        counts.noAccess += 1;
+      } else if (storage.readOnly || policy.default_access === "read_only") {
+        counts.readOnly += 1;
+      } else {
+        counts.readWrite += 1;
+      }
+      return counts;
+    },
+    { noAccess: 0, readOnly: 0, readWrite: 0 },
+  );
+}
+
+function summarizeConfirmationRules(
+  storages: StorageConfig[],
+  drafts: Record<string, McpStoragePolicy>,
+): string {
+  if (storages.length === 0) return "No exposed storage";
+
+  const enabled = new Set<string>();
+  for (const storage of storages) {
+    const rules = effectivePolicy(storage, drafts[storage.id]).confirmation_rules;
+    if (rules.require_for_write || rules.require_for_overwrite) enabled.add("writes");
+    if (rules.require_for_delete || rules.require_for_version_delete) enabled.add("deletes");
+    if (rules.require_for_presign) enabled.add("links");
+    if (rules.require_for_cross_storage_copy) enabled.add("cross-storage copy");
+  }
+
+  if (enabled.size === 0) return "No approvals required";
+  return `${Array.from(enabled).join(", ")} require approval`;
+}
+
+function assessMcpConnectionSafety({
+  exposedStorageCount,
+  enabledToolCount,
+  showNetworkWarning,
+  destructiveAccessEnabled,
+}: {
+  exposedStorageCount: number;
+  enabledToolCount: number;
+  showNetworkWarning: boolean;
+  destructiveAccessEnabled: boolean;
+}): { label: string; description: string; className: string } {
+  if (exposedStorageCount === 0) {
+    return {
+      label: "No storage exposed",
+      description: "Agents cannot browse storage until at least one enabled storage is exposed.",
+      className: "text-muted-foreground",
+    };
+  }
+  if (enabledToolCount === 0) {
+    return {
+      label: "No functions enabled",
+      description: "Agents can connect, but every MCP tool is currently disabled.",
+      className: "text-muted-foreground",
+    };
+  }
+  if (showNetworkWarning) {
+    return {
+      label: "Review network exposure",
+      description: "The HTTP bind address is reachable beyond loopback; use only with intentional network boundaries.",
+      className: "text-amber-700 dark:text-amber-300",
+    };
+  }
+  if (destructiveAccessEnabled) {
+    return {
+      label: "Review destructive access",
+      description: "Delete or move tools can run against at least one write-capable storage; keep confirmations enabled unless intentional.",
+      className: "text-amber-700 dark:text-amber-300",
+    };
+  }
+  return {
+    label: "Ready: scoped local access",
+    description: "Current controls expose storage through enabled tools without broad network or destructive-access warnings.",
+    className: "text-emerald-700 dark:text-emerald-300",
+  };
 }
 
 function formatStorageCount(count: number): string {
