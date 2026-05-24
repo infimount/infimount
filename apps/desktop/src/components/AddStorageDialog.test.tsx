@@ -124,12 +124,12 @@ describe("AddStorageDialog", () => {
     const onVerify = vi.fn();
     renderDialog({ onVerify });
 
-    const nameInput = await screen.findByLabelText("Storage Name");
+    await screen.findByLabelText(/Root path/);
+    const nameInput = screen.getByLabelText("Storage Name");
     fireEvent.change(nameInput, {
       target: { value: "Incomplete" },
     });
-    await screen.findByLabelText(/Root path/);
-    await waitFor(() => expect(nameInput).toHaveValue("Incomplete"));
+    expect(nameInput).toHaveValue("Incomplete");
 
     fireEvent.click(screen.getByRole("button", { name: "Validate" }));
 
