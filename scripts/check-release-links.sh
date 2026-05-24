@@ -9,6 +9,8 @@ ASSETS=(
   "Infimount.dmg"
   "Infimount.msi"
   "Infimount-setup.exe"
+  "install.sh"
+  "install.ps1"
   "SHA256SUMS.txt"
 )
 

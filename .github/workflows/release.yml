@@ -733,6 +733,8 @@ jobs:
           cp artifacts/macos-artifacts/Infimount.dmg release-assets/
           cp artifacts/windows-artifacts/Infimount.msi release-assets/
           cp artifacts/windows-artifacts/Infimount-setup.exe release-assets/
+          cp scripts/install.sh release-assets/
+          cp scripts/install.ps1 release-assets/
 
           for dir in artifacts/linux-artifacts/updater artifacts/macos-artifacts/updater artifacts/windows-artifacts/updater; do
             if [ -d "$dir" ]; then
@@ -766,8 +768,8 @@ jobs:
       - name: Generate checksums
         run: |
           cd release-assets
-          sha256sum Infimount-* Infimount.dmg > SHA256SUMS.txt
-          for file in Infimount-* Infimount.dmg; do
+          sha256sum Infimount-* Infimount.dmg install.sh install.ps1 > SHA256SUMS.txt
+          for file in Infimount-* Infimount.dmg install.sh install.ps1; do
             sha256sum "$file" > "$file.sha256"
           done
 
@@ -797,6 +799,8 @@ jobs:
             release-assets/Infimount.dmg
             release-assets/Infimount.msi
             release-assets/Infimount-setup.exe
+            release-assets/install.sh
+            release-assets/install.ps1
             release-assets/latest.json
             release-assets/*.sig
             release-assets/*.tar.gz
@@ -816,6 +820,20 @@ jobs:
             | Linux (Universal) | `.AppImage` |
             | macOS | `.dmg` |
             | Windows | `.msi` or `.exe` |
+
+            ### Single-command install
+
+            macOS/Linux:
+
+            ```bash
+            curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh
+            ```
+
+            Windows PowerShell:
+
+            ```powershell
+            irm https://github.com/infimount/infimount/releases/latest/download/install.ps1 | iex
+            ```
 
             ### Integrity
 

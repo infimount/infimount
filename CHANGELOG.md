@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Single-command install scripts for macOS/Linux and Windows with release checksum verification.
+
 ## [0.2.3] - 2026-05-14
 
 ### Added

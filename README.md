@@ -45,6 +45,24 @@
 
 ## 📥 Installation
 
+### Single-command install
+
+macOS/Linux:
+
+```bash
+curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://github.com/infimount/infimount/releases/latest/download/install.ps1 | iex
+```
+
+The install scripts download the latest release asset for your platform and verify it against `SHA256SUMS.txt` before installing. To pin a version, set `INFIMOUNT_VERSION` first, for example `INFIMOUNT_VERSION=v0.3.0`.
+
+Linux chooses `.deb`, `.rpm`, or AppImage automatically. Override with `INFIMOUNT_INSTALL_FORMAT=deb|rpm|appimage`.
+
 ### Download
 
 Pre-built binaries for **Linux**, **macOS**, and **Windows** are available on:
@@ -67,7 +85,7 @@ Pre-built binaries for **Linux**, **macOS**, and **Windows** are available on:
 > The `linux-artifacts.zip` from Actions is a temporary CI artifact and is not the canonical public download link.
 
 > 🔐 **Integrity:** Every release includes `SHA256SUMS.txt` and per-file `.sha256` assets.
-> After download, verify with:
+> The install scripts verify selected downloads automatically. After manual download, verify with:
 > `sha256sum -c SHA256SUMS.txt`
 
 > ⚠️ **Note**: macOS/Windows binaries may be unsigned for some releases. See [Installation Notes](#installation-notes) below.

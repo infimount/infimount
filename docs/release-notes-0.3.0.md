@@ -10,6 +10,7 @@
 - Version-aware file tools and desktop file-version browsing where backend capabilities allow it.
 - MCP session scoping tools for temporary storage/path restrictions.
 - Bearer-token enforcement for secure HTTP MCP transport.
+- Single-command install scripts for macOS/Linux and Windows with checksum verification.
 
 ## Changed
 

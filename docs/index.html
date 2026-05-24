@@ -1242,6 +1242,19 @@
         aria-label="Install options"
       >
         <div class="install-grid">
+          <article class="info-card">
+            <h3>Single-command install</h3>
+            <pre class="code-block">
+curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh
+
+# Windows PowerShell
+irm https://github.com/infimount/infimount/releases/latest/download/install.ps1 | iex</pre
+            >
+            <p>
+              The scripts select the right release asset for your platform and
+              verify checksums before installing.
+            </p>
+          </article>
           <article id="homebrew" class="info-card">
             <h3>Install with Homebrew</h3>
             <pre class="code-block">

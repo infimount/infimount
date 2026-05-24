@@ -71,7 +71,7 @@ The `Release` workflow is triggered by `v*` tags and will:
 - run artifact smoke checks, including Linux AppImage launch/migration, `.deb` install/launch/migration, and RPM package metadata checks
 - generate SHA256 checksum files
 - generate `SBOM.spdx.json`
-- create GitHub release draft with all assets
+- create GitHub release draft with all assets, including single-command install scripts
 - emit artifact provenance attestation
 
 ## 3. Validate draft release
@@ -87,6 +87,8 @@ In the release draft:
    - `Infimount.dmg`
    - `Infimount.msi`
    - `Infimount-setup.exe`
+   - `install.sh`
+   - `install.ps1`
    - `SHA256SUMS.txt`
    - `*.sha256`
    - `SBOM.spdx.json`
@@ -97,7 +99,7 @@ Manual checksum or install sanity checks are optional spot audits only; they are
 
 ## 4. Post-release checks
 
-1. Confirm `/releases/latest/download/...` links resolve.
+1. Confirm `/releases/latest/download/...` links resolve, including `install.sh` and `install.ps1`.
 2. Confirm GitHub Pages download page still works.
 3. Confirm release notes render as expected.
 4. Update Homebrew tap repo (`infimount/homebrew-infimount`):
