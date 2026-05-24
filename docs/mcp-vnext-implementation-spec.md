@@ -1,8 +1,10 @@
 # Infimount vNext MCP Implementation Spec
 
-Status: Planning Approved (No code changes in this document)  
+Status: Historical implementation spec; mostly implemented for the 0.3 line  
 Owner: Rajan  
-Scope: Versioning parity + production MCP hardening for next release
+Scope: Versioning parity + production MCP hardening
+
+> Note: this document began as a planning contract. The repository now implements the major MCP hardening items: version tools, session scoping, HTTP bearer auth, desktop file-version browsing, policy controls, confirmations, and audit. Remaining follow-up items are called out below; do not treat older “missing” language in archived PR sections as current product truth.
 
 ## 1. Purpose
 
@@ -17,42 +19,47 @@ This is an implementation contract. If any item below conflicts with ad-hoc agen
 
 ## 2. Current Baseline (Grounded in repository)
 
-### 2.1 Already implemented
+### 2.1 Implemented in the current repository
 
 1. MCP server with `stdio` and Streamable HTTP transport exists.
 2. HTTP bind/port supports port `0` and returns actual runtime endpoint.
 3. Tool-level enable/disable exists via MCP settings (`enabled_tools`).
-4. Tool envelope and strict schemas are already in place.
+4. Tool envelope and strict schemas are in place.
 5. Registry + MCP settings use atomic writes and lock timeout (`2s`).
-6. Desktop MCP settings modal exists and controls runtime start/stop.
-7. `validate_storage` already has a hard timeout (`60s`).
-
-### 2.2 Missing vs PRD
-
-1. Versioning tools are missing:
+6. Desktop MCP settings modal controls runtime start/stop.
+7. `validate_storage` has a hard timeout (`60s`).
+8. Versioning tools are registered and tested:
    - `list_versions`
    - `read_file_version`
    - `delete_version`
-2. Versioning-specific error codes are missing:
-   - `ERR_VERSIONS_NOT_SUPPORTED`
-   - `ERR_VERSIONS_NOT_ENABLED`
-3. Session policy/scoping tools are missing:
+9. Versioning-specific errors exist for unsupported/disabled version behavior where deterministic.
+10. Session policy/scoping tools exist:
    - `session_create`
    - `session_end`
-4. HTTP bearer auth enforcement is missing.
-5. OTEL traces/metrics export is missing.
-6. File detail UI version browsing is missing.
-7. Optional web `/admin` UI is missing.
+11. HTTP bearer auth enforcement exists for secure HTTP mode.
+12. File detail UI includes version browsing where capabilities allow it.
+13. Per-storage MCP path policies, risky-operation confirmations, and local audit persistence are implemented.
+
+### 2.2 Remaining follow-up items
+
+1. OTEL traces/metrics export is still a follow-up unless explicitly implemented in a later PR.
+2. Optional web `/admin` UI remains deferred.
+3. `restore_version` remains deferred until a deterministic cross-backend contract is defined.
+4. Serve adapters such as WebDAV/SFTP gateway remain deferred.
 
 ## 3. Feasibility and Scope Decisions
 
-## 3.1 Feasible now
+## 3.1 Shipped scope
 
 1. Versioning via OpenDAL capability and version options.
 2. HTTP bearer token enforcement for MCP endpoint.
 3. Session scoping in-process (memory-backed).
-4. OTEL baseline instrumentation (tool-level + backend operation spans/metrics).
-5. Desktop versions panel with capability gating.
+4. Desktop versions panel with capability gating.
+5. Safe MCP policy, confirmation, and audit controls.
+
+## 3.1.1 Feasible follow-up
+
+1. OTEL baseline instrumentation (tool-level + backend operation spans/metrics).
 
 ## 3.2 Feasible with caveats
 

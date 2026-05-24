@@ -7,11 +7,14 @@
 - Path-level MCP policies per storage.
 - Risky-operation confirmation queue for write, overwrite, delete, version delete, presign, cross-storage copy, and move-style operations.
 - MCP audit viewer backed by bounded local audit persistence.
+- Version-aware file tools and desktop file-version browsing where backend capabilities allow it.
+- MCP session scoping tools for temporary storage/path restrictions.
+- Bearer-token enforcement for secure HTTP MCP transport.
 
 ## Changed
 
 - Safer MCP operation handling before storage operations reach OpenDAL.
-- Clearer exposed-storage, enabled-tool, access-mode, and capability summaries in MCP Settings.
+- Clearer exposed-storage, enabled-tool, access-mode, policy-aware access, and capability summaries in MCP Settings.
 - Policy prefixes are normalized and de-duplicated before saving.
 - Confirmation approvals are single-use and tied to the original request fingerprint.
 

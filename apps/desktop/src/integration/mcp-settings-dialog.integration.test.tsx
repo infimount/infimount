@@ -224,6 +224,56 @@ describe("McpSettingsDialog integration", () => {
     });
   });
 
+  it("makes the agent access summary policy-aware", () => {
+    const writeEnabledStatus: McpRuntimeStatus = {
+      ...status,
+      settings: {
+        ...status.settings,
+        enabledTools: ["list_dir", "write_file", "delete_path", "generate_download_link"],
+      },
+    };
+    const readOnlyStorage: StorageConfig = {
+      ...storages[0],
+      readOnly: true,
+      mcpPolicy: { ...mcpPolicy, default_access: "read_write" },
+    };
+    const noAccessStorage: StorageConfig = {
+      ...storages[0],
+      id: "blocked",
+      name: "Blocked",
+      readOnly: false,
+      mcpPolicy: { ...mcpPolicy, default_access: "none" },
+    };
+
+    render(
+      <McpSettingsDialog
+        open
+        onOpenChange={() => undefined}
+        status={writeEnabledStatus}
+        snippets={snippets}
+        tools={tools}
+        storages={[readOnlyStorage, noAccessStorage]}
+        auditEvents={[]}
+        pendingConfirmations={[]}
+        notificationPermission="default"
+        onSave={vi.fn()}
+        onStartHttp={vi.fn()}
+        onStopHttp={vi.fn()}
+        onTestServer={vi.fn()}
+        onRefreshAudit={vi.fn()}
+        onClearAudit={vi.fn()}
+        onApproveConfirmation={vi.fn()}
+        onDenyConfirmation={vi.fn()}
+        onEnableNotifications={vi.fn()}
+        onUpdateStoragePolicy={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Allowed for 1 storage")).toBeInTheDocument();
+    expect(screen.getAllByText("Blocked by read-only or no-access policies")).toHaveLength(2);
+    expect(screen.getByText("Enabled for 1 storage")).toBeInTheDocument();
+  });
+
   it("edits and saves path policy for an exposed storage", async () => {
     const onUpdateStoragePolicy = vi.fn().mockResolvedValue(undefined);
 

@@ -220,6 +220,12 @@ export function McpSettingsDialog({
   const endpointDisplay = status?.endpointDisplay ?? "Not configured yet";
   const enabledToolCount = settings.enabledTools.length;
   const exposedStorages = storages.filter((storage) => storage.enabled && storage.mcpExposed);
+  const readAccessibleStorages = exposedStorages.filter((storage) =>
+    storageAllowsRead(storage, policyDrafts[storage.id]),
+  );
+  const writeAccessibleStorages = exposedStorages.filter((storage) =>
+    storageAllowsWrite(storage, policyDrafts[storage.id]),
+  );
   const writeToolsEnabled = settings.enabledTools.some((name) =>
     ["write_file", "mkdir", "copy_path", "move_path"].includes(name),
   );
@@ -227,6 +233,25 @@ export function McpSettingsDialog({
     ["delete_path", "delete_version", "move_path"].includes(name),
   );
   const presignEnabled = settings.enabledTools.includes("generate_download_link");
+  const writeAccessSummary = writeToolsEnabled
+    ? writeAccessibleStorages.length > 0
+      ? `Enabled for ${formatStorageCount(writeAccessibleStorages.length)}`
+      : "Blocked by read-only or no-access policies"
+    : "No write tools enabled";
+  const destructiveAccessSummary = destructiveToolsEnabled
+    ? writeAccessibleStorages.length > 0
+      ? `Enabled for ${formatStorageCount(writeAccessibleStorages.length)}`
+      : "Blocked by read-only or no-access policies"
+    : "No destructive tools enabled";
+  const readAccessSummary =
+    readAccessibleStorages.length > 0
+      ? `Allowed for ${formatStorageCount(readAccessibleStorages.length)}`
+      : "No exposed policy allows reads";
+  const presignSummary = presignEnabled
+    ? readAccessibleStorages.length > 0
+      ? `Enabled for ${formatStorageCount(readAccessibleStorages.length)}`
+      : "Blocked by no-access policies"
+    : "Disabled";
   const primaryActionLabel =
     settings.transport === "http"
       ? status?.runningHttp
@@ -493,23 +518,10 @@ export function McpSettingsDialog({
                 <div className="space-y-2 text-xs">
                   <SummaryRow label="Exposed storages" value={`${exposedStorages.length}`} />
                   <SummaryRow label="Enabled functions" value={`${enabledToolCount}`} />
-                  <SummaryRow label="Read access" value="Allowed by exposed storage policies" />
-                  <SummaryRow
-                    label="Write access"
-                    value={writeToolsEnabled ? "Enabled tools can write" : "No write tools enabled"}
-                  />
-                  <SummaryRow
-                    label="Destructive access"
-                    value={
-                      destructiveToolsEnabled
-                        ? "Delete or move tools are enabled"
-                        : "No destructive tools enabled"
-                    }
-                  />
-                  <SummaryRow
-                    label="Presigned links"
-                    value={presignEnabled ? "Download link tool enabled" : "Disabled"}
-                  />
+                  <SummaryRow label="Read access" value={readAccessSummary} />
+                  <SummaryRow label="Write access" value={writeAccessSummary} />
+                  <SummaryRow label="Destructive access" value={destructiveAccessSummary} />
+                  <SummaryRow label="Presigned links" value={presignSummary} />
                 </div>
               </div>
 
@@ -908,6 +920,24 @@ function clonePolicy(policy: McpStoragePolicy): McpStoragePolicy {
     denied_paths: [...policy.denied_paths],
     confirmation_rules: { ...policy.confirmation_rules },
   };
+}
+
+function effectivePolicy(storage: StorageConfig, draft?: McpStoragePolicy): McpStoragePolicy {
+  return draft ?? storage.mcpPolicy;
+}
+
+function storageAllowsRead(storage: StorageConfig, draft?: McpStoragePolicy): boolean {
+  const policy = effectivePolicy(storage, draft);
+  return policy.default_access === "read_only" || policy.default_access === "read_write";
+}
+
+function storageAllowsWrite(storage: StorageConfig, draft?: McpStoragePolicy): boolean {
+  const policy = effectivePolicy(storage, draft);
+  return !storage.readOnly && policy.default_access === "read_write";
+}
+
+function formatStorageCount(count: number): string {
+  return `${count} ${count === 1 ? "storage" : "storages"}`;
 }
 
 function splitPolicyPrefixes(value: string): string[] {

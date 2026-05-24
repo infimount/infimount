@@ -12,7 +12,7 @@ Infimount is a **cross-platform storage browser**:
 
 - Desktop app (Windows, macOS, Linux) using **Tauri + React**.
 - Storage abstraction via **Apache OpenDAL** (Rust).
-- Currently only the **local filesystem** backend is wired up; other SourceKind variants are placeholders until their OpenDAL builders land.
+- Local filesystem, S3/S3-compatible, Azure Blob Storage, Google Cloud Storage, and WebDAV are wired through OpenDAL builders. Treat backend capabilities as runtime/backend-dependent rather than globally guaranteed.
 - **Core principle:** *Do not re-implement filesystem/storage logic; always delegate to OpenDAL.*
 
 The backend should mainly:
@@ -38,9 +38,12 @@ infimount/
 │   │   │   └── util.rs              # Helpers (path utils, conversions)
 │   │   └── Cargo.toml
 │   │
-│   └── bindings/                    # (Future) Mobile bindings
-│       ├── android/
-│       └── ios/
+│   └── mcp/                         # Rust MCP server, virtual filesystem, policy, sessions, audit
+│       ├── src/
+│       │   ├── server.rs             # MCP tool registration and dispatch
+│       │   ├── registry.rs           # Local storage registry (~/.infimount/storages.json)
+│       │   ├── policy.rs             # Per-storage MCP path/access policy
+│       │   └── ...
 │
 ├── apps/
 │   ├── desktop/                     # Tauri desktop app
@@ -132,8 +135,7 @@ When generating or modifying code, agents MUST follow these rules:
 
 ### 4.1 Adding a New Storage Backend (SourceKind)
 
-**Goal:** Support a new backend (e.g., `SourceKind::S3`, `SourceKind::Webdav`, etc.)  
-_Today only `SourceKind::Local` is functional; the UI hard-limits browsing to local sources until matching registry builders exist._
+**Goal:** Support a new backend beyond the currently wired local, S3/S3-compatible, WebDAV, Azure Blob, and GCS backends.
 
 1. **Update models**  
    - Add new variant to `SourceKind`.
