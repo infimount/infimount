@@ -752,7 +752,10 @@ mod tests {
     async fn test_transfer_entries_copies_file_across_operators() {
         let from_op = create_test_operator().await;
         let to_op = create_test_operator().await;
-        from_op.write("source.txt", "hello".as_bytes()).await.unwrap();
+        from_op
+            .write("source.txt", "hello".as_bytes())
+            .await
+            .unwrap();
         create_directory(&to_op, "target").await.unwrap();
 
         transfer_entries(
@@ -768,14 +771,20 @@ mod tests {
         .unwrap();
 
         assert_eq!(from_op.read("source.txt").await.unwrap().to_vec(), b"hello");
-        assert_eq!(to_op.read("target/source.txt").await.unwrap().to_vec(), b"hello");
+        assert_eq!(
+            to_op.read("target/source.txt").await.unwrap().to_vec(),
+            b"hello"
+        );
     }
 
     #[tokio::test]
     async fn test_transfer_entries_moves_file_across_operators() {
         let from_op = create_test_operator().await;
         let to_op = create_test_operator().await;
-        from_op.write("source.txt", "hello".as_bytes()).await.unwrap();
+        from_op
+            .write("source.txt", "hello".as_bytes())
+            .await
+            .unwrap();
         create_directory(&to_op, "target").await.unwrap();
 
         transfer_entries(
@@ -791,7 +800,10 @@ mod tests {
         .unwrap();
 
         assert!(!from_op.exists("source.txt").await.unwrap());
-        assert_eq!(to_op.read("target/source.txt").await.unwrap().to_vec(), b"hello");
+        assert_eq!(
+            to_op.read("target/source.txt").await.unwrap().to_vec(),
+            b"hello"
+        );
     }
 
     #[tokio::test]
@@ -799,7 +811,9 @@ mod tests {
         let op = create_test_operator().await;
         op.write("source.txt", "new".as_bytes()).await.unwrap();
         create_directory(&op, "target").await.unwrap();
-        op.write("target/source.txt", "old".as_bytes()).await.unwrap();
+        op.write("target/source.txt", "old".as_bytes())
+            .await
+            .unwrap();
 
         transfer_entries(
             &op,

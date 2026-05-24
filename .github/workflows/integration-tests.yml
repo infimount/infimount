@@ -133,7 +133,10 @@ jobs:
       - name: Install simulator CLIs
         run: |
           sudo apt-get update
-          sudo apt-get install -y awscli ca-certificates curl
+          sudo apt-get install -y ca-certificates curl unzip
+          curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
+          unzip -q /tmp/awscliv2.zip -d /tmp
+          sudo /tmp/aws/install --update
           curl -fsSL https://aka.ms/InstallAzureCLIDeb -o /tmp/install-azure-cli.sh
           sudo bash /tmp/install-azure-cli.sh
 
