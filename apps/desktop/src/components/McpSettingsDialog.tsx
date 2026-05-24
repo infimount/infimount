@@ -578,14 +578,25 @@ export function McpSettingsDialog({
                   </div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {exposedStorages.length > 0 ? (
-                      exposedStorages.map((storage) => (
-                        <span
-                          key={storage.id}
-                          className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-xs text-foreground"
-                        >
-                          {storage.name}
-                        </span>
-                      ))
+                      exposedStorages.map((storage) => {
+                        const policy = policyDrafts[storage.id] ?? storage.mcpPolicy;
+                        const access = describeStorageAccess(storage, policy);
+                        const confirmations = describeStorageConfirmations(policy);
+                        return (
+                          <span
+                            key={storage.id}
+                            className="inline-flex flex-wrap items-center gap-1.5 rounded-lg border border-border bg-secondary/50 px-2 py-1 text-xs text-foreground"
+                          >
+                            <span className="font-medium">{storage.name}</span>
+                            <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${access.className}`}>
+                              {access.label}
+                            </span>
+                            <span className="rounded-full bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                              {confirmations}
+                            </span>
+                          </span>
+                        );
+                      })
                     ) : (
                       <span className="text-xs text-muted-foreground">
                         No storage is currently exposed to MCP.
@@ -961,6 +972,41 @@ function storageAllowsRead(storage: StorageConfig, draft?: McpStoragePolicy): bo
 function storageAllowsWrite(storage: StorageConfig, draft?: McpStoragePolicy): boolean {
   const policy = effectivePolicy(storage, draft);
   return !storage.readOnly && policy.default_access === "read_write";
+}
+
+function describeStorageAccess(
+  storage: StorageConfig,
+  policy: McpStoragePolicy,
+): { label: string; className: string } {
+  if (policy.default_access === "none") {
+    return {
+      label: "no access",
+      className: "bg-muted text-muted-foreground",
+    };
+  }
+  if (storage.readOnly || policy.default_access === "read_only") {
+    return {
+      label: "read-only",
+      className: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+    };
+  }
+  return {
+    label: "read/write",
+    className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+  };
+}
+
+function describeStorageConfirmations(policy: McpStoragePolicy): string {
+  const rules = policy.confirmation_rules;
+  const enabled = [
+    rules.require_for_write || rules.require_for_overwrite,
+    rules.require_for_delete || rules.require_for_version_delete,
+    rules.require_for_presign,
+    rules.require_for_cross_storage_copy,
+  ].filter(Boolean).length;
+
+  if (enabled === 0) return "no approvals";
+  return `${enabled} approval ${enabled === 1 ? "rule" : "rules"}`;
 }
 
 function summarizeStorageAccess(
