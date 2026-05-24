@@ -32,12 +32,16 @@ const isInZoomRegion = (target: EventTarget | null) => {
 };
 
 export function AppZoomProvider({ children }: { children: React.ReactNode }) {
-  const [zoom, setZoom] = React.useState<number>(() => {
+  const [zoom, setZoomState] = React.useState<number>(() => {
     if (typeof window === "undefined") return DEFAULT_ZOOM;
     const raw = window.localStorage.getItem(ZOOM_STORAGE_KEY);
     const parsed = raw ? Number(raw) : Number.NaN;
     return Number.isFinite(parsed) ? normalizeZoom(parsed) : DEFAULT_ZOOM;
   });
+
+  const setZoom = React.useCallback<React.Dispatch<React.SetStateAction<number>>>((next) => {
+    setZoomState((prev) => normalizeZoom(typeof next === "function" ? next(prev) : next));
+  }, []);
 
   React.useEffect(() => {
     if (typeof window === "undefined") return;
@@ -46,15 +50,15 @@ export function AppZoomProvider({ children }: { children: React.ReactNode }) {
 
   const zoomIn = React.useCallback(() => {
     setZoom((prev) => normalizeZoom(prev + ZOOM_STEP));
-  }, []);
+  }, [setZoom]);
 
   const zoomOut = React.useCallback(() => {
     setZoom((prev) => normalizeZoom(prev - ZOOM_STEP));
-  }, []);
+  }, [setZoom]);
 
   const resetZoom = React.useCallback(() => {
     setZoom(DEFAULT_ZOOM);
-  }, []);
+  }, [setZoom]);
 
   React.useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -117,11 +121,11 @@ export function AppZoomProvider({ children }: { children: React.ReactNode }) {
 
     window.addEventListener("wheel", onWheel, { passive: false, capture: true });
     return () => window.removeEventListener("wheel", onWheel, { capture: true });
-  }, []);
+  }, [setZoom]);
 
   const value = React.useMemo<AppZoomContextValue>(
     () => ({ zoom, setZoom, zoomIn, zoomOut, resetZoom }),
-    [resetZoom, zoom, zoomIn, zoomOut],
+    [resetZoom, setZoom, zoom, zoomIn, zoomOut],
   );
 
   return <AppZoomContext.Provider value={value}>{children}</AppZoomContext.Provider>;

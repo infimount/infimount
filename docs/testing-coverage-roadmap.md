@@ -30,9 +30,9 @@ pnpm build
 
 Current frontend coverage gate:
 
-- statements: 75%
-- branches: 60%
-- functions: 75%
+- statements: 80%
+- branches: 65%
+- functions: 80%
 - lines: 80%
 
 ## Latest frontend coverage snapshot
@@ -41,11 +41,11 @@ Measured with `pnpm test:coverage:frontend`.
 
 Overall:
 
-- statements: 76.28%
-- branches: 63.18%
-- functions: 76.82%
-- lines: 80.27%
-- tests: 123 passing in the frontend coverage suite
+- statements: 81.89%
+- branches: 67.84%
+- functions: 81.93%
+- lines: 85.73%
+- tests: 139 passing in the frontend coverage suite
 
 High-confidence areas:
 
@@ -53,21 +53,23 @@ High-confidence areas:
 - `JsonCodeEditor.tsx`: 100% line coverage
 - `api.ts`: 100% line coverage
 - `mcpNotifications.ts`: 100% line coverage
+- `use-app-zoom.tsx`: 100% line coverage
+- `StorageConfigEditorDialog.tsx`: 100% line coverage
+- `UploadZone.tsx`: 97.29% line coverage
 - `FileIcon.tsx`: 96.42% line coverage
+- `FileTable.tsx`: 93.83% line coverage
+- `FileGrid.tsx`: 93.9% line coverage
 - `use-toast.ts`: 92.15% line coverage
-- `UploadZone.tsx`: 91.89% line coverage
 - `AddStorageDialog.tsx`: 88.27% line coverage
 - `McpSettingsDialog.tsx`: 83.52% line coverage
 - `StorageSidebar.tsx`: 80% line coverage
 
 Remaining priority areas for the next pass:
 
-- `FileTable.tsx`: 66.43% line coverage
-- `FileGrid.tsx`: 70.12% line coverage
-- `use-app-zoom.tsx`: 71.42% line coverage
 - `FileBrowser.tsx`: 75.87% line coverage
 - `FilePreviewPanel.tsx`: 78% line coverage
-- `StorageConfigEditorDialog.tsx`: 79.41% line coverage
+- `StorageSidebar.tsx`: 80% line coverage, 73.01% statement coverage
+- `McpSettingsDialog.tsx`: 63.51% function coverage
 
 ## Coverage work completed in this pass
 
@@ -78,8 +80,13 @@ Remaining priority areas for the next pass:
 - Added `FileBrowser` orchestration coverage for search, table/grid switching, sort callback wiring, folder navigation, preview open/edit/download/close, delete confirmation, paste conflicts, uploads, and external file/folder drop collection.
 - Added `AddStorageDialog` coverage for add/edit submit paths, validation, secret masking/reveal, reset fields, verification results, and advanced-config preservation.
 - Added `FilePreviewPanel`, `FileIcon`, and `use-toast` coverage for preview modes, icon theme loading/cache behavior, and toast reducer/hook dispatch behavior.
+- Added drag-selection geometry coverage for `FileTable` and `FileGrid`.
+- Added `use-app-zoom` coverage for persisted zoom normalization, shortcut handling, wheel zoom scoping, and provider misuse.
+- Added `UploadZone` coverage for drag affordances, directory-relative file picks, imperative uploads, cancellation, and upload completion.
+- Added `StorageConfigEditorDialog` coverage for load/reload, formatting errors, save failures, and close behavior.
 - Added a release-zero-manual app-shell integration smoke path for adding local storage and starting MCP through the production page orchestration.
-- Raised frontend line coverage from 54.26% to 80.27% and installed an 80% line coverage gate.
+- Raised frontend line coverage from 54.26% to 85.73% and installed an 80% line coverage gate.
+- Raised frontend statements/functions to 80%+ and increased the coverage gate to 80% statements, 65% branches, 80% functions, and 80% lines.
 - Added a `Release` workflow preflight gate that blocks artifact builds until frontend, UI, Rust, desktop smoke, and storage simulator checks pass.
 - Added `pnpm test:release` for local release-gate dry runs.
 - Verified frontend coverage, lint, unit tests, integration tests, and production build pass.
@@ -91,9 +98,9 @@ True zero manual testing is unrealistic for a cross-platform desktop storage app
 
 ### Phase 1: strengthen core product UI component coverage
 
-Status: first target achieved. Frontend line coverage is now 80.07% with an 80% line gate.
+Status: first and second targets achieved. Frontend statements, functions, and lines are now above 80%, with enforced gates for each. Branch coverage is now gated at 65%.
 
-Next goal: raise statements/functions to 80%+ and continue reducing component-level pockets below 80%.
+Next goal: continue reducing component-level pockets below 80% and work branch coverage toward 80%.
 
 Priority tests:
 
@@ -170,4 +177,4 @@ Automate where possible:
 
 ## Recommended next coverage task
 
-Focus on `FileTable.tsx` and `FileGrid.tsx` drag-selection geometry plus `use-app-zoom.tsx` keyboard/storage edge cases. These are now the largest remaining low-coverage areas and should move total statements/functions toward 80%+.
+Focus on `FileBrowser.tsx`, `FilePreviewPanel.tsx`, and `McpSettingsDialog.tsx` branch/function paths. These are now the largest remaining low-coverage areas after the FileTable/FileGrid drag-selection and zoom/storage passes.

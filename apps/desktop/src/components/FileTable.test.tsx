@@ -1,7 +1,19 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { FileTable } from "./FileTable";
 import { FileItem } from "@/types/storage";
 import { vi, describe, it, expect } from "vitest";
+
+const rect = (left: number, top: number, width: number, height: number) => ({
+    left,
+    top,
+    width,
+    height,
+    right: left + width,
+    bottom: top + height,
+    x: left,
+    y: top,
+    toJSON: () => ({}),
+}) as DOMRect;
 
 const mockFiles: FileItem[] = [
     {
@@ -322,5 +334,45 @@ describe("FileTable", () => {
         fireEvent.drop(screen.getByText("folder1"), { dataTransfer });
 
         expect(onMoveToFolder).toHaveBeenCalledWith(["/file1.txt"], "/folder1");
+    });
+
+    it("drag-selects rows from the empty table background", async () => {
+        const onSelectFiles = vi.fn();
+        const onClearSelection = vi.fn();
+        const { container } = render(
+            <FileTable
+                sourceId="test"
+                files={mockFiles}
+                selectedFiles={new Set()}
+                onSelectFile={() => { }}
+                onSelectFiles={onSelectFiles}
+                onClearSelection={onClearSelection}
+            />
+        );
+
+        const scrollContainer = container.querySelector(".overflow-auto") as HTMLDivElement;
+        Object.defineProperty(scrollContainer, "getBoundingClientRect", {
+            value: () => rect(0, 0, 600, 400),
+        });
+
+        const rows = Array.from(
+            container.querySelectorAll<HTMLTableRowElement>('[data-infimount-file-item="true"]'),
+        );
+        Object.defineProperty(rows[0], "getBoundingClientRect", {
+            value: () => rect(0, 10, 500, 40),
+        });
+        Object.defineProperty(rows[1], "getBoundingClientRect", {
+            value: () => rect(0, 60, 500, 40),
+        });
+
+        fireEvent.mouseDown(scrollContainer, { button: 0, clientX: 0, clientY: 0 });
+        expect(onClearSelection).toHaveBeenCalledTimes(1);
+
+        fireEvent.mouseMove(scrollContainer, { buttons: 1, clientX: 400, clientY: 80 });
+
+        await waitFor(() => expect(onSelectFiles).toHaveBeenLastCalledWith(["/folder1", "/file1.txt"]));
+
+        fireEvent.mouseUp(scrollContainer);
+        fireEvent.mouseLeave(scrollContainer, { buttons: 1 });
     });
 });
