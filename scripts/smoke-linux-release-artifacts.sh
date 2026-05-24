@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ARTIFACT_DIR="${1:-$ROOT_DIR/out/linux}"
+ARTIFACT_DIR="$(cd "$ARTIFACT_DIR" && pwd)"
 APPIMAGE="$ARTIFACT_DIR/Infimount-x86_64.AppImage"
 DEB="$ARTIFACT_DIR/Infimount-amd64.deb"
 RPM="$ARTIFACT_DIR/Infimount-x86_64.rpm"
