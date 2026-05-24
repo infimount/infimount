@@ -34,16 +34,17 @@ describe("mcpNotifications", () => {
   });
 
   it("reads and requests notification permission", async () => {
+    const requestPermission = vi.fn().mockResolvedValue("granted");
     const notification = vi.fn();
     Object.assign(notification, {
       permission: "default",
-      requestPermission: vi.fn().mockResolvedValue("granted"),
+      requestPermission,
     });
     vi.stubGlobal("Notification", notification);
 
     expect(getMcpNotificationPermission()).toBe("default");
     await expect(requestMcpNotificationPermission()).resolves.toBe("granted");
-    expect(notification.requestPermission).toHaveBeenCalled();
+    expect(requestPermission).toHaveBeenCalled();
 
     vi.unstubAllGlobals();
   });

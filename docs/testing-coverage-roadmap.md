@@ -41,11 +41,11 @@ Measured with `pnpm test:coverage:frontend`.
 
 Overall:
 
-- statements: 50.93%
-- branches: 38.55%
-- functions: 52.06%
-- lines: 54.26%
-- tests: 79 passing
+- statements: 54.43%
+- branches: 43.56%
+- functions: 56.76%
+- lines: 57.96%
+- tests: 85 passing
 
 High-confidence areas:
 
@@ -55,11 +55,11 @@ High-confidence areas:
 - `UploadZone.tsx`: 91.89% line coverage
 - `api.ts`: 71.31% line coverage
 - `mcpNotifications.ts`: 100% line coverage
+- `FileGrid.tsx`: 58.53% line coverage
+- `FileTable.tsx`: 54.79% line coverage
 
 Low-coverage priority areas:
 
-- `FileTable.tsx`: 28.08% line coverage
-- `FileGrid.tsx`: 36.58% line coverage
 - `FileBrowser.tsx`: 44.94% line coverage
 - `StorageSidebar.tsx`: 42.5% line coverage
 - `FilePreviewPanel.tsx`: 48% line coverage
@@ -71,6 +71,9 @@ Low-coverage priority areas:
 
 - Added tests for notification permission helpers and notification click behavior.
 - Raised `mcpNotifications.ts` from partial coverage to 100% line/function/branch coverage.
+- Added `FileTable` tests for sort callbacks, toggle selection, context-menu actions, and internal drag/drop-to-folder behavior.
+- Added `FileGrid` tests for toggle selection, context-menu actions, and internal drag/drop-to-folder behavior.
+- Raised frontend line coverage from 54.26% to 57.96%.
 - Verified frontend coverage still passes threshold.
 - Verified Rust coverage gate passes.
 
@@ -157,4 +160,4 @@ Automate where possible:
 
 ## Recommended next coverage task
 
-Start with `FileTable.tsx` and `FileGrid.tsx` because they are core file-manager surfaces and currently have the lowest coverage. Add tests around context-menu operations and sort/drop behavior first.
+Start with `FileBrowser.tsx` because it is the central orchestration surface and remains below 50% line coverage. Add tests for delete confirmation, breadcrumb/path navigation, view mode switching, and upload/drop error handling.
