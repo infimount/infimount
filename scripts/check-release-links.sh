@@ -23,7 +23,7 @@ for asset in "${ASSETS[@]}"; do
     --show-error \
     --location \
     --head \
-    --connect-timeout 10 \
+    --connect-timeout 30 \
     --max-time 60 \
     "$url" >/dev/null
 done
