@@ -67,7 +67,8 @@ az storage blob upload \
     --name sample.txt \
     --account-name devstoreaccount1 \
     --account-key "$AZURITE_ACCOUNT_KEY" \
-    --blob-endpoint http://localhost:10000/devstoreaccount1
+    --blob-endpoint http://localhost:10000/devstoreaccount1 \
+    --overwrite true
 
 # ----------- GCS Emulator ------------------
 echo "[GCS] Creating bucket..."

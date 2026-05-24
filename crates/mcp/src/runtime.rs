@@ -231,6 +231,10 @@ fn display_host(addr: SocketAddr) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::Duration;
+
     use tempfile::TempDir;
 
     use super::*;
@@ -238,6 +242,79 @@ mod tests {
 
     fn temp_registry(temp_dir: &TempDir) -> StorageRegistry {
         StorageRegistry::new(Some(temp_dir.path().join("storages.json")))
+    }
+
+    async fn post_raw_http(
+        endpoint: &str,
+        auth_token: Option<&str>,
+        body: &str,
+    ) -> io::Result<String> {
+        post_raw_http_with_headers(endpoint, auth_token, body, &[]).await
+    }
+
+    async fn post_raw_http_with_headers(
+        endpoint: &str,
+        auth_token: Option<&str>,
+        body: &str,
+        headers: &[(&str, &str)],
+    ) -> io::Result<String> {
+        let endpoint = endpoint
+            .strip_prefix("http://")
+            .expect("test endpoint should be http");
+        let (authority, path) = endpoint
+            .split_once('/')
+            .expect("test endpoint should include path");
+        let path = format!("/{path}");
+        let mut request = format!(
+            "POST {path} HTTP/1.1\r\n\
+             Host: {authority}\r\n\
+             Content-Type: application/json\r\n\
+             Accept: application/json, text/event-stream\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n",
+            body.len()
+        );
+        if let Some(token) = auth_token {
+            request.push_str(&format!("Authorization: Bearer {token}\r\n"));
+        }
+        for (name, value) in headers {
+            request.push_str(&format!("{name}: {value}\r\n"));
+        }
+        request.push_str("\r\n");
+        request.push_str(body);
+
+        let authority = authority.to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut stream = TcpStream::connect(authority)?;
+            stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+            stream.write_all(request.as_bytes())?;
+
+            let mut response = String::new();
+            match stream.read_to_string(&mut response) {
+                Ok(_) => Ok(response),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    Ok(response)
+                }
+                Err(error) => Err(error),
+            }
+        })
+        .await
+        .map_err(|error| io::Error::other(format!("HTTP request task failed: {error}")))?
+    }
+
+    fn response_header<'a>(response: &'a str, name: &str) -> Option<&'a str> {
+        response
+            .lines()
+            .take_while(|line| !line.is_empty() && *line != "\r")
+            .find_map(|line| {
+                let (header_name, value) = line.split_once(':')?;
+                header_name.eq_ignore_ascii_case(name).then(|| value.trim())
+            })
     }
 
     #[tokio::test]
@@ -263,6 +340,104 @@ mod tests {
         };
         assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
         assert!(error.to_string().contains("INFIMOUNT_AUTH_TOKEN"));
+    }
+
+    #[tokio::test]
+    async fn http_server_enforces_bearer_auth_over_real_http() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let server = start_http_server(
+            temp_registry(&temp_dir),
+            "127.0.0.1",
+            0,
+            all_tool_names(),
+            false,
+            Some("test-token".to_string()),
+            ConfirmationManager::new(),
+        )
+        .await
+        .expect("start authenticated test server");
+
+        let missing_auth = post_raw_http(server.endpoint(), None, "{}")
+            .await
+            .expect("missing-auth request should complete");
+        assert!(missing_auth.starts_with("HTTP/1.1 401 Unauthorized"));
+        assert!(missing_auth.contains("ERR_UNAUTHORIZED"));
+
+        let wrong_auth = post_raw_http(server.endpoint(), Some("wrong-token"), "{}")
+            .await
+            .expect("wrong-auth request should complete");
+        assert!(wrong_auth.starts_with("HTTP/1.1 401 Unauthorized"));
+        assert!(wrong_auth.contains("ERR_UNAUTHORIZED"));
+
+        let valid_auth = post_raw_http(server.endpoint(), Some("test-token"), "{}")
+            .await
+            .expect("valid-auth request should reach MCP transport");
+        assert!(
+            !valid_auth.starts_with("HTTP/1.1 401 Unauthorized"),
+            "valid bearer token should pass middleware: {valid_auth}"
+        );
+
+        server.stop().await.expect("stop test server");
+    }
+
+    #[tokio::test]
+    async fn http_server_completes_initialize_and_lists_tools_over_real_http() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let server = start_http_server(
+            temp_registry(&temp_dir),
+            "127.0.0.1",
+            0,
+            vec!["list_dir".to_string(), "stat_path".to_string()],
+            false,
+            Some("test-token".to_string()),
+            ConfirmationManager::new(),
+        )
+        .await
+        .expect("start authenticated test server");
+
+        let initialize = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"infimount-test","version":"0.0.0"}}}"#;
+        let initialize_response = post_raw_http(server.endpoint(), Some("test-token"), initialize)
+            .await
+            .expect("initialize request should complete");
+        assert!(initialize_response.starts_with("HTTP/1.1 200 OK"));
+        assert!(initialize_response.contains("\"protocolVersion\""));
+        assert!(initialize_response.contains("\"serverInfo\""));
+
+        let session_id = response_header(&initialize_response, "mcp-session-id")
+            .expect("initialize should return mcp-session-id")
+            .to_string();
+
+        let initialized = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
+        let initialized_response = post_raw_http_with_headers(
+            server.endpoint(),
+            Some("test-token"),
+            initialized,
+            &[("Mcp-Session-Id", &session_id)],
+        )
+        .await
+        .expect("initialized notification should complete");
+        assert!(
+            initialized_response.starts_with("HTTP/1.1 202 Accepted")
+                || initialized_response.starts_with("HTTP/1.1 200 OK"),
+            "initialized notification response should be accepted: {initialized_response}"
+        );
+
+        let tools_list = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#;
+        let tools_response = post_raw_http_with_headers(
+            server.endpoint(),
+            Some("test-token"),
+            tools_list,
+            &[("Mcp-Session-Id", &session_id)],
+        )
+        .await
+        .expect("tools/list request should complete");
+        assert!(tools_response.starts_with("HTTP/1.1 200 OK"));
+        assert!(tools_response.contains("\"tools\""));
+        assert!(tools_response.contains("\"list_dir\""));
+        assert!(tools_response.contains("\"stat_path\""));
+        assert!(!tools_response.contains("\"read_file\""));
+
+        server.stop().await.expect("stop test server");
     }
 
     #[tokio::test]

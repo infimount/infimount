@@ -56,6 +56,13 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 20
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
       - name: Lint Markdown
         run: |
-          git ls-files -z "*.md" | xargs -0 -r npx --yes markdownlint-cli --config .markdownlint.yaml
+          git ls-files -z "*.md" | xargs -0 -r pnpm exec markdownlint --config .markdownlint.yaml

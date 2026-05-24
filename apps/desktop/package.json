@@ -13,7 +13,7 @@
     "test:coverage:frontend": "vitest run --config vitest.coverage.config.ts --coverage",
     "test:ui": "playwright test -c playwright-ct.config.ts",
     "test:ui:update": "playwright test -c playwright-ct.config.ts --update-snapshots",
-    "test:all": "pnpm test:unit && pnpm test:integration",
+    "test:all": "pnpm test:unit && pnpm test:integration && pnpm test:ui",
     "test:coverage": "pnpm test:coverage:frontend",
     "tauri": "tauri",
     "lint": "eslint . --report-unused-disable-directives --max-warnings 0",

@@ -747,4 +747,73 @@ mod tests {
         let exists = op.exists("new-folder/").await.unwrap();
         assert!(exists);
     }
+
+    #[tokio::test]
+    async fn test_transfer_entries_copies_file_across_operators() {
+        let from_op = create_test_operator().await;
+        let to_op = create_test_operator().await;
+        from_op.write("source.txt", "hello".as_bytes()).await.unwrap();
+        create_directory(&to_op, "target").await.unwrap();
+
+        transfer_entries(
+            &from_op,
+            &to_op,
+            vec!["source.txt".to_string()],
+            "target",
+            TransferOperation::Copy,
+            false,
+            TransferConflictPolicy::Fail,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(from_op.read("source.txt").await.unwrap().to_vec(), b"hello");
+        assert_eq!(to_op.read("target/source.txt").await.unwrap().to_vec(), b"hello");
+    }
+
+    #[tokio::test]
+    async fn test_transfer_entries_moves_file_across_operators() {
+        let from_op = create_test_operator().await;
+        let to_op = create_test_operator().await;
+        from_op.write("source.txt", "hello".as_bytes()).await.unwrap();
+        create_directory(&to_op, "target").await.unwrap();
+
+        transfer_entries(
+            &from_op,
+            &to_op,
+            vec!["source.txt".to_string()],
+            "target",
+            TransferOperation::Move,
+            false,
+            TransferConflictPolicy::Fail,
+        )
+        .await
+        .unwrap();
+
+        assert!(!from_op.exists("source.txt").await.unwrap());
+        assert_eq!(to_op.read("target/source.txt").await.unwrap().to_vec(), b"hello");
+    }
+
+    #[tokio::test]
+    async fn test_transfer_entries_skips_existing_destination() {
+        let op = create_test_operator().await;
+        op.write("source.txt", "new".as_bytes()).await.unwrap();
+        create_directory(&op, "target").await.unwrap();
+        op.write("target/source.txt", "old".as_bytes()).await.unwrap();
+
+        transfer_entries(
+            &op,
+            &op,
+            vec!["source.txt".to_string()],
+            "target",
+            TransferOperation::Copy,
+            true,
+            TransferConflictPolicy::Skip,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(op.read("source.txt").await.unwrap().to_vec(), b"new");
+        assert_eq!(op.read("target/source.txt").await.unwrap().to_vec(), b"old");
+    }
 }

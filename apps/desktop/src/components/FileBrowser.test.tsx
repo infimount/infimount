@@ -2,8 +2,9 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { fireEvent } from "@testing-library/react";
 import { FileBrowser } from "./FileBrowser";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createDirectory, listEntries, TauriApiError } from "@/lib/api";
+import { createDirectory, listEntries, readFile, TauriApiError, transferEntries } from "@/lib/api";
 import { AppZoomProvider } from "@/hooks/use-app-zoom";
+import { FileClipboardProvider } from "@/hooks/use-file-clipboard";
 
 function deferred<T>() {
     let resolve!: (value: T) => void;
@@ -13,6 +14,16 @@ function deferred<T>() {
         reject = promiseReject;
     });
     return { promise, resolve, reject };
+}
+
+function renderFileBrowser(sourceId = "test", storageName = "Test Storage") {
+    return render(
+        <AppZoomProvider>
+            <FileClipboardProvider>
+                <FileBrowser sourceId={sourceId} storageName={storageName} />
+            </FileClipboardProvider>
+        </AppZoomProvider>,
+    );
 }
 
 // Mock the api module
@@ -34,6 +45,76 @@ vi.mock("@/lib/api", () => ({
 
 vi.mock("./WindowControls", () => ({
     WindowControls: () => null,
+}));
+
+vi.mock("./FileGrid", () => ({
+    FileGrid: ({ files, selectedFiles, canPaste, onSelectFile, onDownloadFile, onCutSelected, onPaste }: {
+        files: Array<{ id: string; name: string; type: string }>;
+        selectedFiles?: Set<string>;
+        canPaste?: boolean;
+        onSelectFile?: (id: string) => void;
+        onDownloadFile?: (file: { id: string; name: string; type: string }) => void;
+        onCutSelected?: () => void;
+        onPaste?: () => void;
+    }) => (
+        <div>
+            {canPaste && <span>clipboard ready</span>}
+            <button type="button" onClick={() => onCutSelected?.()}>
+                Cut selected
+            </button>
+            <button type="button" disabled={!canPaste} onClick={() => onPaste?.()}>
+                Paste selected
+            </button>
+            {files.map((file) => (
+                <div key={file.id}>
+                    <button type="button" onClick={() => onSelectFile?.(file.id)}>
+                        {file.name}
+                    </button>
+                    {selectedFiles?.has(file.id) && <span>selected {file.name}</span>}
+                    {file.type === "file" && (
+                        <button type="button" onClick={() => onDownloadFile?.(file)}>
+                            Download {file.name}
+                        </button>
+                    )}
+                </div>
+            ))}
+        </div>
+    ),
+}));
+
+vi.mock("./FileTable", () => ({
+    FileTable: ({ files, selectedFiles, canPaste, onSelectFile, onDownloadFile, onCutSelected, onPaste }: {
+        files: Array<{ id: string; name: string; type: string }>;
+        selectedFiles?: Set<string>;
+        canPaste?: boolean;
+        onSelectFile?: (id: string) => void;
+        onDownloadFile?: (file: { id: string; name: string; type: string }) => void;
+        onCutSelected?: () => void;
+        onPaste?: () => void;
+    }) => (
+        <div>
+            {canPaste && <span>clipboard ready</span>}
+            <button type="button" onClick={() => onCutSelected?.()}>
+                Cut selected
+            </button>
+            <button type="button" disabled={!canPaste} onClick={() => onPaste?.()}>
+                Paste selected
+            </button>
+            {files.map((file) => (
+                <div key={file.id}>
+                    <button type="button" onClick={() => onSelectFile?.(file.id)}>
+                        {file.name}
+                    </button>
+                    {selectedFiles?.has(file.id) && <span>selected {file.name}</span>}
+                    {file.type === "file" && (
+                        <button type="button" onClick={() => onDownloadFile?.(file)}>
+                            Download {file.name}
+                        </button>
+                    )}
+                </div>
+            ))}
+        </div>
+    ),
 }));
 
 // Mock UI components that might cause issues in jsdom
@@ -186,6 +267,63 @@ describe("FileBrowser shortcuts and creation", () => {
 
         await waitFor(() => {
             expect(createDirectory).toHaveBeenCalledWith("test", "/from-shortcut");
+        });
+    });
+});
+
+describe("FileBrowser transfer and download flows", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(listEntries).mockResolvedValue([
+            {
+                path: "/report.txt",
+                name: "report.txt",
+                is_dir: false,
+                size: 12,
+                modified_at: null,
+            },
+        ]);
+        vi.mocked(readFile).mockResolvedValue(new TextEncoder().encode("hello"));
+        vi.mocked(transferEntries).mockResolvedValue(undefined);
+    });
+
+    it("downloads a file through the file context menu", async () => {
+        const createObjectURL = vi
+            .spyOn(URL, "createObjectURL")
+            .mockReturnValue("blob:infimount-report");
+        const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+        const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+        renderFileBrowser();
+
+        fireEvent.click(await screen.findByText("Download report.txt"));
+
+        await waitFor(() => {
+            expect(readFile).toHaveBeenCalledWith("test", "/report.txt");
+            expect(createObjectURL).toHaveBeenCalled();
+            expect(click).toHaveBeenCalled();
+            expect(revokeObjectURL).toHaveBeenCalledWith("blob:infimount-report");
+        });
+    });
+
+    it("moves selected files with cut and paste actions", async () => {
+        renderFileBrowser();
+
+        fireEvent.click(await screen.findByText("report.txt"));
+        await screen.findByText("selected report.txt");
+        fireEvent.click(screen.getByRole("button", { name: "Cut selected" }));
+        await screen.findByText("clipboard ready");
+        fireEvent.click(screen.getByRole("button", { name: "Paste selected" }));
+
+        await waitFor(() => {
+            expect(transferEntries).toHaveBeenCalledWith(
+                "test",
+                "test",
+                ["/report.txt"],
+                "/",
+                "move",
+                "fail",
+            );
         });
     });
 });
