@@ -12,9 +12,204 @@ env:
   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
 jobs:
+  release-frontend-gate:
+    name: Release Gate / Frontend
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: apps/desktop
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Install dependencies
+        working-directory: .
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Type check
+        run: pnpm tsc --noEmit
+
+      - name: Unit tests
+        run: pnpm test:unit
+
+      - name: Integration tests
+        run: pnpm test:integration
+
+      - name: Frontend coverage gate
+        run: pnpm test:coverage:frontend
+
+      - name: Production build
+        run: pnpm build
+
+  release-ui-gate:
+    name: Release Gate / Playwright UI
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: apps/desktop
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Install dependencies
+        working-directory: .
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: UI/component tests
+        run: pnpm test:ui
+
+      - name: Upload Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-playwright-ui-artifacts
+          path: |
+            apps/desktop/test-results
+            apps/desktop/playwright-report
+
+  release-rust-gate:
+    name: Release Gate / Rust
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings -A clippy::result_large_err -A clippy::needless_borrows_for_generic_args
+
+      - name: Rust tests
+        run: cargo test --workspace
+
+      - name: Rust coverage gate
+        run: ./scripts/coverage-rust.sh
+
+  release-desktop-smoke:
+    name: Release Gate / Desktop Smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb
+
+      - name: Desktop launch/migration smoke
+        run: ./scripts/smoke-desktop.sh
+
+  release-storage-simulator:
+    name: Release Gate / Storage Simulator
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install simulator CLIs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y awscli ca-certificates curl
+          curl -fsSL https://aka.ms/InstallAzureCLIDeb -o /tmp/install-azure-cli.sh
+          sudo bash /tmp/install-azure-cli.sh
+
+      - name: Start storage simulator
+        run: docker compose -f storage-simulator/docker-compose.yml up -d
+
+      - name: Bootstrap storage simulator
+        working-directory: storage-simulator
+        run: ./bootstrap.sh
+
+      - name: Verify OpenDAL storage simulator
+        run: cargo run -p infimount_core --bin verify_storage
+
+      - name: Stop storage simulator
+        if: always()
+        run: docker compose -f storage-simulator/docker-compose.yml down -v
+
   build-linux:
     name: Build Linux
     runs-on: ubuntu-22.04
+    needs:
+      - release-frontend-gate
+      - release-ui-gate
+      - release-rust-gate
+      - release-desktop-smoke
+      - release-storage-simulator
 
     steps:
       - uses: actions/checkout@v6
@@ -159,6 +354,12 @@ jobs:
   build-macos:
     name: Build macOS
     runs-on: macos-latest
+    needs:
+      - release-frontend-gate
+      - release-ui-gate
+      - release-rust-gate
+      - release-desktop-smoke
+      - release-storage-simulator
 
     steps:
       - uses: actions/checkout@v6
@@ -328,6 +529,12 @@ jobs:
   build-windows:
     name: Build Windows
     runs-on: windows-latest
+    needs:
+      - release-frontend-gate
+      - release-ui-gate
+      - release-rust-gate
+      - release-desktop-smoke
+      - release-storage-simulator
 
     steps:
       - uses: actions/checkout@v6

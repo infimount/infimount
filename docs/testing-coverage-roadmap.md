@@ -41,11 +41,11 @@ Measured with `pnpm test:coverage:frontend`.
 
 Overall:
 
-- statements: 76.05%
-- branches: 62.55%
-- functions: 76.44%
-- lines: 80.07%
-- tests: 122 passing in the frontend coverage suite
+- statements: 76.28%
+- branches: 63.18%
+- functions: 76.82%
+- lines: 80.27%
+- tests: 123 passing in the frontend coverage suite
 
 High-confidence areas:
 
@@ -57,7 +57,7 @@ High-confidence areas:
 - `use-toast.ts`: 92.15% line coverage
 - `UploadZone.tsx`: 91.89% line coverage
 - `AddStorageDialog.tsx`: 88.27% line coverage
-- `McpSettingsDialog.tsx`: 81.25% line coverage
+- `McpSettingsDialog.tsx`: 83.52% line coverage
 - `StorageSidebar.tsx`: 80% line coverage
 
 Remaining priority areas for the next pass:
@@ -78,8 +78,11 @@ Remaining priority areas for the next pass:
 - Added `FileBrowser` orchestration coverage for search, table/grid switching, sort callback wiring, folder navigation, preview open/edit/download/close, delete confirmation, paste conflicts, uploads, and external file/folder drop collection.
 - Added `AddStorageDialog` coverage for add/edit submit paths, validation, secret masking/reveal, reset fields, verification results, and advanced-config preservation.
 - Added `FilePreviewPanel`, `FileIcon`, and `use-toast` coverage for preview modes, icon theme loading/cache behavior, and toast reducer/hook dispatch behavior.
-- Raised frontend line coverage from 54.26% to 80.07% and installed an 80% line coverage gate.
-- Verified frontend coverage, lint, unit tests, and production build pass.
+- Added a release-zero-manual app-shell integration smoke path for adding local storage and starting MCP through the production page orchestration.
+- Raised frontend line coverage from 54.26% to 80.27% and installed an 80% line coverage gate.
+- Added a `Release` workflow preflight gate that blocks artifact builds until frontend, UI, Rust, desktop smoke, and storage simulator checks pass.
+- Added `pnpm test:release` for local release-gate dry runs.
+- Verified frontend coverage, lint, unit tests, integration tests, and production build pass.
 - Verified Rust coverage gate passes.
 
 ## Path to near-zero manual testing

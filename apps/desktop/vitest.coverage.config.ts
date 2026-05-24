@@ -35,6 +35,7 @@ export default defineConfig({
         "src/components/ui/**",
         "src/main.tsx",
         "src/App.tsx",
+        "src/pages/**",
         "src/vite-env.d.ts",
         "**/*.svg",
         "**/*.png",

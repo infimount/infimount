@@ -4,6 +4,25 @@ This document is the operational checklist for cutting a release.
 
 ## 1. Pre-release checks
 
+Infimount releases are intended to require **zero manual test execution**. Before a tag can produce release artifacts, the `Release` workflow now runs automated release-gate jobs for frontend tests, Playwright UI tests, Rust tests/coverage, desktop smoke, and OpenDAL storage simulator verification.
+
+Optional local dry run before tagging:
+
+```bash
+pnpm test:release
+```
+
+For faster local iteration only, you may skip slow checks with:
+
+```bash
+INFIMOUNT_RELEASE_GATE_SKIP_UI=1 \
+INFIMOUNT_RELEASE_GATE_SKIP_DESKTOP_SMOKE=1 \
+INFIMOUNT_RELEASE_GATE_SKIP_RUST_COVERAGE=1 \
+pnpm test:release
+```
+
+Required release preparation:
+
 1. Ensure `main` is green in all required workflows.
 2. Choose next version by impact:
    - patch (`0.1.1`) for fixes only
@@ -35,6 +54,12 @@ git push origin vX.Y.Z
 
 The `Release` workflow is triggered by `v*` tags and will:
 
+- block release builds until automated release gates pass:
+  - frontend lint, typecheck, unit tests, integration tests, coverage, and production build
+  - Playwright component/UI tests
+  - Rust format, clippy, workspace tests, and coverage gate
+  - desktop launch/migration smoke test under Xvfb
+  - OpenDAL storage simulator verification
 - sync app manifest versions from the pushed tag via `scripts/sync-release-version.mjs`
 - build Linux, macOS, Windows binaries
 - sign/notarize macOS artifacts if Apple signing secrets are present
@@ -46,6 +71,8 @@ The `Release` workflow is triggered by `v*` tags and will:
 - emit artifact provenance attestation
 
 ## 3. Validate draft release
+
+The release workflow already performs automated artifact presence, checksum, updater metadata, package, and provenance checks. The remaining human action is release approval/publishing, not manual product testing.
 
 In the release draft:
 
@@ -59,11 +86,10 @@ In the release draft:
    - `SHA256SUMS.txt`
    - `*.sha256`
    - `SBOM.spdx.json`
-2. Verify checksums:
-   - download at least one binary and `SHA256SUMS.txt`
-   - run `sha256sum -c SHA256SUMS.txt`
-3. Perform quick install sanity on each target OS where possible.
-4. Publish release.
+2. Confirm the generated release notes are acceptable.
+3. Publish release.
+
+Manual checksum or install sanity checks are optional spot audits only; they are no longer required release tests because the workflow validates checksums and package structure automatically.
 
 ## 4. Post-release checks
 
