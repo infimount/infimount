@@ -120,13 +120,13 @@ export function TransferQueuePanel() {
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    {job.status === "queued" ? (
+                    {job.status === "queued" || job.status === "running" ? (
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7"
-                        aria-label="Cancel queued transfer"
+                        aria-label={job.status === "running" ? "Cancel active transfer" : "Cancel queued transfer"}
                         onClick={() => cancelTransfer(job.id)}
                       >
                         <X className="h-3.5 w-3.5" />
@@ -164,6 +164,11 @@ export function TransferQueuePanel() {
                   className="mt-2 h-1.5 bg-muted"
                   aria-label={`${formatJobTitle(job)} progress`}
                 />
+                {job.currentPath && job.status === "running" ? (
+                  <p className="mt-2 truncate text-[11px] text-muted-foreground">
+                    Current: {job.currentPath}
+                  </p>
+                ) : null}
                 {job.error ? (
                   <p className="mt-2 line-clamp-2 text-[11px] text-destructive">{job.error}</p>
                 ) : null}

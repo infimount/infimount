@@ -14,10 +14,10 @@ use infimount_mcp::tools_storage::{
     export_config, import_config, validate_storage_record, ExportConfigInput, ExportConfigOutput,
     ImportConfigInput, ImportConfigOutput, ValidateStorageOutput,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Duration;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::app_settings::AppSettings;
 use crate::state::{AppState, McpClientSnippets, McpRuntimeStatus};
@@ -113,8 +113,21 @@ pub async fn upload_dropped_files(
     operations::upload_files_from_paths(&op, paths, targetDir).await
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TransferProgressPayload {
+    job_id: String,
+    completed_items: u64,
+    total_items: u64,
+    bytes_transferred: u64,
+    total_bytes: u64,
+    current_path: String,
+}
+
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn transfer_entries(
+    app: AppHandle,
     state: State<'_, AppState>,
     fromSourceId: String,
     toSourceId: String,
@@ -122,6 +135,7 @@ pub async fn transfer_entries(
     targetDir: String,
     operation: String,
     conflictPolicy: String,
+    jobId: Option<String>,
 ) -> Result<(), CoreError> {
     let from_op = state.operator_for_storage_id(&fromSourceId)?;
     let to_op = state.operator_for_storage_id(&toSourceId)?;
@@ -149,16 +163,54 @@ pub async fn transfer_entries(
         }
     };
 
-    operations::transfer_entries(
-        &from_op,
-        &to_op,
-        paths,
-        &targetDir,
-        op,
-        fromSourceId == toSourceId,
-        policy,
-    )
-    .await
+    if let Some(job_id) = jobId {
+        state.clear_transfer_cancel(&job_id);
+        let emit_app = app.clone();
+        let emit_job_id = job_id.clone();
+        let cancel_job_id = job_id.clone();
+        let result = operations::transfer_entries_with_progress(
+            &from_op,
+            &to_op,
+            paths,
+            &targetDir,
+            op,
+            fromSourceId == toSourceId,
+            policy,
+            move |progress| {
+                let _ = emit_app.emit(
+                    "infimount://transfer-progress",
+                    TransferProgressPayload {
+                        job_id: emit_job_id.clone(),
+                        completed_items: progress.completed_items,
+                        total_items: progress.total_items,
+                        bytes_transferred: progress.bytes_transferred,
+                        total_bytes: progress.total_bytes,
+                        current_path: progress.current_path,
+                    },
+                );
+            },
+            || state.is_transfer_cancelled(&cancel_job_id),
+        )
+        .await;
+        state.clear_transfer_cancel(&job_id);
+        result
+    } else {
+        operations::transfer_entries(
+            &from_op,
+            &to_op,
+            paths,
+            &targetDir,
+            op,
+            fromSourceId == toSourceId,
+            policy,
+        )
+        .await
+    }
+}
+
+#[tauri::command]
+pub fn cancel_transfer_job(state: State<'_, AppState>, jobId: String) {
+    state.request_transfer_cancel(&jobId);
 }
 
 #[tauri::command]

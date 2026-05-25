@@ -11,7 +11,10 @@ import {
   type ReactNode,
 } from "react";
 
+import { listen } from "@tauri-apps/api/event";
+
 import {
+  cancelTransferJob,
   transferEntries,
   type TransferConflictPolicy,
   type TransferOperation,
@@ -38,6 +41,18 @@ export interface TransferJob extends TransferJobRequest {
   createdAt: number;
   updatedAt: number;
   error?: string;
+  currentPath?: string;
+  bytesTransferred?: number;
+  totalBytes?: number;
+}
+
+interface TransferProgressPayload {
+  jobId: string;
+  completedItems: number;
+  totalItems: number;
+  bytesTransferred: number;
+  totalBytes: number;
+  currentPath: string;
 }
 
 interface TransferJobCallbacks {
@@ -75,6 +90,20 @@ function createJob(request: TransferJobRequest): TransferJob {
 function normalizeError(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function isCancellationError(error: unknown) {
+  return normalizeError(error).toLowerCase().includes("cancelled");
+}
+
+function progressPercent(payload: TransferProgressPayload) {
+  if (payload.totalBytes > 0) {
+    return Math.max(1, Math.min(99, Math.round((payload.bytesTransferred / payload.totalBytes) * 100)));
+  }
+  if (payload.totalItems > 0) {
+    return Math.max(1, Math.min(99, Math.round((payload.completedItems / payload.totalItems) * 100)));
+  }
+  return 1;
 }
 
 export function TransferQueueProvider({ children }: { children: ReactNode }) {
@@ -124,16 +153,26 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
 
   const cancelTransfer = useCallback((jobId: string) => {
     setJobs((current) =>
-      current.map((job) =>
-        job.id === jobId && job.status === "queued"
-          ? {
-              ...job,
-              status: "cancelled",
-              progress: 0,
-              updatedAt: now(),
-            }
-          : job,
-      ),
+      current.map((job) => {
+        if (job.id !== jobId) return job;
+        if (job.status === "queued") {
+          return {
+            ...job,
+            status: "cancelled",
+            progress: 0,
+            updatedAt: now(),
+          };
+        }
+        if (job.status === "running") {
+          void cancelTransferJob(jobId);
+          return {
+            ...job,
+            error: "Cancelling transfer...",
+            updatedAt: now(),
+          };
+        }
+        return job;
+      }),
     );
   }, []);
 
@@ -147,6 +186,37 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
     callbacksRef.current.delete(jobId);
     setJobs((current) => current.filter((job) => job.id !== jobId || job.status === "running"));
   }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+
+    void listen<TransferProgressPayload>("infimount://transfer-progress", (event) => {
+      if (disposed) return;
+      const payload = event.payload;
+      patchJob(payload.jobId, {
+        progress: progressPercent(payload),
+        currentPath: payload.currentPath || undefined,
+        bytesTransferred: payload.bytesTransferred,
+        totalBytes: payload.totalBytes,
+      });
+    })
+      .then((cleanup) => {
+        if (disposed) {
+          cleanup();
+        } else {
+          unlisten = cleanup;
+        }
+      })
+      .catch(() => {
+        // Unit tests and non-Tauri previews do not provide the native event bus.
+      });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [patchJob]);
 
   useEffect(() => {
     if (processingRef.current) return;
@@ -173,6 +243,7 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
           nextJob.targetDir,
           nextJob.operation,
           nextJob.conflictPolicy,
+          nextJob.id,
         );
         const completedJob: TransferJob = {
           ...nextJob,
@@ -184,6 +255,15 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
         patchJob(nextJob.id, { status: "completed", progress: 100 });
         await callbacksRef.current.get(nextJob.id)?.onCompleted?.(completedJob);
       } catch (error) {
+        if (isCancellationError(error)) {
+          patchJob(nextJob.id, {
+            status: "cancelled",
+            progress: 0,
+            error: undefined,
+          });
+          return;
+        }
+
         const failedJob: TransferJob = {
           ...nextJob,
           status: "failed",

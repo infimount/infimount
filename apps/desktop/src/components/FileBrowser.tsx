@@ -215,6 +215,10 @@ interface FileBrowserProps {
   onPreviewVisibilityChange?: (visible: boolean) => void;
   onToggleSidebar?: () => void;
   isSidebarOpen?: boolean;
+  onToggleDualPane?: () => void;
+  isDualPane?: boolean;
+  showWindowControls?: boolean;
+  showTransferQueue?: boolean;
 }
 
 interface LoadError {
@@ -229,6 +233,10 @@ export function FileBrowser({
   onPreviewVisibilityChange,
   onToggleSidebar,
   isSidebarOpen,
+  onToggleDualPane,
+  isDualPane = false,
+  showWindowControls = true,
+  showTransferQueue = true,
 }: FileBrowserProps) {
   const { zoom } = useAppZoom();
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
@@ -1083,9 +1091,23 @@ export function FileBrowser({
                     <PanelRight className="h-4 w-4" />
                   </Button>
                 )}
-                <div className="ml-2 pl-2 border-l border-border/50">
-                  <WindowControls />
-                </div>
+                {onToggleDualPane ? (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={onToggleDualPane}
+                    className="h-8 w-8 text-foreground/70 hover:bg-black/5 dark:hover:bg-white/5"
+                    title={isDualPane ? "Close split pane" : "Open split pane"}
+                    aria-label={isDualPane ? "Close split pane" : "Open split pane"}
+                  >
+                    <PanelRight className="h-4 w-4" />
+                  </Button>
+                ) : null}
+                {showWindowControls ? (
+                  <div className="ml-2 pl-2 border-l border-border/50">
+                    <WindowControls />
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>
@@ -1335,7 +1357,7 @@ export function FileBrowser({
             )}
           </ResizablePanelGroup>
         </div>
-        <TransferQueuePanel />
+        {showTransferQueue ? <TransferQueuePanel /> : null}
       </div>
 
       <AlertDialog

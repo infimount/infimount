@@ -244,6 +244,8 @@ const Index = () => {
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [isPreviewVisible, setIsPreviewVisible] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isDualPaneOpen, setIsDualPaneOpen] = useState(false);
+  const [secondaryStorageId, setSecondaryStorageId] = useState<string | null>(null);
 
   const reloadMcpStatus = useCallback(async () => {
     try {
@@ -704,6 +706,14 @@ const Index = () => {
   };
 
   const currentStorage = storages.find((storage) => storage.id === selectedStorage);
+  const secondaryStorage =
+    storages.find((storage) => storage.id === secondaryStorageId) ?? currentStorage ?? storages[0];
+
+  useEffect(() => {
+    if (!secondaryStorageId || !storages.some((storage) => storage.id === secondaryStorageId)) {
+      setSecondaryStorageId(currentStorage?.id ?? storages[0]?.id ?? null);
+    }
+  }, [currentStorage?.id, secondaryStorageId, storages]);
 
   const toggleSidebar = () => setIsSidebarOpen((current) => !current);
   const closeSidebar = () => setIsSidebarOpen(false);
@@ -782,14 +792,63 @@ const Index = () => {
         <ResizablePanel className="flex-1 overflow-hidden">
           <div className="flex h-full flex-col">
             {currentStorage ? (
-              <FileBrowser
-                sourceId={currentStorage.id}
-                storageName={currentStorage.name}
-                refreshTick={storageRefreshTick[currentStorage.id] ?? 0}
-                onPreviewVisibilityChange={setIsPreviewVisible}
-                onToggleSidebar={toggleSidebar}
-                isSidebarOpen={isSidebarOpen}
-              />
+              isDualPaneOpen && secondaryStorage ? (
+                <ResizablePanelGroup direction="horizontal" className="h-full">
+                  <ResizablePanel defaultSize="50" minSize="25" className="overflow-hidden">
+                    <FileBrowser
+                      sourceId={currentStorage.id}
+                      storageName={currentStorage.name}
+                      refreshTick={storageRefreshTick[currentStorage.id] ?? 0}
+                      onPreviewVisibilityChange={setIsPreviewVisible}
+                      onToggleSidebar={toggleSidebar}
+                      isSidebarOpen={isSidebarOpen}
+                      onToggleDualPane={() => setIsDualPaneOpen(false)}
+                      isDualPane
+                    />
+                  </ResizablePanel>
+                  <ResizableHandle className="flex w-px flex-col items-center justify-center bg-border/50" />
+                  <ResizablePanel defaultSize="50" minSize="25" className="overflow-hidden">
+                    <div className="flex h-full flex-col border-l border-border/40 bg-background">
+                      <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-b border-border/70 bg-muted/30 px-3">
+                        <label className="text-xs text-muted-foreground" htmlFor="secondary-storage-select">
+                          Destination pane
+                        </label>
+                        <select
+                          id="secondary-storage-select"
+                          value={secondaryStorage.id}
+                          onChange={(event) => setSecondaryStorageId(event.target.value)}
+                          className="h-7 max-w-[220px] rounded-md border border-border bg-background px-2 text-xs text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        >
+                          {storages.map((storage) => (
+                            <option key={storage.id} value={storage.id}>
+                              {storage.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <FileBrowser
+                        sourceId={secondaryStorage.id}
+                        storageName={secondaryStorage.name}
+                        refreshTick={storageRefreshTick[secondaryStorage.id] ?? 0}
+                        showWindowControls={false}
+                        showTransferQueue={false}
+                        onToggleDualPane={() => setIsDualPaneOpen(false)}
+                        isDualPane
+                      />
+                    </div>
+                  </ResizablePanel>
+                </ResizablePanelGroup>
+              ) : (
+                <FileBrowser
+                  sourceId={currentStorage.id}
+                  storageName={currentStorage.name}
+                  refreshTick={storageRefreshTick[currentStorage.id] ?? 0}
+                  onPreviewVisibilityChange={setIsPreviewVisible}
+                  onToggleSidebar={toggleSidebar}
+                  isSidebarOpen={isSidebarOpen}
+                  onToggleDualPane={() => setIsDualPaneOpen(true)}
+                />
+              )
             ) : (
               <div className="flex h-full items-center justify-center">
                 <p className="text-muted-foreground">Select a storage to view files</p>

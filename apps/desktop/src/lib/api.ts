@@ -155,6 +155,7 @@ export function transferEntries(
   targetDir: string,
   operation: TransferOperation,
   conflictPolicy: TransferConflictPolicy,
+  jobId?: string,
 ): Promise<void> {
   return invokeOrThrow<void>("transfer_entries", {
     fromSourceId,
@@ -163,7 +164,12 @@ export function transferEntries(
     targetDir,
     operation,
     conflictPolicy,
+    ...(jobId ? { jobId } : {}),
   });
+}
+
+export function cancelTransferJob(jobId: string): Promise<void> {
+  return invokeOrThrow<void>("cancel_transfer_job", { jobId });
 }
 
 export function listStorages(): Promise<StorageConfig[]> {

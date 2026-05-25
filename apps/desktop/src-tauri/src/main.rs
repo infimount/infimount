@@ -73,6 +73,7 @@ fn main() {
             commands::export_storage_config,
             commands::upload_dropped_files,
             commands::transfer_entries,
+            commands::cancel_transfer_job,
             commands::list_storage_schemas,
             commands::get_storage_capabilities,
             commands::generate_download_link,

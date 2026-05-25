@@ -203,8 +203,8 @@ Differentiators to preserve:
 ### Power-user workflows
 
 - Multi-tab browsing.
-- Transfer queue and resumable/retry behavior where possible. Initial queued/running/completed/failed UI with retry and queued cancellation is implemented; backend progress events and active cancellation remain next.
-- Dual-pane browsing for source/destination work.
+- Transfer queue and resumable/retry behavior where possible. Queued/running/completed/failed UI, retry, active or queued cancellation, and Tauri-backed progress events are implemented. Resume support remains future work.
+- Dual-pane browsing for source/destination work. Initial split-pane browsing with an independently selectable destination pane is implemented.
 - CLI companion.
 - Saved connections/searches.
 

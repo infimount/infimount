@@ -93,7 +93,7 @@ Remaining priority areas for the next pass:
 - Added `pnpm test:release` for local release-gate dry runs, including the storage simulator by default.
 - Added `pnpm test:release:policy` to fail if release artifact jobs stop depending on automated gates.
 - Added Linux release artifact smoke coverage for AppImage launch/migration, `.deb` install/launch/migration, and RPM metadata/listing validation.
-- Added transfer queue hook and panel coverage for queued/running/completed/failed states, retry, queued-transfer cancellation, and visible progress.
+- Added transfer queue hook and panel coverage for queued/running/completed/failed states, retry, active or queued cancellation, Tauri progress event wiring, and visible progress.
 - Verified frontend coverage, lint, unit tests, integration tests, and production build pass.
 - Verified Rust coverage gate passes.
 
@@ -183,4 +183,4 @@ Automate where possible:
 
 ## Recommended next coverage task
 
-Next feature coverage should follow the workbench roadmap: real transfer progress events, active-transfer cancellation, dual-pane navigation, pane-to-pane copy/move, and conflict-resolution decisions. Continue hardening `FileBrowser.tsx`, `FilePreviewPanel.tsx`, and `McpSettingsDialog.tsx` branch/function paths while adding those features.
+Next feature coverage should follow the workbench roadmap: pane-to-pane copy/move regression coverage, richer conflict-resolution decisions, bookmarks/provider presets, and eventual resumable transfers. Continue hardening `FileBrowser.tsx`, `FilePreviewPanel.tsx`, and `McpSettingsDialog.tsx` branch/function paths while adding those features.

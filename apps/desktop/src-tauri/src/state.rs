@@ -12,6 +12,8 @@ use infimount_mcp::tools_fs::FsToolsContext;
 use opendal::Operator;
 use serde::Serialize;
 use serde_json::{json, Map, Value};
+use std::collections::HashSet;
+use std::sync::Mutex as StdMutex;
 use tokio::sync::Mutex;
 
 use crate::app_settings::AppSettingsStore;
@@ -22,6 +24,7 @@ pub struct AppState {
     pub app_settings_store: AppSettingsStore,
     pub confirmations: ConfirmationManager,
     http_runtime: Mutex<Option<McpHttpServerHandle>>,
+    transfer_cancellations: StdMutex<HashSet<String>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -50,6 +53,7 @@ impl AppState {
             app_settings_store: AppSettingsStore::new(None),
             confirmations: ConfirmationManager::new(),
             http_runtime: Mutex::new(None),
+            transfer_cancellations: StdMutex::new(HashSet::new()),
         })
     }
 
@@ -79,6 +83,25 @@ impl AppState {
                     json!({ "storage_id": storage_id }),
                 )
             })
+    }
+
+    pub fn request_transfer_cancel(&self, job_id: &str) {
+        if let Ok(mut cancellations) = self.transfer_cancellations.lock() {
+            cancellations.insert(job_id.to_string());
+        }
+    }
+
+    pub fn clear_transfer_cancel(&self, job_id: &str) {
+        if let Ok(mut cancellations) = self.transfer_cancellations.lock() {
+            cancellations.remove(job_id);
+        }
+    }
+
+    pub fn is_transfer_cancelled(&self, job_id: &str) -> bool {
+        self.transfer_cancellations
+            .lock()
+            .map(|cancellations| cancellations.contains(job_id))
+            .unwrap_or(false)
     }
 
     pub fn operator_for_storage_id(&self, storage_id: &str) -> Result<Operator, CoreError> {

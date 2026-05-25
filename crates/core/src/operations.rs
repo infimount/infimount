@@ -1,4 +1,4 @@
-use futures::io::AsyncWriteExt;
+use futures::io::{AsyncReadExt, AsyncWriteExt};
 use futures::TryStreamExt;
 use opendal::{ErrorKind, Operator};
 use std::path::Path;
@@ -21,6 +21,23 @@ pub enum TransferConflictPolicy {
     Overwrite,
     /// Skip entries whose destinations already exist.
     Skip,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransferProgress {
+    pub completed_items: u64,
+    pub total_items: u64,
+    pub bytes_transferred: u64,
+    pub total_bytes: u64,
+    pub current_path: String,
+}
+
+#[derive(Debug, Clone)]
+struct TransferProgressState {
+    completed_items: u64,
+    total_items: u64,
+    bytes_transferred: u64,
+    total_bytes: u64,
 }
 
 fn normalize_opendal_path(path: &str) -> String {
@@ -186,6 +203,20 @@ async fn copy_file_across_operators(
     from: &str,
     to: &str,
 ) -> Result<()> {
+    copy_file_across_operators_with_progress(from_op, to_op, from, to, None::<fn(u64)>, None).await
+}
+
+async fn copy_file_across_operators_with_progress<P>(
+    from_op: &Operator,
+    to_op: &Operator,
+    from: &str,
+    to: &str,
+    mut on_bytes: Option<P>,
+    is_cancelled: Option<&(dyn Fn() -> bool + Sync)>,
+) -> Result<()>
+where
+    P: FnMut(u64),
+{
     let meta = from_op.stat(from).await?;
     let size = meta.content_length();
     let mut reader = from_op
@@ -194,8 +225,25 @@ async fn copy_file_across_operators(
         .into_futures_async_read(0..size)
         .await?;
     let mut writer = to_op.writer(to).await?.into_futures_async_write();
+    let mut buffer = vec![0_u8; 64 * 1024];
 
-    futures::io::copy(&mut reader, &mut writer).await?;
+    loop {
+        if let Some(callback) = is_cancelled {
+            ensure_not_cancelled(callback)?;
+        }
+        let read = reader.read(&mut buffer).await?;
+        if read == 0 {
+            break;
+        }
+        writer.write_all(&buffer[..read]).await?;
+        if let Some(callback) = on_bytes.as_mut() {
+            callback(read as u64);
+        }
+        if let Some(callback) = is_cancelled {
+            ensure_not_cancelled(callback)?;
+        }
+    }
+
     writer.close().await?;
     Ok(())
 }
@@ -269,6 +317,72 @@ async fn unique_destination_path(
     .into())
 }
 
+async fn estimate_transfer_totals(op: &Operator, paths: &[String]) -> Result<(u64, u64)> {
+    let mut total_items = 0_u64;
+    let mut total_bytes = 0_u64;
+
+    for path in paths {
+        let (items, bytes) = estimate_path_totals(op, path).await?;
+        total_items = total_items.saturating_add(items);
+        total_bytes = total_bytes.saturating_add(bytes);
+    }
+
+    Ok((total_items, total_bytes))
+}
+
+async fn estimate_path_totals(op: &Operator, path: &str) -> Result<(u64, u64)> {
+    let meta = op.stat(path).await?;
+    if !meta.is_dir() {
+        return Ok((1, meta.content_length()));
+    }
+
+    let mut total_items = 0_u64;
+    let mut total_bytes = 0_u64;
+    let mut stack = vec![ensure_dir_path(path)];
+
+    while let Some(dir) = stack.pop() {
+        let mut lister = op.lister(&dir).await?;
+        while let Some(obj) = lister.try_next().await? {
+            let child_path = obj.path().to_string();
+            let child_meta = op.stat(&child_path).await?;
+            if child_meta.is_dir() {
+                stack.push(ensure_dir_path(&child_path));
+            } else {
+                total_items = total_items.saturating_add(1);
+                total_bytes = total_bytes.saturating_add(child_meta.content_length());
+            }
+        }
+    }
+
+    Ok((total_items, total_bytes))
+}
+
+fn emit_progress<P>(
+    progress: &mut P,
+    state: &TransferProgressState,
+    current_path: impl Into<String>,
+) where
+    P: FnMut(TransferProgress),
+{
+    progress(TransferProgress {
+        completed_items: state.completed_items,
+        total_items: state.total_items,
+        bytes_transferred: state.bytes_transferred,
+        total_bytes: state.total_bytes,
+        current_path: current_path.into(),
+    });
+}
+
+fn ensure_not_cancelled<C>(is_cancelled: &C) -> Result<()>
+where
+    C: Fn() -> bool + ?Sized,
+{
+    if is_cancelled() {
+        return Err(opendal::Error::new(ErrorKind::Unexpected, "Transfer cancelled").into());
+    }
+    Ok(())
+}
+
 async fn transfer_file(
     from_op: &Operator,
     to_op: &Operator,
@@ -297,6 +411,77 @@ async fn transfer_file(
         }
     }
 
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn transfer_file_with_progress<P, C>(
+    from_op: &Operator,
+    to_op: &Operator,
+    from_path: &str,
+    to_path: &str,
+    operation: TransferOperation,
+    same_source: bool,
+    state: &mut TransferProgressState,
+    progress: &mut P,
+    is_cancelled: &C,
+) -> Result<()>
+where
+    P: FnMut(TransferProgress),
+    C: Fn() -> bool + Sync,
+{
+    ensure_not_cancelled(is_cancelled)?;
+    ensure_parent_dir(to_op, to_path).await?;
+    let size = from_op.stat(from_path).await?.content_length();
+
+    match operation {
+        TransferOperation::Copy => {
+            if same_source {
+                from_op.copy(from_path, to_path).await?;
+                state.bytes_transferred = state.bytes_transferred.saturating_add(size);
+                emit_progress(progress, state, from_path);
+            } else {
+                copy_file_across_operators_with_progress(
+                    from_op,
+                    to_op,
+                    from_path,
+                    to_path,
+                    Some(|bytes| {
+                        state.bytes_transferred = state.bytes_transferred.saturating_add(bytes);
+                        emit_progress(progress, state, from_path);
+                    }),
+                    Some(is_cancelled as &(dyn Fn() -> bool + Sync)),
+                )
+                .await?;
+            }
+        }
+        TransferOperation::Move => {
+            if same_source {
+                from_op.rename(from_path, to_path).await?;
+                state.bytes_transferred = state.bytes_transferred.saturating_add(size);
+                emit_progress(progress, state, from_path);
+            } else {
+                copy_file_across_operators_with_progress(
+                    from_op,
+                    to_op,
+                    from_path,
+                    to_path,
+                    Some(|bytes| {
+                        state.bytes_transferred = state.bytes_transferred.saturating_add(bytes);
+                        emit_progress(progress, state, from_path);
+                    }),
+                    Some(is_cancelled as &(dyn Fn() -> bool + Sync)),
+                )
+                .await?;
+                ensure_not_cancelled(is_cancelled)?;
+                from_op.remove_all(from_path).await?;
+            }
+        }
+    }
+
+    state.completed_items = state.completed_items.saturating_add(1);
+    state.bytes_transferred = state.bytes_transferred.max(size.min(state.total_bytes));
+    emit_progress(progress, state, from_path);
     Ok(())
 }
 
@@ -341,6 +526,68 @@ async fn transfer_dir_recursive(
     }
 
     if operation == TransferOperation::Move {
+        from_op.remove_all(&from_root).await?;
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn transfer_dir_recursive_with_progress<P, C>(
+    from_op: &Operator,
+    to_op: &Operator,
+    from_dir: &str,
+    to_dir: &str,
+    operation: TransferOperation,
+    same_source: bool,
+    state: &mut TransferProgressState,
+    progress: &mut P,
+    is_cancelled: &C,
+) -> Result<()>
+where
+    P: FnMut(TransferProgress),
+    C: Fn() -> bool + Sync,
+{
+    ensure_not_cancelled(is_cancelled)?;
+    let from_root = ensure_dir_path(from_dir);
+    let to_root = ensure_dir_path(to_dir);
+    to_op.create_dir(&to_root).await?;
+
+    let mut stack = vec![(from_root.clone(), to_root)];
+    while let Some((from_base, to_base)) = stack.pop() {
+        ensure_not_cancelled(is_cancelled)?;
+        let mut lister = from_op.lister(&from_base).await?;
+        while let Some(obj) = lister.try_next().await? {
+            ensure_not_cancelled(is_cancelled)?;
+            let child_path = obj.path().to_string();
+            let meta = from_op.stat(&child_path).await?;
+            let name = extract_filename(&child_path);
+
+            if meta.is_dir() {
+                let child_src_dir = ensure_dir_path(&child_path);
+                let child_dst_dir = ensure_dir_path(&join_target_dir(&to_base, &name));
+                to_op.create_dir(&child_dst_dir).await?;
+                stack.push((child_src_dir, child_dst_dir));
+            } else {
+                let child_dst_file = join_target_dir(&to_base, &name);
+                transfer_file_with_progress(
+                    from_op,
+                    to_op,
+                    &child_path,
+                    &child_dst_file,
+                    TransferOperation::Copy,
+                    same_source,
+                    state,
+                    progress,
+                    is_cancelled,
+                )
+                .await?;
+            }
+        }
+    }
+
+    if operation == TransferOperation::Move {
+        ensure_not_cancelled(is_cancelled)?;
         from_op.remove_all(&from_root).await?;
     }
 
@@ -529,6 +776,209 @@ pub async fn transfer_entries(
         }
     }
 
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn transfer_entries_with_progress<P, C>(
+    from_op: &Operator,
+    to_op: &Operator,
+    paths: Vec<String>,
+    target_dir: &str,
+    operation: TransferOperation,
+    same_source: bool,
+    conflict_policy: TransferConflictPolicy,
+    mut progress: P,
+    is_cancelled: C,
+) -> Result<()>
+where
+    P: FnMut(TransferProgress),
+    C: Fn() -> bool + Sync,
+{
+    let (total_items, total_bytes) = estimate_transfer_totals(from_op, &paths).await?;
+    let mut state = TransferProgressState {
+        completed_items: 0,
+        total_items,
+        bytes_transferred: 0,
+        total_bytes,
+    };
+    emit_progress(&mut progress, &state, "");
+
+    if conflict_policy == TransferConflictPolicy::Fail {
+        for from_path in &paths {
+            ensure_not_cancelled(&is_cancelled)?;
+            let meta = from_op.stat(from_path).await?;
+
+            if meta.is_dir() {
+                let dir_name = extract_filename(from_path);
+                let dest_dir = ensure_dir_path(&join_target_dir(target_dir, &dir_name));
+                let normalized_src = ensure_dir_path(from_path);
+                let normalized_dest = ensure_dir_path(&dest_dir);
+
+                if same_source {
+                    if operation == TransferOperation::Move && normalized_src == normalized_dest {
+                        continue;
+                    }
+                    if normalized_dest.starts_with(&normalized_src)
+                        && normalized_dest != normalized_src
+                    {
+                        return Err(opendal::Error::new(
+                            ErrorKind::IsSameFile,
+                            "Cannot copy a folder into itself",
+                        )
+                        .into());
+                    }
+                }
+
+                if operation == TransferOperation::Copy
+                    && same_source
+                    && normalized_src == normalized_dest
+                {
+                    continue;
+                }
+
+                if to_op.exists(&dest_dir).await? {
+                    return Err(opendal::Error::new(
+                        ErrorKind::AlreadyExists,
+                        "Destination directory already exists",
+                    )
+                    .into());
+                }
+            } else {
+                let file_name = extract_filename(from_path);
+                let dest_file = join_target_dir(target_dir, &file_name);
+
+                if same_source {
+                    if operation == TransferOperation::Move && *from_path == dest_file {
+                        continue;
+                    }
+                    if operation == TransferOperation::Copy && *from_path == dest_file {
+                        continue;
+                    }
+                }
+
+                if to_op.exists(&dest_file).await? {
+                    return Err(opendal::Error::new(
+                        ErrorKind::AlreadyExists,
+                        "Destination file already exists",
+                    )
+                    .into());
+                }
+            }
+        }
+    }
+
+    for from_path in paths {
+        ensure_not_cancelled(&is_cancelled)?;
+        let meta = from_op.stat(&from_path).await?;
+        if meta.is_dir() {
+            let dir_name = extract_filename(&from_path);
+            let base_dest_dir = ensure_dir_path(&join_target_dir(target_dir, &dir_name));
+            let normalized_src = ensure_dir_path(&from_path);
+            let normalized_dest = ensure_dir_path(&base_dest_dir);
+
+            if same_source {
+                if operation == TransferOperation::Move && normalized_src == normalized_dest {
+                    continue;
+                }
+                if normalized_dest.starts_with(&normalized_src) && normalized_dest != normalized_src
+                {
+                    return Err(opendal::Error::new(
+                        ErrorKind::IsSameFile,
+                        "Cannot copy a folder into itself",
+                    )
+                    .into());
+                }
+            }
+
+            let dest_dir = if operation == TransferOperation::Copy
+                && same_source
+                && normalized_src == normalized_dest
+            {
+                unique_destination_path(to_op, target_dir, &dir_name, true).await?
+            } else {
+                base_dest_dir
+            };
+
+            if to_op.exists(&dest_dir).await? {
+                match conflict_policy {
+                    TransferConflictPolicy::Fail => {
+                        return Err(opendal::Error::new(
+                            ErrorKind::AlreadyExists,
+                            "Destination directory already exists",
+                        )
+                        .into())
+                    }
+                    TransferConflictPolicy::Overwrite => {
+                        to_op.remove_all(&dest_dir).await?;
+                    }
+                    TransferConflictPolicy::Skip => {
+                        continue;
+                    }
+                }
+            }
+
+            transfer_dir_recursive_with_progress(
+                from_op,
+                to_op,
+                &ensure_dir_path(&from_path),
+                &dest_dir,
+                operation,
+                same_source,
+                &mut state,
+                &mut progress,
+                &is_cancelled,
+            )
+            .await?;
+        } else {
+            let file_name = extract_filename(&from_path);
+            let base_dest_file = join_target_dir(target_dir, &file_name);
+            let dest_file = if operation == TransferOperation::Copy
+                && same_source
+                && from_path == base_dest_file
+            {
+                unique_destination_path(to_op, target_dir, &file_name, false).await?
+            } else {
+                base_dest_file
+            };
+
+            if operation == TransferOperation::Move && same_source && from_path == dest_file {
+                continue;
+            }
+
+            if to_op.exists(&dest_file).await? {
+                match conflict_policy {
+                    TransferConflictPolicy::Fail => {
+                        return Err(opendal::Error::new(
+                            ErrorKind::AlreadyExists,
+                            "Destination file already exists",
+                        )
+                        .into())
+                    }
+                    TransferConflictPolicy::Overwrite => {
+                        to_op.remove_all(&dest_file).await?;
+                    }
+                    TransferConflictPolicy::Skip => {
+                        continue;
+                    }
+                }
+            }
+            transfer_file_with_progress(
+                from_op,
+                to_op,
+                &from_path,
+                &dest_file,
+                operation,
+                same_source,
+                &mut state,
+                &mut progress,
+                &is_cancelled,
+            )
+            .await?;
+        }
+    }
+
+    emit_progress(&mut progress, &state, "");
     Ok(())
 }
 
@@ -804,6 +1254,65 @@ mod tests {
             to_op.read("target/source.txt").await.unwrap().to_vec(),
             b"hello"
         );
+    }
+
+    #[tokio::test]
+    async fn test_transfer_entries_with_progress_reports_totals() {
+        let from_op = create_test_operator().await;
+        let to_op = create_test_operator().await;
+        from_op
+            .write("source.txt", "hello".as_bytes())
+            .await
+            .unwrap();
+        create_directory(&to_op, "target").await.unwrap();
+
+        let mut events = Vec::new();
+        transfer_entries_with_progress(
+            &from_op,
+            &to_op,
+            vec!["source.txt".to_string()],
+            "target",
+            TransferOperation::Copy,
+            false,
+            TransferConflictPolicy::Fail,
+            |progress| events.push(progress),
+            || false,
+        )
+        .await
+        .unwrap();
+
+        let final_event = events.last().expect("progress events should be emitted");
+        assert_eq!(final_event.total_items, 1);
+        assert_eq!(final_event.completed_items, 1);
+        assert_eq!(final_event.total_bytes, 5);
+        assert_eq!(final_event.bytes_transferred, 5);
+    }
+
+    #[tokio::test]
+    async fn test_transfer_entries_with_progress_honors_cancellation() {
+        let from_op = create_test_operator().await;
+        let to_op = create_test_operator().await;
+        from_op
+            .write("source.txt", "hello".as_bytes())
+            .await
+            .unwrap();
+        create_directory(&to_op, "target").await.unwrap();
+
+        let result = transfer_entries_with_progress(
+            &from_op,
+            &to_op,
+            vec!["source.txt".to_string()],
+            "target",
+            TransferOperation::Copy,
+            false,
+            TransferConflictPolicy::Fail,
+            |_| {},
+            || true,
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(!to_op.exists("target/source.txt").await.unwrap());
     }
 
     #[tokio::test]

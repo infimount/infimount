@@ -674,6 +674,7 @@ describe("FileBrowser transfer and download flows", () => {
                 "/",
                 "move",
                 "fail",
+                expect.stringMatching(/^transfer-/),
             );
         });
     });
@@ -701,6 +702,7 @@ describe("FileBrowser transfer and download flows", () => {
                 "/",
                 "copy",
                 "overwrite",
+                expect.stringMatching(/^transfer-/),
             );
         });
     });
@@ -741,6 +743,7 @@ describe("FileBrowser transfer and download flows", () => {
                 "/folder",
                 "move",
                 "skip",
+                expect.stringMatching(/^transfer-/),
             );
         });
     });

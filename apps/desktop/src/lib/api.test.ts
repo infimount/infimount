@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   addStorage,
   approveMcpConfirmation,
+  cancelTransferJob,
   clearMcpAuditEvents,
   completeOnboarding,
   createDirectory,
@@ -92,6 +93,7 @@ describe("api wrappers", () => {
     ["createDirectory", () => createDirectory("s1", "/new"), "create_directory", { sourceId: "s1", path: "/new" }],
     ["uploadDroppedFiles", () => uploadDroppedFiles("s1", ["/tmp/a.txt"], "/dst"), "upload_dropped_files", { sourceId: "s1", paths: ["/tmp/a.txt"], targetDir: "/dst" }],
     ["deletePath", () => deletePath("s1", "/old"), "delete_path", { sourceId: "s1", path: "/old" }],
+    ["cancelTransferJob", () => cancelTransferJob("transfer-1"), "cancel_transfer_job", { jobId: "transfer-1" }],
     ["listStorages", () => listStorages(), "list_storages", undefined],
     ["addStorage", () => addStorage(draft), "add_storage", { storage: draft }],
     ["updateStorage", () => updateStorage("s1", draft), "update_storage", { storageId: "s1", storage: draft }],
@@ -177,10 +179,10 @@ describe("api wrappers", () => {
     });
   });
 
-  it("serializes move transfers", async () => {
+  it("serializes move transfers with optional job ids", async () => {
     invokeMock.mockResolvedValue(undefined);
 
-    await transferEntries("from", "to", ["/a.txt"], "/target", "move", "fail");
+    await transferEntries("from", "to", ["/a.txt"], "/target", "move", "fail", "transfer-1");
 
     expect(invokeMock).toHaveBeenCalledWith("transfer_entries", {
       fromSourceId: "from",
@@ -189,6 +191,7 @@ describe("api wrappers", () => {
       targetDir: "/target",
       operation: "move",
       conflictPolicy: "fail",
+      jobId: "transfer-1",
     });
   });
 
