@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import { FileBrowser, type FileBrowserPaneState } from "@/components/FileBrowser";
+import { GlobalSearchDialog } from "@/components/GlobalSearchDialog";
 import { StorageSidebar } from "@/components/StorageSidebar";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { TransferQueueProvider } from "@/hooks/use-transfer-queue";
@@ -229,6 +230,7 @@ const Index = () => {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [editingStorage, setEditingStorage] = useState<StorageConfig | null>(null);
   const [isStorageConfigEditorOpen, setIsStorageConfigEditorOpen] = useState(false);
+  const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
   const [isMcpDialogOpen, setIsMcpDialogOpen] = useState(false);
   const [mcpStatus, setMcpStatus] = useState<McpRuntimeStatus | null>(null);
   const [mcpSnippets, setMcpSnippets] = useState<McpClientSnippets | null>(null);
@@ -797,6 +799,7 @@ const Index = () => {
             onExportStorages={handleExportStorages}
             onOpenMcpSettings={() => setIsMcpDialogOpen(true)}
             onOpenOnboarding={() => setIsOnboardingOpen(true)}
+            onOpenGlobalSearch={() => setIsGlobalSearchOpen(true)}
             isLoading={isStoragesLoading}
           />
         </div>
@@ -957,6 +960,15 @@ const Index = () => {
             onOpenChange={setIsStorageConfigEditorOpen}
             onLoad={loadStorageConfigJson}
             onSave={handleSaveStorageConfigJson}
+          />
+        ) : null}
+
+        {isGlobalSearchOpen ? (
+          <GlobalSearchDialog
+            open={isGlobalSearchOpen}
+            storages={storages}
+            onOpenChange={setIsGlobalSearchOpen}
+            onSelectStorage={handleSelectStorage}
           />
         ) : null}
         </Suspense>

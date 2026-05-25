@@ -7,8 +7,10 @@ import {
     createDirectory,
     deletePath,
     listEntries,
+    listEntriesRecursive,
     readFile,
     TauriApiError,
+    planTransferEntries,
     transferEntries,
     writeFile,
 } from "@/lib/api";
@@ -45,10 +47,26 @@ function renderFileBrowser(sourceId = "test", storageName = "Test Storage") {
 // Mock the api module
 vi.mock("@/lib/api", () => ({
     listEntries: vi.fn(),
+    listEntriesRecursive: vi.fn(),
     readFile: vi.fn(),
     writeFile: vi.fn(),
     createDirectory: vi.fn(),
     deletePath: vi.fn(),
+    planTransferEntries: vi.fn().mockResolvedValue({
+        operation: "copy",
+        conflictPolicy: "fail",
+        entries: [],
+        summary: {
+            create: 1,
+            overwrite: 0,
+            skip: 0,
+            rename: 0,
+            noop: 0,
+            conflict: 0,
+            totalItems: 1,
+            totalBytes: 12,
+        },
+    }),
     transferEntries: vi.fn(),
     TauriApiError: class extends Error {
         code: string;
@@ -634,7 +652,31 @@ describe("FileBrowser transfer and download flows", () => {
                 modified_at: null,
             },
         ]);
+        vi.mocked(listEntriesRecursive).mockResolvedValue([
+            {
+                path: "/report.txt",
+                name: "report.txt",
+                is_dir: false,
+                size: 12,
+                modified_at: null,
+            },
+        ]);
         vi.mocked(readFile).mockResolvedValue(new TextEncoder().encode("hello"));
+        vi.mocked(planTransferEntries).mockResolvedValue({
+            operation: "copy",
+            conflictPolicy: "fail",
+            entries: [],
+            summary: {
+                create: 1,
+                overwrite: 0,
+                skip: 0,
+                rename: 0,
+                noop: 0,
+                conflict: 0,
+                totalItems: 1,
+                totalBytes: 12,
+            },
+        });
         vi.mocked(transferEntries).mockResolvedValue(undefined);
     });
 

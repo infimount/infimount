@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust coverage gate increased from 50% to 54% lines.
 - Documented the OpenDAL-first storage policy: future file operations should remain backend-agnostic rather than adding provider-specific SDK paths.
 - Added the v0.5-v0.7 roadmap and started v0.5 with an OpenDAL-only transfer dry-run manifest API.
+- Added v0.5 workbench foundations: recursive metadata scans, opt-in local global search indexing, transfer activity log events, dry-run summaries in the transfer queue, interrupted-transfer recovery behavior, and dual-pane compare/update flows.
 
 ## [0.2.3] - 2026-05-14
 

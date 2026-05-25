@@ -31,6 +31,7 @@ import { FileItem } from "@/types/storage";
 import {
   Entry,
   listEntries,
+  listEntriesRecursive,
   readFile,
   writeFile,
   createDirectory,
@@ -325,6 +326,13 @@ export function FileBrowser({
     paths: string[];
     targetDir: string;
     operation: "copy" | "move";
+  } | null>(null);
+  const [compareResult, setCompareResult] = useState<{
+    targetName: string;
+    targetDir: string;
+    missingPaths: string[];
+    changedPaths: string[];
+    sameCount: number;
   } | null>(null);
   const [editTargetId, setEditTargetId] = useState<string | null>(null);
   const { theme: iconTheme, setTheme: setIconTheme } = useIconTheme();
@@ -797,6 +805,82 @@ export function FileBrowser({
         } to ${paneTransferTarget.storageName}.`,
       },
     );
+  };
+
+  const compareWithPaneTarget = async () => {
+    if (!paneTransferTarget) return;
+
+    const relativePath = (base: string, path: string) => {
+      const normalizedBase = base === "/" ? "" : base.replace(/\/$/, "");
+      return path.replace(normalizedBase, "").replace(/^\//, "");
+    };
+
+    try {
+      const [sourceEntries, targetEntries] = await Promise.all([
+        listEntriesRecursive(sourceId, currentPath),
+        listEntriesRecursive(paneTransferTarget.sourceId, paneTransferTarget.currentPath),
+      ]);
+      const targetByRelativePath = new Map(
+        targetEntries.map((entry) => [relativePath(paneTransferTarget.currentPath, entry.path), entry]),
+      );
+      const missingPaths: string[] = [];
+      const changedPaths: string[] = [];
+      let sameCount = 0;
+
+      for (const sourceEntry of sourceEntries) {
+        if (sourceEntry.is_dir) continue;
+        const relative = relativePath(currentPath, sourceEntry.path);
+        const targetEntry = targetByRelativePath.get(relative);
+        if (!targetEntry) {
+          missingPaths.push(sourceEntry.path);
+          continue;
+        }
+        if (targetEntry.is_dir || targetEntry.size !== sourceEntry.size) {
+          changedPaths.push(sourceEntry.path);
+          continue;
+        }
+        sameCount += 1;
+      }
+
+      setCompareResult({
+        targetName: paneTransferTarget.storageName,
+        targetDir: paneTransferTarget.currentPath,
+        missingPaths,
+        changedPaths,
+        sameCount,
+      });
+    } catch (error) {
+      toast({
+        title: "Compare failed",
+        description: error instanceof Error ? error.message : String(error),
+        variant: "destructive",
+      });
+    }
+  };
+
+  const copyCompareUpdates = () => {
+    if (!paneTransferTarget || !compareResult) return;
+    const paths = [...compareResult.missingPaths, ...compareResult.changedPaths];
+    if (paths.length === 0) return;
+    queueTransfer(
+      {
+        fromSourceId: sourceId,
+        toSourceId: paneTransferTarget.sourceId,
+        paths,
+        targetDir: compareResult.targetDir,
+        operation: "copy",
+        conflictPolicy: "overwrite",
+        sourceName: storageName,
+        destinationName: paneTransferTarget.storageName,
+      },
+      {
+        onCompleted: () => {
+          onTransferCompleted?.([sourceId, paneTransferTarget.sourceId]);
+        },
+        successDescription: `${paths.length} item${paths.length === 1 ? "" : "s"} updated from compare result.`,
+      },
+    );
+    setCompareResult(null);
   };
 
   const paneTransferLabel = paneTransferTarget
@@ -1277,6 +1361,16 @@ export function FileBrowser({
                       type="button"
                       size="sm"
                       variant="ghost"
+                      onClick={() => void compareWithPaneTarget()}
+                      className="h-7 px-2 text-xs text-foreground/75 hover:bg-black/5 dark:hover:bg-white/5"
+                      title={`Compare this folder with the ${paneTransferLabel}`}
+                    >
+                      Compare
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
                       disabled={selectedFiles.size === 0}
                       onClick={() => queuePaneTransfer("copy")}
                       className="h-7 gap-1.5 px-2 text-xs text-foreground/75 hover:bg-black/5 dark:hover:bg-white/5"
@@ -1688,6 +1782,42 @@ export function FileBrowser({
               }}
             >
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={!!compareResult}
+        onOpenChange={(open) => {
+          if (!open) setCompareResult(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-md rounded-2xl border border-border bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] shadow-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Compare result</AlertDialogTitle>
+            <AlertDialogDescription>
+              {compareResult ? (
+                <span>
+                  Compared this folder with {compareResult.targetName}. {compareResult.missingPaths.length} missing, {compareResult.changedPaths.length} changed, {compareResult.sameCount} unchanged.
+                </span>
+              ) : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Close</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+              disabled={
+                !compareResult ||
+                compareResult.missingPaths.length + compareResult.changedPaths.length === 0
+              }
+              onClick={(event) => {
+                event.preventDefault();
+                copyCompareUpdates();
+              }}
+            >
+              Copy missing and changed
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -20,6 +20,7 @@ import {
   getStorageCapabilities,
   importStorageConfig,
   listEntries,
+  listEntriesRecursive,
   listMcpAuditEvents,
   listMcpTools,
   listPendingMcpConfirmations,
@@ -90,6 +91,7 @@ describe("api wrappers", () => {
 
   it.each([
     ["listEntries", () => listEntries("s1", "/a"), "list_entries", { sourceId: "s1", path: "/a" }],
+    ["listEntriesRecursive", () => listEntriesRecursive("s1", "/a"), "list_entries_recursive", { sourceId: "s1", path: "/a" }],
     ["statEntry", () => statEntry("s1", "/a"), "stat_entry", { sourceId: "s1", path: "/a" }],
     ["createDirectory", () => createDirectory("s1", "/new"), "create_directory", { sourceId: "s1", path: "/new" }],
     ["uploadDroppedFiles", () => uploadDroppedFiles("s1", ["/tmp/a.txt"], "/dst"), "upload_dropped_files", { sourceId: "s1", paths: ["/tmp/a.txt"], targetDir: "/dst" }],

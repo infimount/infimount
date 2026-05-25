@@ -149,6 +149,44 @@ pub async fn list_entries(op: &Operator, path: &str) -> Result<Vec<Entry>> {
     Ok(out)
 }
 
+/// Recursively list entries below the given path using the provided operator.
+pub async fn list_entries_recursive(op: &Operator, path: &str) -> Result<Vec<Entry>> {
+    let root = normalize_list_path(path);
+    let mut out = Vec::new();
+    let mut stack = vec![root];
+
+    while let Some(base) = stack.pop() {
+        let mut lister = op.lister(&base).await?;
+        while let Some(obj) = lister.try_next().await? {
+            let full_path = obj.path().to_string();
+            let name = extract_filename(&full_path);
+            if full_path.is_empty() || name == "." {
+                continue;
+            }
+
+            let meta = op.stat(&full_path).await?;
+            if meta.is_dir() {
+                stack.push(ensure_dir_path(&full_path));
+            }
+
+            out.push(Entry {
+                path: full_path,
+                name,
+                is_dir: meta.is_dir(),
+                size: if meta.is_dir() {
+                    0
+                } else {
+                    meta.content_length()
+                },
+                modified_at: meta.last_modified().map(|dt| dt.to_string()),
+            });
+        }
+    }
+
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(out)
+}
+
 /// Stat a single entry.
 pub async fn stat_entry(op: &Operator, path: &str) -> Result<Entry> {
     let p = normalize_opendal_path(path);
@@ -1465,6 +1503,27 @@ mod tests {
 
         let dir1 = entries.iter().find(|e| e.name == "dir1").unwrap();
         assert!(dir1.is_dir);
+    }
+
+    #[tokio::test]
+    async fn test_list_entries_recursive() {
+        let op = create_test_operator().await;
+        op.write("file1.txt", "content1".as_bytes()).await.unwrap();
+        op.write("dir1/file2.txt", "content2".as_bytes())
+            .await
+            .unwrap();
+        op.write("dir1/nested/file3.txt", "content3".as_bytes())
+            .await
+            .unwrap();
+
+        let entries = list_entries_recursive(&op, "/").await.unwrap();
+        let paths: Vec<_> = entries.iter().map(|entry| entry.path.as_str()).collect();
+
+        assert!(paths.contains(&"file1.txt"));
+        assert!(paths.contains(&"dir1/"));
+        assert!(paths.contains(&"dir1/file2.txt"));
+        assert!(paths.contains(&"dir1/nested/"));
+        assert!(paths.contains(&"dir1/nested/file3.txt"));
     }
 
     #[tokio::test]

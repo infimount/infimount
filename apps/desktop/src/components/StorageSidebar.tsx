@@ -64,6 +64,7 @@ interface StorageSidebarProps {
   onExportStorages?: () => void;
   onOpenMcpSettings?: () => void;
   onOpenOnboarding?: () => void;
+  onOpenGlobalSearch?: () => void;
   isLoading?: boolean;
 }
 
@@ -106,6 +107,7 @@ export function StorageSidebar({
   onExportStorages,
   onOpenMcpSettings,
   onOpenOnboarding,
+  onOpenGlobalSearch,
   isLoading = false,
 }: StorageSidebarProps) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -399,6 +401,12 @@ export function StorageSidebar({
                 <Plus className="mr-2 h-4 w-4" />
                 Add Storage
               </DropdownMenuItem>
+              {onOpenGlobalSearch && (
+                <DropdownMenuItem onClick={onOpenGlobalSearch}>
+                  <Search className="mr-2 h-4 w-4" />
+                  Global Search
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               {onImportStorages && (
                 <DropdownMenuItem onClick={onImportStorages}>

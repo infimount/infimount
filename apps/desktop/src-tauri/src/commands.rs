@@ -52,6 +52,16 @@ pub async fn list_entries(
 }
 
 #[tauri::command]
+pub async fn list_entries_recursive(
+    state: State<'_, AppState>,
+    sourceId: String,
+    path: String,
+) -> Result<Vec<Entry>, CoreError> {
+    let op = state.operator_for_storage_id(&sourceId)?;
+    operations::list_entries_recursive(&op, &path).await
+}
+
+#[tauri::command]
 pub async fn stat_entry(
     state: State<'_, AppState>,
     sourceId: String,

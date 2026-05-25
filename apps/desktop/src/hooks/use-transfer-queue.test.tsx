@@ -14,13 +14,28 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 import { TransferQueueProvider, useTransferQueue } from "./use-transfer-queue";
-import { cancelTransferJob, transferEntries } from "@/lib/api";
+import { cancelTransferJob, planTransferEntries, transferEntries } from "@/lib/api";
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...actual,
     cancelTransferJob: vi.fn().mockResolvedValue(undefined),
+    planTransferEntries: vi.fn().mockResolvedValue({
+      operation: "copy",
+      conflictPolicy: "fail",
+      entries: [],
+      summary: {
+        create: 1,
+        overwrite: 0,
+        skip: 0,
+        rename: 0,
+        noop: 0,
+        conflict: 0,
+        totalItems: 1,
+        totalBytes: 12,
+      },
+    }),
     transferEntries: vi.fn().mockResolvedValue(undefined),
   };
 });
@@ -75,6 +90,22 @@ describe("useTransferQueue", () => {
     eventMock.listener = undefined;
     eventMock.listen.mockClear();
     vi.mocked(cancelTransferJob).mockReset();
+    vi.mocked(planTransferEntries).mockReset();
+    vi.mocked(planTransferEntries).mockResolvedValue({
+      operation: "copy",
+      conflictPolicy: "fail",
+      entries: [],
+      summary: {
+        create: 1,
+        overwrite: 0,
+        skip: 0,
+        rename: 0,
+        noop: 0,
+        conflict: 0,
+        totalItems: 1,
+        totalBytes: 12,
+      },
+    });
     vi.mocked(transferEntries).mockReset();
   });
   it("runs queued transfers and marks them complete", async () => {
@@ -131,10 +162,12 @@ describe("useTransferQueue", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add transfer" }));
 
     await waitFor(() => expect(screen.getByTestId("first-status")).toHaveTextContent("completed"));
-    const persisted = JSON.parse(
-      window.localStorage.getItem("infimount:transfer-history:v1") ?? "[]",
-    ) as Array<{ status: string; paths: string[] }>;
-    expect(persisted).toMatchObject([{ status: "completed", paths: ["/report.txt"] }]);
+    await waitFor(() => {
+      const persisted = JSON.parse(
+        window.localStorage.getItem("infimount:transfer-history:v1") ?? "[]",
+      ) as Array<{ status: string; paths: string[] }>;
+      expect(persisted).toMatchObject([{ status: "completed", paths: ["/report.txt"] }]);
+    });
   });
 
   it("runs queued transfers sequentially", async () => {

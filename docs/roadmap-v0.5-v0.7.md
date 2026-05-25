@@ -17,10 +17,15 @@ Planned work:
 7. Dual-pane compare using path/name/size/modified metadata first.
 8. Copy/update from compare results through dry-run and transfer manifests.
 
-Initial implementation status:
+Implementation status:
 
 - Transfer queue and persisted transfer history are in place.
-- Core transfer dry-run planning has started with an OpenDAL-only `plan_transfer_entries` manifest API.
+- Core transfer dry-run planning is implemented with an OpenDAL-only `plan_transfer_entries` manifest API.
+- Transfer queue jobs store dry-run summaries and write local activity-log events for planned, started, completed, failed, cancelled, and recovery-started transfers.
+- Interrupted transfers are restored as failed/retryable and recovery retries use completed-file skip behavior when safe.
+- Recursive OpenDAL metadata scans support opt-in local path/name/metadata indexing.
+- Global search across indexed storages is available from the storage menu.
+- Dual-pane compare can detect missing/changed files and copy/update from the compare result through the transfer queue.
 
 ## v0.6: Agent Workspaces
 

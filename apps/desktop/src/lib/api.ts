@@ -146,6 +146,10 @@ export function listEntries(sourceId: string, path: string): Promise<Entry[]> {
   return invokeOrThrow<Entry[]>("list_entries", { sourceId, path });
 }
 
+export function listEntriesRecursive(sourceId: string, path = "/"): Promise<Entry[]> {
+  return invokeOrThrow<Entry[]>("list_entries_recursive", { sourceId, path });
+}
+
 export function statEntry(sourceId: string, path: string): Promise<Entry> {
   return invokeOrThrow<Entry>("stat_entry", { sourceId, path });
 }

@@ -15,10 +15,13 @@ import { listen } from "@tauri-apps/api/event";
 
 import {
   cancelTransferJob,
+  planTransferEntries,
   transferEntries,
   type TransferConflictPolicy,
   type TransferOperation,
+  type TransferPlan,
 } from "@/lib/api";
+import { appendActivityLogEvent } from "@/lib/activityLog";
 
 export type TransferJobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
@@ -44,6 +47,8 @@ export interface TransferJob extends TransferJobRequest {
   currentPath?: string;
   bytesTransferred?: number;
   totalBytes?: number;
+  manifest?: TransferPlan;
+  recoveryMode?: boolean;
 }
 
 interface TransferProgressPayload {
@@ -129,6 +134,7 @@ function readPersistedJobs(): TransferJob[] {
             status: "failed",
             progress: 100,
             error: "Interrupted before completion.",
+            recoveryMode: true,
           }
         : job,
     );
@@ -192,6 +198,7 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
               ...job,
               status: "queued",
               progress: 0,
+              conflictPolicy: job.recoveryMode && job.conflictPolicy === "fail" ? "skip" : job.conflictPolicy,
               error: undefined,
               updatedAt: now(),
             }
@@ -288,14 +295,55 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
       });
 
       try {
+        const effectiveConflictPolicy =
+          nextJob.recoveryMode && nextJob.conflictPolicy === "fail" ? "skip" : nextJob.conflictPolicy;
+
+        if (nextJob.recoveryMode) {
+          appendActivityLogEvent({
+            type: "transfer_recovery_started",
+            jobId: nextJob.id,
+            operation: nextJob.operation,
+            sourceId: nextJob.fromSourceId,
+            targetId: nextJob.toSourceId,
+            pathCount: nextJob.paths.length,
+            message: "Recovering interrupted transfer with completed-file skip behavior.",
+          });
+        }
+
+        const manifest = await planTransferEntries(
+          nextJob.fromSourceId,
+          nextJob.toSourceId,
+          nextJob.paths,
+          nextJob.targetDir,
+          nextJob.operation,
+          effectiveConflictPolicy,
+        );
+        patchJob(nextJob.id, { progress: 20, manifest, conflictPolicy: effectiveConflictPolicy });
+        appendActivityLogEvent({
+          type: "transfer_planned",
+          jobId: nextJob.id,
+          operation: nextJob.operation,
+          sourceId: nextJob.fromSourceId,
+          targetId: nextJob.toSourceId,
+          pathCount: nextJob.paths.length,
+          summary: manifest.summary as unknown as Record<string, unknown>,
+        });
         patchJob(nextJob.id, { progress: 35 });
+        appendActivityLogEvent({
+          type: "transfer_started",
+          jobId: nextJob.id,
+          operation: nextJob.operation,
+          sourceId: nextJob.fromSourceId,
+          targetId: nextJob.toSourceId,
+          pathCount: nextJob.paths.length,
+        });
         await transferEntries(
           nextJob.fromSourceId,
           nextJob.toSourceId,
           nextJob.paths,
           nextJob.targetDir,
           nextJob.operation,
-          nextJob.conflictPolicy,
+          effectiveConflictPolicy,
           nextJob.id,
         );
         const completedJob: TransferJob = {
@@ -303,9 +351,27 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
           status: "completed",
           progress: 100,
           attempts: nextJob.attempts + 1,
+          conflictPolicy: effectiveConflictPolicy,
+          manifest,
+          recoveryMode: false,
           updatedAt: now(),
         };
-        patchJob(nextJob.id, { status: "completed", progress: 100 });
+        patchJob(nextJob.id, {
+          status: "completed",
+          progress: 100,
+          conflictPolicy: effectiveConflictPolicy,
+          manifest,
+          recoveryMode: false,
+        });
+        appendActivityLogEvent({
+          type: "transfer_completed",
+          jobId: nextJob.id,
+          operation: nextJob.operation,
+          sourceId: nextJob.fromSourceId,
+          targetId: nextJob.toSourceId,
+          pathCount: nextJob.paths.length,
+          summary: manifest.summary as unknown as Record<string, unknown>,
+        });
         await callbacksRef.current.get(nextJob.id)?.onCompleted?.(completedJob);
       } catch (error) {
         if (isCancellationError(error)) {
@@ -313,6 +379,14 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
             status: "cancelled",
             progress: 0,
             error: undefined,
+          });
+          appendActivityLogEvent({
+            type: "transfer_cancelled",
+            jobId: nextJob.id,
+            operation: nextJob.operation,
+            sourceId: nextJob.fromSourceId,
+            targetId: nextJob.toSourceId,
+            pathCount: nextJob.paths.length,
           });
           return;
         }
@@ -329,6 +403,15 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
           status: "failed",
           progress: 100,
           error: failedJob.error,
+        });
+        appendActivityLogEvent({
+          type: "transfer_failed",
+          jobId: nextJob.id,
+          operation: nextJob.operation,
+          sourceId: nextJob.fromSourceId,
+          targetId: nextJob.toSourceId,
+          pathCount: nextJob.paths.length,
+          message: failedJob.error,
         });
         await callbacksRef.current.get(nextJob.id)?.onFailed?.(failedJob, error);
       } finally {

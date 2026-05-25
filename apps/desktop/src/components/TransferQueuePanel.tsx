@@ -33,6 +33,20 @@ function formatRoute(job: TransferJob) {
   return `${from} → ${to}`;
 }
 
+function formatManifestSummary(job: TransferJob) {
+  const summary = job.manifest?.summary;
+  if (!summary) return null;
+  const parts = [
+    summary.create ? `${summary.create} create` : null,
+    summary.overwrite ? `${summary.overwrite} overwrite` : null,
+    summary.rename ? `${summary.rename} rename` : null,
+    summary.skip ? `${summary.skip} skip` : null,
+    summary.conflict ? `${summary.conflict} conflict` : null,
+  ].filter(Boolean);
+  if (parts.length === 0) return `${summary.totalItems} checked`;
+  return parts.join(", ");
+}
+
 function statusIcon(job: TransferJob) {
   switch (job.status) {
     case "completed":
@@ -164,6 +178,12 @@ export function TransferQueuePanel() {
                   className="mt-2 h-1.5 bg-muted"
                   aria-label={`${formatJobTitle(job)} progress`}
                 />
+                {formatManifestSummary(job) ? (
+                  <p className="mt-2 truncate text-[11px] text-muted-foreground">
+                    Dry-run: {formatManifestSummary(job)}
+                    {job.recoveryMode ? " · recovery mode" : ""}
+                  </p>
+                ) : null}
                 {job.currentPath && job.status === "running" ? (
                   <p className="mt-2 truncate text-[11px] text-muted-foreground">
                     Current: {job.currentPath}

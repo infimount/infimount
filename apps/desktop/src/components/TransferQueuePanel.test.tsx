@@ -3,12 +3,27 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TransferQueuePanel } from "./TransferQueuePanel";
 import { TransferQueueProvider, useTransferQueue } from "@/hooks/use-transfer-queue";
-import { transferEntries } from "@/lib/api";
+import { planTransferEntries, transferEntries } from "@/lib/api";
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...actual,
+    planTransferEntries: vi.fn().mockResolvedValue({
+      operation: "copy",
+      conflictPolicy: "fail",
+      entries: [],
+      summary: {
+        create: 2,
+        overwrite: 0,
+        skip: 0,
+        rename: 0,
+        noop: 0,
+        conflict: 0,
+        totalItems: 2,
+        totalBytes: 42,
+      },
+    }),
     transferEntries: vi.fn().mockResolvedValue(undefined),
   };
 });
@@ -47,6 +62,23 @@ function renderPanel() {
 
 describe("TransferQueuePanel", () => {
   beforeEach(() => {
+    window.localStorage.clear();
+    vi.mocked(planTransferEntries).mockReset();
+    vi.mocked(planTransferEntries).mockResolvedValue({
+      operation: "copy",
+      conflictPolicy: "fail",
+      entries: [],
+      summary: {
+        create: 2,
+        overwrite: 0,
+        skip: 0,
+        rename: 0,
+        noop: 0,
+        conflict: 0,
+        totalItems: 2,
+        totalBytes: 42,
+      },
+    });
     vi.mocked(transferEntries).mockReset();
   });
   it("renders transfer status, route, and clear action", async () => {
