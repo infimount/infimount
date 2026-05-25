@@ -25,6 +25,7 @@ import {
   listPendingMcpConfirmations,
   listStorageSchemas,
   listStorages,
+  planTransferEntries,
   listVersions,
   readFile,
   readFileVersion,
@@ -176,6 +177,21 @@ describe("api wrappers", () => {
       sourceId: "s1",
       path: "/file.txt",
       version: "v1",
+    });
+  });
+
+  it("serializes transfer dry-run plans", async () => {
+    invokeMock.mockResolvedValue({ entries: [], summary: { totalItems: 0, totalBytes: 0 } });
+
+    await planTransferEntries("from", "to", ["/a.txt"], "/target", "copy", "rename");
+
+    expect(invokeMock).toHaveBeenCalledWith("plan_transfer_entries", {
+      fromSourceId: "from",
+      toSourceId: "to",
+      paths: ["/a.txt"],
+      targetDir: "/target",
+      operation: "copy",
+      conflictPolicy: "rename",
     });
   });
 

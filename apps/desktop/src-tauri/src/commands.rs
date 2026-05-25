@@ -124,6 +124,57 @@ struct TransferProgressPayload {
     current_path: String,
 }
 
+fn parse_transfer_operation(operation: &str) -> Result<operations::TransferOperation, CoreError> {
+    match operation {
+        "copy" => Ok(operations::TransferOperation::Copy),
+        "move" => Ok(operations::TransferOperation::Move),
+        _ => Err(CoreError::Config(format!(
+            "invalid transfer operation: {}",
+            operation
+        ))),
+    }
+}
+
+fn parse_transfer_conflict_policy(
+    conflict_policy: &str,
+) -> Result<operations::TransferConflictPolicy, CoreError> {
+    match conflict_policy {
+        "fail" => Ok(operations::TransferConflictPolicy::Fail),
+        "overwrite" => Ok(operations::TransferConflictPolicy::Overwrite),
+        "skip" | "discard" => Ok(operations::TransferConflictPolicy::Skip),
+        "rename" | "keep_both" => Ok(operations::TransferConflictPolicy::Rename),
+        _ => Err(CoreError::Config(format!(
+            "invalid transfer conflict policy: {}",
+            conflict_policy
+        ))),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub async fn plan_transfer_entries(
+    state: State<'_, AppState>,
+    fromSourceId: String,
+    toSourceId: String,
+    paths: Vec<String>,
+    targetDir: String,
+    operation: String,
+    conflictPolicy: String,
+) -> Result<operations::TransferPlan, CoreError> {
+    let from_op = state.operator_for_storage_id(&fromSourceId)?;
+    let to_op = state.operator_for_storage_id(&toSourceId)?;
+    operations::plan_transfer_entries(
+        &from_op,
+        &to_op,
+        paths,
+        &targetDir,
+        parse_transfer_operation(&operation)?,
+        fromSourceId == toSourceId,
+        parse_transfer_conflict_policy(&conflictPolicy)?,
+    )
+    .await
+}
+
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn transfer_entries(
@@ -140,29 +191,8 @@ pub async fn transfer_entries(
     let from_op = state.operator_for_storage_id(&fromSourceId)?;
     let to_op = state.operator_for_storage_id(&toSourceId)?;
 
-    let op = match operation.as_str() {
-        "copy" => operations::TransferOperation::Copy,
-        "move" => operations::TransferOperation::Move,
-        _ => {
-            return Err(CoreError::Config(format!(
-                "invalid transfer operation: {}",
-                operation
-            )));
-        }
-    };
-
-    let policy = match conflictPolicy.as_str() {
-        "fail" => operations::TransferConflictPolicy::Fail,
-        "overwrite" => operations::TransferConflictPolicy::Overwrite,
-        "skip" | "discard" => operations::TransferConflictPolicy::Skip,
-        "rename" | "keep_both" => operations::TransferConflictPolicy::Rename,
-        _ => {
-            return Err(CoreError::Config(format!(
-                "invalid transfer conflict policy: {}",
-                conflictPolicy
-            )));
-        }
-    };
+    let op = parse_transfer_operation(&operation)?;
+    let policy = parse_transfer_conflict_policy(&conflictPolicy)?;
 
     if let Some(job_id) = jobId {
         state.clear_transfer_cancel(&job_id);

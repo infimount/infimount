@@ -55,6 +55,33 @@ export interface StorageKindSchema {
 
 export type TransferOperation = "copy" | "move";
 export type TransferConflictPolicy = "fail" | "overwrite" | "skip" | "rename";
+export type TransferPlanAction = "create" | "overwrite" | "skip" | "rename" | "noop" | "conflict";
+
+export interface TransferPlanEntry {
+  sourcePath: string;
+  destinationPath: string;
+  isDir: boolean;
+  size: number;
+  action: TransferPlanAction;
+}
+
+export interface TransferPlanSummary {
+  create: number;
+  overwrite: number;
+  skip: number;
+  rename: number;
+  noop: number;
+  conflict: number;
+  totalItems: number;
+  totalBytes: number;
+}
+
+export interface TransferPlan {
+  operation: TransferOperation;
+  conflictPolicy: TransferConflictPolicy;
+  entries: TransferPlanEntry[];
+  summary: TransferPlanSummary;
+}
 
 export interface ImportStoragesRequest {
   json: string;
@@ -146,6 +173,24 @@ export function uploadDroppedFiles(
 
 export function deletePath(sourceId: string, path: string): Promise<void> {
   return invokeOrThrow<void>("delete_path", { sourceId, path });
+}
+
+export function planTransferEntries(
+  fromSourceId: string,
+  toSourceId: string,
+  paths: string[],
+  targetDir: string,
+  operation: TransferOperation,
+  conflictPolicy: TransferConflictPolicy,
+): Promise<TransferPlan> {
+  return invokeOrThrow<TransferPlan>("plan_transfer_entries", {
+    fromSourceId,
+    toSourceId,
+    paths,
+    targetDir,
+    operation,
+    conflictPolicy,
+  });
 }
 
 export function transferEntries(

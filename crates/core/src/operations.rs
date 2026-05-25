@@ -1,19 +1,22 @@
 use futures::io::{AsyncReadExt, AsyncWriteExt};
 use futures::TryStreamExt;
 use opendal::{ErrorKind, Operator};
+use serde::Serialize;
 use std::path::Path;
 use tokio::fs;
 
 use crate::models::{Entry, Result};
 use crate::util::extract_filename;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum TransferOperation {
     Copy,
     Move,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum TransferConflictPolicy {
     /// Fail fast if any destination exists (no partial transfer).
     Fail,
@@ -23,6 +26,49 @@ pub enum TransferConflictPolicy {
     Skip,
     /// Keep both by generating a non-conflicting destination name.
     Rename,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferPlan {
+    pub operation: TransferOperation,
+    pub conflict_policy: TransferConflictPolicy,
+    pub entries: Vec<TransferPlanEntry>,
+    pub summary: TransferPlanSummary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferPlanEntry {
+    pub source_path: String,
+    pub destination_path: String,
+    pub is_dir: bool,
+    pub size: u64,
+    pub action: TransferPlanAction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TransferPlanAction {
+    Create,
+    Overwrite,
+    Skip,
+    Rename,
+    Noop,
+    Conflict,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferPlanSummary {
+    pub create: u64,
+    pub overwrite: u64,
+    pub skip: u64,
+    pub rename: u64,
+    pub noop: u64,
+    pub conflict: u64,
+    pub total_items: u64,
+    pub total_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -319,6 +365,173 @@ async fn unique_destination_path(
     .into())
 }
 
+fn summarize_transfer_plan(entries: &[TransferPlanEntry]) -> TransferPlanSummary {
+    let mut summary = TransferPlanSummary::default();
+    for entry in entries {
+        match entry.action {
+            TransferPlanAction::Create => summary.create += 1,
+            TransferPlanAction::Overwrite => summary.overwrite += 1,
+            TransferPlanAction::Skip => summary.skip += 1,
+            TransferPlanAction::Rename => summary.rename += 1,
+            TransferPlanAction::Noop => summary.noop += 1,
+            TransferPlanAction::Conflict => summary.conflict += 1,
+        }
+        if !entry.is_dir {
+            summary.total_items += 1;
+            summary.total_bytes = summary.total_bytes.saturating_add(entry.size);
+        }
+    }
+    summary
+}
+
+async fn plan_path_action(
+    to_op: &Operator,
+    source_path: &str,
+    base_destination_path: &str,
+    is_dir: bool,
+    operation: TransferOperation,
+    same_source: bool,
+    conflict_policy: TransferConflictPolicy,
+) -> Result<(String, TransferPlanAction)> {
+    let normalized_source = if is_dir {
+        ensure_dir_path(source_path)
+    } else {
+        source_path.to_string()
+    };
+    let normalized_destination = if is_dir {
+        ensure_dir_path(base_destination_path)
+    } else {
+        base_destination_path.to_string()
+    };
+
+    if same_source {
+        if operation == TransferOperation::Move && normalized_source == normalized_destination {
+            return Ok((normalized_destination, TransferPlanAction::Noop));
+        }
+        if operation == TransferOperation::Copy && normalized_source == normalized_destination {
+            let name = extract_filename(source_path);
+            let parent = parent_dir_path(&normalized_destination).unwrap_or_default();
+            let target_dir = parent.trim_end_matches('/');
+            let destination = unique_destination_path(to_op, target_dir, &name, is_dir).await?;
+            return Ok((destination, TransferPlanAction::Rename));
+        }
+    }
+
+    if !to_op.exists(&normalized_destination).await? {
+        return Ok((normalized_destination, TransferPlanAction::Create));
+    }
+
+    match conflict_policy {
+        TransferConflictPolicy::Fail => Ok((normalized_destination, TransferPlanAction::Conflict)),
+        TransferConflictPolicy::Overwrite => {
+            Ok((normalized_destination, TransferPlanAction::Overwrite))
+        }
+        TransferConflictPolicy::Skip => Ok((normalized_destination, TransferPlanAction::Skip)),
+        TransferConflictPolicy::Rename => {
+            let name = extract_filename(source_path);
+            let parent = parent_dir_path(&normalized_destination).unwrap_or_default();
+            let target_dir = parent.trim_end_matches('/');
+            let destination = unique_destination_path(to_op, target_dir, &name, is_dir).await?;
+            Ok((destination, TransferPlanAction::Rename))
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn collect_transfer_plan_entries(
+    from_op: &Operator,
+    to_op: &Operator,
+    source_path: &str,
+    destination_path: &str,
+    operation: TransferOperation,
+    same_source: bool,
+    conflict_policy: TransferConflictPolicy,
+    entries: &mut Vec<TransferPlanEntry>,
+) -> Result<()> {
+    let meta = from_op.stat(source_path).await?;
+    let is_dir = meta.is_dir();
+    let size = if is_dir { 0 } else { meta.content_length() };
+    let (planned_destination, action) = plan_path_action(
+        to_op,
+        source_path,
+        destination_path,
+        is_dir,
+        operation,
+        same_source,
+        conflict_policy,
+    )
+    .await?;
+
+    entries.push(TransferPlanEntry {
+        source_path: source_path.to_string(),
+        destination_path: planned_destination.clone(),
+        is_dir,
+        size,
+        action,
+    });
+
+    if !is_dir
+        || matches!(
+            action,
+            TransferPlanAction::Skip | TransferPlanAction::Conflict | TransferPlanAction::Noop
+        )
+    {
+        return Ok(());
+    }
+
+    let from_root = ensure_dir_path(source_path);
+    let to_root = ensure_dir_path(&planned_destination);
+    let mut stack = vec![(from_root, to_root)];
+    while let Some((from_base, to_base)) = stack.pop() {
+        let mut lister = from_op.lister(&from_base).await?;
+        while let Some(obj) = lister.try_next().await? {
+            let child_path = obj.path().to_string();
+            let child_meta = from_op.stat(&child_path).await?;
+            let name = extract_filename(&child_path);
+            let child_destination = if child_meta.is_dir() {
+                ensure_dir_path(&join_target_dir(&to_base, &name))
+            } else {
+                join_target_dir(&to_base, &name)
+            };
+            let child_is_dir = child_meta.is_dir();
+            let child_size = if child_is_dir {
+                0
+            } else {
+                child_meta.content_length()
+            };
+            let (planned_child_destination, child_action) = plan_path_action(
+                to_op,
+                &child_path,
+                &child_destination,
+                child_is_dir,
+                TransferOperation::Copy,
+                same_source,
+                conflict_policy,
+            )
+            .await?;
+            entries.push(TransferPlanEntry {
+                source_path: child_path.clone(),
+                destination_path: planned_child_destination.clone(),
+                is_dir: child_is_dir,
+                size: child_size,
+                action: child_action,
+            });
+            if child_is_dir
+                && !matches!(
+                    child_action,
+                    TransferPlanAction::Skip
+                        | TransferPlanAction::Conflict
+                        | TransferPlanAction::Noop
+                )
+            {
+                stack.push((ensure_dir_path(&child_path), planned_child_destination));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 async fn estimate_transfer_totals(op: &Operator, paths: &[String]) -> Result<(u64, u64)> {
     let mut total_items = 0_u64;
     let mut total_bytes = 0_u64;
@@ -594,6 +807,50 @@ where
     }
 
     Ok(())
+}
+
+/// Build a backend-agnostic dry-run manifest for a copy or move.
+///
+/// The plan performs only OpenDAL stat/list/exists calls. It does not mutate storage.
+pub async fn plan_transfer_entries(
+    from_op: &Operator,
+    to_op: &Operator,
+    paths: Vec<String>,
+    target_dir: &str,
+    operation: TransferOperation,
+    same_source: bool,
+    conflict_policy: TransferConflictPolicy,
+) -> Result<TransferPlan> {
+    let mut entries = Vec::new();
+
+    for source_path in &paths {
+        let meta = from_op.stat(source_path).await?;
+        let name = extract_filename(source_path);
+        let destination = if meta.is_dir() {
+            ensure_dir_path(&join_target_dir(target_dir, &name))
+        } else {
+            join_target_dir(target_dir, &name)
+        };
+        collect_transfer_plan_entries(
+            from_op,
+            to_op,
+            source_path,
+            &destination,
+            operation,
+            same_source,
+            conflict_policy,
+            &mut entries,
+        )
+        .await?;
+    }
+
+    let summary = summarize_transfer_plan(&entries);
+    Ok(TransferPlan {
+        operation,
+        conflict_policy,
+        entries,
+        summary,
+    })
 }
 
 /// Copy or move a set of file/folder paths into `target_dir`.
@@ -1100,7 +1357,7 @@ async fn upload_path_recursive(op: &Operator, src: &Path, target_dir: &str) -> R
     Ok(())
 }
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileVersion {
@@ -1357,6 +1614,40 @@ mod tests {
 
         assert!(result.is_err());
         assert!(!to_op.exists("target/source.txt").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_plan_transfer_entries_reports_conflicts_without_mutation() {
+        let from_op = create_test_operator().await;
+        let to_op = create_test_operator().await;
+        from_op.write("source.txt", "new".as_bytes()).await.unwrap();
+        create_directory(&to_op, "target").await.unwrap();
+        to_op
+            .write("target/source.txt", "old".as_bytes())
+            .await
+            .unwrap();
+
+        let plan = plan_transfer_entries(
+            &from_op,
+            &to_op,
+            vec!["source.txt".to_string()],
+            "target",
+            TransferOperation::Copy,
+            false,
+            TransferConflictPolicy::Fail,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(plan.summary.conflict, 1);
+        assert_eq!(plan.summary.total_items, 1);
+        assert_eq!(plan.summary.total_bytes, 3);
+        assert_eq!(plan.entries[0].action, TransferPlanAction::Conflict);
+        assert_eq!(plan.entries[0].destination_path, "target/source.txt");
+        assert_eq!(
+            to_op.read("target/source.txt").await.unwrap().to_vec(),
+            b"old"
+        );
     }
 
     #[tokio::test]
