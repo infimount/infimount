@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conflict resolution now supports keeping both items by auto-renaming the incoming transfer.
 - Folder bookmarks, recent folders, provider presets, and persisted transfer history make repeated workbench flows faster.
 - Rust coverage gate increased from 50% to 54% lines.
+- Documented the OpenDAL-first storage policy: future file operations should remain backend-agnostic rather than adding provider-specific SDK paths.
 
 ## [0.2.3] - 2026-05-14
 

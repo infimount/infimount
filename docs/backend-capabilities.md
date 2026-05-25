@@ -3,6 +3,12 @@
 Infimount uses OpenDAL capabilities at runtime. A backend being listed here does not mean every account, bucket, container, or server has every feature enabled.
 Use `validate_storage` in MCP or the desktop Validate action to check the effective capabilities for a configured storage.
 
+## OpenDAL-First Storage Policy
+
+OpenDAL is Infimount's storage abstraction boundary. File operations should stay routed through OpenDAL-backed core/MCP layers rather than provider-specific SDKs or custom per-provider implementations.
+
+This means future features should be designed around capabilities exposed through OpenDAL. If a feature requires backend-specific primitives that are not available through the common OpenDAL path, prefer a backend-agnostic UX fallback, capability detection, or clear "not supported" state over adding provider-specific storage code.
+
 | Backend                   | Browse/read/write | Presigned download links | Object versions          | Notes                                                                       |
 | ------------------------- | ----------------- | ------------------------ | ------------------------ | --------------------------------------------------------------------------- |
 | Local filesystem          | Yes               | No                       | No                       | Local paths are direct filesystem operations.                               |

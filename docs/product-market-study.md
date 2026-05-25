@@ -203,7 +203,7 @@ Differentiators to preserve:
 ### Power-user workflows
 
 - Multi-tab browsing.
-- Transfer queue and resumable/retry behavior where possible. Queued/running/completed/failed UI, retry, active or queued cancellation, Tauri-backed progress events, and persisted transfer history are implemented. Provider-specific byte-range resume remains future work where backend capabilities allow it.
+- Transfer queue and resumable/retry behavior where possible. Queued/running/completed/failed UI, retry, active or queued cancellation, Tauri-backed progress events, and persisted transfer history are implemented. True resume remains future work only if it can be implemented through OpenDAL-exposed capabilities without provider-specific storage code.
 - Dual-pane browsing for source/destination work. Initial split-pane browsing with an independently selectable destination pane is implemented.
 - CLI companion.
 - Saved connections/searches.
@@ -223,7 +223,7 @@ Differentiators to preserve:
 Any agent working on Infimount should act as:
 
 1. **Product owner**: preserve local-first trust and explicit safety.
-2. **Developer**: keep storage logic in Rust core/MCP OpenDAL layers; keep Tauri and React thin.
+2. **Developer**: keep storage logic in Rust core/MCP OpenDAL layers; keep Tauri and React thin. Do not add provider-specific SDK paths for file operations outside the OpenDAL abstraction.
 3. **Tester**: add regression tests for each behavior and verify secret masking, policy denial, and accessibility basics.
 4. **Documentarian**: update README/docs/Agents when product behavior changes.
 
