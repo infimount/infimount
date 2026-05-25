@@ -18,7 +18,7 @@ vi.mock("@/hooks/use-toast", () => ({
   useToast: () => ({ toast: vi.fn() }),
 }));
 
-const policy = {
+const policy: StorageConfig["mcpPolicy"] = {
   default_access: "read_write",
   allowed_paths: [],
   denied_paths: [],
