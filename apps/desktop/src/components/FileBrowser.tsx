@@ -22,6 +22,7 @@ import { FileGrid } from "./FileGrid";
 import { FileTable } from "./FileTable";
 import { UploadZone, type UploadFileLike, type UploadZoneRef } from "./UploadZone";
 import { FilePreviewPanel } from "./FilePreviewPanel";
+import { TransferQueuePanel } from "./TransferQueuePanel";
 import { FileItem } from "@/types/storage";
 import {
   Entry,
@@ -30,7 +31,6 @@ import {
   writeFile,
   createDirectory,
   deletePath,
-  transferEntries,
   TauriApiError,
 } from "@/lib/api";
 import {
@@ -70,6 +70,7 @@ import {
 } from "@/hooks/use-icon-theme";
 import { useFileClipboard } from "@/hooks/use-file-clipboard";
 import { useAppZoom } from "@/hooks/use-app-zoom";
+import { useTransferQueue, type TransferJobRequest } from "@/hooks/use-transfer-queue";
 import infinityLoader from "@/assets/loading-infinity.apng";
 
 // Helper to extract file-like objects (including from dropped folders, where supported)
@@ -257,6 +258,7 @@ export function FileBrowser({
   const [editTargetId, setEditTargetId] = useState<string | null>(null);
   const { theme: iconTheme, setTheme: setIconTheme } = useIconTheme();
   const { clipboard, setClipboard, clearClipboard } = useFileClipboard();
+  const { enqueueTransfer } = useTransferQueue();
   const [isEditingPath, setIsEditingPath] = useState(false);
   const [pathInput, setPathInput] = useState("");
   const [createTargetType, setCreateTargetType] = useState<"file" | "folder" | null>(null);
@@ -521,78 +523,91 @@ export function FileBrowser({
     });
   };
 
+  const queueTransfer = (
+    request: TransferJobRequest,
+    options: {
+      onConflict?: () => void;
+      onCompleted?: () => void | Promise<void>;
+      successDescription?: string;
+    } = {},
+  ) => {
+    enqueueTransfer(request, {
+      onCompleted: async () => {
+        await loadFiles(currentPath);
+        toast({
+          title: request.operation === "copy" ? "Copy completed" : "Move completed",
+          description:
+            options.successDescription ??
+            `${request.paths.length} item${request.paths.length === 1 ? "" : "s"} ${
+              request.operation === "copy" ? "copied" : "moved"
+            }.`,
+        });
+        await options.onCompleted?.();
+      },
+      onFailed: (_job, error) => {
+        if (error instanceof TauriApiError && error.code === "ALREADY_EXISTS") {
+          options.onConflict?.();
+          return;
+        }
+        toast({
+          title: request.operation === "copy" ? "Copy failed" : "Move failed",
+          description: error instanceof Error ? error.message : String(error),
+          variant: "destructive",
+        });
+      },
+    });
+  };
+
   const pasteInto = async (targetDir?: string) => {
     if (!clipboard || clipboard.paths.length === 0) {
       return;
     }
 
     const destinationDir = targetDir ?? currentPath;
-    try {
-      await transferEntries(
-        clipboard.sourceId,
-        sourceId,
-        clipboard.paths,
-        destinationDir,
-        clipboard.operation,
-        "fail",
-      );
-      await loadFiles(currentPath);
-      toast({
-        title: clipboard.operation === "copy" ? "Copied" : "Moved",
-        description: `${clipboard.paths.length} item${clipboard.paths.length === 1 ? "" : "s"} ${
-          clipboard.operation === "copy" ? "copied" : "moved"
-        }.`,
-      });
-      if (clipboard.operation === "move") {
-        clearClipboard();
-      }
-    } catch (err) {
-      if (err instanceof TauriApiError) {
-        if (err.code === "ALREADY_EXISTS") {
-          setPasteConflict({
-            fromSourceId: clipboard.sourceId,
-            toSourceId: sourceId,
-            paths: clipboard.paths,
-            targetDir: destinationDir,
-            operation: clipboard.operation,
-          });
-          return;
+    const request: TransferJobRequest = {
+      fromSourceId: clipboard.sourceId,
+      toSourceId: sourceId,
+      paths: clipboard.paths,
+      targetDir: destinationDir,
+      operation: clipboard.operation,
+      conflictPolicy: "fail",
+      destinationName: storageName,
+    };
+
+    queueTransfer(request, {
+      onConflict: () => {
+        setPasteConflict({
+          fromSourceId: clipboard.sourceId,
+          toSourceId: sourceId,
+          paths: clipboard.paths,
+          targetDir: destinationDir,
+          operation: clipboard.operation,
+        });
+      },
+      onCompleted: () => {
+        if (clipboard.operation === "move") {
+          clearClipboard();
         }
-        toast({
-          title: clipboard.operation === "copy" ? "Copy failed" : "Move failed",
-          description: err.message,
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: clipboard.operation === "copy" ? "Copy failed" : "Move failed",
-          description: err instanceof Error ? err.message : String(err),
-          variant: "destructive",
-        });
-      }
-    }
+      },
+    });
   };
 
   const moveIntoFolder = async (paths: string[], folderPath: string) => {
     if (paths.length === 0) return;
 
-    try {
-      await transferEntries(
-        sourceId,
-        sourceId,
+    queueTransfer(
+      {
+        fromSourceId: sourceId,
+        toSourceId: sourceId,
         paths,
-        folderPath,
-        "move",
-        "fail",
-      );
-      await loadFiles(currentPath);
-      toast({
-        title: "Moved",
-        description: `${paths.length} item${paths.length === 1 ? "" : "s"} moved.`,
-      });
-    } catch (err) {
-      if (err instanceof TauriApiError) {
-        if (err.code === "ALREADY_EXISTS") {
+        targetDir: folderPath,
+        operation: "move",
+        conflictPolicy: "fail",
+        sourceName: storageName,
+        destinationName: storageName,
+      },
+      {
+        onConflict: () => {
           setPasteConflict({
             fromSourceId: sourceId,
             toSourceId: sourceId,
@@ -600,21 +615,10 @@ export function FileBrowser({
             targetDir: folderPath,
             operation: "move",
           });
-          return;
-        }
-        toast({
-          title: "Move failed",
-          description: err.message,
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "Move failed",
-          description: err instanceof Error ? err.message : String(err),
-          variant: "destructive",
-        });
-      }
-    }
+        },
+        successDescription: `${paths.length} item${paths.length === 1 ? "" : "s"} moved.`,
+      },
+    );
   };
 
   const composeTargetPath = (name: string) => {
@@ -1331,6 +1335,7 @@ export function FileBrowser({
             )}
           </ResizablePanelGroup>
         </div>
+        <TransferQueuePanel />
       </div>
 
       <AlertDialog
@@ -1425,40 +1430,33 @@ export function FileBrowser({
               className="bg-muted text-foreground hover:bg-muted/80"
               onClick={() => {
                 if (!pasteConflict) return;
-                void (async () => {
-                  try {
-                    await transferEntries(
-                      pasteConflict.fromSourceId,
-                      pasteConflict.toSourceId,
-                      pasteConflict.paths,
-                      pasteConflict.targetDir,
-                      pasteConflict.operation,
-                      "skip",
-                    );
-                    await loadFiles(currentPath);
-                    toast({
-                      title: pasteConflict.operation === "copy" ? "Copy completed" : "Move completed",
-                      description: "Existing items were skipped.",
-                    });
-                    if (
-                      clipboard &&
-                      clipboard.operation === "move" &&
-                      clipboard.sourceId === pasteConflict.fromSourceId &&
-                      clipboard.paths.length === pasteConflict.paths.length &&
-                      clipboard.paths.every((p) => pasteConflict.paths.includes(p))
-                    ) {
-                      clearClipboard();
-                    }
-                  } catch (error) {
-                    toast({
-                      title: pasteConflict.operation === "copy" ? "Copy failed" : "Move failed",
-                      description: error instanceof Error ? error.message : String(error),
-                      variant: "destructive",
-                    });
-                  } finally {
-                    setPasteConflict(null);
-                  }
-                })();
+                const conflict = pasteConflict;
+                queueTransfer(
+                  {
+                    fromSourceId: conflict.fromSourceId,
+                    toSourceId: conflict.toSourceId,
+                    paths: conflict.paths,
+                    targetDir: conflict.targetDir,
+                    operation: conflict.operation,
+                    conflictPolicy: "skip",
+                    destinationName: storageName,
+                  },
+                  {
+                    successDescription: "Existing items were skipped.",
+                    onCompleted: () => {
+                      if (
+                        clipboard &&
+                        clipboard.operation === "move" &&
+                        clipboard.sourceId === conflict.fromSourceId &&
+                        clipboard.paths.length === conflict.paths.length &&
+                        clipboard.paths.every((p) => conflict.paths.includes(p))
+                      ) {
+                        clearClipboard();
+                      }
+                    },
+                  },
+                );
+                setPasteConflict(null);
               }}
             >
               Discard
@@ -1467,40 +1465,33 @@ export function FileBrowser({
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => {
                 if (!pasteConflict) return;
-                void (async () => {
-                  try {
-                    await transferEntries(
-                      pasteConflict.fromSourceId,
-                      pasteConflict.toSourceId,
-                      pasteConflict.paths,
-                      pasteConflict.targetDir,
-                      pasteConflict.operation,
-                      "overwrite",
-                    );
-                    await loadFiles(currentPath);
-                    toast({
-                      title: pasteConflict.operation === "copy" ? "Copy completed" : "Move completed",
-                      description: "Existing items were overwritten.",
-                    });
-                    if (
-                      clipboard &&
-                      clipboard.operation === "move" &&
-                      clipboard.sourceId === pasteConflict.fromSourceId &&
-                      clipboard.paths.length === pasteConflict.paths.length &&
-                      clipboard.paths.every((p) => pasteConflict.paths.includes(p))
-                    ) {
-                      clearClipboard();
-                    }
-                  } catch (error) {
-                    toast({
-                      title: pasteConflict.operation === "copy" ? "Copy failed" : "Move failed",
-                      description: error instanceof Error ? error.message : String(error),
-                      variant: "destructive",
-                    });
-                  } finally {
-                    setPasteConflict(null);
-                  }
-                })();
+                const conflict = pasteConflict;
+                queueTransfer(
+                  {
+                    fromSourceId: conflict.fromSourceId,
+                    toSourceId: conflict.toSourceId,
+                    paths: conflict.paths,
+                    targetDir: conflict.targetDir,
+                    operation: conflict.operation,
+                    conflictPolicy: "overwrite",
+                    destinationName: storageName,
+                  },
+                  {
+                    successDescription: "Existing items were overwritten.",
+                    onCompleted: () => {
+                      if (
+                        clipboard &&
+                        clipboard.operation === "move" &&
+                        clipboard.sourceId === conflict.fromSourceId &&
+                        clipboard.paths.length === conflict.paths.length &&
+                        clipboard.paths.every((p) => conflict.paths.includes(p))
+                      ) {
+                        clearClipboard();
+                      }
+                    },
+                  },
+                );
+                setPasteConflict(null);
               }}
             >
               Overwrite

@@ -3,6 +3,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { FileBrowser } from "@/components/FileBrowser";
 import { StorageSidebar } from "@/components/StorageSidebar";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { TransferQueueProvider } from "@/hooks/use-transfer-queue";
 import { toast } from "@/hooks/use-toast";
 import {
   addStorage as apiAddStorage,
@@ -714,8 +715,9 @@ const Index = () => {
   };
 
   return (
-    <div className="flex h-screen w-full overflow-hidden rounded-[12px] border border-border/40 bg-background">
-      <ResizablePanelGroup direction="horizontal">
+    <TransferQueueProvider>
+      <div className="flex h-screen w-full overflow-hidden rounded-[12px] border border-border/40 bg-background">
+        <ResizablePanelGroup direction="horizontal">
         {isSidebarOpen ? (
           <>
             <ResizablePanel
@@ -795,9 +797,9 @@ const Index = () => {
             )}
           </div>
         </ResizablePanel>
-      </ResizablePanelGroup>
+        </ResizablePanelGroup>
 
-      <Suspense fallback={null}>
+        <Suspense fallback={null}>
         {isOnboardingOpen ? (
           <FirstRunOnboardingDialog
             open={isOnboardingOpen}
@@ -862,8 +864,9 @@ const Index = () => {
             onSave={handleSaveStorageConfigJson}
           />
         ) : null}
-      </Suspense>
-    </div>
+        </Suspense>
+      </div>
+    </TransferQueueProvider>
   );
 };
 

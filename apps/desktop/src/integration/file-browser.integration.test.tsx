@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FileBrowser } from "@/components/FileBrowser";
 import { AppZoomProvider } from "@/hooks/use-app-zoom";
+import { TransferQueueProvider } from "@/hooks/use-transfer-queue";
 import { createDirectory, listEntries } from "@/lib/api";
 
 vi.mock("@/lib/api", () => ({
@@ -33,7 +34,9 @@ describe("FileBrowser integration flow", () => {
   it("supports search focus and create-folder flow", async () => {
     render(
       <AppZoomProvider>
-        <FileBrowser sourceId="s1" storageName="Storage 1" />
+        <TransferQueueProvider>
+          <FileBrowser sourceId="s1" storageName="Storage 1" />
+        </TransferQueueProvider>
       </AppZoomProvider>,
     );
 

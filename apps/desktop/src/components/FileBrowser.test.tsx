@@ -1,3 +1,4 @@
+import type React from "react";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { fireEvent } from "@testing-library/react";
 import { FileBrowser } from "./FileBrowser";
@@ -13,6 +14,7 @@ import {
 } from "@/lib/api";
 import { AppZoomProvider } from "@/hooks/use-app-zoom";
 import { FileClipboardProvider } from "@/hooks/use-file-clipboard";
+import { TransferQueueProvider } from "@/hooks/use-transfer-queue";
 
 function deferred<T>() {
     let resolve!: (value: T) => void;
@@ -24,13 +26,19 @@ function deferred<T>() {
     return { promise, resolve, reject };
 }
 
-function renderFileBrowser(sourceId = "test", storageName = "Test Storage") {
-    return render(
+function withFileBrowserProviders(children: React.ReactNode) {
+    return (
         <AppZoomProvider>
             <FileClipboardProvider>
-                <FileBrowser sourceId={sourceId} storageName={storageName} />
+                <TransferQueueProvider>{children}</TransferQueueProvider>
             </FileClipboardProvider>
-        </AppZoomProvider>,
+        </AppZoomProvider>
+    );
+}
+
+function renderFileBrowser(sourceId = "test", storageName = "Test Storage") {
+    return render(
+        withFileBrowserProviders(<FileBrowser sourceId={sourceId} storageName={storageName} />),
     );
 }
 
@@ -228,11 +236,7 @@ describe("FileBrowser Error Handling", () => {
             .mockResolvedValueOnce([])
             .mockRejectedValueOnce(new TauriApiError("Raw error", "NOT_FOUND"));
 
-        render(
-            <AppZoomProvider>
-                <FileBrowser sourceId="test" storageName="Test Storage" />
-            </AppZoomProvider>
-        );
+        renderFileBrowser();
 
         // Navigate to a missing path (root NOT_FOUND is treated as empty).
         await waitFor(() => {
@@ -254,11 +258,7 @@ describe("FileBrowser Error Handling", () => {
     it("displays user-friendly message for PERMISSION_DENIED error", async () => {
         vi.mocked(listEntries).mockRejectedValue(new TauriApiError("Raw error", "PERMISSION_DENIED"));
 
-        render(
-            <AppZoomProvider>
-                <FileBrowser sourceId="test" storageName="Test Storage" />
-            </AppZoomProvider>
-        );
+        renderFileBrowser();
 
         await waitFor(() => {
             expect(screen.getByText("Access denied")).toBeInTheDocument();
@@ -271,11 +271,7 @@ describe("FileBrowser Error Handling", () => {
     it("displays raw message for unknown errors", async () => {
         vi.mocked(listEntries).mockRejectedValue(new TauriApiError("Something went wrong", "UNKNOWN"));
 
-        render(
-            <AppZoomProvider>
-                <FileBrowser sourceId="test" storageName="Test Storage" />
-            </AppZoomProvider>
-        );
+        renderFileBrowser();
 
         await waitFor(() => {
             expect(screen.getByText("Could not connect to this storage")).toBeInTheDocument();
@@ -294,9 +290,7 @@ describe("FileBrowser Error Handling", () => {
         });
 
         const { rerender } = render(
-            <AppZoomProvider>
-                <FileBrowser sourceId="slow" storageName="Slow Storage" />
-            </AppZoomProvider>,
+            withFileBrowserProviders(<FileBrowser sourceId="slow" storageName="Slow Storage" />),
         );
 
         await waitFor(() => {
@@ -304,9 +298,7 @@ describe("FileBrowser Error Handling", () => {
         });
 
         rerender(
-            <AppZoomProvider>
-                <FileBrowser sourceId="fast" storageName="Fast Storage" />
-            </AppZoomProvider>,
+            withFileBrowserProviders(<FileBrowser sourceId="fast" storageName="Fast Storage" />),
         );
 
         await waitFor(() => {
@@ -331,11 +323,7 @@ describe("FileBrowser shortcuts and creation", () => {
     });
 
     it("focuses search on Ctrl/Cmd+F", async () => {
-        render(
-            <AppZoomProvider>
-                <FileBrowser sourceId="test" storageName="Test Storage" />
-            </AppZoomProvider>
-        );
+        renderFileBrowser();
 
         const search = await screen.findByPlaceholderText("Search...");
         fireEvent.keyDown(window, { key: "f", ctrlKey: true });
@@ -343,11 +331,7 @@ describe("FileBrowser shortcuts and creation", () => {
     });
 
     it("opens create folder dialog on Ctrl/Cmd+Shift+N and creates folder", async () => {
-        render(
-            <AppZoomProvider>
-                <FileBrowser sourceId="test" storageName="Test Storage" />
-            </AppZoomProvider>
-        );
+        renderFileBrowser();
 
         await waitFor(() => {
             expect(listEntries).toHaveBeenCalledWith("test", "/");
