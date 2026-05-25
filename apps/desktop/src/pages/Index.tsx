@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 
+import { AgentWorkspacesDialog } from "@/components/AgentWorkspacesDialog";
 import { FileBrowser, type FileBrowserPaneState } from "@/components/FileBrowser";
 import { GlobalSearchDialog } from "@/components/GlobalSearchDialog";
 import { StorageSidebar } from "@/components/StorageSidebar";
@@ -231,6 +232,7 @@ const Index = () => {
   const [editingStorage, setEditingStorage] = useState<StorageConfig | null>(null);
   const [isStorageConfigEditorOpen, setIsStorageConfigEditorOpen] = useState(false);
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
+  const [isAgentWorkspacesOpen, setIsAgentWorkspacesOpen] = useState(false);
   const [isMcpDialogOpen, setIsMcpDialogOpen] = useState(false);
   const [mcpStatus, setMcpStatus] = useState<McpRuntimeStatus | null>(null);
   const [mcpSnippets, setMcpSnippets] = useState<McpClientSnippets | null>(null);
@@ -763,6 +765,8 @@ const Index = () => {
                 onExportStorages={handleExportStorages}
                 onOpenMcpSettings={() => setIsMcpDialogOpen(true)}
                 onOpenOnboarding={() => setIsOnboardingOpen(true)}
+                onOpenGlobalSearch={() => setIsGlobalSearchOpen(true)}
+                onOpenAgentWorkspaces={() => setIsAgentWorkspacesOpen(true)}
                 isLoading={isStoragesLoading}
               />
             </ResizablePanel>
@@ -800,6 +804,7 @@ const Index = () => {
             onOpenMcpSettings={() => setIsMcpDialogOpen(true)}
             onOpenOnboarding={() => setIsOnboardingOpen(true)}
             onOpenGlobalSearch={() => setIsGlobalSearchOpen(true)}
+            onOpenAgentWorkspaces={() => setIsAgentWorkspacesOpen(true)}
             isLoading={isStoragesLoading}
           />
         </div>
@@ -969,6 +974,16 @@ const Index = () => {
             storages={storages}
             onOpenChange={setIsGlobalSearchOpen}
             onSelectStorage={handleSelectStorage}
+          />
+        ) : null}
+
+        {isAgentWorkspacesOpen ? (
+          <AgentWorkspacesDialog
+            open={isAgentWorkspacesOpen}
+            storages={storages}
+            onOpenChange={setIsAgentWorkspacesOpen}
+            onSelectStorage={handleSelectStorage}
+            onUpdateStoragePolicy={handleUpdateMcpStoragePolicy}
           />
         ) : null}
         </Suspense>

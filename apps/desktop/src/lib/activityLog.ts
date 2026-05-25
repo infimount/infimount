@@ -4,16 +4,21 @@ export type ActivityLogEventType =
   | "transfer_completed"
   | "transfer_failed"
   | "transfer_cancelled"
-  | "transfer_recovery_started";
+  | "transfer_recovery_started"
+  | "workspace_created"
+  | "workspace_memory_appended"
+  | "workspace_checkpoint_created"
+  | "workspace_checkpoint_restored";
 
 export interface ActivityLogEvent {
   id: string;
   type: ActivityLogEventType;
   createdAt: number;
   jobId?: string;
-  operation?: "copy" | "move" | "write" | "delete" | "mcp";
+  operation?: "copy" | "move" | "write" | "delete" | "mcp" | "workspace";
   sourceId?: string;
   targetId?: string;
+  workspaceId?: string;
   pathCount?: number;
   summary?: Record<string, unknown>;
   message?: string;

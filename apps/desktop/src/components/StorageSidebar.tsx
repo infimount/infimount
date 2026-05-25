@@ -12,6 +12,7 @@ import {
   Cable,
   Braces,
   LifeBuoy,
+  Bot,
 } from "lucide-react";
 import s3Icon from "@/assets/amazon-s3.svg";
 import azureIcon from "@/assets/azure-storage-blob.svg";
@@ -65,6 +66,7 @@ interface StorageSidebarProps {
   onOpenMcpSettings?: () => void;
   onOpenOnboarding?: () => void;
   onOpenGlobalSearch?: () => void;
+  onOpenAgentWorkspaces?: () => void;
   isLoading?: boolean;
 }
 
@@ -108,6 +110,7 @@ export function StorageSidebar({
   onOpenMcpSettings,
   onOpenOnboarding,
   onOpenGlobalSearch,
+  onOpenAgentWorkspaces,
   isLoading = false,
 }: StorageSidebarProps) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -405,6 +408,12 @@ export function StorageSidebar({
                 <DropdownMenuItem onClick={onOpenGlobalSearch}>
                   <Search className="mr-2 h-4 w-4" />
                   Global Search
+                </DropdownMenuItem>
+              )}
+              {onOpenAgentWorkspaces && (
+                <DropdownMenuItem onClick={onOpenAgentWorkspaces}>
+                  <Bot className="mr-2 h-4 w-4" />
+                  Agent Workspaces
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />

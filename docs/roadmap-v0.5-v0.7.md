@@ -40,6 +40,16 @@ Planned work:
 5. Workspace checkpoint and restore where OpenDAL versioning or transfer manifests support it.
 6. Audit events grouped by workspace.
 
+Implementation status:
+
+- Agent Workspaces are available from the storage actions menu.
+- Workspaces create real directories and starter files through the existing OpenDAL-backed file APIs.
+- Workspace templates exist for coding, research, and data analysis agents.
+- Optional workspace MCP policy sets default access to none and allows only the workspace root.
+- Memory files are visible under `memory/` and can be listed, read, and appended from the workspace dialog.
+- Memory checkpoints are stored locally and can restore the visible memory files back to the workspace.
+- Workspace activity events carry a `workspaceId` for created, memory-appended, checkpoint-created, and checkpoint-restored actions.
+
 ## v0.7: OpenDAL Backend Expansion
 
 Theme: broaden storage coverage without leaving the OpenDAL abstraction.
