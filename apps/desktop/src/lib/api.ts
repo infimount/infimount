@@ -54,7 +54,7 @@ export interface StorageKindSchema {
 }
 
 export type TransferOperation = "copy" | "move";
-export type TransferConflictPolicy = "fail" | "overwrite" | "skip";
+export type TransferConflictPolicy = "fail" | "overwrite" | "skip" | "rename";
 
 export interface ImportStoragesRequest {
   json: string;

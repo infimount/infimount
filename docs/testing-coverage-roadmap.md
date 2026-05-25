@@ -183,4 +183,4 @@ Automate where possible:
 
 ## Recommended next coverage task
 
-Next feature coverage should follow the workbench roadmap: pane-to-pane copy/move regression coverage, richer conflict-resolution decisions, bookmarks/provider presets, and eventual resumable transfers. Continue hardening `FileBrowser.tsx`, `FilePreviewPanel.tsx`, and `McpSettingsDialog.tsx` branch/function paths while adding those features.
+Next feature coverage should follow the workbench roadmap: bookmarks/provider presets, transfer history, and eventual resumable transfers. Continue hardening `FileBrowser.tsx`, `FilePreviewPanel.tsx`, and `McpSettingsDialog.tsx` branch/function paths while adding those features.

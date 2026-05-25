@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Single-command install scripts for macOS/Linux and Windows with release checksum verification.
 - Transfer queue panel for copy/move work with queued/running/completed/failed states, retry, active or queued cancellation, and progress visibility backed by Tauri transfer progress events.
-- Split-pane browsing with an independently selectable destination pane for source/destination transfer workflows.
+- Split-pane browsing with an independently selectable destination pane and direct copy/move actions between panes.
+- Conflict resolution now supports keeping both items by auto-renaming the incoming transfer.
 
 ## [0.2.3] - 2026-05-14
 

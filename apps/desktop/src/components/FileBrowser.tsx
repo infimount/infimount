@@ -9,6 +9,8 @@ import {
   PanelLeft,
   PanelRight,
   Palette,
+  Copy,
+  MoveRight,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -208,6 +210,20 @@ async function collectFilesFromDataTransfer(
   return files;
 }
 
+export interface FileBrowserPaneState {
+  sourceId: string;
+  storageName: string;
+  currentPath: string;
+  selectedPaths: string[];
+}
+
+export interface FileBrowserPaneTransferTarget {
+  sourceId: string;
+  storageName: string;
+  currentPath: string;
+  direction: "left" | "right";
+}
+
 interface FileBrowserProps {
   sourceId: string;
   storageName: string;
@@ -219,6 +235,9 @@ interface FileBrowserProps {
   isDualPane?: boolean;
   showWindowControls?: boolean;
   showTransferQueue?: boolean;
+  paneTransferTarget?: FileBrowserPaneTransferTarget | null;
+  onPaneStateChange?: (state: FileBrowserPaneState) => void;
+  onTransferCompleted?: (storageIds: string[]) => void;
 }
 
 interface LoadError {
@@ -237,6 +256,9 @@ export function FileBrowser({
   isDualPane = false,
   showWindowControls = true,
   showTransferQueue = true,
+  paneTransferTarget = null,
+  onPaneStateChange,
+  onTransferCompleted,
 }: FileBrowserProps) {
   const { zoom } = useAppZoom();
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
@@ -329,6 +351,15 @@ export function FileBrowser({
   useEffect(() => {
     onPreviewVisibilityChange?.(!!previewFile);
   }, [previewFile, onPreviewVisibilityChange]);
+
+  useEffect(() => {
+    onPaneStateChange?.({
+      sourceId,
+      storageName,
+      currentPath,
+      selectedPaths: Array.from(selectedFiles),
+    });
+  }, [currentPath, onPaneStateChange, selectedFiles, sourceId, storageName]);
 
   const filteredFiles = allFiles.filter((file) =>
     file.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -628,6 +659,45 @@ export function FileBrowser({
       },
     );
   };
+
+  const queuePaneTransfer = (operation: "copy" | "move") => {
+    if (!paneTransferTarget || selectedFiles.size === 0) return;
+
+    const paths = Array.from(selectedFiles);
+    queueTransfer(
+      {
+        fromSourceId: sourceId,
+        toSourceId: paneTransferTarget.sourceId,
+        paths,
+        targetDir: paneTransferTarget.currentPath,
+        operation,
+        conflictPolicy: "fail",
+        sourceName: storageName,
+        destinationName: paneTransferTarget.storageName,
+      },
+      {
+        onConflict: () => {
+          setPasteConflict({
+            fromSourceId: sourceId,
+            toSourceId: paneTransferTarget.sourceId,
+            paths,
+            targetDir: paneTransferTarget.currentPath,
+            operation,
+          });
+        },
+        onCompleted: () => {
+          onTransferCompleted?.([sourceId, paneTransferTarget.sourceId]);
+        },
+        successDescription: `${paths.length} item${paths.length === 1 ? "" : "s"} ${
+          operation === "copy" ? "copied" : "moved"
+        } to ${paneTransferTarget.storageName}.`,
+      },
+    );
+  };
+
+  const paneTransferLabel = paneTransferTarget
+    ? `${paneTransferTarget.direction === "right" ? "right" : "left"} pane`
+    : "other pane";
 
   const composeTargetPath = (name: string) => {
     const basePath = currentPath === "/" ? "" : currentPath.replace(/\/$/, "");
@@ -1039,6 +1109,34 @@ export function FileBrowser({
                     <Upload className="h-4 w-4" />
                   </Button>
                 </label>
+                {paneTransferTarget ? (
+                  <div className="flex items-center gap-1 rounded-md border border-border/70 bg-background/80 px-1 py-0.5">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={selectedFiles.size === 0}
+                      onClick={() => queuePaneTransfer("copy")}
+                      className="h-7 gap-1.5 px-2 text-xs text-foreground/75 hover:bg-black/5 dark:hover:bg-white/5"
+                      title={`Copy selected items to the ${paneTransferLabel}`}
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                      Copy {paneTransferTarget.direction === "right" ? "→" : "←"}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={selectedFiles.size === 0}
+                      onClick={() => queuePaneTransfer("move")}
+                      className="h-7 gap-1.5 px-2 text-xs text-foreground/75 hover:bg-black/5 dark:hover:bg-white/5"
+                      title={`Move selected items to the ${paneTransferLabel}`}
+                    >
+                      <MoveRight className="h-3.5 w-3.5" />
+                      Move {paneTransferTarget.direction === "right" ? "→" : "←"}
+                    </Button>
+                  </div>
+                ) : null}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -1443,7 +1541,7 @@ export function FileBrowser({
           <AlertDialogHeader>
             <AlertDialogTitle>Item already exists</AlertDialogTitle>
             <AlertDialogDescription>
-              One or more items with the same name already exist in this location. Do you want to overwrite them or discard this transfer?
+              One or more items with the same name already exist in this location. Keep both, overwrite, or discard this transfer.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1461,11 +1559,13 @@ export function FileBrowser({
                     targetDir: conflict.targetDir,
                     operation: conflict.operation,
                     conflictPolicy: "skip",
+                    sourceName: storageName,
                     destinationName: storageName,
                   },
                   {
                     successDescription: "Existing items were skipped.",
                     onCompleted: () => {
+                      onTransferCompleted?.([conflict.fromSourceId, conflict.toSourceId]);
                       if (
                         clipboard &&
                         clipboard.operation === "move" &&
@@ -1484,6 +1584,43 @@ export function FileBrowser({
               Discard
             </AlertDialogAction>
             <AlertDialogAction
+              className="bg-background text-foreground hover:bg-muted"
+              onClick={() => {
+                if (!pasteConflict) return;
+                const conflict = pasteConflict;
+                queueTransfer(
+                  {
+                    fromSourceId: conflict.fromSourceId,
+                    toSourceId: conflict.toSourceId,
+                    paths: conflict.paths,
+                    targetDir: conflict.targetDir,
+                    operation: conflict.operation,
+                    conflictPolicy: "rename",
+                    sourceName: storageName,
+                    destinationName: storageName,
+                  },
+                  {
+                    successDescription: "Conflicting items were renamed.",
+                    onCompleted: () => {
+                      onTransferCompleted?.([conflict.fromSourceId, conflict.toSourceId]);
+                      if (
+                        clipboard &&
+                        clipboard.operation === "move" &&
+                        clipboard.sourceId === conflict.fromSourceId &&
+                        clipboard.paths.length === conflict.paths.length &&
+                        clipboard.paths.every((p) => conflict.paths.includes(p))
+                      ) {
+                        clearClipboard();
+                      }
+                    },
+                  },
+                );
+                setPasteConflict(null);
+              }}
+            >
+              Keep both
+            </AlertDialogAction>
+            <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => {
                 if (!pasteConflict) return;
@@ -1496,11 +1633,13 @@ export function FileBrowser({
                     targetDir: conflict.targetDir,
                     operation: conflict.operation,
                     conflictPolicy: "overwrite",
+                    sourceName: storageName,
                     destinationName: storageName,
                   },
                   {
                     successDescription: "Existing items were overwritten.",
                     onCompleted: () => {
+                      onTransferCompleted?.([conflict.fromSourceId, conflict.toSourceId]);
                       if (
                         clipboard &&
                         clipboard.operation === "move" &&

@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 
-import { FileBrowser } from "@/components/FileBrowser";
+import { FileBrowser, type FileBrowserPaneState } from "@/components/FileBrowser";
 import { StorageSidebar } from "@/components/StorageSidebar";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { TransferQueueProvider } from "@/hooks/use-transfer-queue";
@@ -246,6 +246,8 @@ const Index = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isDualPaneOpen, setIsDualPaneOpen] = useState(false);
   const [secondaryStorageId, setSecondaryStorageId] = useState<string | null>(null);
+  const [primaryPaneState, setPrimaryPaneState] = useState<FileBrowserPaneState | null>(null);
+  const [secondaryPaneState, setSecondaryPaneState] = useState<FileBrowserPaneState | null>(null);
 
   const reloadMcpStatus = useCallback(async () => {
     try {
@@ -715,6 +717,16 @@ const Index = () => {
     }
   }, [currentStorage?.id, secondaryStorageId, storages]);
 
+  const refreshStorages = useCallback((storageIds: string[]) => {
+    setStorageRefreshTick((current) => {
+      const next = { ...current };
+      for (const storageId of storageIds) {
+        next[storageId] = (next[storageId] ?? 0) + 1;
+      }
+      return next;
+    });
+  }, []);
+
   const toggleSidebar = () => setIsSidebarOpen((current) => !current);
   const closeSidebar = () => setIsSidebarOpen(false);
   const handleSelectStorage = (id: string) => {
@@ -804,6 +816,17 @@ const Index = () => {
                       isSidebarOpen={isSidebarOpen}
                       onToggleDualPane={() => setIsDualPaneOpen(false)}
                       isDualPane
+                      paneTransferTarget={{
+                        sourceId: secondaryStorage.id,
+                        storageName: secondaryStorage.name,
+                        currentPath:
+                          secondaryPaneState?.sourceId === secondaryStorage.id
+                            ? secondaryPaneState.currentPath
+                            : "/",
+                        direction: "right",
+                      }}
+                      onPaneStateChange={setPrimaryPaneState}
+                      onTransferCompleted={refreshStorages}
                     />
                   </ResizablePanel>
                   <ResizableHandle className="flex w-px flex-col items-center justify-center bg-border/50" />
@@ -834,6 +857,17 @@ const Index = () => {
                         showTransferQueue={false}
                         onToggleDualPane={() => setIsDualPaneOpen(false)}
                         isDualPane
+                        paneTransferTarget={{
+                          sourceId: currentStorage.id,
+                          storageName: currentStorage.name,
+                          currentPath:
+                            primaryPaneState?.sourceId === currentStorage.id
+                              ? primaryPaneState.currentPath
+                              : "/",
+                          direction: "left",
+                        }}
+                        onPaneStateChange={setSecondaryPaneState}
+                        onTransferCompleted={refreshStorages}
                       />
                     </div>
                   </ResizablePanel>
@@ -847,6 +881,8 @@ const Index = () => {
                   onToggleSidebar={toggleSidebar}
                   isSidebarOpen={isSidebarOpen}
                   onToggleDualPane={() => setIsDualPaneOpen(true)}
+                  onPaneStateChange={setPrimaryPaneState}
+                  onTransferCompleted={refreshStorages}
                 />
               )
             ) : (

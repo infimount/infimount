@@ -155,6 +155,7 @@ pub async fn transfer_entries(
         "fail" => operations::TransferConflictPolicy::Fail,
         "overwrite" => operations::TransferConflictPolicy::Overwrite,
         "skip" | "discard" => operations::TransferConflictPolicy::Skip,
+        "rename" | "keep_both" => operations::TransferConflictPolicy::Rename,
         _ => {
             return Err(CoreError::Config(format!(
                 "invalid transfer conflict policy: {}",

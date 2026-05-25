@@ -21,6 +21,8 @@ pub enum TransferConflictPolicy {
     Overwrite,
     /// Skip entries whose destinations already exist.
     Skip,
+    /// Keep both by generating a non-conflicting destination name.
+    Rename,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -719,8 +721,19 @@ pub async fn transfer_entries(
                     TransferConflictPolicy::Skip => {
                         continue;
                     }
+                    TransferConflictPolicy::Rename => {
+                        // The non-conflicting path is selected before this branch.
+                    }
                 }
             }
+
+            let dest_dir = if conflict_policy == TransferConflictPolicy::Rename
+                && to_op.exists(&dest_dir).await?
+            {
+                unique_destination_path(to_op, target_dir, &dir_name, true).await?
+            } else {
+                dest_dir
+            };
 
             transfer_dir_recursive(
                 from_op,
@@ -762,8 +775,18 @@ pub async fn transfer_entries(
                     TransferConflictPolicy::Skip => {
                         continue;
                     }
+                    TransferConflictPolicy::Rename => {
+                        // The non-conflicting path is selected before this branch.
+                    }
                 }
             }
+            let dest_file = if conflict_policy == TransferConflictPolicy::Rename
+                && to_op.exists(&dest_file).await?
+            {
+                unique_destination_path(to_op, target_dir, &file_name, false).await?
+            } else {
+                dest_file
+            };
             transfer_file(
                 from_op,
                 to_op,
@@ -915,8 +938,19 @@ where
                     TransferConflictPolicy::Skip => {
                         continue;
                     }
+                    TransferConflictPolicy::Rename => {
+                        // The non-conflicting path is selected before this branch.
+                    }
                 }
             }
+
+            let dest_dir = if conflict_policy == TransferConflictPolicy::Rename
+                && to_op.exists(&dest_dir).await?
+            {
+                unique_destination_path(to_op, target_dir, &dir_name, true).await?
+            } else {
+                dest_dir
+            };
 
             transfer_dir_recursive_with_progress(
                 from_op,
@@ -961,8 +995,18 @@ where
                     TransferConflictPolicy::Skip => {
                         continue;
                     }
+                    TransferConflictPolicy::Rename => {
+                        // The non-conflicting path is selected before this branch.
+                    }
                 }
             }
+            let dest_file = if conflict_policy == TransferConflictPolicy::Rename
+                && to_op.exists(&dest_file).await?
+            {
+                unique_destination_path(to_op, target_dir, &file_name, false).await?
+            } else {
+                dest_file
+            };
             transfer_file_with_progress(
                 from_op,
                 to_op,
@@ -1313,6 +1357,40 @@ mod tests {
 
         assert!(result.is_err());
         assert!(!to_op.exists("target/source.txt").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_transfer_entries_renames_existing_destination() {
+        let from_op = create_test_operator().await;
+        let to_op = create_test_operator().await;
+        from_op.write("source.txt", "new".as_bytes()).await.unwrap();
+        create_directory(&to_op, "target").await.unwrap();
+        to_op
+            .write("target/source.txt", "old".as_bytes())
+            .await
+            .unwrap();
+
+        transfer_entries(
+            &from_op,
+            &to_op,
+            vec!["source.txt".to_string()],
+            "target",
+            TransferOperation::Copy,
+            false,
+            TransferConflictPolicy::Rename,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(from_op.read("source.txt").await.unwrap().to_vec(), b"new");
+        assert_eq!(
+            to_op.read("target/source.txt").await.unwrap().to_vec(),
+            b"old"
+        );
+        assert_eq!(
+            to_op.read("target/source copy.txt").await.unwrap().to_vec(),
+            b"new"
+        );
     }
 
     #[tokio::test]

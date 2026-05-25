@@ -679,6 +679,39 @@ describe("FileBrowser transfer and download flows", () => {
         });
     });
 
+    it("copies selected files to the opposite split pane", async () => {
+        render(
+            withFileBrowserProviders(
+                <FileBrowser
+                    sourceId="left"
+                    storageName="Left Storage"
+                    paneTransferTarget={{
+                        sourceId: "right",
+                        storageName: "Right Storage",
+                        currentPath: "/incoming",
+                        direction: "right",
+                    }}
+                />,
+            ),
+        );
+
+        fireEvent.click(await screen.findByText("report.txt"));
+        await screen.findByText("selected report.txt");
+        fireEvent.click(screen.getByRole("button", { name: "Copy →" }));
+
+        await waitFor(() => {
+            expect(transferEntries).toHaveBeenCalledWith(
+                "left",
+                "right",
+                ["/report.txt"],
+                "/incoming",
+                "copy",
+                "fail",
+                expect.stringMatching(/^transfer-/),
+            );
+        });
+    });
+
     it("lets users overwrite paste conflicts", async () => {
         vi.mocked(transferEntries)
             .mockRejectedValueOnce(new TauriApiError("already exists", "ALREADY_EXISTS"))
@@ -702,6 +735,34 @@ describe("FileBrowser transfer and download flows", () => {
                 "/",
                 "copy",
                 "overwrite",
+                expect.stringMatching(/^transfer-/),
+            );
+        });
+    });
+
+    it("lets users keep both conflicting transfers", async () => {
+        vi.mocked(transferEntries)
+            .mockRejectedValueOnce(new TauriApiError("already exists", "ALREADY_EXISTS"))
+            .mockResolvedValueOnce(undefined);
+
+        renderFileBrowser();
+
+        fireEvent.click(await screen.findByText("report.txt"));
+        fireEvent.click(screen.getByRole("button", { name: "Copy selected" }));
+        await screen.findByText("clipboard ready");
+        fireEvent.click(screen.getByRole("button", { name: "Paste selected" }));
+
+        expect(await screen.findByText("Item already exists")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Keep both" }));
+
+        await waitFor(() => {
+            expect(transferEntries).toHaveBeenLastCalledWith(
+                "test",
+                "test",
+                ["/report.txt"],
+                "/",
+                "copy",
+                "rename",
                 expect.stringMatching(/^transfer-/),
             );
         });
