@@ -188,6 +188,38 @@ describe("AddStorageDialog", () => {
     });
   });
 
+  it("applies S3-compatible provider presets", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    renderDialog({
+      onAdd,
+      loadSchemas: vi.fn().mockResolvedValue([schemas[1]]),
+    });
+
+    expect(await screen.findByText("Provider presets")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Cloudflare R2/ }));
+    expect(screen.getByLabelText("Storage Name")).toHaveValue("Cloudflare R2");
+    expect(screen.getByLabelText(/Region/)).toHaveValue("auto");
+
+    fireEvent.change(screen.getByLabelText(/Bucket/), {
+      target: { value: "datasets" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add Storage" }));
+
+    await waitFor(() => {
+      expect(onAdd).toHaveBeenCalledWith({
+        name: "Cloudflare R2",
+        backend: "s3",
+        config: {
+          bucket: "datasets",
+          region: "auto",
+        },
+        enabled: true,
+        mcpExposed: true,
+        readOnly: false,
+      });
+    });
+  });
+
   it("edits existing storage while preserving advanced config fields", async () => {
     const onUpdate = vi.fn().mockResolvedValue(undefined);
     const initialStorage: StorageConfig = {

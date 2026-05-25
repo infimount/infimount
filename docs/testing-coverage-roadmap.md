@@ -183,4 +183,4 @@ Automate where possible:
 
 ## Recommended next coverage task
 
-Next feature coverage should follow the workbench roadmap: bookmarks/provider presets, transfer history, and eventual resumable transfers. Continue hardening `FileBrowser.tsx`, `FilePreviewPanel.tsx`, and `McpSettingsDialog.tsx` branch/function paths while adding those features.
+Next feature coverage should follow the workbench roadmap: transfer-history edge cases, interrupted-transfer retry behavior, and eventual provider-specific resumable transfers where OpenDAL backends expose the required primitives. Continue hardening `FileBrowser.tsx`, `FilePreviewPanel.tsx`, and `McpSettingsDialog.tsx` branch/function paths while adding those features.

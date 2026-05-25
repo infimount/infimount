@@ -44,6 +44,81 @@ const STORAGE_TYPE_ICONS: Record<string, string> = {
 const FIELD_FOCUS_CLASS =
   "focus-visible:border-ring focus-visible:ring-0 focus-visible:ring-offset-0";
 
+interface ProviderPreset {
+  id: string;
+  label: string;
+  description: string;
+  defaultName: string;
+  values: Record<string, string>;
+}
+
+const PROVIDER_PRESETS: Partial<Record<StorageType, ProviderPreset[]>> = {
+  "aws-s3": [
+    {
+      id: "cloudflare-r2",
+      label: "Cloudflare R2",
+      description: "S3-compatible object storage. Replace the account id in the endpoint.",
+      defaultName: "Cloudflare R2",
+      values: {
+        region: "auto",
+        endpoint: "https://<account-id>.r2.cloudflarestorage.com",
+      },
+    },
+    {
+      id: "minio",
+      label: "MinIO",
+      description: "Local or self-hosted S3-compatible storage.",
+      defaultName: "MinIO",
+      values: {
+        region: "us-east-1",
+        endpoint: "http://localhost:9000",
+      },
+    },
+    {
+      id: "wasabi",
+      label: "Wasabi",
+      description: "Replace the region if your bucket lives outside us-east-1.",
+      defaultName: "Wasabi Bucket",
+      values: {
+        region: "us-east-1",
+        endpoint: "https://s3.us-east-1.wasabisys.com",
+      },
+    },
+    {
+      id: "backblaze-b2",
+      label: "Backblaze B2",
+      description: "S3-compatible endpoint. Replace the region with your bucket region.",
+      defaultName: "Backblaze B2",
+      values: {
+        region: "us-west-004",
+        endpoint: "https://s3.us-west-004.backblazeb2.com",
+      },
+    },
+    {
+      id: "digitalocean-spaces",
+      label: "DigitalOcean Spaces",
+      description: "S3-compatible Spaces endpoint. Replace nyc3 when needed.",
+      defaultName: "DigitalOcean Space",
+      values: {
+        region: "nyc3",
+        endpoint: "https://nyc3.digitaloceanspaces.com",
+      },
+    },
+  ],
+  webdav: [
+    {
+      id: "nextcloud",
+      label: "Nextcloud",
+      description: "WebDAV URL for a user's files. Replace the host and username.",
+      defaultName: "Nextcloud Files",
+      values: {
+        serverUrl: "https://cloud.example.com/remote.php/dav/files/<username>/",
+        rootPath: "/",
+      },
+    },
+  ],
+};
+
 interface AddStorageDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -181,6 +256,19 @@ export function AddStorageDialog({
     setFormError(null);
     setRevealSecrets(true);
   };
+
+  const applyProviderPreset = (preset: ProviderPreset) => {
+    setFieldValues((current) => ({
+      ...current,
+      ...preset.values,
+    }));
+    setName((current) => current.trim() || preset.defaultName);
+    setFormError(null);
+    setVerifyResult(null);
+    setVerifyMessage(null);
+  };
+
+  const providerPresets = PROVIDER_PRESETS[type] ?? [];
 
   const buildDraft = (): StorageDraft | null => {
     if (!currentSchema) {
@@ -398,6 +486,34 @@ export function AddStorageDialog({
                 ) : null}
               </div>
             </div>
+
+            {providerPresets.length > 0 ? (
+              <div className="rounded-xl border border-border/70 bg-card/40 p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs text-foreground">Provider presets</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Fill endpoint defaults, then add your bucket, account, and secrets.
+                    </p>
+                  </div>
+                </div>
+                <div className="grid gap-2 md:grid-cols-2">
+                  {providerPresets.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      className="rounded-lg border border-border bg-background px-3 py-2 text-left text-xs transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      onClick={() => applyProviderPreset(preset)}
+                    >
+                      <span className="block text-foreground">{preset.label}</span>
+                      <span className="mt-1 block text-[11px] leading-relaxed text-muted-foreground">
+                        {preset.description}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             <div className="grid gap-4 rounded-xl border border-border/70 bg-card/40 p-4">
               {currentSchema?.fields.map((field) => (

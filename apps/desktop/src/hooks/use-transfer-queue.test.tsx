@@ -71,6 +71,7 @@ function renderQueue() {
 
 describe("useTransferQueue", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     eventMock.listener = undefined;
     eventMock.listen.mockClear();
     vi.mocked(cancelTransferJob).mockReset();
@@ -121,6 +122,19 @@ describe("useTransferQueue", () => {
 
     await waitFor(() => expect(screen.getByTestId("first-progress")).toHaveTextContent("50"));
     resolveTransfer();
+  });
+
+  it("persists completed transfer history locally", async () => {
+    vi.mocked(transferEntries).mockResolvedValueOnce(undefined);
+    renderQueue();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add transfer" }));
+
+    await waitFor(() => expect(screen.getByTestId("first-status")).toHaveTextContent("completed"));
+    const persisted = JSON.parse(
+      window.localStorage.getItem("infimount:transfer-history:v1") ?? "[]",
+    ) as Array<{ status: string; paths: string[] }>;
+    expect(persisted).toMatchObject([{ status: "completed", paths: ["/report.txt"] }]);
   });
 
   it("runs queued transfers sequentially", async () => {

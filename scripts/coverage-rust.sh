@@ -8,4 +8,4 @@ if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
 fi
 
 mkdir -p coverage/rust
-cargo llvm-cov --workspace --lcov --output-path coverage/rust/lcov.info --fail-under-lines 50
+cargo llvm-cov --workspace --lcov --output-path coverage/rust/lcov.info --fail-under-lines 54

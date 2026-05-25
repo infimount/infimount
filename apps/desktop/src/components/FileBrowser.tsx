@@ -11,6 +11,8 @@ import {
   Palette,
   Copy,
   MoveRight,
+  Star,
+  Clock,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -49,6 +51,7 @@ import { toast } from "@/hooks/use-toast";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -245,6 +248,44 @@ interface LoadError {
   detail?: string;
 }
 
+interface StoredLocation {
+  sourceId: string;
+  storageName: string;
+  path: string;
+  updatedAt: number;
+}
+
+const BOOKMARKS_STORAGE_KEY = "infimount:file-bookmarks:v1";
+const RECENTS_STORAGE_KEY = "infimount:file-recents:v1";
+
+function locationLabel(path: string) {
+  if (!path || path === "/") return "/";
+  const trimmed = path.replace(/\/$/, "");
+  return trimmed.split("/").filter(Boolean).pop() ?? trimmed;
+}
+
+function readStoredLocations(key: string): StoredLocation[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(key) ?? "[]") as StoredLocation[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item) =>
+        typeof item?.sourceId === "string" &&
+        typeof item.storageName === "string" &&
+        typeof item.path === "string" &&
+        typeof item.updatedAt === "number",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredLocations(key: string, locations: StoredLocation[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(key, JSON.stringify(locations));
+}
+
 export function FileBrowser({
   sourceId,
   storageName,
@@ -293,6 +334,12 @@ export function FileBrowser({
   const [pathInput, setPathInput] = useState("");
   const [createTargetType, setCreateTargetType] = useState<"file" | "folder" | null>(null);
   const [newEntryName, setNewEntryName] = useState("");
+  const [bookmarks, setBookmarks] = useState<StoredLocation[]>(() =>
+    readStoredLocations(BOOKMARKS_STORAGE_KEY),
+  );
+  const [recents, setRecents] = useState<StoredLocation[]>(() =>
+    readStoredLocations(RECENTS_STORAGE_KEY),
+  );
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const loadRequestIdRef = useRef(0);
 
@@ -365,6 +412,62 @@ export function FileBrowser({
     file.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const storageBookmarks = bookmarks.filter((item) => item.sourceId === sourceId);
+  const storageRecents = recents.filter((item) => item.sourceId === sourceId && item.path !== currentPath);
+  const isCurrentPathBookmarked = storageBookmarks.some((item) => item.path === currentPath);
+
+  const persistBookmarks = useCallback((next: StoredLocation[]) => {
+    setBookmarks(next);
+    writeStoredLocations(BOOKMARKS_STORAGE_KEY, next);
+  }, []);
+
+  const persistRecents = useCallback((next: StoredLocation[]) => {
+    setRecents(next);
+    writeStoredLocations(RECENTS_STORAGE_KEY, next);
+  }, []);
+
+  const rememberRecent = useCallback(
+    (path: string) => {
+      const location: StoredLocation = {
+        sourceId,
+        storageName,
+        path,
+        updatedAt: Date.now(),
+      };
+      const next = [
+        location,
+        ...readStoredLocations(RECENTS_STORAGE_KEY).filter(
+          (item) => !(item.sourceId === sourceId && item.path === path),
+        ),
+      ].slice(0, 40);
+      persistRecents(next);
+    },
+    [persistRecents, sourceId, storageName],
+  );
+
+  const toggleBookmark = () => {
+    const existing = readStoredLocations(BOOKMARKS_STORAGE_KEY);
+    const hasBookmark = existing.some(
+      (item) => item.sourceId === sourceId && item.path === currentPath,
+    );
+    const next = hasBookmark
+      ? existing.filter((item) => !(item.sourceId === sourceId && item.path === currentPath))
+      : [
+          {
+            sourceId,
+            storageName,
+            path: currentPath,
+            updatedAt: Date.now(),
+          },
+          ...existing,
+        ].slice(0, 80);
+    persistBookmarks(next);
+    toast({
+      title: hasBookmark ? "Bookmark removed" : "Bookmark added",
+      description: `${storageName}: ${currentPath}`,
+    });
+  };
+
   const mapEntryToFileItem = (entry: Entry): FileItem => ({
     id: entry.path,
     name: entry.name,
@@ -425,6 +528,7 @@ export function FileBrowser({
 
   useEffect(() => {
     void loadFiles(currentPath);
+    rememberRecent(currentPath);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPath, sourceId, refreshTick]);
 
@@ -1109,6 +1213,64 @@ export function FileBrowser({
                     <Upload className="h-4 w-4" />
                   </Button>
                 </label>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  onClick={toggleBookmark}
+                  className="h-8 w-8 text-foreground/70 hover:bg-black/5 dark:hover:bg-white/5"
+                  title={isCurrentPathBookmarked ? "Remove bookmark" : "Bookmark folder"}
+                  aria-label={isCurrentPathBookmarked ? "Remove bookmark" : "Bookmark folder"}
+                >
+                  <Star
+                    className={`h-4 w-4 ${
+                      isCurrentPathBookmarked ? "fill-current text-amber-600" : ""
+                    }`}
+                  />
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8 text-foreground/70 hover:bg-black/5 dark:hover:bg-white/5"
+                      title="Bookmarks and recent folders"
+                      aria-label="Bookmarks and recent folders"
+                    >
+                      <Clock className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-[240px]">
+                    <DropdownMenuLabel className="font-normal">Bookmarks</DropdownMenuLabel>
+                    {storageBookmarks.length === 0 ? (
+                      <DropdownMenuItem disabled>No bookmarks for this storage</DropdownMenuItem>
+                    ) : (
+                      storageBookmarks.slice(0, 8).map((item) => (
+                        <DropdownMenuItem key={`bookmark-${item.path}`} onClick={() => handleNavigate(item.path)}>
+                          <div className="min-w-0">
+                            <div className="truncate text-xs">{locationLabel(item.path)}</div>
+                            <div className="truncate text-[11px] text-muted-foreground">{item.path}</div>
+                          </div>
+                        </DropdownMenuItem>
+                      ))
+                    )}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel className="font-normal">Recent folders</DropdownMenuLabel>
+                    {storageRecents.length === 0 ? (
+                      <DropdownMenuItem disabled>No recent folders yet</DropdownMenuItem>
+                    ) : (
+                      storageRecents.slice(0, 6).map((item) => (
+                        <DropdownMenuItem key={`recent-${item.path}`} onClick={() => handleNavigate(item.path)}>
+                          <div className="min-w-0">
+                            <div className="truncate text-xs">{locationLabel(item.path)}</div>
+                            <div className="truncate text-[11px] text-muted-foreground">{item.path}</div>
+                          </div>
+                        </DropdownMenuItem>
+                      ))
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 {paneTransferTarget ? (
                   <div className="flex items-center gap-1 rounded-md border border-border/70 bg-background/80 px-1 py-0.5">
                     <Button

@@ -196,14 +196,14 @@ Differentiators to preserve:
 ### Storage breadth
 
 - SFTP and FTP backends.
-- More S3-compatible provider presets.
+- More S3-compatible provider presets. Cloudflare R2, MinIO, Wasabi, Backblaze B2, DigitalOcean Spaces, and Nextcloud/WebDAV presets are implemented in the add-storage flow.
 - Better WebDAV/Nextcloud guidance.
 - Versioning UI where backend supports it.
 
 ### Power-user workflows
 
 - Multi-tab browsing.
-- Transfer queue and resumable/retry behavior where possible. Queued/running/completed/failed UI, retry, active or queued cancellation, and Tauri-backed progress events are implemented. Resume support remains future work.
+- Transfer queue and resumable/retry behavior where possible. Queued/running/completed/failed UI, retry, active or queued cancellation, Tauri-backed progress events, and persisted transfer history are implemented. Provider-specific byte-range resume remains future work where backend capabilities allow it.
 - Dual-pane browsing for source/destination work. Initial split-pane browsing with an independently selectable destination pane is implemented.
 - CLI companion.
 - Saved connections/searches.

@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Transfer queue panel for copy/move work with queued/running/completed/failed states, retry, active or queued cancellation, and progress visibility backed by Tauri transfer progress events.
 - Split-pane browsing with an independently selectable destination pane and direct copy/move actions between panes.
 - Conflict resolution now supports keeping both items by auto-renaming the incoming transfer.
+- Folder bookmarks, recent folders, provider presets, and persisted transfer history make repeated workbench flows faster.
+- Rust coverage gate increased from 50% to 54% lines.
 
 ## [0.2.3] - 2026-05-14
 

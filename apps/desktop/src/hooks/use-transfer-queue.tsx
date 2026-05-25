@@ -72,6 +72,9 @@ interface TransferQueueContextValue {
 
 const TransferQueueContext = createContext<TransferQueueContextValue | null>(null);
 
+const TRANSFER_HISTORY_STORAGE_KEY = "infimount:transfer-history:v1";
+const MAX_PERSISTED_TRANSFERS = 50;
+
 const now = () => Date.now();
 
 function createJob(request: TransferJobRequest): TransferJob {
@@ -96,6 +99,52 @@ function isCancellationError(error: unknown) {
   return normalizeError(error).toLowerCase().includes("cancelled");
 }
 
+function isTransferJob(value: unknown): value is TransferJob {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<TransferJob>;
+  return (
+    typeof candidate.id === "string" &&
+    typeof candidate.fromSourceId === "string" &&
+    typeof candidate.toSourceId === "string" &&
+    Array.isArray(candidate.paths) &&
+    typeof candidate.targetDir === "string" &&
+    (candidate.operation === "copy" || candidate.operation === "move") &&
+    typeof candidate.conflictPolicy === "string" &&
+    typeof candidate.progress === "number" &&
+    typeof candidate.attempts === "number" &&
+    typeof candidate.createdAt === "number" &&
+    typeof candidate.updatedAt === "number"
+  );
+}
+
+function readPersistedJobs(): TransferJob[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(TRANSFER_HISTORY_STORAGE_KEY) ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isTransferJob).map((job) =>
+      job.status === "queued" || job.status === "running"
+        ? {
+            ...job,
+            status: "failed",
+            progress: 100,
+            error: "Interrupted before completion.",
+          }
+        : job,
+    );
+  } catch {
+    return [];
+  }
+}
+
+function persistJobs(jobs: TransferJob[]) {
+  if (typeof window === "undefined") return;
+  const persisted = jobs
+    .filter((job) => job.status !== "queued" || job.attempts > 0)
+    .slice(-MAX_PERSISTED_TRANSFERS);
+  window.localStorage.setItem(TRANSFER_HISTORY_STORAGE_KEY, JSON.stringify(persisted));
+}
+
 function progressPercent(payload: TransferProgressPayload) {
   if (payload.totalBytes > 0) {
     return Math.max(1, Math.min(99, Math.round((payload.bytesTransferred / payload.totalBytes) * 100)));
@@ -107,7 +156,7 @@ function progressPercent(payload: TransferProgressPayload) {
 }
 
 export function TransferQueueProvider({ children }: { children: ReactNode }) {
-  const [jobs, setJobs] = useState<TransferJob[]>([]);
+  const [jobs, setJobs] = useState<TransferJob[]>(() => readPersistedJobs());
   const callbacksRef = useRef(new Map<string, TransferJobCallbacks>());
   const processingRef = useRef(false);
 
@@ -186,6 +235,10 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
     callbacksRef.current.delete(jobId);
     setJobs((current) => current.filter((job) => job.id !== jobId || job.status === "running"));
   }, []);
+
+  useEffect(() => {
+    persistJobs(jobs);
+  }, [jobs]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
