@@ -1,9 +1,4 @@
-import {
-  createDirectory,
-  listEntries,
-  readFile,
-  writeFile,
-} from "@/lib/api";
+import { createDirectory, listEntries, readFile, writeFile } from "@/lib/api";
 import { appendActivityLogEvent } from "@/lib/activityLog";
 import type { McpStoragePolicy } from "@/types/storage";
 
@@ -35,6 +30,7 @@ export interface AgentWorkspaceCheckpoint {
   workspaceId: string;
   createdAt: string;
   label: string;
+  manifestPath: string;
   memoryFiles: Array<{ path: string; content: string }>;
 }
 
@@ -49,6 +45,8 @@ export interface CreateAgentWorkspaceInput {
 
 const WORKSPACES_STORAGE_KEY = "infimount:agent-workspaces:v1";
 const CHECKPOINTS_STORAGE_KEY = "infimount:agent-workspace-checkpoints:v1";
+const WORKSPACE_MANIFEST_PATH = ".infimount/workspace.json";
+const CHECKPOINTS_DIR = ".infimount/checkpoints";
 
 export const AGENT_WORKSPACE_TEMPLATES: AgentWorkspaceTemplate[] = [
   {
@@ -64,7 +62,10 @@ export const AGENT_WORKSPACE_TEMPLATES: AgentWorkspaceTemplate[] = [
       },
       { path: "memory/tasks.md", content: "# Tasks\n\n- [ ] Define the next task.\n" },
       { path: "memory/decisions.md", content: "# Decisions\n\nRecord important choices here.\n" },
-      { path: "memory/handoff.md", content: "# Handoff\n\nAdd status notes before changing agents or sessions.\n" },
+      {
+        path: "memory/handoff.md",
+        content: "# Handoff\n\nAdd status notes before changing agents or sessions.\n",
+      },
     ],
   },
   {
@@ -148,30 +149,45 @@ export async function createAgentWorkspace({
     checkpointIds: [],
   };
 
-  await createWorkspaceDirectories(storageId, normalizedRoot, template.files.map((file) => file.path));
+  await createWorkspaceDirectories(
+    storageId,
+    normalizedRoot,
+    template.files.map((file) => file.path),
+  );
+  await createDirectory(storageId, joinWorkspacePath(normalizedRoot, CHECKPOINTS_DIR)).catch(
+    () => undefined,
+  );
+
   for (const file of template.files) {
     await writeTextFile(storageId, joinWorkspacePath(normalizedRoot, file.path), file.content);
   }
+  await writeWorkspaceManifest(workspace);
 
   if (updatePolicy) {
     await updatePolicy(policy);
   }
 
-  saveAgentWorkspaces([workspace, ...listAgentWorkspaces().filter((item) => item.id !== workspace.id)]);
+  saveAgentWorkspaces([
+    workspace,
+    ...listAgentWorkspaces().filter((item) => item.id !== workspace.id),
+  ]);
   appendActivityLogEvent({
     type: "workspace_created",
     operation: "workspace",
     sourceId: storageId,
     workspaceId: workspace.id,
     message: `Created agent workspace ${workspace.name}`,
-    summary: { rootPath: normalizedRoot, templateId },
+    summary: { rootPath: normalizedRoot, templateId, policyScoped: Boolean(updatePolicy) },
   });
 
   return workspace;
 }
 
 export async function listWorkspaceMemoryFiles(workspace: AgentWorkspace): Promise<string[]> {
-  const entries = await listEntries(workspace.storageId, joinWorkspacePath(workspace.rootPath, "memory"));
+  const entries = await listEntries(
+    workspace.storageId,
+    joinWorkspacePath(workspace.rootPath, "memory"),
+  );
   const paths = entries
     .filter((entry) => !entry.is_dir)
     .map((entry) => joinRelativePath("memory", entry.name))
@@ -211,6 +227,7 @@ export async function createWorkspaceCheckpoint(
   workspace: AgentWorkspace,
   label?: string,
 ): Promise<AgentWorkspaceCheckpoint> {
+  const checkpointId = `checkpoint-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const memoryFiles = await Promise.all(
     workspace.memoryFiles.map(async (path) => ({
       path,
@@ -218,21 +235,29 @@ export async function createWorkspaceCheckpoint(
     })),
   );
   const checkpoint: AgentWorkspaceCheckpoint = {
-    id: `checkpoint-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    id: checkpointId,
     workspaceId: workspace.id,
     createdAt: new Date().toISOString(),
     label: label?.trim() || "Memory checkpoint",
+    manifestPath: workspaceCheckpointManifestPath(checkpointId),
     memoryFiles,
   };
+
+  await writeCheckpointManifest(workspace, checkpoint);
+
   const checkpoints = [checkpoint, ...readCheckpoints()].slice(0, 200);
   saveCheckpoints(checkpoints);
+  const updatedAt = checkpoint.createdAt;
   saveAgentWorkspaces(
     listAgentWorkspaces().map((item) =>
       item.id === workspace.id
         ? {
             ...item,
-            updatedAt: checkpoint.createdAt,
-            checkpointIds: [checkpoint.id, ...item.checkpointIds.filter((id) => id !== checkpoint.id)],
+            updatedAt,
+            checkpointIds: [
+              checkpoint.id,
+              ...item.checkpointIds.filter((id) => id !== checkpoint.id),
+            ],
           }
         : item,
     ),
@@ -243,7 +268,11 @@ export async function createWorkspaceCheckpoint(
     sourceId: workspace.storageId,
     workspaceId: workspace.id,
     message: `Checkpointed ${workspace.name}`,
-    summary: { checkpointId: checkpoint.id, fileCount: memoryFiles.length },
+    summary: {
+      checkpointId: checkpoint.id,
+      fileCount: memoryFiles.length,
+      manifestPath: checkpoint.manifestPath,
+    },
   });
   return checkpoint;
 }
@@ -252,9 +281,7 @@ export async function restoreWorkspaceMemoryCheckpoint(
   workspace: AgentWorkspace,
   checkpointId: string,
 ): Promise<void> {
-  const checkpoint = readCheckpoints().find(
-    (item) => item.workspaceId === workspace.id && item.id === checkpointId,
-  );
+  const checkpoint = await loadCheckpoint(workspace, checkpointId);
   if (!checkpoint) throw new Error("Checkpoint not found");
 
   for (const file of checkpoint.memoryFiles) {
@@ -266,12 +293,19 @@ export async function restoreWorkspaceMemoryCheckpoint(
     sourceId: workspace.storageId,
     workspaceId: workspace.id,
     message: `Restored ${checkpoint.label}`,
-    summary: { checkpointId: checkpoint.id, fileCount: checkpoint.memoryFiles.length },
+    summary: {
+      checkpointId: checkpoint.id,
+      fileCount: checkpoint.memoryFiles.length,
+      manifestPath: checkpoint.manifestPath,
+    },
   });
 }
 
 export function getWorkspaceTemplate(templateId: AgentWorkspaceTemplateId): AgentWorkspaceTemplate {
-  return AGENT_WORKSPACE_TEMPLATES.find((template) => template.id === templateId) ?? AGENT_WORKSPACE_TEMPLATES[0];
+  return (
+    AGENT_WORKSPACE_TEMPLATES.find((template) => template.id === templateId) ??
+    AGENT_WORKSPACE_TEMPLATES[0]
+  );
 }
 
 export function defaultWorkspacePath(name: string): string {
@@ -292,6 +326,10 @@ export function joinWorkspacePath(rootPath: string, relativePath: string): strin
   if (!relative) return root;
   if (root === "/") return `/${relative}`;
   return `${root}/${relative}`;
+}
+
+export function workspaceCheckpointManifestPath(checkpointId: string): string {
+  return `${CHECKPOINTS_DIR}/${checkpointId}.json`;
 }
 
 export function buildWorkspacePolicy(
@@ -320,7 +358,12 @@ async function createWorkspaceDirectories(
   rootPath: string,
   files: string[],
 ): Promise<void> {
-  const directories = new Set<string>([rootPath, joinWorkspacePath(rootPath, "memory")]);
+  const directories = new Set<string>([
+    rootPath,
+    joinWorkspacePath(rootPath, "memory"),
+    joinWorkspacePath(rootPath, ".infimount"),
+    joinWorkspacePath(rootPath, CHECKPOINTS_DIR),
+  ]);
   for (const file of files) {
     const segments = file.split("/").filter(Boolean);
     for (let index = 1; index < segments.length; index += 1) {
@@ -333,8 +376,84 @@ async function createWorkspaceDirectories(
   }
 }
 
+async function writeWorkspaceManifest(workspace: AgentWorkspace): Promise<void> {
+  const manifest = {
+    kind: "infimount-agent-workspace",
+    version: 1,
+    workspace: {
+      id: workspace.id,
+      name: workspace.name,
+      rootPath: workspace.rootPath,
+      templateId: workspace.templateId,
+      memoryFiles: workspace.memoryFiles,
+      policy: workspace.policy,
+      createdAt: workspace.createdAt,
+      updatedAt: workspace.updatedAt,
+    },
+  };
+  await writeJsonFile(
+    workspace.storageId,
+    joinWorkspacePath(workspace.rootPath, WORKSPACE_MANIFEST_PATH),
+    manifest,
+  );
+}
+
+async function writeCheckpointManifest(
+  workspace: AgentWorkspace,
+  checkpoint: AgentWorkspaceCheckpoint,
+): Promise<void> {
+  await createDirectory(workspace.storageId, joinWorkspacePath(workspace.rootPath, CHECKPOINTS_DIR)).catch(
+    () => undefined,
+  );
+  await writeJsonFile(
+    workspace.storageId,
+    joinWorkspacePath(workspace.rootPath, checkpoint.manifestPath),
+    {
+      kind: "infimount-agent-workspace-checkpoint",
+      version: 1,
+      checkpoint,
+    },
+  );
+}
+
+async function loadCheckpoint(
+  workspace: AgentWorkspace,
+  checkpointId: string,
+): Promise<AgentWorkspaceCheckpoint | null> {
+  const local = readCheckpoints().find(
+    (item) => item.workspaceId === workspace.id && item.id === checkpointId,
+  );
+  if (local) return local;
+
+  const manifestPath = workspaceCheckpointManifestPath(checkpointId);
+  try {
+    const raw = await readWorkspaceTextFile(workspace, manifestPath);
+    const parsed = JSON.parse(raw) as { checkpoint?: unknown };
+    if (isCheckpoint(parsed.checkpoint)) return parsed.checkpoint;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+async function readWorkspaceTextFile(
+  workspace: AgentWorkspace,
+  relativePath: string,
+): Promise<string> {
+  const data = await readFile(workspace.storageId, joinWorkspacePath(workspace.rootPath, relativePath));
+  return new TextDecoder().decode(data);
+}
+
 async function writeTextFile(storageId: string, path: string, content: string): Promise<void> {
   await writeFile(storageId, path, new TextEncoder().encode(content));
+}
+
+async function writeJsonFile(
+  storageId: string,
+  path: string,
+  value: unknown,
+): Promise<void> {
+  await writeTextFile(storageId, path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function readCheckpoints(): AgentWorkspaceCheckpoint[] {
@@ -374,6 +493,8 @@ function isCheckpoint(value: unknown): value is AgentWorkspaceCheckpoint {
     typeof item.id === "string" &&
     typeof item.workspaceId === "string" &&
     typeof item.createdAt === "string" &&
+    typeof item.label === "string" &&
+    typeof item.manifestPath === "string" &&
     Array.isArray(item.memoryFiles)
   );
 }

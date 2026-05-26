@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Bot,
   CheckCircle2,
+  Clock3,
   FolderLock,
   NotebookPen,
   RefreshCw,
@@ -46,12 +47,14 @@ import {
   type AgentWorkspaceCheckpoint,
   type AgentWorkspaceTemplateId,
 } from "@/lib/agentWorkspaces";
+import { listActivityLogEvents, type ActivityLogEvent } from "@/lib/activityLog";
 import { cn } from "@/lib/utils";
-import type { McpStoragePolicy, StorageConfig } from "@/types/storage";
+import type { McpAuditEvent, McpStoragePolicy, StorageConfig } from "@/types/storage";
 
 interface AgentWorkspacesDialogProps {
   open: boolean;
   storages: StorageConfig[];
+  auditEvents?: McpAuditEvent[];
   onOpenChange: (open: boolean) => void;
   onSelectStorage: (storageId: string) => void;
   onUpdateStoragePolicy: (storageId: string, policy: McpStoragePolicy) => Promise<void>;
@@ -60,6 +63,7 @@ interface AgentWorkspacesDialogProps {
 export function AgentWorkspacesDialog({
   open,
   storages,
+  auditEvents = [],
   onOpenChange,
   onSelectStorage,
   onUpdateStoragePolicy,
@@ -80,6 +84,7 @@ export function AgentWorkspacesDialog({
   const [selectedCheckpointId, setSelectedCheckpointId] = useState<string>("");
   const [isMemoryBusy, setIsMemoryBusy] = useState(false);
   const [isCheckpointBusy, setIsCheckpointBusy] = useState(false);
+  const [activityEvents, setActivityEvents] = useState<ActivityLogEvent[]>([]);
 
   const selectedWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,
@@ -89,6 +94,12 @@ export function AgentWorkspacesDialog({
   const selectedWorkspaceStorage = selectedWorkspace
     ? storages.find((storage) => storage.id === selectedWorkspace.storageId)
     : null;
+  const workspaceAuditItems = useMemo(
+    () => selectedWorkspace ? buildWorkspaceAuditItems(selectedWorkspace, activityEvents, auditEvents) : [],
+    [activityEvents, auditEvents, selectedWorkspace],
+  );
+
+  const refreshWorkspaceActivity = () => setActivityEvents(listActivityLogEvents());
 
   useEffect(() => {
     if (!open) return;
@@ -96,6 +107,7 @@ export function AgentWorkspacesDialog({
     setWorkspaces(next);
     setSelectedWorkspaceId((current) => current ?? next[0]?.id ?? null);
     setStorageId((current) => current || storages[0]?.id || "");
+    refreshWorkspaceActivity();
   }, [open, storages]);
 
   useEffect(() => {
@@ -172,6 +184,7 @@ export function AgentWorkspacesDialog({
       const next = listAgentWorkspaces();
       setWorkspaces(next);
       setSelectedWorkspaceId(workspace.id);
+      refreshWorkspaceActivity();
       toast({
         title: "Workspace created",
         description: applyPolicy
@@ -200,6 +213,7 @@ export function AgentWorkspacesDialog({
       );
       setMemoryContent(next);
       setMemoryAppendText("");
+      refreshWorkspaceActivity();
       toast({ title: "Memory appended", description: `${selectedMemoryFile} was updated.` });
     } catch (error) {
       toast({
@@ -221,7 +235,11 @@ export function AgentWorkspacesDialog({
       setCheckpoints(nextCheckpoints);
       setSelectedCheckpointId(checkpoint.id);
       setWorkspaces(listAgentWorkspaces());
-      toast({ title: "Checkpoint saved", description: "Memory files were captured locally." });
+      refreshWorkspaceActivity();
+      toast({
+        title: "Checkpoint saved",
+        description: "Memory files were captured locally and in the workspace manifest.",
+      });
     } catch (error) {
       toast({
         title: "Checkpoint failed",
@@ -241,6 +259,7 @@ export function AgentWorkspacesDialog({
       if (selectedMemoryFile) {
         setMemoryContent(await readWorkspaceMemoryFile(selectedWorkspace, selectedMemoryFile));
       }
+      refreshWorkspaceActivity();
       toast({ title: "Checkpoint restored", description: "Memory files were restored." });
     } catch (error) {
       toast({
@@ -480,7 +499,7 @@ export function AgentWorkspacesDialog({
                   <div className="rounded-xl border bg-background p-4">
                     <h3 className="text-sm font-medium">Checkpoints</h3>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Capture memory files locally, then restore them to the workspace when needed.
+                      Capture memory files locally and under `.infimount/checkpoints` in the workspace.
                     </p>
                     <Button
                       className="mt-4 w-full"
@@ -519,6 +538,34 @@ export function AgentWorkspacesDialog({
                       <RotateCcw className="mr-2 h-4 w-4" />
                       Restore memory
                     </Button>
+
+                    <div className="mt-5 border-t pt-4">
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        <Clock3 className="h-4 w-4" />
+                        Workspace audit
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        {workspaceAuditItems.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">
+                            No workspace activity recorded yet.
+                          </p>
+                        ) : (
+                          workspaceAuditItems.slice(0, 6).map((item) => (
+                            <div key={item.id} className="rounded-lg bg-muted/40 p-2">
+                              <div className="text-xs font-medium">{item.title}</div>
+                              <div className="mt-0.5 text-[11px] text-muted-foreground">
+                                {new Date(item.createdAt).toLocaleString()}
+                              </div>
+                              {item.detail ? (
+                                <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
+                                  {item.detail}
+                                </div>
+                              ) : null}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </section>
               ) : null}
@@ -528,4 +575,54 @@ export function AgentWorkspacesDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+interface WorkspaceAuditItem {
+  id: string;
+  createdAt: number;
+  title: string;
+  detail?: string;
+}
+
+function buildWorkspaceAuditItems(
+  workspace: AgentWorkspace,
+  activityEvents: ActivityLogEvent[],
+  auditEvents: McpAuditEvent[],
+): WorkspaceAuditItem[] {
+  const activityItems = activityEvents
+    .filter((event) => event.workspaceId === workspace.id)
+    .map((event) => ({
+      id: event.id,
+      createdAt: event.createdAt,
+      title: event.message ?? humanizeActivityType(event.type),
+      detail: typeof event.summary?.rootPath === "string" ? event.summary.rootPath : undefined,
+    }));
+
+  const mcpItems = auditEvents
+    .filter((event) => event.storage_id === workspace.storageId)
+    .filter((event) => isWorkspacePath(workspace.rootPath, event.path))
+    .map((event) => ({
+      id: event.id,
+      createdAt: Date.parse(event.timestamp),
+      title: `MCP ${event.operation}: ${event.decision}`,
+      detail: event.path ?? undefined,
+    }));
+
+  return [...activityItems, ...mcpItems]
+    .filter((event) => Number.isFinite(event.createdAt))
+    .sort((a, b) => b.createdAt - a.createdAt);
+}
+
+function isWorkspacePath(rootPath: string, path: string | null): boolean {
+  if (!path) return false;
+  const root = rootPath.endsWith("/") ? rootPath : `${rootPath}/`;
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return normalizedPath === rootPath || normalizedPath.startsWith(root);
+}
+
+function humanizeActivityType(type: ActivityLogEvent["type"]): string {
+  return type
+    .replace(/^workspace_/, "")
+    .replace(/_/g, " ")
+    .replace(/^./, (character) => character.toUpperCase());
 }

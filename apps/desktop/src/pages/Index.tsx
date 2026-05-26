@@ -981,6 +981,7 @@ const Index = () => {
           <AgentWorkspacesDialog
             open={isAgentWorkspacesOpen}
             storages={storages}
+            auditEvents={mcpAuditEvents}
             onOpenChange={setIsAgentWorkspacesOpen}
             onSelectStorage={handleSelectStorage}
             onUpdateStoragePolicy={handleUpdateMcpStoragePolicy}

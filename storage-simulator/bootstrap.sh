@@ -40,6 +40,11 @@ export AWS_ACCESS_KEY_ID="admin"
 export AWS_SECRET_ACCESS_KEY="password123"
 export AWS_DEFAULT_REGION="us-east-1"
 export AWS_EC2_METADATA_DISABLED="true"
+# SeaweedFS's S3 compatibility endpoint can reject the flexible checksum
+# headers/trailers enabled by newer AWS CLI releases. Keep simulator uploads
+# on the broadly supported checksum behavior.
+export AWS_REQUEST_CHECKSUM_CALCULATION="when_required"
+export AWS_RESPONSE_CHECKSUM_VALIDATION="when_required"
 
 echo "[S3] Creating bucket..."
 aws --endpoint-url http://localhost:8333 \

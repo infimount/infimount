@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documented the OpenDAL-first storage policy: future file operations should remain backend-agnostic rather than adding provider-specific SDK paths.
 - Added the v0.5-v0.7 roadmap and started v0.5 with an OpenDAL-only transfer dry-run manifest API.
 - Added v0.5 workbench foundations: recursive metadata scans, opt-in local global search indexing, transfer activity log events, dry-run summaries in the transfer queue, interrupted-transfer recovery behavior, and dual-pane compare/update flows.
-- Started v0.6 Agent Workspaces with OpenDAL-backed workspace creation, scoped MCP policy application, coding/research/data-analysis templates, visible memory files, local memory checkpoints, and workspace activity events.
+- Completed v0.6 Agent Workspaces foundation with OpenDAL-backed workspace creation, scoped MCP policy application, coding/research/data-analysis templates, visible memory files, OpenDAL-written checkpoint manifests, checkpoint restore, and grouped workspace audit activity.
 
 ## [0.2.3] - 2026-05-14
 

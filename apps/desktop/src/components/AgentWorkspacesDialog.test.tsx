@@ -125,6 +125,28 @@ describe("AgentWorkspacesDialog", () => {
       <AgentWorkspacesDialog
         open
         storages={[storage]}
+        auditEvents={[
+          {
+            id: "audit-1",
+            timestamp: "2026-01-01T00:01:00Z",
+            actor_type: "mcp_client",
+            mcp_client_id: null,
+            session_id: null,
+            storage_id: "local",
+            storage_name: "Local Docs",
+            backend: "local",
+            tool_name: "list_dir",
+            operation: "list",
+            path: "/agent-workspaces/existing/memory",
+            version_id: null,
+            decision: "allowed",
+            confirmation_id: null,
+            duration_ms: 1,
+            bytes_read: null,
+            bytes_written: null,
+            error_code: null,
+          },
+        ]}
         onOpenChange={vi.fn()}
         onSelectStorage={vi.fn()}
         onUpdateStoragePolicy={vi.fn()}
@@ -134,6 +156,8 @@ describe("AgentWorkspacesDialog", () => {
     await waitFor(() => {
       expect(screen.getAllByText("Existing workspace").length).toBeGreaterThan(0);
     });
+    expect(await screen.findByText("MCP list: allowed")).toBeInTheDocument();
+
     fireEvent.change(screen.getByLabelText("Memory note"), {
       target: { value: "Follow up" },
     });

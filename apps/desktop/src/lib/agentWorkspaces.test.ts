@@ -88,9 +88,42 @@ describe("agentWorkspaces", () => {
     );
 
     const checkpoint = await createWorkspaceCheckpoint(workspace);
+    expect(checkpoint.manifestPath).toMatch(/^\.infimount\/checkpoints\/checkpoint-/);
     expect(listAgentWorkspaceCheckpoints(workspace.id)).toMatchObject([{ id: checkpoint.id }]);
+    expect(writeFile).toHaveBeenCalledWith(
+      "local",
+      `/research/${checkpoint.manifestPath}`,
+      expect.anything(),
+    );
 
     await restoreWorkspaceMemoryCheckpoint(workspace, checkpoint.id);
+    expect(writeFile).toHaveBeenCalledWith(
+      "local",
+      "/research/memory/questions.md",
+      expect.anything(),
+    );
+  });
+
+  it("restores a checkpoint from the OpenDAL workspace manifest when local state is missing", async () => {
+    const workspace = await createAgentWorkspace({
+      storageId: "local",
+      name: "Research",
+      rootPath: "/research",
+      templateId: "research",
+    });
+    const checkpoint = await createWorkspaceCheckpoint(workspace);
+    const manifestCall = vi
+      .mocked(writeFile)
+      .mock.calls.find((call) => call[1] === `/research/${checkpoint.manifestPath}`);
+    expect(manifestCall).toBeTruthy();
+    const manifestBytes = manifestCall?.[2] as Uint8Array;
+
+    window.localStorage.setItem("infimount:agent-workspace-checkpoints:v1", "[]");
+    vi.mocked(readFile).mockResolvedValueOnce(manifestBytes);
+
+    await restoreWorkspaceMemoryCheckpoint(workspace, checkpoint.id);
+
+    expect(readFile).toHaveBeenCalledWith("local", `/research/${checkpoint.manifestPath}`);
     expect(writeFile).toHaveBeenCalledWith(
       "local",
       "/research/memory/questions.md",

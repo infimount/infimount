@@ -15,7 +15,7 @@ services:
   seaweed-volume:
     image: chrislusf/seaweedfs:latest
     container_name: seaweed-volume
-    command: "volume -max=5 -mserver=seaweed-master:9333 -port=8080"
+    command: "volume -max=5 -mserver=seaweed-master:9333 -port=8080 -minFreeSpace=0"
     ports:
       - "8081:8080"
     depends_on:

@@ -47,8 +47,9 @@ Implementation status:
 - Workspace templates exist for coding, research, and data analysis agents.
 - Optional workspace MCP policy sets default access to none and allows only the workspace root.
 - Memory files are visible under `memory/` and can be listed, read, and appended from the workspace dialog.
-- Memory checkpoints are stored locally and can restore the visible memory files back to the workspace.
+- Memory checkpoints are stored locally and as OpenDAL-written workspace manifests under `.infimount/checkpoints`, then can restore visible memory files back to the workspace.
 - Workspace activity events carry a `workspaceId` for created, memory-appended, checkpoint-created, and checkpoint-restored actions.
+- Workspace audit groups local workspace activity with MCP audit events whose storage and path fall under the workspace root.
 
 ## v0.7: OpenDAL Backend Expansion
 
