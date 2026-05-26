@@ -5,7 +5,7 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use futures::TryStreamExt;
 use indexmap::IndexMap;
-use opendal::services::{Azblob, Fs, Gcs, Webdav, S3};
+use opendal::services::{Azblob, Fs, Gcs, Webdav, B2, S3};
 use opendal::ErrorKind;
 use opendal::Operator;
 use tokio::sync::RwLock;
@@ -182,6 +182,7 @@ fn build_operator(source: &Source) -> Result<Operator> {
         SourceKind::WebDav => build_webdav_operator(source),
         SourceKind::AzureBlob => build_azure_blob_operator(source),
         SourceKind::Gcs => build_gcs_operator(source),
+        SourceKind::B2 => build_b2_operator(source),
     }
 }
 
@@ -284,6 +285,11 @@ fn build_s3_operator(source: &Source) -> Result<Operator> {
         if let Some(endpoint) = config.get("endpoint") {
             builder = builder.endpoint(endpoint);
         }
+        if let Some(default_acl) = config.get("defaultAcl") {
+            if !default_acl.trim().is_empty() {
+                builder = builder.default_acl(default_acl);
+            }
+        }
     }
 
     let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
@@ -309,6 +315,13 @@ fn build_webdav_operator(source: &Source) -> Result<Operator> {
         }
         if let Some(root_path) = config.get("rootPath") {
             builder = builder.root(root_path);
+        }
+        if config
+            .get("disableCreateDir")
+            .and_then(|v| parse_bool(v))
+            .unwrap_or(false)
+        {
+            builder = builder.disable_create_dir(true);
         }
     }
 
@@ -394,6 +407,50 @@ fn build_gcs_operator(source: &Source) -> Result<Operator> {
 
     let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
     Ok(op)
+}
+
+fn build_b2_operator(source: &Source) -> Result<Operator> {
+    let mut builder = B2::default();
+
+    if !source.root.is_empty() {
+        builder = builder.bucket(&source.root);
+    }
+
+    if let Some(config) = &source.config {
+        if let Some(bucket) = config.get("bucket").or_else(|| config.get("bucketName")) {
+            builder = builder.bucket(bucket);
+        }
+        if let Some(bucket_id) = config.get("bucketId") {
+            builder = builder.bucket_id(bucket_id);
+        }
+        if let Some(application_key_id) = config
+            .get("applicationKeyId")
+            .or_else(|| config.get("keyId"))
+            .or_else(|| config.get("application_key_id"))
+        {
+            builder = builder.application_key_id(application_key_id);
+        }
+        if let Some(application_key) = config
+            .get("applicationKey")
+            .or_else(|| config.get("application_key"))
+        {
+            builder = builder.application_key(application_key);
+        }
+        if let Some(root_path) = config.get("rootPath").or_else(|| config.get("root")) {
+            builder = builder.root(root_path);
+        }
+    }
+
+    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    Ok(op)
+}
+
+fn parse_bool(raw: &str) -> Option<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "y" | "on" => Some(true),
+        "false" | "0" | "no" | "n" | "off" => Some(false),
+        _ => None,
+    }
 }
 
 fn normalize_gcs_credential(raw: &str) -> Option<String> {
@@ -542,6 +599,40 @@ mod tests {
         let encoded = BASE64_STANDARD.encode(b"hello");
         let with_ws = format!("  {} \n", encoded);
         assert_eq!(normalize_gcs_credential(&with_ws).unwrap(), encoded);
+    }
+
+    #[test]
+    fn build_b2_operator_accepts_native_b2_config() {
+        let source = Source {
+            id: "b2".to_string(),
+            name: "B2".to_string(),
+            kind: crate::models::SourceKind::B2,
+            root: String::new(),
+            config: Some(std::collections::HashMap::from([
+                ("bucket".to_string(), "bucket-name".to_string()),
+                ("bucketId".to_string(), "bucket-id".to_string()),
+                ("applicationKeyId".to_string(), "key-id".to_string()),
+                ("applicationKey".to_string(), "application-key".to_string()),
+                ("rootPath".to_string(), "/workspace".to_string()),
+            ])),
+        };
+
+        let op = build_operator(&source).expect("operator should build");
+        let caps = op.info().full_capability();
+        assert!(caps.list);
+        assert!(caps.read);
+        assert!(caps.write);
+        assert!(caps.presign_read);
+        assert!(caps.write_with_user_metadata);
+    }
+
+    #[test]
+    fn parse_bool_accepts_storage_config_values() {
+        assert_eq!(parse_bool("true"), Some(true));
+        assert_eq!(parse_bool("on"), Some(true));
+        assert_eq!(parse_bool("false"), Some(false));
+        assert_eq!(parse_bool("off"), Some(false));
+        assert_eq!(parse_bool("maybe"), None);
     }
 
     #[test]

@@ -52,6 +52,55 @@
         "input_type": "text",
         "required": false,
         "secret": false
+      },
+      {
+        "name": "defaultAcl",
+        "label": "Default Object ACL",
+        "input_type": "text",
+        "required": false,
+        "secret": false
+      }
+    ]
+  },
+  {
+    "id": "backblaze-b2",
+    "label": "Backblaze B2",
+    "kind": "b2",
+    "fields": [
+      {
+        "name": "bucket",
+        "label": "Bucket Name",
+        "input_type": "text",
+        "required": true,
+        "secret": false
+      },
+      {
+        "name": "bucketId",
+        "label": "Bucket ID",
+        "input_type": "text",
+        "required": true,
+        "secret": false
+      },
+      {
+        "name": "applicationKeyId",
+        "label": "Application Key ID",
+        "input_type": "text",
+        "required": true,
+        "secret": true
+      },
+      {
+        "name": "applicationKey",
+        "label": "Application Key",
+        "input_type": "password",
+        "required": true,
+        "secret": true
+      },
+      {
+        "name": "rootPath",
+        "label": "Root Prefix",
+        "input_type": "text",
+        "required": false,
+        "secret": false
       }
     ]
   },
@@ -120,6 +169,13 @@
         "name": "rootPath",
         "label": "Root Path",
         "input_type": "text",
+        "required": false,
+        "secret": false
+      },
+      {
+        "name": "disableCreateDir",
+        "label": "Disable directory creation compatibility mode",
+        "input_type": "checkbox",
         "required": false,
         "secret": false
       }

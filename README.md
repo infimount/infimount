@@ -34,7 +34,7 @@
 
 ## ✨ Features
 
-- 🗂️ **Unified File Browser** — Browse local files, S3, Azure Blob, GCS, and WebDAV from one app
+- 🗂️ **Unified File Browser** — Browse local files, S3, Backblaze B2, Azure Blob, GCS, and WebDAV from one app
 - 🔐 **Local-First Storage of Config + Credentials** — Sources and credentials persist locally on your machine
 - 🖼️ **Rich Previews** — View images, text files, and documents inline
 - 📁 **Grid & List Views** — Switch between visual layouts
@@ -149,10 +149,11 @@ If you installed from release binaries (not Homebrew), upgrade like this:
 | Backend                  | Status     | Notes                                                                       |
 | ------------------------ | ---------- | --------------------------------------------------------------------------- |
 | **Local Filesystem**     | ✅ Stable  | Full read/write support                                                     |
-| **Amazon S3**            | ✅ Stable  | Any S3-compatible service; versioning depends on bucket support             |
+| **Amazon S3**            | ✅ Stable  | Any S3-compatible service; versioning depends on bucket support; optional default object ACL |
+| **Backblaze B2**         | ✅ Stable  | Native OpenDAL B2 backend with read/write/list/delete, copy, presign, and user metadata capability |
 | **Azure Blob Storage**   | ✅ Stable  | Container/account key auth; advanced capabilities depend on account support |
 | **Google Cloud Storage** | ✅ Stable  | Service account JSON; advanced capabilities depend on bucket support        |
-| **WebDAV**               | ✅ Stable  | Nextcloud, ownCloud, etc.; no object versioning                             |
+| **WebDAV**               | ✅ Stable  | Nextcloud, ownCloud, etc.; optional compatibility mode for servers that cannot create collection placeholders |
 | **SFTP**                 | 🔜 Planned | Coming soon                                                                 |
 | **FTP**                  | 🔜 Planned | Coming soon                                                                 |
 

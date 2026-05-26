@@ -284,6 +284,7 @@ fn legacy_source_to_storage(source: Source) -> StorageRecord {
         SourceKind::WebDav => "webdav",
         SourceKind::AzureBlob => "azure_blob",
         SourceKind::Gcs => "gcs",
+        SourceKind::B2 => "b2",
     }
     .to_string();
 

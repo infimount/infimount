@@ -51,6 +51,7 @@ const validationResult: StorageValidationResult = {
     rename: true,
     presign_read: false,
     create_dir: true,
+    write_with_user_metadata: false,
   },
 };
 
@@ -62,7 +63,9 @@ export function MockedAddStorageDialog() {
       loadSchemas={async () => schemas}
       onVerify={async () => validationResult}
       onAdd={async (draft: StorageDraft) => {
-        (window as Window & { __PLAYWRIGHT_ADD_STORAGE_RESULT__?: StorageDraft }).__PLAYWRIGHT_ADD_STORAGE_RESULT__ = draft;
+        (
+          window as Window & { __PLAYWRIGHT_ADD_STORAGE_RESULT__?: StorageDraft }
+        ).__PLAYWRIGHT_ADD_STORAGE_RESULT__ = draft;
       }}
     />
   );

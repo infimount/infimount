@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Upgraded OpenDAL to 0.56.0, migrated recursive delete calls to `delete_with(...).recursive(true)`, and documented Rust 1.85+ as the minimum Rust version for source builds.
+- Started public v0.5.0 backend expansion with native Backblaze B2 support, S3 default object ACL configuration, WebDAV directory-creation compatibility mode, and user-metadata capability reporting.
 
 ## [0.4.0] - 2026-05-26
 

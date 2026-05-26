@@ -100,6 +100,8 @@ pub enum SourceKind {
     AzureBlob,
     #[serde(rename = "gcs")]
     Gcs,
+    #[serde(rename = "b2")]
+    B2,
 }
 
 impl fmt::Display for SourceKind {
@@ -110,6 +112,7 @@ impl fmt::Display for SourceKind {
             SourceKind::WebDav => write!(f, "webdav"),
             SourceKind::AzureBlob => write!(f, "azure_blob"),
             SourceKind::Gcs => write!(f, "gcs"),
+            SourceKind::B2 => write!(f, "b2"),
         }
     }
 }

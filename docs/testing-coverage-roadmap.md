@@ -156,6 +156,7 @@ Use `storage-simulator` CI to verify:
 - Azure/Azurite read/write/list/stat/delete
 - GCS emulator read/write/list/stat/delete
 - WebDAV list reachability
+- Backblaze B2 operator/schema/capability unit coverage; live B2 round-trip tests remain opt-in because no local simulator is available
 - `validate_storage` capability summary
 
 ### Phase 4: accessibility and visual regression

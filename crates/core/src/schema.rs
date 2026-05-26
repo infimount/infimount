@@ -32,3 +32,34 @@ pub fn list_storage_schemas() -> Result<Vec<StorageKindSchema>> {
     let items: Vec<StorageKindSchema> = serde_json::from_str(JSON)?;
     Ok(items)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schemas_include_v0_5_backend_expansion_fields() {
+        let schemas = list_storage_schemas().expect("schemas should parse");
+        let b2 = schemas
+            .iter()
+            .find(|schema| schema.id == "backblaze-b2")
+            .expect("Backblaze B2 schema should exist");
+        assert!(matches!(b2.kind, SourceKind::B2));
+        assert!(b2.fields.iter().any(|field| field.name == "bucketId"));
+
+        let s3 = schemas
+            .iter()
+            .find(|schema| schema.id == "aws-s3")
+            .expect("S3 schema should exist");
+        assert!(s3.fields.iter().any(|field| field.name == "defaultAcl"));
+
+        let webdav = schemas
+            .iter()
+            .find(|schema| schema.id == "webdav")
+            .expect("WebDAV schema should exist");
+        assert!(webdav
+            .fields
+            .iter()
+            .any(|field| field.name == "disableCreateDir" && field.input_type == "checkbox"));
+    }
+}

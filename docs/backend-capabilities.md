@@ -9,13 +9,16 @@ OpenDAL is Infimount's storage abstraction boundary. File operations should stay
 
 This means future features should be designed around capabilities exposed through OpenDAL. If a feature requires backend-specific primitives that are not available through the common OpenDAL path, prefer a backend-agnostic UX fallback, capability detection, or clear "not supported" state over adding provider-specific storage code.
 
+For backend expansion, a backend is not considered product-ready until it has an OpenDAL operator builder, desktop schema, MCP builder support, capability coverage, automated tests, and documentation. OpenDAL 0.56.0 also introduced a Volcengine TOS service crate, but its Rust backend currently reports no read/write/list/stat capability, so Infimount does not expose it as a user-selectable storage yet.
+
 | Backend                   | Browse/read/write | Presigned download links | Object versions          | Notes                                                                       |
 | ------------------------- | ----------------- | ------------------------ | ------------------------ | --------------------------------------------------------------------------- |
 | Local filesystem          | Yes               | No                       | No                       | Local paths are direct filesystem operations.                               |
-| Amazon S3 / S3-compatible | Yes               | Backend-dependent        | Backend/config-dependent | Versioning requires bucket support and versioning enabled.                  |
+| Amazon S3 / S3-compatible | Yes               | Backend-dependent        | Backend/config-dependent | Versioning requires bucket support and versioning enabled. Optional `defaultAcl` is passed through OpenDAL for writes. |
+| Backblaze B2              | Yes               | Yes                      | No                       | Native OpenDAL B2 backend. Supports write-time user metadata when OpenDAL reports `write_with_user_metadata`. |
 | Azure Blob Storage        | Yes               | Backend-dependent        | Backend/config-dependent | Version behavior depends on account/container support and configuration.    |
 | Google Cloud Storage      | Yes               | Backend-dependent        | Backend/config-dependent | Versioning requires object versioning/generation support and configuration. |
-| WebDAV                    | Yes               | No                       | No                       | Version tools return `ERR_VERSIONS_NOT_SUPPORTED`.                          |
+| WebDAV                    | Yes               | No                       | No                       | Version tools return `ERR_VERSIONS_NOT_SUPPORTED`. Use `disableCreateDir` for servers that reject collection creation probes/placeholders. |
 
 ## Error Semantics
 

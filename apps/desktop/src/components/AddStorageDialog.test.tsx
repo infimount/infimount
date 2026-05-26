@@ -10,9 +10,7 @@ const schemas: StorageKindSchema[] = [
     id: "local-fs",
     label: "Local Folder",
     kind: "local",
-    fields: [
-      { name: "root", label: "Root path", input_type: "text", required: true },
-    ],
+    fields: [{ name: "root", label: "Root path", input_type: "text", required: true }],
   },
   {
     id: "aws-s3",
@@ -40,6 +38,7 @@ const validResult: StorageValidationResult = {
     rename: false,
     presign_read: false,
     create_dir: true,
+    write_with_user_metadata: false,
   },
 };
 
@@ -48,12 +47,7 @@ const renderDialog = (props: Partial<Parameters<typeof AddStorageDialog>[0]> = {
   const loadSchemas = vi.fn().mockResolvedValue(schemas);
 
   render(
-    <AddStorageDialog
-      open
-      onOpenChange={onOpenChange}
-      loadSchemas={loadSchemas}
-      {...props}
-    />,
+    <AddStorageDialog open onOpenChange={onOpenChange} loadSchemas={loadSchemas} {...props} />,
   );
 
   return { onOpenChange, loadSchemas };
@@ -220,6 +214,120 @@ describe("AddStorageDialog", () => {
     });
   });
 
+  it("submits native Backblaze B2 storage drafts", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    renderDialog({
+      onAdd,
+      loadSchemas: vi.fn().mockResolvedValue([
+        {
+          id: "backblaze-b2",
+          label: "Backblaze B2",
+          kind: "b2",
+          fields: [
+            { name: "bucket", label: "Bucket", input_type: "text", required: true },
+            { name: "bucketId", label: "Bucket ID", input_type: "text", required: true },
+            {
+              name: "applicationKeyId",
+              label: "Application Key ID",
+              input_type: "text",
+              required: true,
+              secret: true,
+            },
+            {
+              name: "applicationKey",
+              label: "Application Key",
+              input_type: "password",
+              required: true,
+              secret: true,
+            },
+            { name: "rootPath", label: "Root Prefix", input_type: "text" },
+          ],
+        },
+      ]),
+    });
+
+    fireEvent.change(await screen.findByLabelText("Storage Name"), {
+      target: { value: "B2 Archive" },
+    });
+    fireEvent.change(await screen.findByLabelText(/^Bucket \*/i), {
+      target: { value: "archive" },
+    });
+    fireEvent.change(screen.getByLabelText(/Bucket ID/), { target: { value: "bucket-id" } });
+    fireEvent.change(screen.getByLabelText(/Application Key ID/), {
+      target: { value: "key-id" },
+    });
+    fireEvent.change(screen.getByLabelText(/^Application Key \*/i), {
+      target: { value: "secret-key" },
+    });
+    fireEvent.change(screen.getByLabelText(/Root Prefix/), {
+      target: { value: "/team" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Storage" }));
+
+    await waitFor(() => {
+      expect(onAdd).toHaveBeenCalledWith({
+        name: "B2 Archive",
+        backend: "b2",
+        config: {
+          bucket: "archive",
+          bucketId: "bucket-id",
+          applicationKeyId: "key-id",
+          applicationKey: "secret-key",
+          rootPath: "/team",
+        },
+        enabled: true,
+        mcpExposed: true,
+        readOnly: false,
+      });
+    });
+  });
+
+  it("submits WebDAV compatibility flags as booleans", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    renderDialog({
+      onAdd,
+      loadSchemas: vi.fn().mockResolvedValue([
+        {
+          id: "webdav",
+          label: "WebDAV",
+          kind: "webdav",
+          fields: [
+            { name: "serverUrl", label: "Server URL", input_type: "text", required: true },
+            {
+              name: "disableCreateDir",
+              label: "Disable directory creation compatibility mode",
+              input_type: "checkbox",
+            },
+          ],
+        },
+      ]),
+    });
+
+    fireEvent.change(await screen.findByLabelText("Storage Name"), {
+      target: { value: "Strict WebDAV" },
+    });
+    fireEvent.change(await screen.findByLabelText(/Server URL/), {
+      target: { value: "https://dav.example.test" },
+    });
+    fireEvent.click(screen.getByRole("switch", { name: /Disable directory creation/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Storage" }));
+
+    await waitFor(() => {
+      expect(onAdd).toHaveBeenCalledWith({
+        name: "Strict WebDAV",
+        backend: "webdav",
+        config: {
+          serverUrl: "https://dav.example.test",
+          disableCreateDir: true,
+        },
+        enabled: true,
+        mcpExposed: true,
+        readOnly: false,
+      });
+    });
+  });
+
   it("edits existing storage while preserving advanced config fields", async () => {
     const onUpdate = vi.fn().mockResolvedValue(undefined);
     const initialStorage: StorageConfig = {
@@ -256,7 +364,9 @@ describe("AddStorageDialog", () => {
     renderDialog({ initialStorage, onUpdate });
 
     expect(await screen.findByText("Edit Storage")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByLabelText("Storage Name")).toHaveValue("Existing bucket"));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Storage Name")).toHaveValue("Existing bucket"),
+    );
     expect(await screen.findByLabelText(/Bucket/)).toHaveValue("old-bucket");
     expect(screen.getByLabelText(/Secret key/)).toHaveAttribute("type", "password");
     expect(screen.getByText(/advanced config field/)).toBeInTheDocument();

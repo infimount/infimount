@@ -83,6 +83,8 @@ const getStorageIcon = (type: string) => {
   switch (type) {
     case "aws-s3":
       return s3Icon;
+    case "backblaze-b2":
+      return folderNetworkIcon;
     case "azure-blob":
       return azureIcon;
     case "gcs":

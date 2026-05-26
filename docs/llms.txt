@@ -1,8 +1,8 @@
 # Infimount
 
 Infimount is a local-first desktop app for browsing and managing local files,
-Amazon S3, Azure Blob Storage, Google Cloud Storage, and WebDAV from one native
-interface. It also exposes selected storages through MCP for local AI assistants
+Amazon S3, Backblaze B2, Azure Blob Storage, Google Cloud Storage, and WebDAV
+from one native interface. It also exposes selected storages through MCP for local AI assistants
 and agent workflows.
 
 ## Useful Links
@@ -20,6 +20,7 @@ and agent workflows.
 
 - Local filesystem
 - Amazon S3 and S3-compatible storage
+- Backblaze B2
 - Azure Blob Storage
 - Google Cloud Storage
 - WebDAV

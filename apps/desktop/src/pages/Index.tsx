@@ -80,6 +80,7 @@ const StorageConfigEditorDialog = lazy(() =>
 const BACKEND_TO_TYPE: Record<StorageBackend, StorageType> = {
   local: "local-fs",
   s3: "aws-s3",
+  b2: "backblaze-b2",
   azure_blob: "azure-blob",
   webdav: "webdav",
   gcs: "gcs",

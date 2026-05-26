@@ -35,6 +35,7 @@ import folderNetworkIcon from "@/assets/folder-network.svg";
 
 const STORAGE_TYPE_ICONS: Record<string, string> = {
   "aws-s3": s3Icon,
+  "backblaze-b2": folderNetworkIcon,
   "azure-blob": azureIcon,
   gcs: gcsIcon,
   webdav: webdavIcon,
@@ -289,6 +290,11 @@ export function AddStorageDialog({
       if (field.required && !rawValue.trim()) {
         setFormError(`${field.label} is required.`);
         return null;
+      }
+
+      if (field.input_type === "checkbox") {
+        config[field.name] = rawValue === "true";
+        continue;
       }
 
       if (!rawValue.trim()) continue;
@@ -611,8 +617,25 @@ function StorageFieldInput({
   onChange: (value: string) => void;
 }) {
   const isTextarea = field.input_type === "textarea";
+  const isCheckbox = field.input_type === "checkbox";
   const inputType = field.secret && !revealSecrets ? "password" : field.input_type || "text";
   const inputId = `storage-field-${field.name}`;
+
+  if (isCheckbox) {
+    return (
+      <div className="flex items-start justify-between gap-3 rounded-lg border border-border/60 bg-background/60 px-3 py-3">
+        <Label htmlFor={inputId} className="text-xs font-normal leading-5 text-muted-foreground">
+          {field.label}
+          {field.required ? " *" : ""}
+        </Label>
+        <Switch
+          id={inputId}
+          checked={value === "true"}
+          onCheckedChange={(checked) => onChange(String(checked))}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-2">
@@ -669,6 +692,8 @@ function mapStorageTypeToBackend(type: StorageType): StorageDraft["backend"] {
   switch (type) {
     case "aws-s3":
       return "s3";
+    case "backblaze-b2":
+      return "b2";
     case "azure-blob":
       return "azure_blob";
     case "webdav":
@@ -687,8 +712,22 @@ function buildFieldValues(
 ): Record<string, string> {
   if (!schema) return {};
   return Object.fromEntries(
-    schema.fields.map((field) => [field.name, stringifyFieldValue(config[field.name])]),
+    schema.fields.map((field) => {
+      const value = config[field.name];
+      if (field.input_type === "checkbox") {
+        return [field.name, stringifyCheckboxValue(value)];
+      }
+      return [field.name, stringifyFieldValue(value)];
+    }),
   );
+}
+
+function stringifyCheckboxValue(value: unknown): string {
+  if (typeof value === "boolean") return String(value);
+  if (typeof value === "string") {
+    return ["true", "1", "yes", "y", "on"].includes(value.trim().toLowerCase()) ? "true" : "false";
+  }
+  return "false";
 }
 
 function stringifyFieldValue(value: unknown): string {

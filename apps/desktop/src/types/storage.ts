@@ -1,5 +1,5 @@
-export type StorageType = "aws-s3" | "azure-blob" | "webdav" | "gcs" | "local-fs";
-export type StorageBackend = "s3" | "azure_blob" | "webdav" | "gcs" | "local";
+export type StorageType = "aws-s3" | "backblaze-b2" | "azure-blob" | "webdav" | "gcs" | "local-fs";
+export type StorageBackend = "s3" | "b2" | "azure_blob" | "webdav" | "gcs" | "local";
 export type McpTransport = "stdio" | "http";
 
 export interface StorageDraft {
@@ -48,6 +48,7 @@ export interface StorageValidationCapabilities {
   rename: boolean;
   presign_read: boolean;
   create_dir: boolean;
+  write_with_user_metadata: boolean;
 }
 
 export interface StorageValidationResult {
@@ -86,6 +87,7 @@ export interface StorageCapabilities {
   read_with_version: boolean;
   delete_with_version: boolean;
   presign_read: boolean;
+  write_with_user_metadata?: boolean;
 }
 
 export interface FileItem {

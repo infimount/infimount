@@ -27,7 +27,7 @@ The durable product wedge is not “another cloud file manager.” It is:
 - Shared core crate in `crates/core`.
 - Uses Apache OpenDAL for storage operations.
 - Desktop file operations are thin wrappers over OpenDAL: list, stat, read, write, create directory, delete, upload, transfer, versions.
-- Registry currently builds OpenDAL operators for local filesystem, S3, Azure Blob, GCS, and WebDAV.
+- Registry currently builds OpenDAL operators for local filesystem, S3, Backblaze B2, Azure Blob, GCS, and WebDAV.
 
 ### MCP server
 
@@ -49,7 +49,7 @@ The durable product wedge is not “another cloud file manager.” It is:
 
 Needs:
 
-- Browse and move files across local folders, buckets, containers, and WebDAV.
+- Browse and move files across local folders, buckets, B2 buckets, containers, and WebDAV.
 - Validate storage credentials quickly.
 - Avoid switching among cloud consoles, CLIs, Cyberduck-style apps, and filesystem windows.
 
@@ -196,7 +196,7 @@ Differentiators to preserve:
 ### Storage breadth
 
 - SFTP and FTP backends.
-- More S3-compatible provider presets. Cloudflare R2, MinIO, Wasabi, Backblaze B2, DigitalOcean Spaces, and Nextcloud/WebDAV presets are implemented in the add-storage flow.
+- More S3-compatible provider presets. Cloudflare R2, MinIO, Wasabi, Backblaze B2 S3-compatible endpoints, DigitalOcean Spaces, and Nextcloud/WebDAV presets are implemented in the add-storage flow; native Backblaze B2 is also available as a first-class OpenDAL backend.
 - Better WebDAV/Nextcloud guidance.
 - Versioning UI where backend supports it.
 
