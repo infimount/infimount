@@ -80,10 +80,11 @@ describe("AddStorageDialog", () => {
     const onVerify = vi.fn().mockResolvedValue(validResult);
     const { onOpenChange } = renderDialog({ onAdd, onVerify });
 
-    fireEvent.change(await screen.findByLabelText("Storage Name"), {
+    const rootInput = await screen.findByLabelText(/Root path/);
+    fireEvent.change(screen.getByLabelText("Storage Name"), {
       target: { value: "Local docs" },
     });
-    fireEvent.change(screen.getByLabelText(/Root path/), {
+    fireEvent.change(rootInput, {
       target: { value: "/Users/me/docs" },
     });
 
@@ -246,10 +247,11 @@ describe("AddStorageDialog", () => {
       ]),
     });
 
-    fireEvent.change(await screen.findByLabelText("Storage Name"), {
+    const bucketInput = await screen.findByLabelText(/^Bucket \*/i);
+    fireEvent.change(screen.getByLabelText("Storage Name"), {
       target: { value: "B2 Archive" },
     });
-    fireEvent.change(await screen.findByLabelText(/^Bucket \*/i), {
+    fireEvent.change(bucketInput, {
       target: { value: "archive" },
     });
     fireEvent.change(screen.getByLabelText(/Bucket ID/), { target: { value: "bucket-id" } });
@@ -304,10 +306,11 @@ describe("AddStorageDialog", () => {
       ]),
     });
 
-    fireEvent.change(await screen.findByLabelText("Storage Name"), {
+    const serverUrlInput = await screen.findByLabelText(/Server URL/);
+    fireEvent.change(screen.getByLabelText("Storage Name"), {
       target: { value: "Strict WebDAV" },
     });
-    fireEvent.change(await screen.findByLabelText(/Server URL/), {
+    fireEvent.change(serverUrlInput, {
       target: { value: "https://dav.example.test" },
     });
     fireEvent.click(screen.getByRole("switch", { name: /Disable directory creation/ }));
