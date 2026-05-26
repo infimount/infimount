@@ -7,10 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-26
+
+### Added
+
+- Native Backblaze B2 support across core, desktop, and MCP using OpenDAL.
+- S3 `defaultAcl` configuration for buckets that require a default object ACL.
+- WebDAV `disableCreateDir` compatibility mode for servers that reject collection creation probes/placeholders.
+- Capability reporting and capability-gated writes for OpenDAL user metadata.
+- MCP `stat_path` now returns user metadata when OpenDAL exposes it.
+
 ### Changed
 
 - Upgraded OpenDAL to 0.56.0, migrated recursive delete calls to `delete_with(...).recursive(true)`, and documented Rust 1.85+ as the minimum Rust version for source builds.
-- Started public v0.5.0 backend expansion with native Backblaze B2 support, S3 default object ACL configuration, WebDAV directory-creation compatibility mode, and capability-gated user-metadata writes/reporting.
+- Clarified the public roadmap so v0.4.0 contains the completed Workbench Reliability and Agent Workspaces work, while public v0.5.0 focuses on backend expansion.
+- Documented that Volcengine TOS was assessed but is not exposed until OpenDAL reports product-ready read/write/list/stat capability.
 
 ## [0.4.0] - 2026-05-26
 
