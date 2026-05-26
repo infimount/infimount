@@ -101,6 +101,7 @@ test("renders the MCP settings dialog", async ({ mount, page }) => {
         storages={storages}
         auditEvents={[]}
         pendingConfirmations={[]}
+        activeSessions={[]}
         notificationPermission="default"
         onSave={async () => undefined}
         onStartHttp={async () => undefined}
