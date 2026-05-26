@@ -140,12 +140,19 @@ describe("api wrappers", () => {
 
     await expect(readFile("s1", "/hi.txt")).resolves.toEqual(new Uint8Array([104, 105]));
     await writeFile("s1", "/hi.txt", new Uint8Array([1, 2, 3]));
+    await writeFile("s1", "/meta.txt", new Uint8Array([4]), { project: "alpha" });
 
     expect(invokeMock).toHaveBeenNthCalledWith(1, "read_file", { sourceId: "s1", path: "/hi.txt" });
     expect(invokeMock).toHaveBeenNthCalledWith(2, "write_file", {
       sourceId: "s1",
       path: "/hi.txt",
       data: [1, 2, 3],
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(3, "write_file", {
+      sourceId: "s1",
+      path: "/meta.txt",
+      data: [4],
+      userMetadata: { project: "alpha" },
     });
   });
 

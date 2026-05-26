@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::errors::{map_opendal_error, McpErrorCode, McpResult};
 use crate::opendal_adapter;
@@ -24,6 +25,7 @@ pub struct StatPathOutput {
     pub modified_at: Option<String>,
     pub etag: Option<String>,
     pub content_type: Option<String>,
+    pub user_metadata: Option<HashMap<String, String>>,
 }
 
 pub async fn stat_path(ctx: &FsToolsContext, input: StatPathInput) -> McpResult<StatPathOutput> {
@@ -38,6 +40,7 @@ pub async fn stat_path(ctx: &FsToolsContext, input: StatPathInput) -> McpResult<
             modified_at: None,
             etag: None,
             content_type: None,
+            user_metadata: None,
         });
     }
 
@@ -65,6 +68,7 @@ pub async fn stat_path(ctx: &FsToolsContext, input: StatPathInput) -> McpResult<
             modified_at: None,
             etag: None,
             content_type: None,
+            user_metadata: None,
         });
     }
 
@@ -88,5 +92,6 @@ pub async fn stat_path(ctx: &FsToolsContext, input: StatPathInput) -> McpResult<
         modified_at: meta.last_modified().map(|dt| dt.to_string()),
         etag: meta.etag().map(|s| s.to_string()),
         content_type: meta.content_type().map(|s| s.to_string()),
+        user_metadata: meta.user_metadata().cloned(),
     })
 }

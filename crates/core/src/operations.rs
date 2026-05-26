@@ -2,6 +2,7 @@ use futures::io::{AsyncReadExt, AsyncWriteExt};
 use futures::TryStreamExt;
 use opendal::{ErrorKind, Operator};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::Path;
 use tokio::fs;
 
@@ -212,9 +213,59 @@ pub async fn read_full(op: &Operator, path: &str) -> Result<Vec<u8>> {
 
 /// Write the full contents of a file, overwriting if it exists.
 pub async fn write_full(op: &Operator, path: &str, data: &[u8]) -> Result<()> {
+    write_full_with_user_metadata(op, path, data, None).await
+}
+
+/// Write the full contents of a file with optional user metadata.
+///
+/// Metadata is only sent when the OpenDAL backend advertises
+/// `write_with_user_metadata`; callers get an explicit config error instead of
+/// silently dropping requested metadata on unsupported backends.
+pub async fn write_full_with_user_metadata(
+    op: &Operator,
+    path: &str,
+    data: &[u8],
+    user_metadata: Option<HashMap<String, String>>,
+) -> Result<()> {
     let p = normalize_opendal_path(path);
-    op.write(&p, data.to_vec()).await?;
+    let Some(metadata) = sanitize_user_metadata(user_metadata) else {
+        op.write(&p, data.to_vec()).await?;
+        return Ok(());
+    };
+
+    if !op.info().full_capability().write_with_user_metadata {
+        return Err(crate::models::CoreError::Config(
+            "storage backend does not support user metadata writes".to_string(),
+        ));
+    }
+
+    op.write_with(&p, data.to_vec())
+        .user_metadata(metadata)
+        .await?;
     Ok(())
+}
+
+fn sanitize_user_metadata(
+    user_metadata: Option<HashMap<String, String>>,
+) -> Option<HashMap<String, String>> {
+    let metadata = user_metadata?;
+    let sanitized = metadata
+        .into_iter()
+        .filter_map(|(key, value)| {
+            let key = key.trim().to_string();
+            if key.is_empty() {
+                None
+            } else {
+                Some((key, value))
+            }
+        })
+        .collect::<HashMap<_, _>>();
+
+    if sanitized.is_empty() {
+        None
+    } else {
+        Some(sanitized)
+    }
 }
 
 /// Create a directory at the given path.
@@ -1541,6 +1592,44 @@ mod tests {
 
         let read_content = read_full(&op, path).await.unwrap();
         assert_eq!(read_content, content);
+    }
+
+    #[tokio::test]
+    async fn write_full_with_user_metadata_rejects_unsupported_backends() {
+        let op = create_test_operator().await;
+        assert!(!op.info().full_capability().write_with_user_metadata);
+
+        let err = write_full_with_user_metadata(
+            &op,
+            "metadata.txt",
+            b"hello",
+            Some(HashMap::from([(
+                "language".to_string(),
+                "rust".to_string(),
+            )])),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("storage backend does not support user metadata writes"));
+    }
+
+    #[tokio::test]
+    async fn write_full_with_empty_user_metadata_falls_back_to_plain_write() {
+        let op = create_test_operator().await;
+
+        write_full_with_user_metadata(
+            &op,
+            "metadata.txt",
+            b"hello",
+            Some(HashMap::from([(" ".to_string(), "ignored".to_string())])),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(op.read("metadata.txt").await.unwrap().to_vec(), b"hello");
     }
 
     #[tokio::test]

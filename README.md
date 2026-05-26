@@ -150,7 +150,7 @@ If you installed from release binaries (not Homebrew), upgrade like this:
 | ------------------------ | ---------- | --------------------------------------------------------------------------- |
 | **Local Filesystem**     | ✅ Stable  | Full read/write support                                                     |
 | **Amazon S3**            | ✅ Stable  | Any S3-compatible service; versioning depends on bucket support; optional default object ACL |
-| **Backblaze B2**         | ✅ Stable  | Native OpenDAL B2 backend with read/write/list/delete, copy, presign, and user metadata capability |
+| **Backblaze B2**         | ✅ Stable  | Native OpenDAL B2 backend with read/write/list/delete, copy, presign, and capability-gated user metadata writes |
 | **Azure Blob Storage**   | ✅ Stable  | Container/account key auth; advanced capabilities depend on account support |
 | **Google Cloud Storage** | ✅ Stable  | Service account JSON; advanced capabilities depend on bucket support        |
 | **WebDAV**               | ✅ Stable  | Nextcloud, ownCloud, etc.; optional compatibility mode for servers that cannot create collection placeholders |

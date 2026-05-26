@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Upgraded OpenDAL to 0.56.0, migrated recursive delete calls to `delete_with(...).recursive(true)`, and documented Rust 1.85+ as the minimum Rust version for source builds.
-- Started public v0.5.0 backend expansion with native Backblaze B2 support, S3 default object ACL configuration, WebDAV directory-creation compatibility mode, and user-metadata capability reporting.
+- Started public v0.5.0 backend expansion with native Backblaze B2 support, S3 default object ACL configuration, WebDAV directory-creation compatibility mode, and capability-gated user-metadata writes/reporting.
 
 ## [0.4.0] - 2026-05-26
 
@@ -23,9 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Folder bookmarks, recent folders, provider presets, and persisted transfer history make repeated workbench flows faster.
 - Rust coverage gate increased from 50% to 54% lines.
 - Documented the OpenDAL-first storage policy: future file operations should remain backend-agnostic rather than adding provider-specific SDK paths.
-- Added the v0.5-v0.7 roadmap and started v0.5 with an OpenDAL-only transfer dry-run manifest API.
-- Added v0.5 workbench foundations: recursive metadata scans, opt-in local global search indexing, transfer activity log events, dry-run summaries in the transfer queue, interrupted-transfer recovery behavior, and dual-pane compare/update flows.
-- Completed v0.6 Agent Workspaces foundation with OpenDAL-backed workspace creation, scoped MCP policy application, coding/research/data-analysis templates, visible memory files, OpenDAL-written checkpoint manifests, checkpoint restore, and grouped workspace audit activity.
+- Added the internal workbench roadmap and started transfer reliability with an OpenDAL-only transfer dry-run manifest API.
+- Added workbench foundations: recursive metadata scans, opt-in local global search indexing, transfer activity log events, dry-run summaries in the transfer queue, interrupted-transfer recovery behavior, and dual-pane compare/update flows.
+- Completed Agent Workspaces foundation with OpenDAL-backed workspace creation, scoped MCP policy application, coding/research/data-analysis templates, visible memory files, OpenDAL-written checkpoint manifests, checkpoint restore, and grouped workspace audit activity.
 
 ## [0.2.3] - 2026-05-14
 

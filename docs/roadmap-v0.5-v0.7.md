@@ -1,72 +1,65 @@
-# Roadmap: v0.5 to v0.7
+# Roadmap: public v0.5 and beyond
 
-Infimount remains OpenDAL-first. File operations should route through OpenDAL-backed Rust core/MCP layers, not provider-specific SDK paths.
+Infimount remains OpenDAL-first. File operations route through OpenDAL-backed Rust core/MCP layers, not provider-specific SDK paths.
 
-## v0.5: Workbench Reliability
+## Released in public v0.4.0: Workbench Reliability and Agent Workspaces
 
-Theme: search, compare, dry-run, and recover.
+The internal workbench and agent-workspace milestones were bundled into public `v0.4.0` so the public roadmap can move forward with fewer confusing internal version labels.
 
-Planned work:
+Delivered workbench reliability:
 
-1. Global activity log foundation for transfers, writes, deletes, conflict choices, dry-runs, recovery attempts, and MCP operations.
-2. Transfer manifests that describe intended and completed file-level work.
-3. Operation dry-run for copy, move, delete, overwrite, skip, and keep-both decisions.
-4. Interrupted transfer recovery at file granularity: retry incomplete files, skip completed files, verify with metadata where OpenDAL exposes it.
-5. Opt-in local path/name/metadata index per storage.
-6. Global search across indexed storages with index freshness shown.
-7. Dual-pane compare using path/name/size/modified metadata first.
-8. Copy/update from compare results through dry-run and transfer manifests.
+- Transfer queue and persisted transfer history.
+- OpenDAL-only transfer dry-run planning with `plan_transfer_entries`.
+- Dry-run summaries and local activity-log events for planned, started, completed, failed, cancelled, and recovery-started transfers.
+- Interrupted-transfer recovery that restores failed/retryable jobs and skips completed files when safe.
+- Recursive OpenDAL metadata scans for opt-in local path/name/metadata indexing.
+- Global search across indexed storages from the storage menu.
+- Dual-pane compare that detects missing/changed files and copies/updates through the transfer queue.
 
-Implementation status:
+Delivered Agent Workspaces:
 
-- Transfer queue and persisted transfer history are in place.
-- Core transfer dry-run planning is implemented with an OpenDAL-only `plan_transfer_entries` manifest API.
-- Transfer queue jobs store dry-run summaries and write local activity-log events for planned, started, completed, failed, cancelled, and recovery-started transfers.
-- Interrupted transfers are restored as failed/retryable and recovery retries use completed-file skip behavior when safe.
-- Recursive OpenDAL metadata scans support opt-in local path/name/metadata indexing.
-- Global search across indexed storages is available from the storage menu.
-- Dual-pane compare can detect missing/changed files and copy/update from the compare result through the transfer queue.
+- Workspace creation on OpenDAL-backed storage.
+- Workspace-scoped MCP policy using default-deny access and a workspace-root allowlist.
+- Coding, research, and data-analysis templates.
+- Visible memory files under `memory/`.
+- OpenDAL-written workspace/checkpoint manifests under `.infimount/checkpoints`.
+- Checkpoint restore for visible memory files.
+- Workspace activity grouping across local events and MCP audit events that fall under the workspace root.
 
-## v0.6: Agent Workspaces
+## Active public v0.5.0: Backend Expansion
 
-Theme: make safe MCP storage scopes a first-class product concept.
+Theme: broaden storage coverage and compatibility without leaving the OpenDAL abstraction.
 
-Planned work:
+Implemented so far:
 
-1. Create an agent workspace on any OpenDAL-backed storage.
-2. Workspace-scoped MCP access and policy.
-3. Workspace templates for coding, research, and data analysis agents.
-4. Visible workspace memory files for append, read, and list workflows.
-5. Workspace checkpoint and restore where OpenDAL versioning or transfer manifests support it.
-6. Audit events grouped by workspace.
+- Native Backblaze B2 backend across core, desktop, and MCP.
+- B2 schema, add-storage UI mapping, operator builders, capability tests, and docs.
+- S3 `defaultAcl` pass-through for buckets that require a default object ACL.
+- WebDAV `disableCreateDir` compatibility mode for servers that reject collection creation probes/placeholders.
+- `write_with_user_metadata` capability reporting in validation/capability payloads.
+- Capability-gated user metadata writes for desktop/API and MCP `write_file`; unsupported backends return an explicit error instead of silently dropping requested metadata.
+- `stat_path` returns user metadata when OpenDAL exposes it.
+- Volcengine TOS assessed but not exposed because the current OpenDAL service does not report product-ready read/write/list/stat capability.
 
-Implementation status:
-
-- Agent Workspaces are available from the storage actions menu.
-- Workspaces create real directories and starter files through the existing OpenDAL-backed file APIs.
-- Workspace templates exist for coding, research, and data analysis agents.
-- Optional workspace MCP policy sets default access to none and allows only the workspace root.
-- Memory files are visible under `memory/` and can be listed, read, and appended from the workspace dialog.
-- Memory checkpoints are stored locally and as OpenDAL-written workspace manifests under `.infimount/checkpoints`, then can restore visible memory files back to the workspace.
-- Workspace activity events carry a `workspaceId` for created, memory-appended, checkpoint-created, and checkpoint-restored actions.
-- Workspace audit groups local workspace activity with MCP audit events whose storage and path fall under the workspace root.
-
-## v0.7: OpenDAL Backend Expansion
-
-Theme: broaden storage coverage without leaving the OpenDAL abstraction.
-
-Candidate additions:
-
-- SFTP.
-- SMB if OpenDAL support is adequate.
-- HDFS if useful for data users.
-- OSS, COS, OBS, and similar object stores through OpenDAL.
-- More WebDAV presets.
-
-Rule for every backend:
+Rule for every new backend or backend-specific option:
 
 ```text
 new backend = OpenDAL operator + capability matrix + tests + docs
 ```
 
 No direct provider SDKs for file operations.
+
+## Future backend candidates
+
+- SFTP, if OpenDAL support meets the product-ready rule.
+- FTP, only with clear security warnings and capability coverage.
+- OSS, COS, OBS, and similar object stores through OpenDAL.
+- Additional WebDAV presets and compatibility toggles.
+- Additional S3-compatible presets where they materially reduce setup friction.
+- TOS once OpenDAL exposes useful read/write/list/stat capability.
+
+## Future quality work
+
+- Continue frontend branch/function coverage hardening for `FileBrowser.tsx`, `FilePreviewPanel.tsx`, and `McpSettingsDialog.tsx`.
+- Keep release artifact builds blocked behind the automated zero-manual release gate.
+- Keep storage-simulator coverage focused on OpenDAL behavior and safe fallbacks instead of provider-specific SDK paths.

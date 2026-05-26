@@ -229,6 +229,7 @@ Behavior:
     * `modified_at` (nullable)
     * `etag` (nullable)
     * `content_type` (nullable)
+    * `user_metadata` (nullable, only when OpenDAL exposes backend user metadata)
 * Errors:
 
   * not found -> `ERR_PATH_NOT_FOUND`
@@ -269,6 +270,7 @@ Input:
 * `encoding`: string default "utf-8"
 * `overwrite`: boolean default true
 * `create_parents`: boolean default false
+* `user_metadata`: optional object of string key/value pairs; sent only when the backend reports `write_with_user_metadata`
 
 Behavior:
 
@@ -280,6 +282,7 @@ Behavior:
   * If `create_parents=true`, ensure all parent directories exist, create them.
   * If false and parent missing -> `ERR_PARENT_NOT_FOUND`
 * Writes are atomic when backend supports it. If not, best effort.
+* If `user_metadata` is requested and the backend does not report `write_with_user_metadata`, return `ERR_BACKEND_UNSUPPORTED` instead of silently dropping metadata.
 * Errors:
 
   * if path points to directory -> `ERR_IS_A_DIRECTORY`

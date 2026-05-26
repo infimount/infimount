@@ -30,4 +30,5 @@ and agent workflows.
 - Local-first: storage configuration and credentials remain on the user's machine.
 - Cross-platform: Linux, macOS, and Windows builds are published on GitHub Releases.
 - MCP-ready: stdio and local HTTP transport are supported, with tool-level exposure controls.
+- Backend expansion is OpenDAL-first, including capability-gated user metadata writes.
 - Built with Tauri, Rust, React, and Apache OpenDAL.

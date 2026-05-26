@@ -159,8 +159,21 @@ export async function readFile(sourceId: string, path: string): Promise<Uint8Arr
   return new Uint8Array(data);
 }
 
-export function writeFile(sourceId: string, path: string, data: Uint8Array): Promise<void> {
-  return invokeOrThrow<void>("write_file", { sourceId, path, data: Array.from(data) });
+export function writeFile(
+  sourceId: string,
+  path: string,
+  data: Uint8Array,
+  userMetadata?: Record<string, string>,
+): Promise<void> {
+  const args: { sourceId: string; path: string; data: number[]; userMetadata?: Record<string, string> } = {
+    sourceId,
+    path,
+    data: Array.from(data),
+  };
+  if (userMetadata && Object.keys(userMetadata).length > 0) {
+    args.userMetadata = userMetadata;
+  }
+  return invokeOrThrow<void>("write_file", args);
 }
 
 export function createDirectory(sourceId: string, path: string): Promise<void> {

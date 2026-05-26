@@ -16,6 +16,7 @@ use infimount_mcp::tools_storage::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
@@ -87,9 +88,10 @@ pub async fn write_file(
     sourceId: String,
     path: String,
     data: Vec<u8>,
+    userMetadata: Option<HashMap<String, String>>,
 ) -> Result<(), CoreError> {
     let op = state.operator_for_storage_id(&sourceId)?;
-    operations::write_full(&op, &path, &data).await
+    operations::write_full_with_user_metadata(&op, &path, &data, userMetadata).await
 }
 
 #[tauri::command]

@@ -3,6 +3,7 @@ use crate::errors::McpErrorCode;
 use crate::policy::McpStoragePolicy;
 use crate::registry::StorageRecord;
 use serde_json::json;
+use std::collections::HashMap;
 use tempfile::TempDir;
 
 fn registry_in(dir: &TempDir) -> crate::registry::StorageRegistry {
@@ -64,6 +65,7 @@ async fn path_policy_denies_reads_and_writes_before_backend_operation() {
             create_parents: false,
             confirmation_id: None,
             session_id: None,
+            user_metadata: None,
         },
     )
     .await
@@ -794,6 +796,7 @@ async fn write_file_rejects_read_only_storage() {
         &ctx,
         WriteFileInput {
             session_id: None,
+            user_metadata: None,
             confirmation_id: None,
             path: "/Local/file.txt".to_string(),
             content: "hello".to_string(),
@@ -833,6 +836,7 @@ async fn write_file_requires_parent_when_create_parents_false() {
         &ctx,
         WriteFileInput {
             session_id: None,
+            user_metadata: None,
             confirmation_id: None,
             path: "/Local/missing/file.txt".to_string(),
             content: "hello".to_string(),
@@ -872,6 +876,7 @@ async fn write_file_creates_parents_when_requested() {
         &ctx,
         WriteFileInput {
             session_id: None,
+            user_metadata: None,
             confirmation_id: None,
             path: "/Local/a/b/file.txt".to_string(),
             content: "hello".to_string(),
@@ -916,6 +921,7 @@ async fn write_file_respects_overwrite_flag() {
         &ctx,
         WriteFileInput {
             session_id: None,
+            user_metadata: None,
             confirmation_id: None,
             path: "/Local/file.txt".to_string(),
             content: "new".to_string(),
@@ -932,6 +938,7 @@ async fn write_file_respects_overwrite_flag() {
         &ctx,
         WriteFileInput {
             session_id: None,
+            user_metadata: None,
             confirmation_id: None,
             path: "/Local/file.txt".to_string(),
             content: "new".to_string(),
@@ -974,6 +981,7 @@ async fn write_file_rejects_directory_target_and_non_utf8_encoding() {
         &ctx,
         WriteFileInput {
             session_id: None,
+            user_metadata: None,
             confirmation_id: None,
             path: "/Local/docs".to_string(),
             content: "hello".to_string(),
@@ -990,6 +998,7 @@ async fn write_file_rejects_directory_target_and_non_utf8_encoding() {
         &ctx,
         WriteFileInput {
             session_id: None,
+            user_metadata: None,
             confirmation_id: None,
             path: "/Local/file.txt".to_string(),
             content: "hello".to_string(),
@@ -1014,6 +1023,50 @@ fn write_file_input_defaults_are_applied() {
     assert_eq!(input.encoding, "utf-8");
     assert!(input.overwrite);
     assert!(!input.create_parents);
+    assert!(input.user_metadata.is_none());
+}
+
+#[tokio::test]
+async fn write_file_accepts_user_metadata_when_backend_reports_support() {
+    let dir = TempDir::new().unwrap();
+    let local_root = dir.path().join("local");
+    std::fs::create_dir_all(&local_root).unwrap();
+
+    let registry = registry_in(&dir);
+    let storage = StorageRecord::new(
+        "Local".to_string(),
+        "local".to_string(),
+        json!({"root": local_root}),
+    );
+    registry.save_all_atomic(&[storage]).unwrap();
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
+
+    let out = write_file(
+        &ctx,
+        WriteFileInput {
+            session_id: None,
+            confirmation_id: None,
+            path: "/Local/file.txt".to_string(),
+            content: "hello".to_string(),
+            encoding: "utf-8".to_string(),
+            overwrite: true,
+            create_parents: false,
+            user_metadata: Some(HashMap::from([
+                (" project ".to_string(), "alpha".to_string()),
+                ("".to_string(), "ignored".to_string()),
+            ])),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(out.written_bytes, 5);
 }
 
 #[tokio::test]

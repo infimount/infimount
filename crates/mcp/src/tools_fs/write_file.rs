@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 
 use crate::errors::{err_with_details, map_opendal_error, McpErrorCode, McpResult};
 use crate::opendal_adapter;
@@ -26,6 +27,8 @@ pub struct WriteFileInput {
     pub session_id: Option<String>,
     #[serde(default)]
     pub confirmation_id: Option<String>,
+    #[serde(default)]
+    pub user_metadata: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -137,13 +140,52 @@ pub async fn write_file(ctx: &FsToolsContext, input: WriteFileInput) -> McpResul
         }
     }
 
+    let user_metadata = sanitize_user_metadata(input.user_metadata);
+    if user_metadata.is_some() && !op.info().full_capability().write_with_user_metadata {
+        return Err(err_with_details(
+            McpErrorCode::ERR_BACKEND_UNSUPPORTED,
+            "storage backend does not support user metadata writes",
+            json!({ "path": parsed.normalized, "storage_name": storage.name }),
+        ));
+    }
+
     let bytes = input.content.into_bytes();
-    op.write(&parsed.backend_path, bytes.clone())
-        .await
-        .map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?;
+    if let Some(metadata) = user_metadata {
+        op.write_with(&parsed.backend_path, bytes.clone())
+            .user_metadata(metadata)
+            .await
+            .map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?;
+    } else {
+        op.write(&parsed.backend_path, bytes.clone())
+            .await
+            .map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?;
+    }
 
     Ok(WriteFileOutput {
         path: parsed.normalized,
         written_bytes: bytes.len() as u64,
     })
+}
+
+fn sanitize_user_metadata(
+    user_metadata: Option<HashMap<String, String>>,
+) -> Option<HashMap<String, String>> {
+    let metadata = user_metadata?;
+    let sanitized = metadata
+        .into_iter()
+        .filter_map(|(key, value)| {
+            let key = key.trim().to_string();
+            if key.is_empty() {
+                None
+            } else {
+                Some((key, value))
+            }
+        })
+        .collect::<HashMap<_, _>>();
+
+    if sanitized.is_empty() {
+        None
+    } else {
+        Some(sanitized)
+    }
 }

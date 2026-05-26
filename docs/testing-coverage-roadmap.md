@@ -156,7 +156,7 @@ Use `storage-simulator` CI to verify:
 - Azure/Azurite read/write/list/stat/delete
 - GCS emulator read/write/list/stat/delete
 - WebDAV list reachability
-- Backblaze B2 operator/schema/capability unit coverage; live B2 round-trip tests remain opt-in because no local simulator is available
+- Backblaze B2 operator/schema/capability unit coverage plus capability-gated user-metadata write tests; live B2 round-trip tests remain opt-in because no local simulator is available
 - `validate_storage` capability summary
 
 ### Phase 4: accessibility and visual regression
@@ -184,4 +184,4 @@ Automate where possible:
 
 ## Recommended next coverage task
 
-Next feature coverage should follow the workbench roadmap: transfer-history edge cases, interrupted-transfer retry behavior, and OpenDAL-capability-gated transfer improvements. Avoid provider-specific transfer implementations; tests should assert capability detection and safe fallback behavior when OpenDAL does not expose a common primitive. Continue hardening `FileBrowser.tsx`, `FilePreviewPanel.tsx`, and `McpSettingsDialog.tsx` branch/function paths while adding those features.
+Next feature coverage should follow the public backend-expansion roadmap: OpenDAL-capability-gated backend options, safe unsupported-capability errors, and simulator-backed behavior where local services exist. Avoid provider-specific transfer implementations; tests should assert capability detection and safe fallback behavior when OpenDAL does not expose a common primitive. Continue hardening `FileBrowser.tsx`, `FilePreviewPanel.tsx`, and `McpSettingsDialog.tsx` branch/function paths while adding those features.

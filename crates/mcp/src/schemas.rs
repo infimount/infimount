@@ -67,6 +67,11 @@ pub fn schema_write_file() -> serde_json::Value {
         "encoding": { "type": "string", "default": "utf-8", "description": "Text encoding. Only utf-8 is supported in v1." },
         "overwrite": { "type": "boolean", "default": true },
         "create_parents": { "type": "boolean", "default": false },
+        "user_metadata": {
+          "type": "object",
+          "description": "Optional user metadata to attach during writes when the backend advertises write_with_user_metadata.",
+          "additionalProperties": { "type": "string" }
+        },
         "session_id": { "type": "string", "description": "Session ID for scoped access." },
         "confirmation_id": { "type": "string", "description": "Approved operation ID for risky MCP operations." }
       },
