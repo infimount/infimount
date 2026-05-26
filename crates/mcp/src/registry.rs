@@ -199,7 +199,7 @@ impl StorageRegistry {
         }
 
         let result = f();
-        let _ = lock_file.unlock();
+        let _ = FileExt::unlock(&lock_file);
         result
     }
 }

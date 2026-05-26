@@ -163,7 +163,7 @@ impl AuditStore {
             .lock_exclusive()
             .map_err(|e| map_io_error(&e, McpErrorCode::ERR_INTERNAL))?;
         let result = f();
-        let _ = lock_file.unlock();
+        let _ = FileExt::unlock(&lock_file);
         result
     }
 }
