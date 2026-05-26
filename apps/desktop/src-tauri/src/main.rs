@@ -84,6 +84,7 @@ fn main() {
             commands::skip_onboarding,
             commands::list_mcp_audit_events,
             commands::clear_mcp_audit_events,
+            commands::export_mcp_audit_bundle,
             commands::list_pending_mcp_confirmations,
             commands::list_active_mcp_sessions,
             commands::approve_mcp_confirmation,

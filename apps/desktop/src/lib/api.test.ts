@@ -11,6 +11,7 @@ import {
   deleteFileVersion,
   deletePath,
   denyMcpConfirmation,
+  exportMcpAuditBundle,
   exportStorageConfig,
   generateDownloadLink,
   getAppSettings,
@@ -84,6 +85,27 @@ const settings: McpSettings = {
   enabledTools: ["list_dir"],
 };
 
+const auditEvent = {
+  id: "audit-1",
+  timestamp: "2026-01-01T00:00:00Z",
+  actor_type: "mcp",
+  mcp_client_id: null,
+  session_id: null,
+  storage_id: "s1",
+  storage_name: "Local",
+  backend: "local",
+  tool_name: "read_file",
+  operation: "read",
+  path: "/Local/file.txt",
+  version_id: null,
+  decision: "allowed",
+  confirmation_id: null,
+  duration_ms: 3,
+  bytes_read: null,
+  bytes_written: null,
+  error_code: null,
+};
+
 describe("api wrappers", () => {
   beforeEach(() => {
     invokeMock.mockReset();
@@ -112,6 +134,7 @@ describe("api wrappers", () => {
     ["skipOnboarding", () => skipOnboarding(), "skip_onboarding", undefined],
     ["listMcpAuditEvents", () => listMcpAuditEvents(25), "list_mcp_audit_events", { limit: 25 }],
     ["clearMcpAuditEvents", () => clearMcpAuditEvents(), "clear_mcp_audit_events", undefined],
+    ["exportMcpAuditBundle", () => exportMcpAuditBundle([auditEvent]), "export_mcp_audit_bundle", { request: { events: [auditEvent] } }],
     ["listPendingMcpConfirmations", () => listPendingMcpConfirmations(), "list_pending_mcp_confirmations", undefined],
     ["listActiveMcpSessions", () => listActiveMcpSessions(), "list_active_mcp_sessions", undefined],
     ["approveMcpConfirmation", () => approveMcpConfirmation("op-1"), "approve_mcp_confirmation", { operationId: "op-1" }],

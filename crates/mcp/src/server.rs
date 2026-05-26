@@ -1416,6 +1416,7 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    use crate::policy::{McpAccessMode, McpConfirmationRules, McpStoragePolicy};
     use crate::registry::{StorageRecord, StorageRegistry};
     use crate::session::SessionManager;
 
@@ -1480,6 +1481,77 @@ mod tests {
             .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn mcp_scenario_allows_reads_denies_prefix_escape_and_blocks_read_only_session_write() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let root = temp_dir.path().join("local");
+        std::fs::create_dir_all(root.join("public/private")).expect("create local root");
+        std::fs::write(root.join("public/readme.txt"), "hello").expect("write readme");
+        std::fs::write(root.join("public/private/secret.txt"), "secret").expect("write secret");
+
+        let ctx = test_context(&temp_dir);
+        let mut storage = StorageRecord::new(
+            "Local".to_string(),
+            "local".to_string(),
+            json!({ "root": root.clone() }),
+        );
+        storage.mcp_policy = McpStoragePolicy {
+            default_access: McpAccessMode::ReadWrite,
+            allowed_paths: vec!["public".to_string()],
+            denied_paths: vec!["public/private".to_string()],
+            confirmation_rules: McpConfirmationRules {
+                require_for_write: false,
+                require_for_overwrite: false,
+                require_for_delete: false,
+                require_for_version_delete: false,
+                require_for_presign: false,
+                require_for_cross_storage_copy: false,
+            },
+        };
+        ctx.registry
+            .save_all_atomic(&[storage])
+            .expect("save registry");
+        let sessions = ctx.sessions.clone();
+        let server = InfimountMcpServer::new(ctx, default_enabled_tool_names());
+
+        let mut read_args = JsonObject::new();
+        read_args.insert("path".to_string(), json!("/Local/public/readme.txt"));
+        let read_response = server
+            .dispatch_tool_json("read_file", Some(read_args))
+            .await
+            .expect("read response");
+        assert_eq!(read_response["ok"], true);
+        assert_eq!(read_response["data"]["content"], "hello");
+
+        let mut denied_args = JsonObject::new();
+        denied_args.insert(
+            "path".to_string(),
+            json!("/Local/public/private/../private/secret.txt"),
+        );
+        let denied_response = server
+            .dispatch_tool_json("read_file", Some(denied_args))
+            .await
+            .expect("denied response");
+        assert_eq!(denied_response["ok"], false);
+        assert_eq!(denied_response["error"]["code"], "ERR_MCP_POLICY_DENIED");
+
+        let session = sessions
+            .create_session(vec!["Local".to_string()], None, Some(true), Some(60))
+            .await
+            .expect("create session");
+        let mut write_args = JsonObject::new();
+        write_args.insert("path".to_string(), json!("/Local/public/new.txt"));
+        write_args.insert("content".to_string(), json!("new"));
+        write_args.insert("session_id".to_string(), json!(session.id));
+        let write_response = server
+            .dispatch_tool_json("write_file", Some(write_args))
+            .await
+            .expect("write response");
+        assert_eq!(write_response["ok"], false);
+        assert_eq!(write_response["error"]["code"], "ERR_SESSION_FORBIDDEN");
+        assert!(!root.join("public/new.txt").exists());
     }
 
     #[tokio::test]

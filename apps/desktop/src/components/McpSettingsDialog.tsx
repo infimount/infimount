@@ -113,6 +113,7 @@ interface McpAccessPreset {
   id: string;
   title: string;
   description: string;
+  recommendedFor: string;
   enabledTools: string[];
   accessMode: McpStoragePolicy["default_access"];
   confirmationRules: McpConfirmationRules;
@@ -123,6 +124,7 @@ const MCP_ACCESS_PRESETS: McpAccessPreset[] = [
     id: "research-read-only",
     title: "Read-only research",
     description: "Agents can browse, inspect, and search exposed storage without mutations.",
+    recommendedFor: "Research, summarization, and read-only assistants.",
     enabledTools: READ_ONLY_TOOLS,
     accessMode: "read_only",
     confirmationRules: DEFAULT_CONFIRMATION_RULES,
@@ -131,6 +133,7 @@ const MCP_ACCESS_PRESETS: McpAccessPreset[] = [
     id: "workspace-agent",
     title: "Workspace agent",
     description: "Agents can create, write, copy, and move files while risky work still requires approval.",
+    recommendedFor: "Coding agents working inside an allowed project or workspace root.",
     enabledTools: WORKSPACE_TOOLS,
     accessMode: "read_write",
     confirmationRules: DEFAULT_CONFIRMATION_RULES,
@@ -139,6 +142,7 @@ const MCP_ACCESS_PRESETS: McpAccessPreset[] = [
     id: "manual-approval",
     title: "Manual approval mode",
     description: "Broad file tools are available, but writes, deletes, links, and cross-storage work wait for approval.",
+    recommendedFor: "Data cleanup, backups, and operator workflows with a human in the loop.",
     enabledTools: FULL_MANUAL_TOOLS,
     accessMode: "read_write",
     confirmationRules: DEFAULT_CONFIRMATION_RULES,
@@ -147,6 +151,7 @@ const MCP_ACCESS_PRESETS: McpAccessPreset[] = [
     id: "locked-down",
     title: "Lock down MCP",
     description: "Disable all tools and set exposed storage policies to no access.",
+    recommendedFor: "Pausing MCP exposure before changing clients, networks, or policies.",
     enabledTools: [],
     accessMode: "none",
     confirmationRules: DEFAULT_CONFIRMATION_RULES,
@@ -170,6 +175,7 @@ interface McpSettingsDialogProps {
   onTestServer: () => Promise<void>;
   onRefreshAudit: () => Promise<void>;
   onClearAudit: () => Promise<void>;
+  onExportAuditBundle: (events: McpAuditEvent[]) => Promise<void>;
   onApproveConfirmation: (operationId: string) => Promise<void>;
   onDenyConfirmation: (operationId: string) => Promise<void>;
   onEnableNotifications: () => Promise<void>;
@@ -193,6 +199,7 @@ export function McpSettingsDialog({
   onTestServer,
   onRefreshAudit,
   onClearAudit,
+  onExportAuditBundle,
   onApproveConfirmation,
   onDenyConfirmation,
   onEnableNotifications,
@@ -325,6 +332,10 @@ export function McpSettingsDialog({
       title: "Audit copied",
       description: `${filteredAuditEvents.length} visible MCP audit events copied as JSON.`,
     });
+  };
+
+  const handleExportVisibleAudit = async () => {
+    await onExportAuditBundle(filteredAuditEvents);
   };
 
   const toggleHttpServer = async () => {
@@ -655,6 +666,9 @@ export function McpSettingsDialog({
                         </span>
                         <span className="mt-1 block text-xs leading-5 text-muted-foreground">
                           {preset.description}
+                        </span>
+                        <span className="mt-1 block text-[11px] leading-5 text-muted-foreground">
+                          Best for: {preset.recommendedFor}
                         </span>
                       </span>
                       <span className="rounded-full border border-border bg-card px-2 py-0.5 text-[10px] text-muted-foreground">
@@ -1095,6 +1109,16 @@ export function McpSettingsDialog({
                   >
                     <Copy className="mr-2 h-4 w-4" />
                     Copy visible
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="border-border/80"
+                    onClick={() => void handleExportVisibleAudit()}
+                    disabled={filteredAuditEvents.length === 0}
+                  >
+                    Export visible
                   </Button>
                   <Button
                     type="button"

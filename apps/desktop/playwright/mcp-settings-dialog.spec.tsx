@@ -109,6 +109,7 @@ test("renders the MCP settings dialog", async ({ mount, page }) => {
         onTestServer={async () => undefined}
         onRefreshAudit={async () => undefined}
         onClearAudit={async () => undefined}
+        onExportAuditBundle={async () => undefined}
         onApproveConfirmation={async () => undefined}
         onDenyConfirmation={async () => undefined}
         onEnableNotifications={async () => undefined}

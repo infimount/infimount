@@ -104,6 +104,7 @@ describe("McpSettingsDialog integration", () => {
         onTestServer={vi.fn()}
         onRefreshAudit={vi.fn()}
         onClearAudit={vi.fn()}
+        onExportAuditBundle={vi.fn()}
         onApproveConfirmation={vi.fn()}
         onDenyConfirmation={vi.fn()}
         onEnableNotifications={vi.fn()}
@@ -151,6 +152,7 @@ describe("McpSettingsDialog integration", () => {
         onTestServer={vi.fn()}
         onRefreshAudit={vi.fn()}
         onClearAudit={vi.fn()}
+        onExportAuditBundle={vi.fn()}
         onApproveConfirmation={vi.fn()}
         onDenyConfirmation={vi.fn()}
         onEnableNotifications={vi.fn()}
@@ -220,6 +222,7 @@ describe("McpSettingsDialog integration", () => {
         onTestServer={vi.fn()}
         onRefreshAudit={vi.fn()}
         onClearAudit={vi.fn()}
+        onExportAuditBundle={vi.fn()}
         onApproveConfirmation={onApproveConfirmation}
         onDenyConfirmation={onDenyConfirmation}
         onEnableNotifications={vi.fn()}
@@ -268,6 +271,7 @@ describe("McpSettingsDialog integration", () => {
         onTestServer={vi.fn()}
         onRefreshAudit={vi.fn()}
         onClearAudit={vi.fn()}
+        onExportAuditBundle={vi.fn()}
         onApproveConfirmation={vi.fn()}
         onDenyConfirmation={vi.fn()}
         onEnableNotifications={vi.fn()}
@@ -320,6 +324,7 @@ describe("McpSettingsDialog integration", () => {
         onTestServer={vi.fn()}
         onRefreshAudit={vi.fn()}
         onClearAudit={vi.fn()}
+        onExportAuditBundle={vi.fn()}
         onApproveConfirmation={vi.fn()}
         onDenyConfirmation={vi.fn()}
         onEnableNotifications={vi.fn()}
@@ -360,6 +365,7 @@ describe("McpSettingsDialog integration", () => {
         onTestServer={vi.fn()}
         onRefreshAudit={vi.fn()}
         onClearAudit={vi.fn()}
+        onExportAuditBundle={vi.fn()}
         onApproveConfirmation={vi.fn()}
         onDenyConfirmation={vi.fn()}
         onEnableNotifications={vi.fn()}
@@ -385,8 +391,9 @@ describe("McpSettingsDialog integration", () => {
     expect(onSave.mock.calls[0][0].enabledTools).not.toContain("write_file");
   });
 
-  it("filters and copies visible MCP audit events", async () => {
+  it("filters, copies, and exports visible MCP audit events", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
+    const onExportAuditBundle = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, {
       clipboard: { writeText },
     });
@@ -450,6 +457,7 @@ describe("McpSettingsDialog integration", () => {
         onTestServer={vi.fn()}
         onRefreshAudit={vi.fn()}
         onClearAudit={vi.fn()}
+        onExportAuditBundle={onExportAuditBundle}
         onApproveConfirmation={vi.fn()}
         onDenyConfirmation={vi.fn()}
         onEnableNotifications={vi.fn()}
@@ -471,6 +479,14 @@ describe("McpSettingsDialog integration", () => {
       expect(writeText).toHaveBeenCalledWith(expect.stringContaining("audit-2"));
     });
     expect(writeText.mock.calls[0][0]).not.toContain("audit-1");
+
+    fireEvent.click(screen.getByRole("button", { name: /Export visible/i }));
+
+    await waitFor(() => {
+      expect(onExportAuditBundle).toHaveBeenCalledWith([
+        expect.objectContaining({ id: "audit-2" }),
+      ]);
+    });
   });
 
   it("edits and saves path policy for an exposed storage", async () => {
@@ -494,6 +510,7 @@ describe("McpSettingsDialog integration", () => {
         onTestServer={vi.fn()}
         onRefreshAudit={vi.fn()}
         onClearAudit={vi.fn()}
+        onExportAuditBundle={vi.fn()}
         onApproveConfirmation={vi.fn()}
         onDenyConfirmation={vi.fn()}
         onEnableNotifications={vi.fn()}

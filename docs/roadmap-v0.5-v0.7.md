@@ -65,17 +65,18 @@ Theme: make safe MCP access easier to understand, apply, and audit.
 Delivered so far:
 
 - MCP Settings includes a policy-aware "What the agent can access" summary.
-- Access presets for read-only research, workspace agents, manual approval mode, and MCP lockdown.
+- Access presets for read-only research, workspace agents, manual approval mode, and MCP lockdown, with guided copy for common agent/workspace uses.
 - Presets save enabled tools and exposed storage path policies without exposing hidden storages.
 - MCP audit filtering by text, decision, and storage.
 - Copy-visible audit export for redacted local audit review.
+- Export-visible audit bundles under `~/.infimount/exports/` with a redaction manifest.
 - Active scoped session visibility in MCP Settings, backed by the same session manager used by the desktop HTTP runtime.
+- MCP safety scenario tests for allowed reads, denied prefix escape attempts, write confirmations, confirmation replay protection, read-only session write blocking, and audit redaction.
+
+v0.6.0 Safe Agent Operations is now implementation-complete for the planned public scope. Remaining hardening moves into v0.6.1 workbench polish.
 
 Next candidates:
 
-- More guided preset copy for common clients and workspace types.
-- Audit export to a local file with redaction manifest.
-- End-to-end MCP scenario tests for preset behavior.
 - Keyboard navigation hardening across file lists, sidebar, dialogs, and MCP settings.
 
 ## Future quality work

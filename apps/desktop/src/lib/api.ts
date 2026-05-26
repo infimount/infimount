@@ -1,6 +1,7 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 
 import type {
+  McpAuditExportResult,
   McpClientSnippets,
   McpRuntimeStatus,
   McpSettings,
@@ -310,6 +311,10 @@ export function listMcpAuditEvents(limit = 200): Promise<McpAuditEvent[]> {
 
 export function clearMcpAuditEvents(): Promise<void> {
   return invokeOrThrow<void>("clear_mcp_audit_events");
+}
+
+export function exportMcpAuditBundle(events: McpAuditEvent[]): Promise<McpAuditExportResult> {
+  return invokeOrThrow<McpAuditExportResult>("export_mcp_audit_bundle", { request: { events } });
 }
 
 export function listPendingMcpConfirmations(): Promise<PendingMcpConfirmation[]> {

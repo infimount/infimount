@@ -12,6 +12,7 @@ import {
   approveMcpConfirmation,
   completeOnboarding,
   denyMcpConfirmation,
+  exportMcpAuditBundle,
   exportStorageConfig,
   getAppSettings,
   getMcpClientSnippets,
@@ -667,6 +668,14 @@ const Index = () => {
     });
   };
 
+  const handleExportMcpAudit = async (events: McpAuditEvent[]) => {
+    const result = await exportMcpAuditBundle(events);
+    toast({
+      title: "Audit bundle exported",
+      description: `${result.eventCount} event(s) written to ${result.path}`,
+    });
+  };
+
   const refreshMcpActivity = async () => {
     const [auditEvents, pendingConfirmations, activeSessions] = await Promise.all([
       listMcpAuditEvents(200),
@@ -965,6 +974,7 @@ const Index = () => {
             onTestServer={handleTestMcpConnection}
             onRefreshAudit={refreshMcpActivity}
             onClearAudit={handleClearMcpAudit}
+            onExportAuditBundle={handleExportMcpAudit}
             onApproveConfirmation={handleApproveMcpConfirmation}
             onDenyConfirmation={handleDenyMcpConfirmation}
             onEnableNotifications={handleEnableMcpNotifications}

@@ -108,6 +108,19 @@ export interface AppSettings {
   onboardingSkippedAt: string | null;
 }
 
+export interface McpAuditExportManifest {
+  secretsIncluded: boolean;
+  fileContentsIncluded: boolean;
+  authTokensIncluded: boolean;
+  presignedUrlQueryStrings: string;
+}
+
+export interface McpAuditExportResult {
+  path: string;
+  eventCount: number;
+  redactionManifest: McpAuditExportManifest;
+}
+
 export interface McpAuditEvent {
   id: string;
   timestamp: string;

@@ -68,8 +68,10 @@ Safety rules:
 - auth tokens are not logged
 - storage secrets are not logged
 - file contents are not logged
-- presigned URLs have query strings redacted before persistence
+- presigned URLs have query strings redacted before persistence and export
 - sensitive headers are not logged
+
+The desktop audit viewer can export the current filtered rows as a local JSON bundle under `~/.infimount/exports/`. The bundle includes a redaction manifest stating that secrets, file contents, auth tokens, and presigned URL query strings are excluded or redacted.
 
 ## HTTP Transport
 

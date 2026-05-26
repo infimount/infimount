@@ -57,6 +57,8 @@ Approvals are single-use and tied to the original request fingerprint. A client 
 
 MCP Settings includes a local audit viewer for recent MCP activity. It records allowed, denied, confirmation-required, confirmed, and failed tool calls. The audit log is bounded and local-only. Secrets, auth tokens, file contents, and presigned URL query signatures are not stored.
 
+Use **Copy visible** for a JSON clipboard export of the current filtered rows, or **Export visible** to write a local redacted audit bundle under `~/.infimount/exports/` with a redaction manifest.
+
 ## Claude Desktop / Stdio
 
 Use stdio when the MCP client launches the server process itself.
