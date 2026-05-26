@@ -31,7 +31,7 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 ## Development Setup
 
 ### Prerequisites
-- **Rust** (latest stable via rustup)
+- **Rust 1.85+** (latest stable via rustup)
 - **Node.js** ≥ 18
 - **pnpm** (package manager)
 - **Tauri dependencies** (see [Tauri Prerequisites](https://tauri.app/v1/guides/getting-started/prerequisites))

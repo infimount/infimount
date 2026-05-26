@@ -2,9 +2,10 @@
 name = "infimount_core"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.85"
 
 [dependencies]
-opendal = { version = "0.55.0", features = ["services-fs", "services-s3", "services-webdav", "services-azblob", "services-gcs", "services-memory"] }
+opendal = { version = "0.56.0", features = ["services-fs", "services-s3", "services-webdav", "services-azblob", "services-gcs", "services-memory"] }
 
 futures = "0.3"
 serde = { version = "1.0", features = ["derive"] }

@@ -181,7 +181,7 @@ Security model: [Security Model](docs/security.md)
 
 ### Prerequisites
 
-- **Rust** (latest stable) — [rustup.rs](https://rustup.rs/)
+- **Rust 1.85+** (latest stable recommended) — [rustup.rs](https://rustup.rs/)
 - **Node.js 18+** and **pnpm** — [pnpm.io](https://pnpm.io/installation)
 - **Tauri dependencies** — [Platform-specific setup](https://tauri.app/start/prerequisites/)
 

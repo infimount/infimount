@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Upgraded OpenDAL to 0.56.0, migrated recursive delete calls to `delete_with(...).recursive(true)`, and documented Rust 1.85+ as the minimum Rust version for source builds.
+
 ## [0.4.0] - 2026-05-26
 
 ### Added

@@ -227,7 +227,12 @@ pub async fn create_directory(op: &Operator, path: &str) -> Result<()> {
 /// Delete a path (file or directory).
 pub async fn delete(op: &Operator, path: &str) -> Result<()> {
     let p = normalize_opendal_path(path);
-    op.remove_all(&p).await?;
+    delete_recursive(op, &p).await?;
+    Ok(())
+}
+
+async fn delete_recursive(op: &Operator, path: &str) -> Result<()> {
+    op.delete_with(path).recursive(true).await?;
     Ok(())
 }
 
@@ -659,7 +664,7 @@ async fn transfer_file(
                 from_op.rename(from_path, to_path).await?;
             } else {
                 copy_file_across_operators(from_op, to_op, from_path, to_path).await?;
-                from_op.remove_all(from_path).await?;
+                delete_recursive(from_op, from_path).await?;
             }
         }
     }
@@ -727,7 +732,7 @@ where
                 )
                 .await?;
                 ensure_not_cancelled(is_cancelled)?;
-                from_op.remove_all(from_path).await?;
+                delete_recursive(from_op, from_path).await?;
             }
         }
     }
@@ -779,7 +784,7 @@ async fn transfer_dir_recursive(
     }
 
     if operation == TransferOperation::Move {
-        from_op.remove_all(&from_root).await?;
+        delete_recursive(from_op, &from_root).await?;
     }
 
     Ok(())
@@ -841,7 +846,7 @@ where
 
     if operation == TransferOperation::Move {
         ensure_not_cancelled(is_cancelled)?;
-        from_op.remove_all(&from_root).await?;
+        delete_recursive(from_op, &from_root).await?;
     }
 
     Ok(())
@@ -1011,7 +1016,7 @@ pub async fn transfer_entries(
                         .into())
                     }
                     TransferConflictPolicy::Overwrite => {
-                        to_op.remove_all(&dest_dir).await?;
+                        delete_recursive(to_op, &dest_dir).await?;
                     }
                     TransferConflictPolicy::Skip => {
                         continue;
@@ -1065,7 +1070,7 @@ pub async fn transfer_entries(
                         .into())
                     }
                     TransferConflictPolicy::Overwrite => {
-                        to_op.remove_all(&dest_file).await?;
+                        delete_recursive(to_op, &dest_file).await?;
                     }
                     TransferConflictPolicy::Skip => {
                         continue;
@@ -1228,7 +1233,7 @@ where
                         .into())
                     }
                     TransferConflictPolicy::Overwrite => {
-                        to_op.remove_all(&dest_dir).await?;
+                        delete_recursive(to_op, &dest_dir).await?;
                     }
                     TransferConflictPolicy::Skip => {
                         continue;
@@ -1285,7 +1290,7 @@ where
                         .into())
                     }
                     TransferConflictPolicy::Overwrite => {
-                        to_op.remove_all(&dest_file).await?;
+                        delete_recursive(to_op, &dest_file).await?;
                     }
                     TransferConflictPolicy::Skip => {
                         continue;
