@@ -2,6 +2,8 @@
 
 Infimount 0.5.0 expands the OpenDAL-backed storage surface while preserving the local-first, safe-MCP architecture.
 
+Release: <https://github.com/infimount/infimount/releases/tag/v0.5.0>
+
 ## Highlights
 
 - Native Backblaze B2 support across desktop, core, and MCP.

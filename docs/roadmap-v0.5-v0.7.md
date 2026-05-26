@@ -26,11 +26,11 @@ Delivered Agent Workspaces:
 - Checkpoint restore for visible memory files.
 - Workspace activity grouping across local events and MCP audit events that fall under the workspace root.
 
-## Active public v0.5.0: Backend Expansion
+## Released in public v0.5.0: Backend Expansion
 
 Theme: broaden storage coverage and compatibility without leaving the OpenDAL abstraction.
 
-Implemented so far:
+Delivered in v0.5.0:
 
 - Native Backblaze B2 backend across core, desktop, and MCP.
 - B2 schema, add-storage UI mapping, operator builders, capability tests, and docs.
@@ -49,7 +49,7 @@ new backend = OpenDAL operator + capability matrix + tests + docs
 
 No direct provider SDKs for file operations.
 
-## Future backend candidates
+## Future public v0.6.0 candidates
 
 - SFTP, if OpenDAL support meets the product-ready rule.
 - FTP, only with clear security warnings and capability coverage.

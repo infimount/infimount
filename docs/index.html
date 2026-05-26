@@ -59,7 +59,7 @@
         "description": "Local-first desktop app for browsing local files, cloud storage, and MCP-enabled storage workflows.",
         "image": "https://infimount.github.io/infimount/assets/infimount-banner.png",
         "downloadUrl": "https://github.com/infimount/infimount/releases/latest",
-        "softwareVersion": "latest",
+        "softwareVersion": "0.5.0",
         "codeRepository": "https://github.com/infimount/infimount",
         "license": "https://github.com/infimount/infimount/blob/main/LICENSE",
         "sameAs": [
@@ -1004,6 +1004,7 @@
           <div class="hero-copy">
             <div class="meta-row">
               <span class="meta-pill">Open source</span>
+              <span class="meta-pill">v0.5.0 released</span>
               <span class="meta-pill">MIT licensed</span>
             </div>
             <h1 id="hero-title">Infimount</h1>
@@ -1027,8 +1028,8 @@
               >
               <a
                 class="mini-stat"
-                href="https://github.com/infimount/infimount/releases/latest"
-                >Latest release</a
+                href="https://github.com/infimount/infimount/releases/tag/v0.5.0"
+                >v0.5.0 release</a
               >
             </div>
           </div>
@@ -1068,16 +1069,16 @@
           <p>Built for AI agents with MCP support and tool integrations.</p>
         </article>
         <article class="feature-card">
-          <h2>Read-only or read-write</h2>
-          <p>Fine-grained access controls for safe collaboration.</p>
+          <h2>Backend compatibility</h2>
+          <p>S3 default ACLs, WebDAV compatibility mode, and capability-gated metadata writes ship in v0.5.0.</p>
         </article>
         <article class="feature-card">
           <h2>Unified browsing</h2>
           <p>One consistent experience for all your storage and data.</p>
         </article>
         <article class="feature-card">
-          <h2>Open-source and extensible</h2>
-          <p>MIT licensed. Extend with custom connectors and plugins.</p>
+          <h2>OpenDAL-first</h2>
+          <p>New backends stay behind OpenDAL operators, capability checks, tests, and docs.</p>
         </article>
       </section>
 
@@ -1172,10 +1173,10 @@
         aria-labelledby="downloads-title"
       >
         <div class="section-head">
-          <h2 id="downloads-title">Download the latest stable release</h2>
+          <h2 id="downloads-title">Download Infimount v0.5.0</h2>
           <p>
-            These links always point to the latest GitHub Release assets, not
-            temporary CI artifacts.
+            The latest stable release adds native Backblaze B2, S3 default ACLs,
+            WebDAV compatibility mode, and capability-gated user metadata writes.
           </p>
         </div>
         <div class="download-grid">
@@ -1257,8 +1258,9 @@ curl -fsSL https://github.com/infimount/infimount/releases/latest/download/insta
 irm https://github.com/infimount/infimount/releases/latest/download/install.ps1 | iex</pre
             >
             <p>
-              The scripts select the right release asset for your platform and
-              verify checksums before installing.
+              The scripts select the latest release asset for your platform and
+              verify checksums before installing. Set <code>INFIMOUNT_VERSION=v0.5.0</code>
+              to pin this release.
             </p>
           </article>
           <article id="homebrew" class="info-card">
@@ -1269,8 +1271,8 @@ brew install infimount
 brew install --cask infimount</pre
             >
             <p>
-              Linux uses the formula. macOS can use the cask. Upgrade with
-              <code>brew update</code> and <code>brew upgrade</code>.
+              Linux uses the formula. macOS can use the cask. The tap is updated
+              to v0.5.0; upgrade with <code>brew update</code> and <code>brew upgrade</code>.
             </p>
           </article>
           <article class="info-card">

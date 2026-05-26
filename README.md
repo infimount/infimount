@@ -59,7 +59,7 @@ Windows PowerShell:
 irm https://github.com/infimount/infimount/releases/latest/download/install.ps1 | iex
 ```
 
-The install scripts download the latest release asset for your platform and verify it against `SHA256SUMS.txt` before installing. To pin a version, set `INFIMOUNT_VERSION` first, for example `INFIMOUNT_VERSION=v0.4.0`.
+The install scripts download the latest release asset for your platform and verify it against `SHA256SUMS.txt` before installing. To pin a version, set `INFIMOUNT_VERSION` first, for example `INFIMOUNT_VERSION=v0.5.0`.
 
 Linux chooses `.deb`, `.rpm`, or AppImage automatically. Override with `INFIMOUNT_INSTALL_FORMAT=deb|rpm|appimage`.
 
@@ -70,7 +70,7 @@ Pre-built binaries for **Linux**, **macOS**, and **Windows** are available on:
 - GitHub Pages download hub: [infimount.github.io/infimount](https://infimount.github.io/infimount/)
 - Releases page: [github.com/infimount/infimount/releases](https://github.com/infimount/infimount/releases)
 
-**Current stable release:** [Latest Release](https://github.com/infimount/infimount/releases/latest)
+**Current stable release:** [v0.5.0](https://github.com/infimount/infimount/releases/tag/v0.5.0)
 
 | Platform              | Download Link (`latest stable`)                                                                                        | Format      |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------- |
@@ -108,6 +108,8 @@ Pre-built binaries for **Linux**, **macOS**, and **Windows** are available on:
 See [Building from Source](#️-building-from-source) section below.
 
 ### Install with Homebrew (macOS and Linux)
+
+The Homebrew tap is updated for v0.5.0.
 
 ```bash
 brew tap infimount/infimount
