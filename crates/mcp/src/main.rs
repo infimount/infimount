@@ -1,6 +1,7 @@
 use infimount_mcp::confirmation::ConfirmationManager;
 use infimount_mcp::registry::StorageRegistry;
 use infimount_mcp::runtime::{serve_stdio, start_http_server};
+use infimount_mcp::session::SessionManager;
 use infimount_mcp::settings::{
     normalize_auth_token, McpSettings, McpSettingsStore, DEFAULT_HTTP_BIND_ADDRESS,
     DEFAULT_HTTP_PORT,
@@ -52,6 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 allow_insecure,
                 effective_auth_token,
                 ConfirmationManager::new(),
+                SessionManager::new(),
             )
             .await?;
             eprintln!(

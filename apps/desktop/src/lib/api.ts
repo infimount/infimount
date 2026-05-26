@@ -7,6 +7,7 @@ import type {
   McpStoragePolicy,
   McpToolDefinition,
   PendingMcpConfirmation,
+  ActiveMcpSession,
   AppSettings,
   McpAuditEvent,
   StorageCapabilities,
@@ -313,6 +314,10 @@ export function clearMcpAuditEvents(): Promise<void> {
 
 export function listPendingMcpConfirmations(): Promise<PendingMcpConfirmation[]> {
   return invokeOrThrow<PendingMcpConfirmation[]>("list_pending_mcp_confirmations");
+}
+
+export function listActiveMcpSessions(): Promise<ActiveMcpSession[]> {
+  return invokeOrThrow<ActiveMcpSession[]>("list_active_mcp_sessions");
 }
 
 export function approveMcpConfirmation(operationId: string): Promise<PendingMcpConfirmation> {

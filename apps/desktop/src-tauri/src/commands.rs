@@ -9,6 +9,7 @@ use infimount_mcp::opendal_adapter::{get_capabilities, StorageBackendCapabilitie
 use infimount_mcp::policy::McpStoragePolicy;
 use infimount_mcp::registry::{ensure_unique_name, validate_storage_name, StorageRecord};
 use infimount_mcp::server::ToolDefinition;
+use infimount_mcp::session::Session;
 use infimount_mcp::settings::McpSettings;
 use infimount_mcp::tools_storage::{
     export_config, import_config, validate_storage_record, ExportConfigInput, ExportConfigOutput,
@@ -504,6 +505,13 @@ pub async fn list_pending_mcp_confirmations(
     state: State<'_, AppState>,
 ) -> Result<Vec<PendingConfirmation>, McpError> {
     Ok(state.confirmations.list_pending().await)
+}
+
+#[tauri::command]
+pub async fn list_active_mcp_sessions(
+    state: State<'_, AppState>,
+) -> Result<Vec<Session>, McpError> {
+    Ok(state.sessions.list_active().await)
 }
 
 #[tauri::command]

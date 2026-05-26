@@ -23,6 +23,7 @@ pub struct AppState {
     pub settings_store: McpSettingsStore,
     pub app_settings_store: AppSettingsStore,
     pub confirmations: ConfirmationManager,
+    pub sessions: SessionManager,
     http_runtime: Mutex<Option<McpHttpServerHandle>>,
     transfer_cancellations: StdMutex<HashSet<String>>,
 }
@@ -52,6 +53,7 @@ impl AppState {
             settings_store: McpSettingsStore::new(None),
             app_settings_store: AppSettingsStore::new(None),
             confirmations: ConfirmationManager::new(),
+            sessions: SessionManager::new(),
             http_runtime: Mutex::new(None),
             transfer_cancellations: StdMutex::new(HashSet::new()),
         })
@@ -61,7 +63,7 @@ impl AppState {
         let settings = self.settings_store.load().unwrap_or_default();
         FsToolsContext {
             registry: self.registry.clone(),
-            sessions: SessionManager::new(),
+            sessions: self.sessions.clone(),
             allow_insecure: settings.auth_token.is_none(),
             auth_token: settings.auth_token,
         }
@@ -133,6 +135,7 @@ impl AppState {
             &settings,
             allow_insecure,
             self.confirmations.clone(),
+            self.sessions.clone(),
         )
         .await
         .map_err(map_runtime_io_error)?;
@@ -208,6 +211,7 @@ impl AppState {
 
         if let Some(server) = existing {
             server.stop().await.map_err(map_runtime_io_error)?;
+            self.sessions.clear().await;
         }
         Ok(())
     }

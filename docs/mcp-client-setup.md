@@ -49,6 +49,8 @@ The approval queue shows:
 - exact action summary
 - expiry time
 
+MCP Settings also shows active scoped sessions created by MCP clients, including storage scope, path prefixes, read-only status, and expiry. These sessions are in-memory, expire locally, and are cleared when the desktop HTTP server stops.
+
 Approvals are single-use and tied to the original request fingerprint. A client cannot approve one operation and then reuse the ID for a different path, storage, or tool. Pending approvals are in-memory and are cleared by app/server restart.
 
 ## Audit Viewer

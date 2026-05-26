@@ -9,8 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Started v0.6.0 Safe Agent Operations with MCP access presets and filtered copy-visible audit export in MCP settings.
+- Started v0.6.0 Safe Agent Operations with MCP access presets, active-session visibility, and filtered copy-visible audit export in MCP settings.
 - Updated agent-facing architecture docs to reflect native Backblaze B2 and the current OpenDAL-backed backend set.
+- Reused the desktop MCP session manager for the in-process HTTP server so active scoped sessions can be inspected from MCP Settings and cleared when the server stops.
+- Hardened MCP session path-prefix checks to be normalized and segment-aware.
 
 ## [0.5.0] - 2026-05-26
 

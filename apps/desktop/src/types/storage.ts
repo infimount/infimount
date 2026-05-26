@@ -141,3 +141,12 @@ export interface PendingMcpConfirmation {
   created_at: string;
   expires_at: string;
 }
+
+export interface ActiveMcpSession {
+  id: string;
+  allowed_storages: string[];
+  allowed_prefixes: string[];
+  read_only: boolean;
+  created_at: string;
+  expires_at: string;
+}

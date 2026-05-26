@@ -43,6 +43,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type {
+  ActiveMcpSession,
   McpClientSnippets,
   McpRuntimeStatus,
   McpSettings,
@@ -161,6 +162,7 @@ interface McpSettingsDialogProps {
   storages: StorageConfig[];
   auditEvents: McpAuditEvent[];
   pendingConfirmations: PendingMcpConfirmation[];
+  activeSessions: ActiveMcpSession[];
   notificationPermission: McpNotificationPermission;
   onSave: (settings: McpSettings) => Promise<void>;
   onStartHttp: () => Promise<void>;
@@ -183,6 +185,7 @@ export function McpSettingsDialog({
   storages,
   auditEvents,
   pendingConfirmations,
+  activeSessions,
   notificationPermission,
   onSave,
   onStartHttp,
@@ -712,6 +715,7 @@ export function McpSettingsDialog({
                 <div className="space-y-2 text-xs">
                   <SummaryRow label="Exposed storages" value={`${exposedStorages.length}`} />
                   <SummaryRow label="Enabled functions" value={`${enabledToolCount}`} />
+                  <SummaryRow label="Active sessions" value={`${activeSessions.length}`} />
                   <SummaryRow
                     label="Access levels"
                     value={`${accessCounts.readWrite} write / ${accessCounts.readOnly} read-only / ${accessCounts.noAccess} no access`}
@@ -908,6 +912,57 @@ export function McpSettingsDialog({
                 ) : (
                   <div className="rounded-lg border border-border/80 bg-background px-3 py-6 text-center text-xs text-muted-foreground">
                     No storage is exposed to MCP yet.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-3 rounded-xl border border-border/80 bg-card p-4 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium text-foreground">Active MCP Sessions</div>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    Scoped sessions created by MCP clients. These are in-memory and expire locally.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="border-border/80"
+                  onClick={() => void onRefreshAudit()}
+                >
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Refresh
+                </Button>
+              </div>
+
+              <div className="max-h-52 overflow-y-auto rounded-lg border border-border/80 bg-background">
+                {activeSessions.length > 0 ? (
+                  activeSessions.map((session) => (
+                    <div
+                      key={session.id}
+                      className="grid gap-2 border-b border-border/70 px-3 py-3 text-xs last:border-b-0 md:grid-cols-[1fr_auto]"
+                    >
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono text-foreground">{shortSessionId(session.id)}</span>
+                          <span className="rounded-full border border-border bg-secondary/60 px-2 py-0.5 text-[11px] text-muted-foreground">
+                            {session.read_only ? "read-only" : "read/write"}
+                          </span>
+                        </div>
+                        <div className="truncate text-muted-foreground">
+                          {describeSessionScope(session)}
+                        </div>
+                      </div>
+                      <div className="text-muted-foreground md:text-right">
+                        Expires {new Date(session.expires_at).toLocaleString()}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="px-3 py-6 text-center text-xs text-muted-foreground">
+                    No scoped MCP sessions are active.
                   </div>
                 )}
               </div>
@@ -1372,6 +1427,22 @@ function assessMcpConnectionSafety({
 
 function formatStorageCount(count: number): string {
   return `${count} ${count === 1 ? "storage" : "storages"}`;
+}
+
+function shortSessionId(sessionId: string): string {
+  return sessionId.length > 12 ? `${sessionId.slice(0, 8)}…` : sessionId;
+}
+
+function describeSessionScope(session: ActiveMcpSession): string {
+  const storages =
+    session.allowed_storages.length > 0
+      ? session.allowed_storages.join(", ")
+      : "all exposed storages";
+  const prefixes =
+    session.allowed_prefixes.length > 0
+      ? `prefixes: ${session.allowed_prefixes.join(", ")}`
+      : "all paths";
+  return `${storages}, ${prefixes}`;
 }
 
 function splitPolicyPrefixes(value: string): string[] {

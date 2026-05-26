@@ -103,7 +103,7 @@ MCP clients can create scoped sessions with:
 - optional read-only override
 - TTL
 
-Filesystem tools that receive a `session_id` enforce those restrictions before backend operations.
+Filesystem tools that receive a `session_id` enforce those restrictions before backend operations. Session path prefixes are normalized and segment-aware to avoid broad matches such as allowing `docs2` when only `docs` was scoped. Desktop MCP Settings shows active in-memory scoped sessions with their storage scope, path prefixes, read-only status, and expiry so users can inspect current agent scopes. Desktop HTTP sessions are cleared when that server stops.
 
 ## Backend Capability Boundaries
 

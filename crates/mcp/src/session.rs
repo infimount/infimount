@@ -92,6 +92,19 @@ impl SessionManager {
         }
     }
 
+    pub async fn list_active(&self) -> Vec<Session> {
+        self.cleanup_expired().await;
+        let mut sessions = self
+            .sessions
+            .read()
+            .await
+            .values()
+            .map(|item| item.session.clone())
+            .collect::<Vec<_>>();
+        sessions.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        sessions
+    }
+
     pub async fn get_session(&self, session_id: &str) -> McpResult<Session> {
         let sessions = self.sessions.read().await;
 
@@ -139,10 +152,11 @@ impl SessionManager {
 
         if let Some(path) = backend_path {
             if !session.allowed_prefixes.is_empty() {
+                let normalized_path = normalize_session_path(path);
                 let allowed = session
                     .allowed_prefixes
                     .iter()
-                    .any(|prefix| path.starts_with(prefix) || prefix.is_empty());
+                    .any(|prefix| session_path_matches_prefix(&normalized_path, prefix));
                 if !allowed {
                     return Err(err_with_details(
                         McpErrorCode::ERR_SESSION_FORBIDDEN,
@@ -164,6 +178,35 @@ impl SessionManager {
         let mut sessions = self.sessions.write().await;
         sessions.retain(|_, meta| meta.expires_instant > now);
     }
+
+    pub async fn clear(&self) {
+        self.sessions.write().await.clear();
+    }
+}
+
+fn session_path_matches_prefix(path: &str, prefix: &str) -> bool {
+    let prefix = normalize_session_path(prefix);
+    if prefix.is_empty() {
+        return true;
+    }
+    path == prefix
+        || path
+            .strip_prefix(&prefix)
+            .is_some_and(|tail| tail.starts_with('/'))
+}
+
+fn normalize_session_path(path: &str) -> String {
+    let mut segments = Vec::new();
+    for segment in path.trim().replace('\\', "/").split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            value => segments.push(value.to_string()),
+        }
+    }
+    segments.join("/")
 }
 
 impl Default for SessionManager {
@@ -199,4 +242,56 @@ pub struct SessionEndInput {
 pub struct SessionEndOutput {
     pub session_id: String,
     pub ended: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn list_active_returns_non_expired_sessions_only() {
+        let manager = SessionManager::new();
+        let session = manager
+            .create_session(vec!["Local".to_string()], None, Some(true), Some(60))
+            .await
+            .unwrap();
+
+        let active = manager.list_active().await;
+
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].id, session.id);
+        assert_eq!(active[0].allowed_storages, vec!["Local".to_string()]);
+        assert!(active[0].read_only);
+    }
+
+    #[tokio::test]
+    async fn session_prefixes_are_normalized_and_segment_aware() {
+        let manager = SessionManager::new();
+        let session = manager
+            .create_session(
+                vec!["Local".to_string()],
+                Some(vec!["docs".to_string()]),
+                None,
+                Some(60),
+            )
+            .await
+            .unwrap();
+
+        assert!(manager
+            .validate_access(&session.id, "Local", Some("docs/file.txt"))
+            .await
+            .unwrap());
+        assert!(manager
+            .validate_access(&session.id, "Local", Some("./docs\\nested.txt"))
+            .await
+            .unwrap());
+        assert!(manager
+            .validate_access(&session.id, "Local", Some("docs2/file.txt"))
+            .await
+            .is_err());
+        assert!(manager
+            .validate_access(&session.id, "Local", Some("docs/../private.txt"))
+            .await
+            .is_err());
+    }
 }

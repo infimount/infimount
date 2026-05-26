@@ -69,6 +69,7 @@ Delivered so far:
 - Presets save enabled tools and exposed storage path policies without exposing hidden storages.
 - MCP audit filtering by text, decision, and storage.
 - Copy-visible audit export for redacted local audit review.
+- Active scoped session visibility in MCP Settings, backed by the same session manager used by the desktop HTTP runtime.
 
 Next candidates:
 

@@ -16,6 +16,7 @@ import {
   getAppSettings,
   getMcpClientSnippets,
   getMcpStatus,
+  listActiveMcpSessions,
   listPendingMcpConfirmations,
   listMcpAuditEvents,
   listMcpTools,
@@ -39,6 +40,7 @@ import {
   type McpNotificationPermission,
 } from "@/lib/mcpNotifications";
 import type {
+  ActiveMcpSession,
   AppSettings,
   McpClientSnippets,
   McpAuditEvent,
@@ -242,6 +244,7 @@ const Index = () => {
   const [pendingMcpConfirmations, setPendingMcpConfirmations] = useState<
     PendingMcpConfirmation[]
   >([]);
+  const [activeMcpSessions, setActiveMcpSessions] = useState<ActiveMcpSession[]>([]);
   const notifiedMcpConfirmationIds = useRef<Set<string>>(new Set());
   const [mcpNotificationPermission, setMcpNotificationPermission] =
     useState<McpNotificationPermission>(() => getMcpNotificationPermission());
@@ -264,12 +267,14 @@ const Index = () => {
       setMcpStatus(status);
       setMcpSnippets(snippets);
       setMcpTools(tools);
-      const [auditEvents, pendingConfirmations] = await Promise.all([
+      const [auditEvents, pendingConfirmations, activeSessions] = await Promise.all([
         listMcpAuditEvents(200),
         listPendingMcpConfirmations(),
+        listActiveMcpSessions(),
       ]);
       setMcpAuditEvents(auditEvents);
       setPendingMcpConfirmations(pendingConfirmations);
+      setActiveMcpSessions(activeSessions);
     } catch (error) {
       console.error("Failed to load MCP status", error);
     }
@@ -335,9 +340,13 @@ const Index = () => {
     let cancelled = false;
     const refreshPendingConfirmations = async () => {
       try {
-        const pendingConfirmations = await listPendingMcpConfirmations();
+        const [pendingConfirmations, activeSessions] = await Promise.all([
+          listPendingMcpConfirmations(),
+          listActiveMcpSessions(),
+        ]);
         if (!cancelled) {
           setPendingMcpConfirmations(pendingConfirmations);
+          setActiveMcpSessions(activeSessions);
         }
       } catch (error) {
         console.error("Failed to refresh pending MCP confirmations", error);
@@ -659,12 +668,14 @@ const Index = () => {
   };
 
   const refreshMcpActivity = async () => {
-    const [auditEvents, pendingConfirmations] = await Promise.all([
+    const [auditEvents, pendingConfirmations, activeSessions] = await Promise.all([
       listMcpAuditEvents(200),
       listPendingMcpConfirmations(),
+      listActiveMcpSessions(),
     ]);
     setMcpAuditEvents(auditEvents);
     setPendingMcpConfirmations(pendingConfirmations);
+    setActiveMcpSessions(activeSessions);
   };
 
   const handleApproveMcpConfirmation = async (operationId: string) => {
@@ -946,6 +957,7 @@ const Index = () => {
             storages={storages}
             auditEvents={mcpAuditEvents}
             pendingConfirmations={pendingMcpConfirmations}
+            activeSessions={activeMcpSessions}
             notificationPermission={mcpNotificationPermission}
             onSave={handleSaveMcpSettings}
             onStartHttp={handleStartMcpHttp}

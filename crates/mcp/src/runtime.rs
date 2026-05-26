@@ -116,6 +116,7 @@ pub async fn serve_stdio(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn start_http_server(
     registry: StorageRegistry,
     bind_address: &str,
@@ -124,6 +125,7 @@ pub async fn start_http_server(
     allow_insecure: bool,
     auth_token: Option<String>,
     confirmations: ConfirmationManager,
+    sessions: SessionManager,
 ) -> io::Result<McpHttpServerHandle> {
     let auth_token = normalize_auth_token(auth_token);
 
@@ -147,7 +149,7 @@ pub async fn start_http_server(
     let enabled_tools_for_factory = enabled_tools.clone();
     let allow_insecure_for_factory = allow_insecure;
     let auth_token_for_factory = auth_token.clone();
-    let sessions_for_factory = SessionManager::new();
+    let sessions_for_factory = sessions.clone();
     let confirmations_for_factory = confirmations.clone();
     let service: StreamableHttpService<InfimountMcpServer, LocalSessionManager> =
         StreamableHttpService::new(
@@ -206,6 +208,7 @@ pub async fn start_http_server_from_settings(
     settings: &McpSettings,
     allow_insecure: bool,
     confirmations: ConfirmationManager,
+    sessions: SessionManager,
 ) -> io::Result<McpHttpServerHandle> {
     let effective_auth_token = settings.auth_token.clone();
     let require_auth = effective_auth_token.is_some();
@@ -218,6 +221,7 @@ pub async fn start_http_server_from_settings(
         allow,
         effective_auth_token,
         confirmations,
+        sessions,
     )
     .await
 }
@@ -328,6 +332,7 @@ mod tests {
             false,
             None,
             ConfirmationManager::new(),
+            SessionManager::new(),
         )
         .await;
 
@@ -353,6 +358,7 @@ mod tests {
             false,
             Some("test-token".to_string()),
             ConfirmationManager::new(),
+            SessionManager::new(),
         )
         .await
         .expect("start authenticated test server");
@@ -391,6 +397,7 @@ mod tests {
             false,
             Some("test-token".to_string()),
             ConfirmationManager::new(),
+            SessionManager::new(),
         )
         .await
         .expect("start authenticated test server");
@@ -451,6 +458,7 @@ mod tests {
             true,
             None,
             ConfirmationManager::new(),
+            SessionManager::new(),
         )
         .await
         .expect("start insecure test server");
@@ -472,6 +480,7 @@ mod tests {
             false,
             Some("   ".to_string()),
             ConfirmationManager::new(),
+            SessionManager::new(),
         )
         .await;
 

@@ -96,6 +96,7 @@ describe("McpSettingsDialog integration", () => {
         storages={storages}
         auditEvents={[]}
         pendingConfirmations={[]}
+        activeSessions={[]}
         notificationPermission="default"
         onSave={onSave}
         onStartHttp={onStartHttp}
@@ -142,6 +143,7 @@ describe("McpSettingsDialog integration", () => {
         storages={storages}
         auditEvents={[]}
         pendingConfirmations={[]}
+        activeSessions={[]}
         notificationPermission="default"
         onSave={onSave}
         onStartHttp={onStartHttp}
@@ -210,6 +212,7 @@ describe("McpSettingsDialog integration", () => {
             expires_at: "2026-01-01T00:05:00Z",
           },
         ]}
+        activeSessions={[]}
         notificationPermission="default"
         onSave={vi.fn()}
         onStartHttp={vi.fn()}
@@ -235,6 +238,47 @@ describe("McpSettingsDialog integration", () => {
       expect(onApproveConfirmation).toHaveBeenCalledWith("op-1");
       expect(onDenyConfirmation).toHaveBeenCalledWith("op-1");
     });
+  });
+
+  it("renders active scoped MCP sessions", () => {
+    render(
+      <McpSettingsDialog
+        open
+        onOpenChange={() => undefined}
+        status={status}
+        snippets={snippets}
+        tools={tools}
+        storages={storages}
+        auditEvents={[]}
+        pendingConfirmations={[]}
+        activeSessions={[
+          {
+            id: "session-1234567890",
+            allowed_storages: ["Local"],
+            allowed_prefixes: ["docs"],
+            read_only: true,
+            created_at: "2026-01-01T00:00:00Z",
+            expires_at: "2026-01-01T01:00:00Z",
+          },
+        ]}
+        notificationPermission="default"
+        onSave={vi.fn()}
+        onStartHttp={vi.fn()}
+        onStopHttp={vi.fn()}
+        onTestServer={vi.fn()}
+        onRefreshAudit={vi.fn()}
+        onClearAudit={vi.fn()}
+        onApproveConfirmation={vi.fn()}
+        onDenyConfirmation={vi.fn()}
+        onEnableNotifications={vi.fn()}
+        onUpdateStoragePolicy={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Active MCP Sessions")).toBeInTheDocument();
+    expect(screen.getAllByText("1").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Local,\s+prefixes: docs/i)).toBeInTheDocument();
+    expect(screen.getAllByText("read-only").length).toBeGreaterThan(0);
   });
 
   it("makes the agent access summary policy-aware", () => {
@@ -268,6 +312,7 @@ describe("McpSettingsDialog integration", () => {
         storages={[readOnlyStorage, noAccessStorage]}
         auditEvents={[]}
         pendingConfirmations={[]}
+        activeSessions={[]}
         notificationPermission="default"
         onSave={vi.fn()}
         onStartHttp={vi.fn()}
@@ -307,6 +352,7 @@ describe("McpSettingsDialog integration", () => {
         storages={storages}
         auditEvents={[]}
         pendingConfirmations={[]}
+        activeSessions={[]}
         notificationPermission="default"
         onSave={onSave}
         onStartHttp={vi.fn()}
@@ -396,6 +442,7 @@ describe("McpSettingsDialog integration", () => {
           },
         ]}
         pendingConfirmations={[]}
+        activeSessions={[]}
         notificationPermission="default"
         onSave={vi.fn()}
         onStartHttp={vi.fn()}
@@ -439,6 +486,7 @@ describe("McpSettingsDialog integration", () => {
         storages={storages}
         auditEvents={[]}
         pendingConfirmations={[]}
+        activeSessions={[]}
         notificationPermission="default"
         onSave={vi.fn()}
         onStartHttp={vi.fn()}
