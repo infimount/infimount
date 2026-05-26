@@ -59,7 +59,7 @@ Windows PowerShell:
 irm https://github.com/infimount/infimount/releases/latest/download/install.ps1 | iex
 ```
 
-The install scripts download the latest release asset for your platform and verify it against `SHA256SUMS.txt` before installing. To pin a version, set `INFIMOUNT_VERSION` first, for example `INFIMOUNT_VERSION=v0.3.0`.
+The install scripts download the latest release asset for your platform and verify it against `SHA256SUMS.txt` before installing. To pin a version, set `INFIMOUNT_VERSION` first, for example `INFIMOUNT_VERSION=v0.4.0`.
 
 Linux chooses `.deb`, `.rpm`, or AppImage automatically. Override with `INFIMOUNT_INSTALL_FORMAT=deb|rpm|appimage`.
 
