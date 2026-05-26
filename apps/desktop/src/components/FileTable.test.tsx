@@ -133,6 +133,37 @@ describe("FileTable", () => {
         expect(onSortChange).toHaveBeenNthCalledWith(3, "size");
     });
 
+    it("supports roving keyboard navigation", async () => {
+        const onSelectFile = vi.fn();
+        const onOpenFile = vi.fn();
+        render(
+            <FileTable
+                sourceId="test"
+                files={mockFiles}
+                selectedFiles={new Set()}
+                onSelectFile={onSelectFile}
+                onOpenFile={onOpenFile}
+            />
+        );
+
+        const rows = screen.getAllByRole("row");
+        const folderRow = rows.find((row) => row.getAttribute("aria-label") === "folder1")!;
+        const fileRow = rows.find((row) => row.getAttribute("aria-label") === "file1.txt")!;
+
+        expect(folderRow).toHaveAttribute("tabindex", "0");
+        folderRow.focus();
+        fireEvent.keyDown(folderRow, { key: "ArrowDown" });
+
+        expect(onSelectFile).toHaveBeenCalledWith("/file1.txt");
+        await waitFor(() => expect(fileRow).toHaveFocus());
+
+        fireEvent.keyDown(fileRow, { key: "Enter" });
+        expect(onOpenFile).toHaveBeenCalledWith(mockFiles[1]);
+
+        fireEvent.keyDown(fileRow, { key: " " });
+        expect(onSelectFile).toHaveBeenCalledWith("/file1.txt", { toggle: true });
+    });
+
     it("exposes file actions through the context menu", async () => {
         const onOpenFile = vi.fn();
         const onEditFile = vi.fn();

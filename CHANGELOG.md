@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Started v0.6.1 Workbench Polish with roving keyboard navigation for virtualized file grid and table views, including arrow-key movement, Home/End jumps, Enter open, and Space toggle selection.
 - Completed the planned v0.6.0 Safe Agent Operations scope with guided MCP access presets, active-session visibility, copy/export-visible audit bundles, and redaction manifests in MCP settings.
 - Updated agent-facing architecture docs to reflect native Backblaze B2 and the current OpenDAL-backed backend set.
 - Reused the desktop MCP session manager for the in-process HTTP server so active scoped sessions can be inspected from MCP Settings and cleared when the server stops.

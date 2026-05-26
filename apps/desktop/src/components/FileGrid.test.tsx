@@ -125,6 +125,36 @@ describe("FileGrid", () => {
         expect(onSelectFile).toHaveBeenCalledWith("/file1.txt", { toggle: true });
     });
 
+    it("supports roving keyboard navigation", async () => {
+        const onSelectFile = vi.fn();
+        const onOpenFile = vi.fn();
+        render(
+            <FileGrid
+                sourceId="test"
+                files={mockFiles}
+                selectedFiles={new Set()}
+                onSelectFile={onSelectFile}
+                onOpenFile={onOpenFile}
+            />
+        );
+
+        const folder = screen.getByRole("option", { name: "folder1" });
+        const file = screen.getByRole("option", { name: "file1.txt" });
+
+        expect(folder).toHaveAttribute("tabindex", "0");
+        folder.focus();
+        fireEvent.keyDown(folder, { key: "ArrowRight" });
+
+        expect(onSelectFile).toHaveBeenCalledWith("/file1.txt");
+        await waitFor(() => expect(file).toHaveFocus());
+
+        fireEvent.keyDown(file, { key: "Enter" });
+        expect(onOpenFile).toHaveBeenCalledWith(mockFiles[1]);
+
+        fireEvent.keyDown(file, { key: " " });
+        expect(onSelectFile).toHaveBeenCalledWith("/file1.txt", { toggle: true });
+    });
+
     it("exposes file actions through the context menu", async () => {
         const onOpenFile = vi.fn();
         const onEditFile = vi.fn();

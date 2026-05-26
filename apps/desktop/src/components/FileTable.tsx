@@ -68,7 +68,7 @@ interface FileTableProps {
   onSortChange?: (field: "name" | "type" | "modified" | "size") => void;
 }
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 type InternalTransferPayload = {
@@ -145,7 +145,11 @@ export function FileTable({
 
   const parentRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
+  const pendingKeyboardFocusRef = useRef<string | null>(null);
   const [folderDropTargetId, setFolderDropTargetId] = useState<string | null>(null);
+  const [focusedFileId, setFocusedFileId] = useState<string | null>(
+    files[0]?.id ?? null,
+  );
   const [dragSelect, setDragSelect] = useState<{
     startX: number;
     startY: number;
@@ -164,11 +168,93 @@ export function FileTable({
 
   const { getVirtualItems, getTotalSize } = rowVirtualizer;
   const virtualItems = getVirtualItems();
+  const fileIds = files.map((file) => file.id);
+  const effectiveFocusedFileId =
+    focusedFileId && fileIds.includes(focusedFileId)
+      ? focusedFileId
+      : (files[0]?.id ?? null);
   const paddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
   const paddingBottom =
     virtualItems.length > 0
       ? getTotalSize() - virtualItems[virtualItems.length - 1].end
       : 0;
+
+  useEffect(() => {
+    if (files.length === 0) {
+      setFocusedFileId(null);
+      return;
+    }
+
+    if (!focusedFileId || !fileIds.includes(focusedFileId)) {
+      setFocusedFileId(files[0].id);
+    }
+  }, [fileIds, files, focusedFileId]);
+
+  useEffect(() => {
+    const pendingId = pendingKeyboardFocusRef.current;
+    if (!pendingId) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      const row = rowRefs.current.get(pendingId);
+      row?.focus();
+      if (document.activeElement === row) {
+        pendingKeyboardFocusRef.current = null;
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [effectiveFocusedFileId, virtualItems]);
+
+  const focusFileAt = (index: number) => {
+    if (files.length === 0) return;
+
+    const nextIndex = Math.min(Math.max(index, 0), files.length - 1);
+    const nextFile = files[nextIndex];
+    if (!nextFile) return;
+
+    pendingKeyboardFocusRef.current = nextFile.id;
+    setFocusedFileId(nextFile.id);
+    onSelectFile(nextFile.id);
+    rowVirtualizer.scrollToIndex?.(nextIndex, { align: "auto" });
+  };
+
+  const handleRowKeyDown = (
+    event: KeyboardEvent<HTMLTableRowElement>,
+    file: FileItem,
+    index: number,
+  ) => {
+    switch (event.key) {
+      case "ArrowDown":
+      case "ArrowRight":
+        event.preventDefault();
+        focusFileAt(index + 1);
+        break;
+      case "ArrowUp":
+      case "ArrowLeft":
+        event.preventDefault();
+        focusFileAt(index - 1);
+        break;
+      case "Home":
+        event.preventDefault();
+        focusFileAt(0);
+        break;
+      case "End":
+        event.preventDefault();
+        focusFileAt(files.length - 1);
+        break;
+      case "Enter":
+        event.preventDefault();
+        onOpenFile?.(file);
+        break;
+      case " ":
+        event.preventDefault();
+        setFocusedFileId(file.id);
+        onSelectFile(file.id, { toggle: true });
+        break;
+      default:
+        break;
+    }
+  };
 
   useEffect(() => {
     if (!dragSelect || !onSelectFiles || !parentRef.current) return;
@@ -292,9 +378,12 @@ export function FileTable({
                       }
                     }}
                     data-infimount-file-item="true"
-                    className={`group cursor-pointer ${isSelected ? "bg-muted/50" : "hover:bg-muted/50"
+                    className={`group cursor-pointer outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary/40 ${isSelected ? "bg-muted/50" : "hover:bg-muted/50"
                       } ${file.type === "folder" && folderDropTargetId === file.id && !isSelected ? "bg-primary/10" : ""
                       }`}
+                    tabIndex={file.id === effectiveFocusedFileId ? 0 : -1}
+                    aria-selected={isSelected}
+                    aria-label={file.name}
                     draggable
                     onDragStart={(event) => {
                       const paths = selectedFiles.has(file.id)
@@ -339,6 +428,8 @@ export function FileTable({
                       onMoveToFolder(payload.paths, file.id);
                     }}
                     onDoubleClick={() => onOpenFile?.(file)}
+                    onFocus={() => setFocusedFileId(file.id)}
+                    onKeyDown={(event) => handleRowKeyDown(event, file, virtualRow.index)}
                     onClick={(event) => {
                       const toggle = event.metaKey || event.ctrlKey;
                       if (toggle) {

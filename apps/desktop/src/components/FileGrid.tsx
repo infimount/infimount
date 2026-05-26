@@ -63,7 +63,7 @@ interface FileGridProps {
   onClearSelection?: () => void;
 }
 
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, type KeyboardEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 type InternalTransferPayload = {
@@ -134,10 +134,14 @@ export function FileGrid({
 }: FileGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const pendingKeyboardFocusRef = useRef<string | null>(null);
   const [columns, setColumns] = useState(3);
   const [columnWidth, setColumnWidth] = useState(GRID_MIN_COLUMN_WIDTH);
   const [nameMaxChars, setNameMaxChars] = useState(24);
   const [folderDropTargetId, setFolderDropTargetId] = useState<string | null>(null);
+  const [focusedFileId, setFocusedFileId] = useState<string | null>(
+    files[0]?.id ?? null,
+  );
   const [dragSelect, setDragSelect] = useState<{
     startX: number;
     startY: number;
@@ -177,6 +181,11 @@ export function FileGrid({
   }, []);
 
   const rowCount = Math.ceil(files.length / columns);
+  const fileIds = files.map((file) => file.id);
+  const effectiveFocusedFileId =
+    focusedFileId && fileIds.includes(focusedFileId)
+      ? focusedFileId
+      : (files[0]?.id ?? null);
 
   // TanStack Virtual returns imperative helpers that React Compiler intentionally skips.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -186,6 +195,89 @@ export function FileGrid({
     estimateSize: () => GRID_ROW_ESTIMATE,
     overscan: 5,
   });
+
+  useEffect(() => {
+    if (files.length === 0) {
+      setFocusedFileId(null);
+      return;
+    }
+
+    if (!focusedFileId || !fileIds.includes(focusedFileId)) {
+      setFocusedFileId(files[0].id);
+    }
+  }, [fileIds, files, focusedFileId]);
+
+  useEffect(() => {
+    const pendingId = pendingKeyboardFocusRef.current;
+    if (!pendingId) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      const item = itemRefs.current.get(pendingId);
+      item?.focus();
+      if (document.activeElement === item) {
+        pendingKeyboardFocusRef.current = null;
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [effectiveFocusedFileId, rowVirtualizer]);
+
+  const focusFileAt = (index: number) => {
+    if (files.length === 0) return;
+
+    const nextIndex = Math.min(Math.max(index, 0), files.length - 1);
+    const nextFile = files[nextIndex];
+    if (!nextFile) return;
+
+    pendingKeyboardFocusRef.current = nextFile.id;
+    setFocusedFileId(nextFile.id);
+    onSelectFile(nextFile.id);
+    rowVirtualizer.scrollToIndex?.(Math.floor(nextIndex / columns), { align: "auto" });
+  };
+
+  const handleCardKeyDown = (
+    event: KeyboardEvent<HTMLDivElement>,
+    file: FileItem,
+    index: number,
+  ) => {
+    switch (event.key) {
+      case "ArrowRight":
+        event.preventDefault();
+        focusFileAt(index + 1);
+        break;
+      case "ArrowLeft":
+        event.preventDefault();
+        focusFileAt(index - 1);
+        break;
+      case "ArrowDown":
+        event.preventDefault();
+        focusFileAt(index + columns);
+        break;
+      case "ArrowUp":
+        event.preventDefault();
+        focusFileAt(index - columns);
+        break;
+      case "Home":
+        event.preventDefault();
+        focusFileAt(0);
+        break;
+      case "End":
+        event.preventDefault();
+        focusFileAt(files.length - 1);
+        break;
+      case "Enter":
+        event.preventDefault();
+        onOpenFile?.(file);
+        break;
+      case " ":
+        event.preventDefault();
+        setFocusedFileId(file.id);
+        onSelectFile(file.id, { toggle: true });
+        break;
+      default:
+        break;
+    }
+  };
 
   useEffect(() => {
     if (!dragSelect || !onSelectFiles || !parentRef.current) return;
@@ -226,6 +318,8 @@ export function FileGrid({
     <div
       ref={parentRef}
       className="h-full w-full overflow-y-auto overflow-x-hidden"
+      role="listbox"
+      aria-multiselectable="true"
       onMouseDown={(event) => {
         if (event.button !== 0) return;
         const target = event.target as HTMLElement | null;
@@ -288,7 +382,7 @@ export function FileGrid({
                 justifyContent: "start",
               }}
             >
-              {rowFiles.map((file) => {
+              {rowFiles.map((file, columnIndex) => {
                 const isSelected = selectedFiles.has(file.id);
                 const displayName = formatDisplayName(file.name, nameMaxChars);
 
@@ -304,13 +398,17 @@ export function FileGrid({
                           }
                         }}
                         data-infimount-file-item="true"
-                        className={`group relative cursor-pointer border-transparent font-normal text-foreground shadow-none antialiased transition-all duration-200 ${isSelected
+                        className={`group relative cursor-pointer border-transparent font-normal text-foreground shadow-none antialiased outline-none transition-all duration-200 focus-visible:ring-2 focus-visible:ring-primary/40 ${isSelected
                           ? "bg-primary/15 ring-1 ring-primary/20"
                           : "bg-transparent hover:bg-black/5 dark:hover:bg-white/5"
                           } ${file.type === "folder" && folderDropTargetId === file.id && !isSelected
                             ? "bg-primary/10 ring-1 ring-primary/30"
                             : ""
                           }`}
+                        role="option"
+                        tabIndex={file.id === effectiveFocusedFileId ? 0 : -1}
+                        aria-selected={isSelected}
+                        aria-label={file.name}
                         draggable
                         onDragStart={(event) => {
                           const paths = selectedFiles.has(file.id)
@@ -355,6 +453,8 @@ export function FileGrid({
                           onMoveToFolder(payload.paths, file.id);
                         }}
                         onDoubleClick={() => onOpenFile?.(file)}
+                        onFocus={() => setFocusedFileId(file.id)}
+                        onKeyDown={(event) => handleCardKeyDown(event, file, startIndex + columnIndex)}
                         onClick={(event) => {
                           const toggle = event.metaKey || event.ctrlKey;
                           if (toggle) {

@@ -75,9 +75,21 @@ Delivered so far:
 
 v0.6.0 Safe Agent Operations is now implementation-complete for the planned public scope. Remaining hardening moves into v0.6.1 workbench polish.
 
+## In progress for public v0.6.1: Workbench Polish
+
+Theme: make daily file-manager work faster, more accessible, and more predictable under large or interrupted workloads.
+
+Delivered so far:
+
+- Roving keyboard navigation in the virtualized file grid and table views.
+- Arrow keys move between files and folders, Home/End jump to the first or last entry, Enter opens the focused item, and Space toggles selection.
+- File items now expose selection state and visible focus rings for keyboard users.
+
 Next candidates:
 
-- Keyboard navigation hardening across file lists, sidebar, dialogs, and MCP settings.
+- Keyboard navigation hardening across the sidebar, dialogs, and MCP settings.
+- Cancel in-flight list/search work so slow storage responses do not keep the workbench feeling blocked.
+- Better storage validation UX with capability summaries and fix hints.
 
 ## Future quality work
 
