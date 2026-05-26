@@ -46,6 +46,7 @@ import type {
   McpClientSnippets,
   McpRuntimeStatus,
   McpSettings,
+  McpConfirmationRules,
   McpStoragePolicy,
   McpAuditEvent,
   McpToolDefinition,
@@ -68,6 +69,87 @@ const CONFIRMATION_RULES: Array<{
   { key: "require_for_version_delete", label: "Confirm version deletes" },
   { key: "require_for_presign", label: "Confirm download links" },
   { key: "require_for_cross_storage_copy", label: "Confirm cross-storage copy" },
+];
+
+const DEFAULT_CONFIRMATION_RULES: McpConfirmationRules = {
+  require_for_write: true,
+  require_for_overwrite: true,
+  require_for_delete: true,
+  require_for_version_delete: true,
+  require_for_presign: true,
+  require_for_cross_storage_copy: true,
+};
+
+const READ_ONLY_TOOLS = [
+  "list_dir",
+  "stat_path",
+  "read_file",
+  "search_paths",
+  "list_storages",
+  "validate_storage",
+  "list_versions",
+  "read_file_version",
+];
+
+const WORKSPACE_TOOLS = [
+  ...READ_ONLY_TOOLS,
+  "mkdir",
+  "write_file",
+  "copy_path",
+  "move_path",
+];
+
+const FULL_MANUAL_TOOLS = [
+  ...WORKSPACE_TOOLS,
+  "delete_path",
+  "generate_download_link",
+  "delete_version",
+  "session_create",
+  "session_end",
+];
+
+interface McpAccessPreset {
+  id: string;
+  title: string;
+  description: string;
+  enabledTools: string[];
+  accessMode: McpStoragePolicy["default_access"];
+  confirmationRules: McpConfirmationRules;
+}
+
+const MCP_ACCESS_PRESETS: McpAccessPreset[] = [
+  {
+    id: "research-read-only",
+    title: "Read-only research",
+    description: "Agents can browse, inspect, and search exposed storage without mutations.",
+    enabledTools: READ_ONLY_TOOLS,
+    accessMode: "read_only",
+    confirmationRules: DEFAULT_CONFIRMATION_RULES,
+  },
+  {
+    id: "workspace-agent",
+    title: "Workspace agent",
+    description: "Agents can create, write, copy, and move files while risky work still requires approval.",
+    enabledTools: WORKSPACE_TOOLS,
+    accessMode: "read_write",
+    confirmationRules: DEFAULT_CONFIRMATION_RULES,
+  },
+  {
+    id: "manual-approval",
+    title: "Manual approval mode",
+    description: "Broad file tools are available, but writes, deletes, links, and cross-storage work wait for approval.",
+    enabledTools: FULL_MANUAL_TOOLS,
+    accessMode: "read_write",
+    confirmationRules: DEFAULT_CONFIRMATION_RULES,
+  },
+  {
+    id: "locked-down",
+    title: "Lock down MCP",
+    description: "Disable all tools and set exposed storage policies to no access.",
+    enabledTools: [],
+    accessMode: "none",
+    confirmationRules: DEFAULT_CONFIRMATION_RULES,
+  },
 ];
 
 interface McpSettingsDialogProps {
@@ -123,9 +205,13 @@ export function McpSettingsDialog({
   const [isSaving, setIsSaving] = useState(false);
   const [isTogglingHttp, setIsTogglingHttp] = useState(false);
   const [savingPolicyId, setSavingPolicyId] = useState<string | null>(null);
+  const [applyingPresetId, setApplyingPresetId] = useState<string | null>(null);
   const [policyDrafts, setPolicyDrafts] = useState<Record<string, McpStoragePolicy>>({});
+  const [auditQuery, setAuditQuery] = useState("");
+  const [auditDecisionFilter, setAuditDecisionFilter] = useState("all");
+  const [auditStorageFilter, setAuditStorageFilter] = useState("all");
   const [showNetworkConfirm, setShowNetworkConfirm] = useState(false);
-  const isBusy = isSaving || isTogglingHttp;
+  const isBusy = isSaving || isTogglingHttp || applyingPresetId !== null;
   const showNetworkWarning =
     settings.transport === "http" && !isLoopbackBindAddress(settings.bindAddress);
   const requiresHttpRestart = Boolean(
@@ -202,6 +288,42 @@ export function McpSettingsDialog({
     }
   };
 
+  const handleApplyPreset = async (preset: McpAccessPreset) => {
+    const nextSettings: McpSettings = {
+      ...settings,
+      enabled: false,
+      enabledTools: filterAvailableTools(preset.enabledTools, tools),
+    };
+    const nextDrafts = buildPresetPolicyDrafts(exposedStorages, policyDrafts, preset);
+
+    setApplyingPresetId(preset.id);
+    setSettings(nextSettings);
+    setPolicyDrafts((current) => ({ ...current, ...nextDrafts }));
+    try {
+      await onSave(nextSettings);
+      for (const storage of exposedStorages) {
+        await onUpdateStoragePolicy(storage.id, nextDrafts[storage.id]);
+      }
+      toast({
+        title: "Preset applied",
+        description:
+          status?.runningHttp && settings.transport === "http"
+            ? "Restart the HTTP server to apply tool changes to connected clients."
+            : `${preset.title} is saved for exposed MCP storage.`,
+      });
+    } finally {
+      setApplyingPresetId(null);
+    }
+  };
+
+  const handleCopyVisibleAudit = async () => {
+    await navigator.clipboard.writeText(JSON.stringify(filteredAuditEvents, null, 2));
+    toast({
+      title: "Audit copied",
+      description: `${filteredAuditEvents.length} visible MCP audit events copied as JSON.`,
+    });
+  };
+
   const toggleHttpServer = async () => {
     setIsTogglingHttp(true);
     try {
@@ -259,6 +381,15 @@ export function McpSettingsDialog({
     enabledToolCount,
     showNetworkWarning,
     destructiveAccessEnabled: destructiveToolsEnabled && writeAccessibleStorages.length > 0,
+  });
+  const auditStorageOptions = Array.from(
+    new Set(auditEvents.map((event) => event.storage_name).filter((name): name is string => Boolean(name))),
+  ).sort();
+  const auditDecisionOptions = Array.from(new Set(auditEvents.map((event) => event.decision))).sort();
+  const filteredAuditEvents = filterAuditEvents(auditEvents, {
+    query: auditQuery,
+    decision: auditDecisionFilter,
+    storage: auditStorageFilter,
   });
   const primaryActionLabel =
     settings.transport === "http"
@@ -494,6 +625,50 @@ export function McpSettingsDialog({
                     Tool metadata is unavailable.
                   </div>
                 ) : null}
+              </div>
+            </div>
+
+            <div className="space-y-3 rounded-xl border border-border/80 bg-card p-4 shadow-sm">
+              <div>
+                <div className="text-sm font-medium text-foreground">MCP Access Presets</div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  Start from a safe operating mode. Presets save tool visibility and exposed storage
+                  policies, but they do not expose hidden storages.
+                </p>
+              </div>
+              <div className="grid gap-2 md:grid-cols-2">
+                {MCP_ACCESS_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className="rounded-lg border border-border/80 bg-background px-3 py-3 text-left transition-colors hover:bg-secondary/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => void handleApplyPreset(preset)}
+                    disabled={isBusy}
+                  >
+                    <span className="flex items-start justify-between gap-3">
+                      <span>
+                        <span className="block text-sm font-medium text-foreground">
+                          {preset.title}
+                        </span>
+                        <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                          {preset.description}
+                        </span>
+                      </span>
+                      <span className="rounded-full border border-border bg-card px-2 py-0.5 text-[10px] text-muted-foreground">
+                        {preset.accessMode === "read_write"
+                          ? "read/write"
+                          : preset.accessMode === "read_only"
+                            ? "read-only"
+                            : "no access"}
+                      </span>
+                    </span>
+                    <span className="mt-2 block text-[11px] text-muted-foreground">
+                      {applyingPresetId === preset.id
+                        ? "Applying..."
+                        : `${filterAvailableTools(preset.enabledTools, tools).length} tools, ${formatStorageCount(exposedStorages.length)}`}
+                    </span>
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -844,7 +1019,7 @@ export function McpSettingsDialog({
                     signatures are not stored here.
                   </p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
                     variant="outline"
@@ -860,6 +1035,17 @@ export function McpSettingsDialog({
                     variant="outline"
                     size="sm"
                     className="border-border/80"
+                    onClick={() => void handleCopyVisibleAudit()}
+                    disabled={filteredAuditEvents.length === 0}
+                  >
+                    <Copy className="mr-2 h-4 w-4" />
+                    Copy visible
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="border-border/80"
                     onClick={() => void onClearAudit()}
                     disabled={auditEvents.length === 0}
                   >
@@ -868,9 +1054,50 @@ export function McpSettingsDialog({
                   </Button>
                 </div>
               </div>
+              <div className="grid gap-3 md:grid-cols-[1fr_160px_160px]">
+                <Input
+                  value={auditQuery}
+                  onChange={(event) => setAuditQuery(event.target.value)}
+                  placeholder="Filter tool, path, error, or session"
+                  className={`border border-border bg-background text-xs ${FIELD_FOCUS_CLASS}`}
+                />
+                <Select value={auditDecisionFilter} onValueChange={setAuditDecisionFilter}>
+                  <SelectTrigger
+                    className={`h-9 border border-border bg-background text-xs ${FIELD_FOCUS_CLASS}`}
+                  >
+                    <SelectValue placeholder="Decision" />
+                  </SelectTrigger>
+                  <SelectContent className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md">
+                    <SelectItem value="all">All decisions</SelectItem>
+                    {auditDecisionOptions.map((decision) => (
+                      <SelectItem key={decision} value={decision}>
+                        {decision}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={auditStorageFilter} onValueChange={setAuditStorageFilter}>
+                  <SelectTrigger
+                    className={`h-9 border border-border bg-background text-xs ${FIELD_FOCUS_CLASS}`}
+                  >
+                    <SelectValue placeholder="Storage" />
+                  </SelectTrigger>
+                  <SelectContent className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md">
+                    <SelectItem value="all">All storages</SelectItem>
+                    {auditStorageOptions.map((storageName) => (
+                      <SelectItem key={storageName} value={storageName}>
+                        {storageName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                Showing {Math.min(filteredAuditEvents.length, 20)} of {filteredAuditEvents.length} matching events.
+              </div>
               <div className="max-h-64 overflow-y-auto rounded-lg border border-border/80 bg-background">
-                {auditEvents.length > 0 ? (
-                  auditEvents.slice(0, 20).map((event) => (
+                {filteredAuditEvents.length > 0 ? (
+                  filteredAuditEvents.slice(0, 20).map((event) => (
                     <div
                       key={event.id}
                       className="grid gap-1 border-b border-border/70 px-3 py-2 text-xs last:border-b-0 md:grid-cols-[1fr_auto]"
@@ -898,7 +1125,9 @@ export function McpSettingsDialog({
                   ))
                 ) : (
                   <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-                    No MCP audit events yet.
+                    {auditEvents.length === 0
+                      ? "No MCP audit events yet."
+                      : "No MCP audit events match these filters."}
                   </div>
                 )}
               </div>
@@ -958,6 +1187,53 @@ function clonePolicy(policy: McpStoragePolicy): McpStoragePolicy {
     denied_paths: [...policy.denied_paths],
     confirmation_rules: { ...policy.confirmation_rules },
   };
+}
+
+function filterAvailableTools(toolNames: string[], tools: McpToolDefinition[]): string[] {
+  const available = new Set(tools.map((tool) => tool.name));
+  return toolNames.filter((name) => available.has(name)).sort();
+}
+
+function buildPresetPolicyDrafts(
+  storages: StorageConfig[],
+  drafts: Record<string, McpStoragePolicy>,
+  preset: McpAccessPreset,
+): Record<string, McpStoragePolicy> {
+  const next: Record<string, McpStoragePolicy> = {};
+  for (const storage of storages) {
+    const current = clonePolicy(effectivePolicy(storage, drafts[storage.id]));
+    next[storage.id] = {
+      ...current,
+      default_access: storage.readOnly && preset.accessMode === "read_write" ? "read_only" : preset.accessMode,
+      confirmation_rules: { ...preset.confirmationRules },
+    };
+  }
+  return next;
+}
+
+function filterAuditEvents(
+  events: McpAuditEvent[],
+  filters: { query: string; decision: string; storage: string },
+): McpAuditEvent[] {
+  const query = filters.query.trim().toLowerCase();
+  return events.filter((event) => {
+    if (filters.decision !== "all" && event.decision !== filters.decision) return false;
+    if (filters.storage !== "all" && event.storage_name !== filters.storage) return false;
+    if (!query) return true;
+
+    return [
+      event.tool_name,
+      event.operation,
+      event.path,
+      event.storage_name,
+      event.backend,
+      event.session_id,
+      event.error_code,
+      event.decision,
+    ]
+      .filter(Boolean)
+      .some((value) => value?.toLowerCase().includes(query));
+  });
 }
 
 function effectivePolicy(storage: StorageConfig, draft?: McpStoragePolicy): McpStoragePolicy {

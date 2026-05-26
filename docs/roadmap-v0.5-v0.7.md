@@ -58,6 +58,25 @@ No direct provider SDKs for file operations.
 - Additional S3-compatible presets where they materially reduce setup friction.
 - TOS once OpenDAL exposes useful read/write/list/stat capability.
 
+## In progress for public v0.6.0: Safe Agent Operations
+
+Theme: make safe MCP access easier to understand, apply, and audit.
+
+Delivered so far:
+
+- MCP Settings includes a policy-aware "What the agent can access" summary.
+- Access presets for read-only research, workspace agents, manual approval mode, and MCP lockdown.
+- Presets save enabled tools and exposed storage path policies without exposing hidden storages.
+- MCP audit filtering by text, decision, and storage.
+- Copy-visible audit export for redacted local audit review.
+
+Next candidates:
+
+- More guided preset copy for common clients and workspace types.
+- Audit export to a local file with redaction manifest.
+- End-to-end MCP scenario tests for preset behavior.
+- Keyboard navigation hardening across file lists, sidebar, dialogs, and MCP settings.
+
 ## Future quality work
 
 - Continue frontend branch/function coverage hardening for `FileBrowser.tsx`, `FilePreviewPanel.tsx`, and `McpSettingsDialog.tsx`.

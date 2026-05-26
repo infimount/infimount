@@ -39,9 +39,9 @@ The durable product wedge is not “another cloud file manager.” It is:
 - Storage-management tools support list/add/edit/remove/import/export/validate.
 - Safe MCP controls include exposed/enabled flags, read-only, path policy, confirmation queue, audit log, and sessions.
 
-### Documentation mismatch to fix
+### Documentation status
 
-`Agents.md` still says only local filesystem is wired and other `SourceKind` variants are placeholders. The current code includes builders for S3, WebDAV, Azure Blob, and GCS. Future agent work should update this doc before relying on it.
+`Agents.md` now reflects the wired OpenDAL backends: local filesystem, S3/S3-compatible, native Backblaze B2, Azure Blob, Google Cloud Storage, and WebDAV. Future backend work should keep this guide aligned with the registry and desktop schema.
 
 ## 3. Primary user segments
 
@@ -187,10 +187,10 @@ Differentiators to preserve:
 
 ### MCP and AI workflow
 
-- Make the “What the agent can access” summary the central MCP settings primitive.
-- Add scenario presets: read-only research, code agent workspace, backup operator, full manual-approval mode.
+- Keep the “What the agent can access” summary the central MCP settings primitive.
+- Expand scenario presets beyond the implemented read-only research, workspace agent, manual-approval, and lockdown modes.
 - Harden HTTP auth and non-loopback warnings.
-- Improve audit filtering/export without leaking secrets.
+- Continue improving audit filtering/export without leaking secrets; text/decision/storage filters and copy-visible JSON are implemented.
 - Add end-to-end MCP scenario tests.
 
 ### Storage breadth

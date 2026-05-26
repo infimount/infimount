@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Started v0.6.0 Safe Agent Operations with MCP access presets and filtered copy-visible audit export in MCP settings.
+- Updated agent-facing architecture docs to reflect native Backblaze B2 and the current OpenDAL-backed backend set.
+
 ## [0.5.0] - 2026-05-26
 
 ### Added

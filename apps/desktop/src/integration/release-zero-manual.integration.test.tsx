@@ -259,7 +259,7 @@ describe("release zero-manual smoke path", () => {
 
     expect(await screen.findByText("2 of 2 functions enabled")).toBeInTheDocument();
     expect(screen.getAllByText("Release Local").length).toBeGreaterThan(0);
-    expect(screen.getByText("read/write")).toBeInTheDocument();
+    expect(screen.getAllByText("read/write").length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole("button", { name: /Save & Start HTTP Server/i }));
 

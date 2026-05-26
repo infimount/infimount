@@ -29,6 +29,17 @@ const snippets: McpClientSnippets = {
 
 const tools: McpToolDefinition[] = [
   { name: "list_dir", description: "List directories within the Infimount virtual filesystem." },
+  { name: "stat_path", description: "Return path metadata." },
+  { name: "read_file", description: "Read file contents." },
+  { name: "search_paths", description: "Search storage paths." },
+  { name: "write_file", description: "Write file contents." },
+  { name: "mkdir", description: "Create directories." },
+  { name: "copy_path", description: "Copy files." },
+  { name: "move_path", description: "Move files." },
+  { name: "delete_path", description: "Delete files." },
+  { name: "generate_download_link", description: "Create download links." },
+  { name: "list_storages", description: "List exposed storage." },
+  { name: "validate_storage", description: "Validate storage configuration." },
   { name: "export_config", description: "Export the storage registry as JSON." },
 ];
 
@@ -214,7 +225,7 @@ describe("McpSettingsDialog integration", () => {
     );
 
     expect(screen.getByText(/Pending MCP Approvals/i)).toBeInTheDocument();
-    expect(screen.getByText("delete_path")).toBeInTheDocument();
+    expect(screen.getAllByText("delete_path").length).toBeGreaterThan(0);
     expect(screen.getByText(/delete_path on \/Local\/file.txt/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Approve/i }));
@@ -280,6 +291,139 @@ describe("McpSettingsDialog integration", () => {
     expect(screen.getAllByText("Blocked by read-only or no-access policies")).toHaveLength(2);
     expect(screen.getByText("Enabled for 1 storage")).toBeInTheDocument();
     expect(screen.getByText(/writes, deletes, links, cross-storage copy require approval/i)).toBeInTheDocument();
+  });
+
+  it("applies safe access presets to tools and exposed storage policies", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const onUpdateStoragePolicy = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <McpSettingsDialog
+        open
+        onOpenChange={() => undefined}
+        status={status}
+        snippets={snippets}
+        tools={tools}
+        storages={storages}
+        auditEvents={[]}
+        pendingConfirmations={[]}
+        notificationPermission="default"
+        onSave={onSave}
+        onStartHttp={vi.fn()}
+        onStopHttp={vi.fn()}
+        onTestServer={vi.fn()}
+        onRefreshAudit={vi.fn()}
+        onClearAudit={vi.fn()}
+        onApproveConfirmation={vi.fn()}
+        onDenyConfirmation={vi.fn()}
+        onEnableNotifications={vi.fn()}
+        onUpdateStoragePolicy={onUpdateStoragePolicy}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Read-only research/i }));
+
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          enabled: false,
+          enabledTools: expect.arrayContaining(["list_dir", "read_file", "search_paths"]),
+        }),
+      );
+      expect(onUpdateStoragePolicy).toHaveBeenCalledWith("local", {
+        ...mcpPolicy,
+        default_access: "read_only",
+      });
+    });
+
+    expect(onSave.mock.calls[0][0].enabledTools).not.toContain("write_file");
+  });
+
+  it("filters and copies visible MCP audit events", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, {
+      clipboard: { writeText },
+    });
+
+    render(
+      <McpSettingsDialog
+        open
+        onOpenChange={() => undefined}
+        status={status}
+        snippets={snippets}
+        tools={tools}
+        storages={storages}
+        auditEvents={[
+          {
+            id: "audit-1",
+            timestamp: "2026-01-01T00:00:00Z",
+            actor_type: "mcp_client",
+            mcp_client_id: null,
+            session_id: "session-1",
+            storage_id: "local",
+            storage_name: "Local",
+            backend: "local",
+            tool_name: "read_file",
+            operation: "read",
+            path: "/Local/docs/readme.md",
+            version_id: null,
+            decision: "allowed",
+            confirmation_id: null,
+            duration_ms: 1,
+            bytes_read: 12,
+            bytes_written: null,
+            error_code: null,
+          },
+          {
+            id: "audit-2",
+            timestamp: "2026-01-01T00:01:00Z",
+            actor_type: "mcp_client",
+            mcp_client_id: null,
+            session_id: null,
+            storage_id: "local",
+            storage_name: "Local",
+            backend: "local",
+            tool_name: "delete_path",
+            operation: "delete",
+            path: "/Local/private.txt",
+            version_id: null,
+            decision: "denied",
+            confirmation_id: null,
+            duration_ms: 2,
+            bytes_read: null,
+            bytes_written: null,
+            error_code: "ERR_MCP_POLICY_DENIED",
+          },
+        ]}
+        pendingConfirmations={[]}
+        notificationPermission="default"
+        onSave={vi.fn()}
+        onStartHttp={vi.fn()}
+        onStopHttp={vi.fn()}
+        onTestServer={vi.fn()}
+        onRefreshAudit={vi.fn()}
+        onClearAudit={vi.fn()}
+        onApproveConfirmation={vi.fn()}
+        onDenyConfirmation={vi.fn()}
+        onEnableNotifications={vi.fn()}
+        onUpdateStoragePolicy={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Filter tool, path, error, or session/i), {
+      target: { value: "private" },
+    });
+
+    expect(screen.getByText(/Showing 1 of 1 matching events/i)).toBeInTheDocument();
+    expect(screen.getAllByText("delete_path").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/docs\/readme/i)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Copy visible/i }));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(expect.stringContaining("audit-2"));
+    });
+    expect(writeText.mock.calls[0][0]).not.toContain("audit-1");
   });
 
   it("edits and saves path policy for an exposed storage", async () => {
