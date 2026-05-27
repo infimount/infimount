@@ -28,8 +28,8 @@ Required release preparation:
 
 1. Ensure `main` is green in all required workflows.
 2. Choose next version by impact:
-   - patch (`0.1.1`) for fixes only
-   - minor (`0.2.0`) for new user-facing features (recommended for MCP rollout)
+   - patch (`X.Y.Z+1`) for fixes only
+   - minor (`X.Y+1.0`) for new user-facing features
 3. If you want signed installers, configure release secrets first.
    - macOS signing/notarization secrets:
      - `APPLE_CERTIFICATE`

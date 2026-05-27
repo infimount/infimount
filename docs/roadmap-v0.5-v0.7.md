@@ -49,20 +49,11 @@ new backend = OpenDAL operator + capability matrix + tests + docs
 
 No direct provider SDKs for file operations.
 
-## Future public v0.6.0 candidates
+## Prepared for public v0.6.0: Safe Agent Operations and Workbench Polish
 
-- SFTP, if OpenDAL support meets the product-ready rule.
-- FTP, only with clear security warnings and capability coverage.
-- OSS, COS, OBS, and similar object stores through OpenDAL.
-- Additional WebDAV presets and compatibility toggles.
-- Additional S3-compatible presets where they materially reduce setup friction.
-- TOS once OpenDAL exposes useful read/write/list/stat capability.
+Theme: make safe MCP access easier to understand, apply, and audit while improving daily file-manager keyboard work.
 
-## In progress for public v0.6.0: Safe Agent Operations
-
-Theme: make safe MCP access easier to understand, apply, and audit.
-
-Delivered so far:
+Delivered for v0.6.0:
 
 - MCP Settings includes a policy-aware "What the agent can access" summary.
 - Access presets for read-only research, workspace agents, manual approval mode, and MCP lockdown, with guided copy for common agent/workspace uses.
@@ -71,23 +62,22 @@ Delivered so far:
 - Copy-visible audit export for redacted local audit review.
 - Export-visible audit bundles under `~/.infimount/exports/` with a redaction manifest.
 - Active scoped session visibility in MCP Settings, backed by the same session manager used by the desktop HTTP runtime.
-- MCP safety scenario tests for allowed reads, denied prefix escape attempts, write confirmations, confirmation replay protection, read-only session write blocking, and audit redaction.
-
-v0.6.0 Safe Agent Operations is now implementation-complete for the planned public scope. Remaining hardening moves into v0.6.1 workbench polish.
-
-## In progress for public v0.6.1: Workbench Polish
-
-Theme: make daily file-manager work faster, more accessible, and more predictable under large or interrupted workloads.
-
-Delivered so far:
-
+- Desktop HTTP requires a bearer token before binding beyond loopback.
+- MCP resources respect enabled-tool controls so disabled filesystem tools cannot be bypassed through resource APIs.
+- Recursive list, search, copy, delete, and overwrite flows enforce MCP path policy for descendant paths so denied child prefixes cannot be exposed or mutated through an allowed parent.
+- MCP safety scenario tests for allowed reads, denied prefix escape attempts, write confirmations, confirmation replay protection, read-only session write blocking, cross-storage copy from read-only sources, recursive denied descendants, and audit redaction.
 - Roving keyboard navigation in the virtualized file grid and table views.
 - Arrow keys move between files and folders, Home/End jump to the first or last entry, Enter opens the focused item, and Space toggles selection.
 - File items now expose selection state and visible focus rings for keyboard users.
 
-Next candidates:
+## Future public v0.7.0 candidates
 
-- Keyboard navigation hardening across the sidebar, dialogs, and MCP settings.
+- SFTP, if OpenDAL support meets the product-ready rule.
+- FTP, only with clear security warnings and capability coverage.
+- OSS, COS, OBS, and similar object stores through OpenDAL.
+- Additional WebDAV presets and compatibility toggles.
+- Additional S3-compatible presets where they materially reduce setup friction.
+- TOS once OpenDAL exposes useful read/write/list/stat capability.
 - Cancel in-flight list/search work so slow storage responses do not keep the workbench feeling blocked.
 - Better storage validation UX with capability summaries and fix hints.
 

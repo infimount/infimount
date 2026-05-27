@@ -224,11 +224,14 @@ export function McpSettingsDialog({
   const isBusy = isSaving || isTogglingHttp || applyingPresetId !== null;
   const showNetworkWarning =
     settings.transport === "http" && !isLoopbackBindAddress(settings.bindAddress);
+  const httpAuthToken = settings.authToken?.trim() ?? "";
+  const nonLoopbackMissingAuth = showNetworkWarning && httpAuthToken.length === 0;
   const requiresHttpRestart = Boolean(
     status?.runningHttp &&
     settings.transport === "http" &&
     (settings.bindAddress !== status.settings.bindAddress ||
       settings.port !== status.settings.port ||
+      (settings.authToken ?? "") !== (status.settings.authToken ?? "") ||
       !sameToolSet(settings.enabledTools, status.settings.enabledTools)),
   );
 
@@ -264,7 +267,7 @@ export function McpSettingsDialog({
   };
 
   const handleHttpToggle = async () => {
-    if (showNetworkWarning) {
+    if (!status?.runningHttp && showNetworkWarning) {
       setShowNetworkConfirm(true);
       return;
     }
@@ -493,10 +496,30 @@ export function McpSettingsDialog({
                         />
                       </div>
                     </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs font-normal text-muted-foreground">
+                        HTTP bearer token
+                      </Label>
+                      <Input
+                        type="password"
+                        value={settings.authToken ?? ""}
+                        placeholder={showNetworkWarning ? "Required for non-loopback HTTP" : "Optional for loopback HTTP"}
+                        onChange={(event) =>
+                          setSettings((current) => ({
+                            ...current,
+                            authToken: event.target.value,
+                          }))
+                        }
+                        className={`border border-border bg-card text-sm text-[hsl(var(--card-foreground))] ${FIELD_FOCUS_CLASS}`}
+                      />
+                      <p className="text-[11px] text-muted-foreground">
+                        Clients must send <span className="font-mono">Authorization: Bearer …</span> when a token is set.
+                      </p>
+                    </div>
                     {showNetworkWarning ? (
                       <div className="rounded-lg border border-amber-300/80 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
                         This bind address is not loopback. Clients on your LAN may be able to reach
-                        this MCP endpoint.
+                        this MCP endpoint. A bearer token is required before it can start.
                       </div>
                     ) : null}
                   </div>
@@ -536,7 +559,7 @@ export function McpSettingsDialog({
                     type="button"
                     className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
                     onClick={handleHttpToggle}
-                    disabled={isBusy}
+                    disabled={isBusy || (!status?.runningHttp && nonLoopbackMissingAuth)}
                   >
                     {status?.runningHttp ? (
                       <Square className="mr-2 h-4 w-4" />
@@ -1221,13 +1244,15 @@ export function McpSettingsDialog({
             <AlertDialogTitle>Expose MCP beyond this machine?</AlertDialogTitle>
             <AlertDialogDescription>
               The HTTP server will bind to {settings.bindAddress}. Clients on your LAN may be able
-              to reach this endpoint. Continue only if you intend to expose it.
+              to reach it. Continue only if this is intentional, a bearer token is configured, and
+              your storage exposure policies are scoped for this network.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               className="bg-primary text-primary-foreground hover:bg-primary/90"
+              disabled={nonLoopbackMissingAuth}
               onClick={() => {
                 setShowNetworkConfirm(false);
                 void toggleHttpServer();

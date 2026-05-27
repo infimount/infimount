@@ -7,14 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-27
+
 ### Added
 
-- Started v0.6.1 Workbench Polish with roving keyboard navigation for virtualized file grid and table views, including arrow-key movement, Home/End jumps, Enter open, and Space toggle selection.
-- Completed the planned v0.6.0 Safe Agent Operations scope with guided MCP access presets, active-session visibility, copy/export-visible audit bundles, and redaction manifests in MCP settings.
+- MCP Settings now includes guided access presets for read-only research, workspace agents, manual approval mode, and MCP lockdown.
+- Added a policy-aware "What the agent can access" summary covering exposed storages, enabled tools, write/destructive/link access, confirmations, active sessions, and recent risky actions.
+- Added MCP audit filtering by text, decision, and storage, plus copy-visible JSON and export-visible local audit bundles with redaction manifests.
+- Added active scoped MCP session visibility in desktop MCP Settings by reusing the desktop HTTP runtime session manager.
+- Added roving keyboard navigation for virtualized file grid and table views, including arrow-key movement, Home/End jumps, Enter open, and Space toggle selection.
+- Added MCP safety scenario coverage for allowed reads, denied prefix escape attempts, read-only session write blocking, confirmation replay protection, cross-storage copy from read-only sources, and audit redaction behavior.
+
+### Changed
+
+- Presets save enabled tools and update policies only for storages already exposed to MCP, preserving explicit storage exposure.
+- Desktop HTTP now requires a bearer token for non-loopback bind addresses; unauthenticated HTTP is limited to loopback local development.
+- MCP resources now respect enabled-tool controls so disabled read/list/stat tools cannot be bypassed through resource APIs.
+- Recursive list, search, copy, delete, and overwrite flows enforce MCP path policy for descendant paths so denied child prefixes cannot be exposed or mutated through an allowed parent.
+- Confirmation checks now validate session scope before creating pending approvals, so read-only sessions receive deterministic denial instead of approval prompts.
+- Cross-storage copy confirmation checks treat the source as read-like and the destination as write-like.
 - Updated agent-facing architecture docs to reflect native Backblaze B2 and the current OpenDAL-backed backend set.
-- Reused the desktop MCP session manager for the in-process HTTP server so active scoped sessions can be inspected from MCP Settings and cleared when the server stops.
-- Hardened MCP session path-prefix checks to be normalized and segment-aware.
-- Added MCP safety scenario coverage for allowed reads, denied prefix escape attempts, read-only session write blocking, confirmation replay protection, and audit redaction behavior.
+
+### Fixed
+
+- Fixed desktop Tauri storage draft validation so native Backblaze B2 is accepted by add, update, and verify flows.
 
 ## [0.5.0] - 2026-05-26
 
@@ -112,7 +128,8 @@ First stable release of Infimount — a unified desktop storage browser powered 
 
 ---
 
-[Unreleased]: https://github.com/infimount/infimount/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/infimount/infimount/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/infimount/infimount/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/infimount/infimount/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/infimount/infimount/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/infimount/infimount/releases/tag/v0.3.0

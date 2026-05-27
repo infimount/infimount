@@ -179,9 +179,9 @@ Differentiators to preserve:
 
 ### Near-term product quality
 
-- Fix doc drift in `Agents.md`.
-- Improve keyboard navigation in file lists, sidebar, dialogs, and MCP settings.
-- Improve large directory performance: virtualized list/grid, pagination/cursor where possible, async progress states.
+- Keep docs aligned with the current backend set, MCP safety model, and release status.
+- Continue keyboard navigation hardening in the sidebar, dialogs, and MCP settings; file grid/table roving navigation is implemented.
+- Improve large directory performance: virtualized list/grid is implemented; continue pagination/cursor where possible and async progress states.
 - Strengthen storage validation with clearer capability summaries.
 - Improve error messaging for backend-specific auth/config failures.
 
@@ -189,9 +189,9 @@ Differentiators to preserve:
 
 - Keep the “What the agent can access” summary the central MCP settings primitive.
 - Expand scenario presets beyond the implemented read-only research, workspace agent, manual-approval, and lockdown modes.
-- Harden HTTP auth and non-loopback warnings.
-- Continue improving audit filtering/export without leaking secrets; text/decision/storage filters and copy-visible JSON are implemented.
-- Add end-to-end MCP scenario tests.
+- Continue hardening HTTP auth and non-loopback warnings; desktop non-loopback HTTP now requires a bearer token.
+- Continue improving audit filtering/export without leaking secrets; text/decision/storage filters, copy-visible JSON, and redacted export-visible bundles are implemented.
+- Expand MCP scenario tests beyond the implemented allowed-read, denied-prefix, confirmation, read-only-session, cross-storage-copy, and audit-redaction cases.
 
 ### Storage breadth
 

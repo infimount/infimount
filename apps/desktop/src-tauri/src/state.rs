@@ -64,7 +64,8 @@ impl AppState {
         FsToolsContext {
             registry: self.registry.clone(),
             sessions: self.sessions.clone(),
-            allow_insecure: settings.auth_token.is_none(),
+            allow_insecure: settings.auth_token.is_none()
+                && is_loopback_bind_address(&settings.bind_address),
             auth_token: settings.auth_token,
         }
     }
@@ -129,7 +130,8 @@ impl AppState {
         }
 
         self.stop_http_server_inner().await?;
-        let allow_insecure = settings.auth_token.is_none();
+        let allow_insecure =
+            settings.auth_token.is_none() && is_loopback_bind_address(&settings.bind_address);
         let server = start_http_server_from_settings(
             self.registry.clone(),
             &settings,
@@ -192,13 +194,10 @@ impl AppState {
                 }
             }))
             .unwrap_or_default(),
-            http: serde_json::to_string_pretty(&json!({
-                "mcpServers": {
-                    "infimount": {
-                        "url": http_endpoint
-                    }
-                }
-            }))
+            http: serde_json::to_string_pretty(&http_client_snippet(
+                &http_endpoint,
+                status.settings.auth_token.as_deref(),
+            ))
             .unwrap_or_default(),
         })
     }
@@ -243,6 +242,31 @@ impl AppState {
             endpoint_display,
         })
     }
+}
+
+fn http_client_snippet(endpoint: &str, auth_token: Option<&str>) -> Value {
+    let mut server = Map::new();
+    server.insert("url".to_string(), Value::String(endpoint.to_string()));
+    if let Some(token) = auth_token.filter(|token| !token.trim().is_empty()) {
+        server.insert(
+            "headers".to_string(),
+            json!({ "Authorization": format!("Bearer {token}") }),
+        );
+    }
+
+    json!({
+        "mcpServers": {
+            "infimount": Value::Object(server)
+        }
+    })
+}
+
+fn is_loopback_bind_address(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase();
+    normalized == "localhost"
+        || normalized == "::1"
+        || normalized == "[::1]"
+        || normalized.starts_with("127.")
 }
 
 fn suggested_http_endpoint(settings: &McpSettings) -> String {

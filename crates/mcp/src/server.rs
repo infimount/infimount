@@ -5,9 +5,9 @@ use std::time::Instant;
 use rmcp::model::{
     CallToolRequestMethod, CallToolRequestParams, CallToolResult, ErrorData,
     GetPromptRequestParams, GetPromptResult, Implementation, JsonObject, ListPromptsResult,
-    ListResourcesResult, ListToolsResult, PromptsCapability, ReadResourceRequestParams,
-    ReadResourceResult, ResourcesCapability, ServerCapabilities, ServerInfo, Tool, ToolAnnotations,
-    ToolsCapability,
+    ListResourcesRequestMethod, ListResourcesResult, ListToolsResult, PromptsCapability,
+    ReadResourceRequestMethod, ReadResourceRequestParams, ReadResourceResult, ResourcesCapability,
+    ServerCapabilities, ServerInfo, Tool, ToolAnnotations, ToolsCapability,
 };
 use rmcp::ServerHandler;
 use serde::de::DeserializeOwned;
@@ -311,8 +311,9 @@ impl InfimountMcpServer {
         tool_name: &str,
         arguments: &JsonObject,
     ) -> Result<Option<ConfirmationRequiredResponse>, ErrorData> {
-        let Some(check) =
-            confirmation_check(&self.ctx, tool_name, arguments).map_err(mcp_to_rmcp_error)?
+        let Some(check) = confirmation_check(&self.ctx, tool_name, arguments)
+            .await
+            .map_err(mcp_to_rmcp_error)?
         else {
             return Ok(None);
         };
@@ -527,6 +528,10 @@ impl ServerHandler for InfimountMcpServer {
         _request: Option<rmcp::model::PaginatedRequestParams>,
         _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
+        if !self.is_tool_enabled("list_dir") {
+            return Err(ErrorData::method_not_found::<ListResourcesRequestMethod>());
+        }
+
         let resources = resources::list_resources(&self.ctx).map_err(mcp_to_rmcp_error)?;
         Ok(ListResourcesResult::with_all_items(resources))
     }
@@ -536,6 +541,31 @@ impl ServerHandler for InfimountMcpServer {
         request: ReadResourceRequestParams,
         _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
     ) -> Result<ReadResourceResult, ErrorData> {
+        if !self.is_tool_enabled("stat_path") {
+            return Err(ErrorData::method_not_found::<ReadResourceRequestMethod>());
+        }
+
+        let path = resources::resource_uri_to_mcp_path(&request.uri)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+        let stat = tools_fs::stat_path(
+            &self.ctx,
+            StatPathInput {
+                path: path.clone(),
+                session_id: None,
+            },
+        )
+        .await
+        .map_err(mcp_to_rmcp_error)?;
+
+        let required_tool = if stat.entry_type == tools_fs::EntryType::Dir {
+            "list_dir"
+        } else {
+            "read_file"
+        };
+        if !self.is_tool_enabled(required_tool) {
+            return Err(ErrorData::method_not_found::<ReadResourceRequestMethod>());
+        }
+
         resources::read_resource(&self.ctx, &request.uri)
             .await
             .map_err(mcp_to_rmcp_error)
@@ -1168,76 +1198,97 @@ struct ConfirmationCheck {
     summary: String,
 }
 
-fn confirmation_check(
+async fn confirmation_check(
     ctx: &FsToolsContext,
     tool_name: &str,
     arguments: &JsonObject,
 ) -> McpResult<Option<ConfirmationCheck>> {
     match tool_name {
-        "write_file" => check_single_path_confirmation(
-            ctx,
-            tool_name,
-            arguments,
-            "path",
-            McpOperation::Write,
-            bool_arg(arguments, "overwrite", true),
-            false,
-        ),
-        "mkdir" => check_single_path_confirmation(
-            ctx,
-            tool_name,
-            arguments,
-            "path",
-            McpOperation::Mkdir,
-            false,
-            false,
-        ),
-        "delete_path" => check_single_path_confirmation(
-            ctx,
-            tool_name,
-            arguments,
-            "path",
-            McpOperation::Delete,
-            false,
-            false,
-        ),
-        "generate_download_link" => check_single_path_confirmation(
-            ctx,
-            tool_name,
-            arguments,
-            "path",
-            McpOperation::PresignDownloadLink,
-            false,
-            false,
-        ),
-        "delete_version" => check_single_path_confirmation(
-            ctx,
-            tool_name,
-            arguments,
-            "path",
-            McpOperation::DeleteVersion,
-            false,
-            false,
-        ),
-        "copy_path" => check_transfer_confirmation(
-            ctx,
-            tool_name,
-            arguments,
-            McpOperation::Copy,
-            bool_arg(arguments, "overwrite", false),
-        ),
-        "move_path" => check_transfer_confirmation(
-            ctx,
-            tool_name,
-            arguments,
-            McpOperation::Move,
-            bool_arg(arguments, "overwrite", false),
-        ),
+        "write_file" => {
+            check_single_path_confirmation(
+                ctx,
+                tool_name,
+                arguments,
+                "path",
+                McpOperation::Write,
+                bool_arg(arguments, "overwrite", true),
+                false,
+            )
+            .await
+        }
+        "mkdir" => {
+            check_single_path_confirmation(
+                ctx,
+                tool_name,
+                arguments,
+                "path",
+                McpOperation::Mkdir,
+                false,
+                false,
+            )
+            .await
+        }
+        "delete_path" => {
+            check_single_path_confirmation(
+                ctx,
+                tool_name,
+                arguments,
+                "path",
+                McpOperation::Delete,
+                false,
+                false,
+            )
+            .await
+        }
+        "generate_download_link" => {
+            check_single_path_confirmation(
+                ctx,
+                tool_name,
+                arguments,
+                "path",
+                McpOperation::PresignDownloadLink,
+                false,
+                false,
+            )
+            .await
+        }
+        "delete_version" => {
+            check_single_path_confirmation(
+                ctx,
+                tool_name,
+                arguments,
+                "path",
+                McpOperation::DeleteVersion,
+                false,
+                false,
+            )
+            .await
+        }
+        "copy_path" => {
+            check_transfer_confirmation(
+                ctx,
+                tool_name,
+                arguments,
+                McpOperation::Copy,
+                bool_arg(arguments, "overwrite", false),
+            )
+            .await
+        }
+        "move_path" => {
+            check_transfer_confirmation(
+                ctx,
+                tool_name,
+                arguments,
+                McpOperation::Move,
+                bool_arg(arguments, "overwrite", false),
+            )
+            .await
+        }
         _ => Ok(None),
     }
 }
 
-fn check_single_path_confirmation(
+async fn check_single_path_confirmation(
     ctx: &FsToolsContext,
     tool_name: &str,
     arguments: &JsonObject,
@@ -1254,6 +1305,21 @@ fn check_single_path_confirmation(
         return Ok(None);
     }
     let resolved = crate::path::resolve_storage_path(&ctx.registry, &parsed.normalized)?;
+    let session_access = ctx
+        .validate_session(
+            session_id_arg(arguments),
+            &resolved.storage.name,
+            Some(&resolved.parsed.backend_path),
+        )
+        .await?;
+    if session_access.read_only && operation.is_write_like() {
+        return Err(err_with_details(
+            McpErrorCode::ERR_SESSION_FORBIDDEN,
+            "session is read-only",
+            json!({ "session_id": session_id_arg(arguments) }),
+        ));
+    }
+
     match evaluate_storage_policy(
         &resolved.storage,
         &resolved.parsed.backend_path,
@@ -1273,7 +1339,7 @@ fn check_single_path_confirmation(
     }
 }
 
-fn check_transfer_confirmation(
+async fn check_transfer_confirmation(
     ctx: &FsToolsContext,
     tool_name: &str,
     arguments: &JsonObject,
@@ -1293,14 +1359,48 @@ fn check_transfer_confirmation(
     }
     let src_resolved = crate::path::resolve_storage_path(&ctx.registry, &src_parsed.normalized)?;
     let dst_resolved = crate::path::resolve_storage_path(&ctx.registry, &dst_parsed.normalized)?;
+    let src_session_access = ctx
+        .validate_session(
+            session_id_arg(arguments),
+            &src_resolved.storage.name,
+            Some(&src_resolved.parsed.backend_path),
+        )
+        .await?;
+    let dst_session_access = ctx
+        .validate_session(
+            session_id_arg(arguments),
+            &dst_resolved.storage.name,
+            Some(&dst_resolved.parsed.backend_path),
+        )
+        .await?;
     let cross_storage = src_resolved.storage.id != dst_resolved.storage.id;
+    let source_operation = if operation == McpOperation::Copy {
+        McpOperation::Read
+    } else {
+        operation
+    };
+
+    if src_session_access.read_only && source_operation.is_write_like() {
+        return Err(err_with_details(
+            McpErrorCode::ERR_SESSION_FORBIDDEN,
+            "session is read-only",
+            json!({ "session_id": session_id_arg(arguments) }),
+        ));
+    }
+    if dst_session_access.read_only && operation.is_write_like() {
+        return Err(err_with_details(
+            McpErrorCode::ERR_SESSION_FORBIDDEN,
+            "session is read-only",
+            json!({ "session_id": session_id_arg(arguments) }),
+        ));
+    }
 
     let src_decision = evaluate_storage_policy(
         &src_resolved.storage,
         &src_resolved.parsed.backend_path,
-        operation,
+        source_operation,
         false,
-        cross_storage,
+        false,
     )?;
     if let PolicyDecision::RequireConfirmation { risk_type } = src_decision {
         return Ok(Some(ConfirmationCheck {
@@ -1336,6 +1436,13 @@ fn check_transfer_confirmation(
             ),
         })),
     }
+}
+
+fn session_id_arg(arguments: &JsonObject) -> Option<&str> {
+    arguments
+        .get("session_id")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
 }
 
 fn bool_arg(arguments: &JsonObject, key: &str, default: bool) -> bool {
@@ -1545,13 +1652,109 @@ mod tests {
         write_args.insert("path".to_string(), json!("/Local/public/new.txt"));
         write_args.insert("content".to_string(), json!("new"));
         write_args.insert("session_id".to_string(), json!(session.id));
-        let write_response = server
+        let write_error = server
             .dispatch_tool_json("write_file", Some(write_args))
             .await
-            .expect("write response");
-        assert_eq!(write_response["ok"], false);
-        assert_eq!(write_response["error"]["code"], "ERR_SESSION_FORBIDDEN");
+            .expect_err("write should be rejected before confirmation");
+        assert_eq!(
+            error_code_from_error_data(&write_error),
+            "ERR_SESSION_FORBIDDEN"
+        );
         assert!(!root.join("public/new.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn read_only_session_blocks_write_before_confirmation_prompt() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let root = temp_dir.path().join("local");
+        std::fs::create_dir_all(&root).expect("create local root");
+
+        let ctx = test_context(&temp_dir);
+        let storage = StorageRecord::new(
+            "Local".to_string(),
+            "local".to_string(),
+            json!({ "root": root.clone() }),
+        );
+        ctx.registry
+            .save_all_atomic(&[storage])
+            .expect("save registry");
+        let sessions = ctx.sessions.clone();
+        let server = InfimountMcpServer::new(ctx, default_enabled_tool_names());
+
+        let session = sessions
+            .create_session(vec!["Local".to_string()], None, Some(true), Some(60))
+            .await
+            .expect("create session");
+        let mut args = JsonObject::new();
+        args.insert("path".to_string(), json!("/Local/new.txt"));
+        args.insert("content".to_string(), json!("new"));
+        args.insert("session_id".to_string(), json!(session.id));
+
+        let error = server
+            .dispatch_tool_json("write_file", Some(args))
+            .await
+            .expect_err("write should be rejected before confirmation");
+
+        assert_eq!(error_code_from_error_data(&error), "ERR_SESSION_FORBIDDEN");
+        assert!(!root.join("new.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn copy_from_read_only_source_to_writable_destination_is_allowed() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let src_root = temp_dir.path().join("source");
+        let dst_root = temp_dir.path().join("destination");
+        std::fs::create_dir_all(&src_root).expect("create source root");
+        std::fs::create_dir_all(&dst_root).expect("create destination root");
+        std::fs::write(src_root.join("report.txt"), "hello").expect("write source file");
+
+        let ctx = test_context(&temp_dir);
+        let mut source = StorageRecord::new(
+            "Source".to_string(),
+            "local".to_string(),
+            json!({ "root": src_root.clone() }),
+        );
+        source.read_only = true;
+        source.mcp_policy = McpStoragePolicy {
+            default_access: McpAccessMode::ReadOnly,
+            ..Default::default()
+        };
+        let mut destination = StorageRecord::new(
+            "Destination".to_string(),
+            "local".to_string(),
+            json!({ "root": dst_root.clone() }),
+        );
+        destination.mcp_policy = McpStoragePolicy {
+            confirmation_rules: McpConfirmationRules {
+                require_for_write: false,
+                require_for_overwrite: false,
+                require_for_delete: false,
+                require_for_version_delete: false,
+                require_for_presign: false,
+                require_for_cross_storage_copy: false,
+            },
+            ..Default::default()
+        };
+        ctx.registry
+            .save_all_atomic(&[source, destination])
+            .expect("save registry");
+        let server = InfimountMcpServer::new(ctx, default_enabled_tool_names());
+
+        let mut args = JsonObject::new();
+        args.insert("src".to_string(), json!("/Source/report.txt"));
+        args.insert("dst".to_string(), json!("/Destination/report.txt"));
+
+        let response = server
+            .dispatch_tool_json("copy_path", Some(args))
+            .await
+            .expect("copy response");
+
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["data"]["copied"], true);
+        assert_eq!(
+            std::fs::read_to_string(dst_root.join("report.txt")).expect("read copied file"),
+            "hello"
+        );
     }
 
     #[tokio::test]

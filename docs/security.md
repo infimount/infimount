@@ -81,8 +81,9 @@ For desktop and local development, keep HTTP bound to loopback:
 127.0.0.1
 ```
 
-Headless HTTP mode requires bearer-token authentication unless explicitly started with `--allow-insecure`.
-Set a token with either CLI or environment:
+Desktop HTTP can run unauthenticated only on loopback for local development. If you bind desktop HTTP to `0.0.0.0` or a LAN address, Infimount requires a bearer token before the server can start.
+
+Headless HTTP mode also requires bearer-token authentication unless explicitly started with `--allow-insecure` on loopback. Set a token with either CLI or environment:
 
 ```bash
 INFIMOUNT_AUTH_TOKEN='replace-with-a-random-token' infimount_mcp --transport http --bind 127.0.0.1 --port 7331

@@ -8,7 +8,7 @@ use crate::policy::McpOperation;
 
 use super::common::{
     copy_directory, copy_file_chunked, delete_existing_on_operator, enforce_storage_policy,
-    ensure_parent_exists_for_copy, FsToolsContext,
+    ensure_parent_exists_for_copy, preflight_copy_directory, FsToolsContext,
 };
 
 #[derive(Debug, Deserialize)]
@@ -138,9 +138,22 @@ pub async fn copy_path(ctx: &FsToolsContext, input: CopyPathInput) -> McpResult<
         ));
     }
 
+    if src_is_dir {
+        preflight_copy_directory(
+            &src_op,
+            &src_resolved.storage,
+            &dst_resolved.storage,
+            &src_parsed.backend_path,
+            &dst_parsed.backend_path,
+            src_resolved.storage.id == dst_resolved.storage.id,
+        )
+        .await?;
+    }
+
     if dst_exists && input.overwrite && !dst_parsed.backend_path.is_empty() {
         delete_existing_on_operator(
             &dst_op,
+            &dst_resolved.storage,
             &dst_resolved.storage.name,
             &dst_parsed.backend_path,
             dst_meta.as_ref().map(|meta| meta.is_dir()).unwrap_or(false),
@@ -152,8 +165,8 @@ pub async fn copy_path(ctx: &FsToolsContext, input: CopyPathInput) -> McpResult<
         copy_directory(
             &src_op,
             &dst_op,
-            &src_resolved.storage.name,
-            &dst_resolved.storage.name,
+            &src_resolved.storage,
+            &dst_resolved.storage,
             &src_parsed.backend_path,
             &dst_parsed.backend_path,
             src_resolved.storage.id == dst_resolved.storage.id,

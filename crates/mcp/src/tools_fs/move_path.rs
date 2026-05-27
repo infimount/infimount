@@ -145,6 +145,7 @@ pub async fn move_path(ctx: &FsToolsContext, input: MovePathInput) -> McpResult<
     if dst_exists && input.overwrite && !dst_parsed.backend_path.is_empty() {
         delete_existing_on_operator(
             &dst_op,
+            &dst_resolved.storage,
             &dst_resolved.storage.name,
             &dst_parsed.backend_path,
             dst_meta.as_ref().map(|meta| meta.is_dir()).unwrap_or(false),

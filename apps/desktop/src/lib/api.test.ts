@@ -83,6 +83,7 @@ const settings: McpSettings = {
   bindAddress: "127.0.0.1",
   port: 7331,
   enabledTools: ["list_dir"],
+  authToken: "test-token",
 };
 
 const auditEvent = {

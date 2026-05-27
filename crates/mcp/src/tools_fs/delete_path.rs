@@ -7,8 +7,9 @@ use crate::path::{enforce_root_operation, parse_mcp_path, resolve_storage_path, 
 use crate::policy::McpOperation;
 
 use super::common::{
-    backend_path_from_virtual, collect_entries, enforce_storage_policy, normalize_list_prefix,
-    path_depth, sort_entries, EntryType, FsToolsContext,
+    backend_path_from_virtual, collect_entries_with_policy, enforce_storage_policy,
+    enforce_storage_policy_for_virtual_path, normalize_list_prefix, path_depth, sort_entries,
+    DeniedDescendantBehavior, EntryType, FsToolsContext,
 };
 
 #[derive(Debug, Deserialize)]
@@ -102,7 +103,25 @@ pub async fn delete_path(
         ));
     }
 
-    let mut entries = collect_entries(&op, &storage.name, &parsed.backend_path, true).await?;
+    let mut entries = collect_entries_with_policy(
+        &op,
+        &storage,
+        &parsed.backend_path,
+        true,
+        McpOperation::Delete,
+        DeniedDescendantBehavior::Fail,
+    )
+    .await?;
+    for entry in &entries {
+        enforce_storage_policy_for_virtual_path(
+            &storage,
+            &storage.name,
+            &entry.path,
+            McpOperation::Delete,
+            false,
+            false,
+        )?;
+    }
     sort_entries(&mut entries, true);
 
     let mut delete_order = entries;

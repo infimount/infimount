@@ -59,7 +59,7 @@ Windows PowerShell:
 irm https://github.com/infimount/infimount/releases/latest/download/install.ps1 | iex
 ```
 
-The install scripts download the latest release asset for your platform and verify it against `SHA256SUMS.txt` before installing. To pin a version, set `INFIMOUNT_VERSION` first, for example `INFIMOUNT_VERSION=v0.5.0`.
+The install scripts download the latest release asset for your platform and verify it against `SHA256SUMS.txt` before installing. To pin a version, set `INFIMOUNT_VERSION` first, for example `INFIMOUNT_VERSION=v0.6.0`.
 
 Linux chooses `.deb`, `.rpm`, or AppImage automatically. Override with `INFIMOUNT_INSTALL_FORMAT=deb|rpm|appimage`.
 
@@ -70,7 +70,7 @@ Pre-built binaries for **Linux**, **macOS**, and **Windows** are available on:
 - GitHub Pages download hub: [infimount.github.io/infimount](https://infimount.github.io/infimount/)
 - Releases page: [github.com/infimount/infimount/releases](https://github.com/infimount/infimount/releases)
 
-**Current stable release:** [v0.5.0](https://github.com/infimount/infimount/releases/tag/v0.5.0)
+**Current stable release:** [v0.6.0](https://github.com/infimount/infimount/releases/tag/v0.6.0)
 
 | Platform              | Download Link (`latest stable`)                                                                                        | Format      |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------- |
@@ -109,7 +109,7 @@ See [Building from Source](#️-building-from-source) section below.
 
 ### Install with Homebrew (macOS and Linux)
 
-The Homebrew tap is updated for v0.5.0.
+The Homebrew tap tracks published stable releases after release assets and checksums are available.
 
 ```bash
 brew tap infimount/infimount
@@ -168,7 +168,7 @@ For MCP/versioning details, see [Backend Capability Matrix](docs/backend-capabil
 Infimount includes a Rust MCP server for local AI clients and agent workflows.
 
 - Transports: stdio and Streamable HTTP
-- HTTP auth: bearer token required for headless HTTP unless explicitly started in insecure dev mode
+- HTTP auth: bearer token required for non-loopback desktop HTTP and for headless HTTP unless explicitly started in loopback-only insecure dev mode
 - Scoped access: expose only selected storages, disable individual MCP tools, and restrict storage paths with allow/deny prefixes
 - Risk controls: write/delete/presign/version-delete operations can require approval in Infimount before execution
 - Audit trail: local bounded MCP audit log records allowed, denied, confirmed, and failed tool activity without storing secrets or presigned URL signatures
@@ -225,23 +225,19 @@ Outputs:
 
 ## 🎯 Roadmap
 
-### Current Focus (v0.2.x)
+### Current Focus
 
-- [x] Local filesystem browsing
-- [x] S3/Azure/GCS/WebDAV backends
-- [x] Grid and list views
-- [x] File preview panel
-- [x] Drag-and-drop uploads
-- [x] MCP support for integration with AI assistants
+- [x] Local, S3/S3-compatible, Backblaze B2, Azure Blob, GCS, and WebDAV browsing
+- [x] Grid and list views with file preview, drag-and-drop upload, bookmarks, recents, and transfer queue
+- [x] Dual-pane copy/move and compare/update workflows
+- [x] MCP support for local AI assistants with explicit storage exposure, tool controls, path policy, confirmations, sessions, and audit
 - [x] Version-aware MCP tools where supported by the backend
-- [x] Tool-level MCP exposure controls
-- [ ] Multi-tab browsing
-- [ ] Keyboard navigation
+- [x] Keyboard navigation in virtualized file grid and table views
+- [ ] Additional storage backends such as SFTP and selected object stores
+- [ ] More large-directory and storage-validation polish
 
 ### Future Plans
 
-- [ ] Additional storage backends (SFTP, FTP, etc.)
-- [ ] Improved performance for large directories
 - [ ] CLI companion (`infimount-cli`)
 - [ ] Mobile app (iOS/Android)
 - [ ] Hosted and managed deployment options

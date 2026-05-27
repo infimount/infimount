@@ -166,6 +166,11 @@ describe("McpSettingsDialog integration", () => {
     expect(screen.getByText(/not loopback/i)).toBeInTheDocument();
     expect(screen.getByText("Review network exposure")).toBeInTheDocument();
     expect(screen.getByText("Non-loopback bind needs review")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Save & Start HTTP Server/i })).toBeDisabled();
+
+    fireEvent.change(screen.getByPlaceholderText("Required for non-loopback HTTP"), {
+      target: { value: "test-token" },
+    });
 
     fireEvent.click(screen.getByRole("button", { name: /Save & Start HTTP Server/i }));
 
@@ -182,6 +187,7 @@ describe("McpSettingsDialog integration", () => {
         bindAddress: "0.0.0.0",
         port: 7331,
         enabledTools: ["list_dir", "export_config"],
+        authToken: "test-token",
       });
       expect(onStartHttp).toHaveBeenCalled();
     });

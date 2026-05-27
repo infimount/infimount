@@ -6,7 +6,9 @@ use crate::opendal_adapter;
 use crate::path::{enforce_root_operation, parse_mcp_path, resolve_storage_path, FsOp};
 use crate::policy::McpOperation;
 
-use super::common::{collect_entries, enforce_storage_policy, FsToolsContext};
+use super::common::{
+    collect_entries_with_policy, enforce_storage_policy, DeniedDescendantBehavior, FsToolsContext,
+};
 
 fn default_max_results() -> u32 {
     200
@@ -65,7 +67,15 @@ pub async fn search_paths(
             matches.push(parsed.normalized.clone());
         }
 
-        let entries = collect_entries(&op, &resolved.storage.name, "", true).await?;
+        let entries = collect_entries_with_policy(
+            &op,
+            &resolved.storage,
+            "",
+            true,
+            McpOperation::Search,
+            DeniedDescendantBehavior::Filter,
+        )
+        .await?;
         matches.extend(
             entries
                 .into_iter()
@@ -98,7 +108,15 @@ pub async fn search_paths(
         matches.push(parsed.normalized.clone());
     }
 
-    let entries = collect_entries(&op, &resolved.storage.name, &parsed.backend_path, true).await?;
+    let entries = collect_entries_with_policy(
+        &op,
+        &resolved.storage,
+        &parsed.backend_path,
+        true,
+        McpOperation::Search,
+        DeniedDescendantBehavior::Filter,
+    )
+    .await?;
     matches.extend(
         entries
             .into_iter()

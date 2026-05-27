@@ -63,6 +63,7 @@ export interface McpSettings {
   bindAddress: string;
   port: number;
   enabledTools: string[];
+  authToken?: string | null;
 }
 
 export interface McpRuntimeStatus {

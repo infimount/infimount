@@ -9,8 +9,8 @@ use crate::path::{enforce_root_operation, parse_mcp_path, resolve_storage_path, 
 use crate::policy::McpOperation;
 
 use super::common::{
-    collect_entries, default_limit, enforce_storage_policy, sort_entries, EntryType,
-    FsToolsContext, ListDirEntry,
+    collect_entries_with_policy, default_limit, enforce_storage_policy, sort_entries,
+    DeniedDescendantBehavior, EntryType, FsToolsContext, ListDirEntry,
 };
 
 #[derive(Debug, Deserialize)]
@@ -106,11 +106,13 @@ pub async fn list_dir(ctx: &FsToolsContext, input: ListDirInput) -> McpResult<Li
         }
     }
 
-    let mut entries = collect_entries(
+    let mut entries = collect_entries_with_policy(
         &op,
-        &resolved.storage.name,
+        &resolved.storage,
         &parsed.backend_path,
         input.recursive,
+        McpOperation::List,
+        DeniedDescendantBehavior::Filter,
     )
     .await?;
     sort_entries(&mut entries, input.recursive);

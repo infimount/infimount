@@ -126,8 +126,9 @@ Generic HTTP configuration:
 
 ## HTTP Authentication
 
-Headless HTTP mode requires a bearer token unless `--allow-insecure` is passed for local development.
-Set the token with either CLI or environment:
+Desktop HTTP can run without a token only on loopback for local development. If you bind desktop HTTP to `0.0.0.0` or a LAN address, enter an HTTP bearer token in MCP Settings before starting the server.
+
+Headless HTTP mode requires a bearer token unless `--allow-insecure` is passed for loopback local development. Set the token with either CLI or environment:
 
 ```bash
 INFIMOUNT_AUTH_TOKEN='replace-with-a-random-token' infimount_mcp --transport http --bind 127.0.0.1 --port 7331

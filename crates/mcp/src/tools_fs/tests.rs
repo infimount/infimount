@@ -75,6 +75,137 @@ async fn path_policy_denies_reads_and_writes_before_backend_operation() {
 }
 
 #[tokio::test]
+async fn recursive_operations_enforce_denied_descendant_policy() {
+    let dir = TempDir::new().unwrap();
+    let src_root = dir.path().join("src");
+    let dst_root = dir.path().join("dst");
+    std::fs::create_dir_all(src_root.join("public").join("private")).unwrap();
+    std::fs::create_dir_all(&dst_root).unwrap();
+    std::fs::write(src_root.join("public").join("visible.txt"), "visible").unwrap();
+    std::fs::write(
+        src_root.join("public").join("private").join("secret.txt"),
+        "secret",
+    )
+    .unwrap();
+
+    let registry = registry_in(&dir);
+    let mut src = StorageRecord::new(
+        "Src".to_string(),
+        "local".to_string(),
+        json!({"root": src_root.clone()}),
+    );
+    src.mcp_policy = McpStoragePolicy {
+        allowed_paths: vec!["public".to_string()],
+        denied_paths: vec!["public/private".to_string()],
+        ..Default::default()
+    };
+    let dst = StorageRecord::new(
+        "Dst".to_string(),
+        "local".to_string(),
+        json!({"root": dst_root.clone()}),
+    );
+    registry.save_all_atomic(&[src, dst]).unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+
+    let listed = list_dir(
+        &ctx,
+        ListDirInput {
+            session_id: None,
+            path: "/Src/public".to_string(),
+            recursive: true,
+            limit: 200,
+            cursor: None,
+        },
+    )
+    .await
+    .unwrap();
+    let listed_paths = listed
+        .entries
+        .into_iter()
+        .map(|entry| entry.path)
+        .collect::<Vec<_>>();
+    assert!(listed_paths.contains(&"/Src/public/visible.txt".to_string()));
+    assert!(!listed_paths.iter().any(|path| path.contains("private")));
+
+    let searched = search_paths(
+        &ctx,
+        SearchPathsInput {
+            session_id: None,
+            path: "/Src/public".to_string(),
+            pattern: "secret".to_string(),
+            max_results: 10,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(searched.matches.is_empty());
+
+    let copy_error = copy_path(
+        &ctx,
+        CopyPathInput {
+            session_id: None,
+            confirmation_id: None,
+            src: "/Src/public".to_string(),
+            dst: "/Dst/public".to_string(),
+            overwrite: false,
+            recursive: true,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(copy_error.code, McpErrorCode::ERR_MCP_POLICY_DENIED);
+    assert!(!dst_root.join("public").exists());
+
+    std::fs::create_dir_all(dst_root.join("public")).unwrap();
+    std::fs::write(dst_root.join("public").join("keep.txt"), "keep").unwrap();
+    let overwrite_copy_error = copy_path(
+        &ctx,
+        CopyPathInput {
+            session_id: None,
+            confirmation_id: None,
+            src: "/Src/public".to_string(),
+            dst: "/Dst/public".to_string(),
+            overwrite: true,
+            recursive: true,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        overwrite_copy_error.code,
+        McpErrorCode::ERR_MCP_POLICY_DENIED
+    );
+    assert_eq!(
+        std::fs::read_to_string(dst_root.join("public").join("keep.txt")).unwrap(),
+        "keep"
+    );
+
+    let delete_error = delete_path(
+        &ctx,
+        DeletePathInput {
+            session_id: None,
+            confirmation_id: None,
+            path: "/Src/public".to_string(),
+            recursive: true,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(delete_error.code, McpErrorCode::ERR_MCP_POLICY_DENIED);
+    assert!(src_root.join("public").join("visible.txt").exists());
+    assert!(src_root
+        .join("public")
+        .join("private")
+        .join("secret.txt")
+        .exists());
+}
+
+#[tokio::test]
 async fn list_dir_root_is_sorted_and_filtered() {
     let dir = TempDir::new().unwrap();
     let registry = registry_in(&dir);

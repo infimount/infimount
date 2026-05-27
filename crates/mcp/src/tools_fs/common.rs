@@ -54,14 +54,20 @@ pub(super) fn enforce_storage_policy(
     cross_storage: bool,
 ) -> McpResult<()> {
     match evaluate_storage_policy(storage, backend_path, operation, overwrite, cross_storage)? {
-        PolicyDecision::Allow => Ok(()),
-        PolicyDecision::RequireConfirmation { .. } => {
-            // Confirmation execution is wired in the next P0 step. Until pending operation
-            // replay exists, path/access policy is enforced while risky operation prompts
-            // remain feature-gated by the confirmation manager.
-            Ok(())
-        }
+        PolicyDecision::Allow | PolicyDecision::RequireConfirmation { .. } => Ok(()),
     }
+}
+
+pub(super) fn enforce_storage_policy_for_virtual_path(
+    storage: &StorageRecord,
+    storage_name: &str,
+    full_path: &str,
+    operation: McpOperation,
+    overwrite: bool,
+    cross_storage: bool,
+) -> McpResult<()> {
+    let backend_path = backend_path_from_virtual(storage_name, full_path);
+    enforce_storage_policy(storage, &backend_path, operation, overwrite, cross_storage)
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -102,11 +108,36 @@ pub(super) fn default_true() -> bool {
     true
 }
 
-pub(super) async fn collect_entries(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum DeniedDescendantBehavior {
+    Filter,
+    Fail,
+}
+
+pub(super) async fn collect_entries_with_policy(
+    op: &opendal::Operator,
+    storage: &StorageRecord,
+    backend_path: &str,
+    recursive: bool,
+    operation: McpOperation,
+    denied_behavior: DeniedDescendantBehavior,
+) -> McpResult<Vec<ListDirEntry>> {
+    collect_entries_inner(
+        op,
+        &storage.name,
+        backend_path,
+        recursive,
+        Some((storage, operation, denied_behavior)),
+    )
+    .await
+}
+
+async fn collect_entries_inner(
     op: &opendal::Operator,
     storage_name: &str,
     backend_path: &str,
     recursive: bool,
+    policy: Option<(&StorageRecord, McpOperation, DeniedDescendantBehavior)>,
 ) -> McpResult<Vec<ListDirEntry>> {
     let mut out = Vec::new();
     let mut stack = vec![normalize_list_prefix(backend_path)];
@@ -138,12 +169,6 @@ pub(super) async fn collect_entries(
             .map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?
         {
             let object_path = obj.path().to_string();
-            let meta = op
-                .stat(&object_path)
-                .await
-                .map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?;
-
-            let is_dir = meta.is_dir();
             let normalized_object = object_path.trim_end_matches('/').to_string();
             if normalized_object.is_empty() {
                 continue;
@@ -151,6 +176,26 @@ pub(super) async fn collect_entries(
             if normalized_object == current_prefix.trim_end_matches('/') {
                 continue;
             }
+
+            if let Some((storage, operation, denied_behavior)) = policy {
+                match enforce_storage_policy(storage, &normalized_object, operation, false, false) {
+                    Ok(()) => {}
+                    Err(error) if error.code == McpErrorCode::ERR_MCP_POLICY_DENIED => {
+                        if denied_behavior == DeniedDescendantBehavior::Filter {
+                            continue;
+                        }
+                        return Err(error);
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+
+            let meta = op
+                .stat(&object_path)
+                .await
+                .map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?;
+
+            let is_dir = meta.is_dir();
             let name = extract_name(&normalized_object);
             let full_path = format!("/{storage_name}/{}", normalized_object);
 
@@ -316,10 +361,13 @@ pub(super) async fn copy_file_chunked(
 
 pub(super) async fn delete_existing_on_operator(
     op: &opendal::Operator,
+    storage: &StorageRecord,
     storage_name: &str,
     backend_path: &str,
     is_dir: bool,
 ) -> McpResult<()> {
+    enforce_storage_policy(storage, backend_path, McpOperation::Delete, false, false)?;
+
     if !is_dir {
         op.delete(backend_path)
             .await
@@ -327,7 +375,15 @@ pub(super) async fn delete_existing_on_operator(
         return Ok(());
     }
 
-    let mut entries = collect_entries(op, storage_name, backend_path, true).await?;
+    let mut entries = collect_entries_with_policy(
+        op,
+        storage,
+        backend_path,
+        true,
+        McpOperation::Delete,
+        DeniedDescendantBehavior::Fail,
+    )
+    .await?;
     sort_entries(&mut entries, true);
     entries.sort_by(|a, b| {
         path_depth(&b.path).cmp(&path_depth(&a.path)).then_with(|| {
@@ -338,6 +394,17 @@ pub(super) async fn delete_existing_on_operator(
             }
         })
     });
+
+    for entry in &entries {
+        enforce_storage_policy_for_virtual_path(
+            storage,
+            storage_name,
+            &entry.path,
+            McpOperation::Delete,
+            false,
+            false,
+        )?;
+    }
 
     for entry in entries {
         let child_backend = backend_path_from_virtual(storage_name, &entry.path);
@@ -367,33 +434,93 @@ pub(super) async fn delete_existing_on_operator(
     Ok(())
 }
 
-pub(super) async fn copy_directory(
+pub(super) async fn preflight_copy_directory(
     src_op: &opendal::Operator,
-    dst_op: &opendal::Operator,
-    src_storage_name: &str,
-    dst_storage_name: &str,
+    src_storage: &StorageRecord,
+    dst_storage: &StorageRecord,
     src_backend_root: &str,
     dst_backend_root: &str,
     same_storage: bool,
 ) -> McpResult<()> {
-    if !dst_backend_root.is_empty() {
-        create_dir_chain(dst_op, dst_backend_root, dst_storage_name, dst_backend_root).await?;
-    }
-
-    let mut entries = collect_entries(src_op, src_storage_name, src_backend_root, true).await?;
+    let mut entries = collect_entries_with_policy(
+        src_op,
+        src_storage,
+        src_backend_root,
+        true,
+        McpOperation::Read,
+        DeniedDescendantBehavior::Fail,
+    )
+    .await?;
     sort_entries(&mut entries, true);
 
+    for entry in &entries {
+        let src_backend = backend_path_from_virtual(&src_storage.name, &entry.path);
+        let relative = relative_backend_path(src_backend_root, &src_backend);
+        let dst_backend = join_backend_path(dst_backend_root, &relative);
+        enforce_storage_policy(src_storage, &src_backend, McpOperation::Read, false, false)?;
+        enforce_storage_policy(
+            dst_storage,
+            &dst_backend,
+            McpOperation::Copy,
+            false,
+            !same_storage,
+        )?;
+    }
+
+    Ok(())
+}
+
+pub(super) async fn copy_directory(
+    src_op: &opendal::Operator,
+    dst_op: &opendal::Operator,
+    src_storage: &StorageRecord,
+    dst_storage: &StorageRecord,
+    src_backend_root: &str,
+    dst_backend_root: &str,
+    same_storage: bool,
+) -> McpResult<()> {
+    preflight_copy_directory(
+        src_op,
+        src_storage,
+        dst_storage,
+        src_backend_root,
+        dst_backend_root,
+        same_storage,
+    )
+    .await?;
+
+    let mut entries = collect_entries_with_policy(
+        src_op,
+        src_storage,
+        src_backend_root,
+        true,
+        McpOperation::Read,
+        DeniedDescendantBehavior::Fail,
+    )
+    .await?;
+    sort_entries(&mut entries, true);
+
+    if !dst_backend_root.is_empty() {
+        create_dir_chain(
+            dst_op,
+            dst_backend_root,
+            &dst_storage.name,
+            dst_backend_root,
+        )
+        .await?;
+    }
+
     for entry in entries {
-        let src_backend = backend_path_from_virtual(src_storage_name, &entry.path);
+        let src_backend = backend_path_from_virtual(&src_storage.name, &entry.path);
         let relative = relative_backend_path(src_backend_root, &src_backend);
         let dst_backend = join_backend_path(dst_backend_root, &relative);
 
         match entry.entry_type {
             EntryType::Dir => {
-                create_dir_chain(dst_op, &dst_backend, dst_storage_name, &entry.path).await?;
+                create_dir_chain(dst_op, &dst_backend, &dst_storage.name, &entry.path).await?;
             }
             EntryType::File => {
-                ensure_parent_exists_for_copy(dst_op, dst_storage_name, &dst_backend).await?;
+                ensure_parent_exists_for_copy(dst_op, &dst_storage.name, &dst_backend).await?;
                 if same_storage {
                     src_op
                         .copy(&src_backend, &dst_backend)
