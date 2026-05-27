@@ -52,7 +52,12 @@ const validationResult: StorageValidationResult = {
     presign_read: false,
     create_dir: true,
     write_with_user_metadata: false,
+    list_with_versions: false,
+    read_with_version: false,
+    delete_with_version: false,
   },
+  fix_hints: [],
+  warnings: [],
 };
 
 export function MockedAddStorageDialog() {

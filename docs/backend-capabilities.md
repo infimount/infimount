@@ -1,7 +1,7 @@
 # Backend Capability Matrix
 
 Infimount uses OpenDAL capabilities at runtime. A backend being listed here does not mean every account, bucket, container, or server has every feature enabled.
-Use `validate_storage` in MCP or the desktop Validate action to check the effective capabilities for a configured storage.
+Use `validate_storage` in MCP or the desktop Validate action to check the effective capabilities for a configured storage. Validation reports grouped browse, mutation, sharing/versioning, and metadata capabilities, plus sanitized fix hints and MCP readiness notes.
 
 ## OpenDAL-First Storage Policy
 
@@ -29,10 +29,23 @@ Version-aware tools return deterministic MCP errors:
 - `ERR_STORAGE_READ_ONLY`: a mutation was attempted on a read-only storage.
 - `ERR_BACKEND_UNSUPPORTED`: a non-version capability such as presigned links is not available for that backend.
 
+## Validation Output
+
+The desktop Validate action and MCP `validate_storage` response include:
+
+- `valid`: whether the storage could be reached with the configured root, bucket, container, or prefix.
+- `details`: a sanitized result message such as success, timeout, permission denied, missing target, or invalid local root.
+- `capabilities`: OpenDAL-reported booleans for list, stat, read, write, delete, copy, rename, create directory, presigned reads, object versions, and write-time user metadata.
+- `fix_hints`: actionable next steps that avoid echoing raw credentials or full secret-bearing config.
+- `warnings`: advisory MCP readiness notes, such as disabled storage, not exposed to MCP, writable MCP exposure, or presigned-link capability.
+
+Validation does not automatically change storage exposure or MCP settings.
+
 ## Recommended Validation Before Exposing a Storage
 
 1. Add or edit the storage in Infimount.
 2. Run Validate.
 3. Confirm the effective capabilities match the intended MCP exposure.
-4. Set `read_only=true` for storages that agents should not mutate.
-5. Keep `mcp_exposed=false` for storages that should remain desktop-only.
+4. Review MCP readiness notes, especially writable exposed storage or presigned download-link support.
+5. Set `read_only=true` for storages that agents should not mutate.
+6. Keep `mcp_exposed=false` for storages that should remain desktop-only.

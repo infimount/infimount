@@ -182,7 +182,7 @@ Differentiators to preserve:
 - Keep docs aligned with the current backend set, MCP safety model, and release status.
 - Continue keyboard navigation hardening in the sidebar, dialogs, and MCP settings; file grid/table roving navigation is implemented.
 - Improve large directory performance: virtualized list/grid is implemented; continue pagination/cursor where possible and async progress states.
-- Strengthen storage validation with clearer capability summaries.
+- Strengthen storage validation with clearer capability summaries; grouped validation results, sanitized fix hints, MCP readiness notes, and copyable summaries are now started for v0.7.0.
 - Improve error messaging for backend-specific auth/config failures.
 
 ### MCP and AI workflow

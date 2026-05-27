@@ -159,6 +159,7 @@ If you installed from release binaries (not Homebrew), upgrade like this:
 | **SFTP**                 | 🔜 Planned | Coming soon                                                                 |
 | **FTP**                  | 🔜 Planned | Coming soon                                                                 |
 
+Use **Validate** in Add/Edit Storage to check reachability, grouped capabilities, fix hints, and MCP readiness notes before browsing or exposing a storage to agents.
 For MCP/versioning details, see [Backend Capability Matrix](docs/backend-capabilities.md).
 
 ---
@@ -234,7 +235,8 @@ Outputs:
 - [x] Version-aware MCP tools where supported by the backend
 - [x] Keyboard navigation in virtualized file grid and table views
 - [ ] Additional storage backends such as SFTP and selected object stores
-- [ ] More large-directory and storage-validation polish
+- [x] Capability-aware storage validation summaries with fix hints and MCP readiness notes
+- [ ] Additional large-directory polish
 
 ### Future Plans
 

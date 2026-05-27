@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Eye, EyeOff, Sparkles } from "lucide-react";
+import { Clipboard, Eye, EyeOff, Sparkles } from "lucide-react";
 
 import {
   Dialog,
@@ -156,6 +156,7 @@ export function AddStorageDialog({
   const [isVerifying, setIsVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<StorageValidationResult | null>(null);
   const [verifyMessage, setVerifyMessage] = useState<string | null>(null);
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -190,6 +191,7 @@ export function AddStorageDialog({
       setVerifyMessage(null);
       setIsSubmitting(false);
       setIsVerifying(false);
+      setCopyStatus(null);
       return;
     }
 
@@ -337,6 +339,7 @@ export function AddStorageDialog({
 
     setIsVerifying(true);
     setVerifyMessage(null);
+    setCopyStatus(null);
     try {
       const result = await onVerify(draft);
       setVerifyResult(result);
@@ -346,6 +349,16 @@ export function AddStorageDialog({
       setVerifyMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setIsVerifying(false);
+    }
+  };
+
+  const handleCopyValidationSummary = async () => {
+    if (!verifyResult) return;
+    try {
+      await navigator.clipboard.writeText(buildValidationSummary(verifyResult));
+      setCopyStatus("Validation summary copied.");
+    } catch {
+      setCopyStatus("Could not copy validation summary.");
     }
   };
 
@@ -548,29 +561,12 @@ export function AddStorageDialog({
           </div>
 
           {verifyMessage ? (
-            <div
-              className={`rounded-md border px-3 py-3 text-xs ${
-                verifyResult?.valid
-                  ? "border-emerald-300/80 bg-emerald-50 text-emerald-700 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-300"
-                  : "border-rose-300/80 bg-rose-50 text-rose-700 dark:border-rose-700/60 dark:bg-rose-950/40 dark:text-rose-300"
-              }`}
-            >
-              <div>{verifyMessage}</div>
-              {verifyResult ? (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {Object.entries(verifyResult.capabilities)
-                    .filter(([, value]) => Boolean(value))
-                    .map(([key]) => (
-                      <span
-                        key={key}
-                        className="rounded-full border border-current/20 px-2 py-1 text-[10px] uppercase tracking-[0.12em]"
-                      >
-                        {key.split("_").join(" ")}
-                      </span>
-                    ))}
-                </div>
-              ) : null}
-            </div>
+            <ValidationResultPanel
+              message={verifyMessage}
+              result={verifyResult}
+              copyStatus={copyStatus}
+              onCopy={handleCopyValidationSummary}
+            />
           ) : null}
 
           <div className="flex justify-end gap-3 pt-2">
@@ -603,6 +599,166 @@ export function AddStorageDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+function ValidationResultPanel({
+  message,
+  result,
+  copyStatus,
+  onCopy,
+}: {
+  message: string;
+  result: StorageValidationResult | null;
+  copyStatus: string | null;
+  onCopy: () => void;
+}) {
+  const isValid = result?.valid ?? false;
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={`rounded-xl border px-3 py-3 text-xs ${
+        isValid
+          ? "border-emerald-300/80 bg-emerald-50 text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-200"
+          : "border-rose-300/80 bg-rose-50 text-rose-800 dark:border-rose-700/60 dark:bg-rose-950/40 dark:text-rose-200"
+      }`}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="font-medium">{isValid ? "Validation passed" : "Validation needs attention"}</div>
+          <div className="mt-1">{message}</div>
+        </div>
+        {result ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 border-current/20 bg-background/70 text-xs text-foreground hover:bg-background"
+            onClick={onCopy}
+            aria-label="Copy validation summary"
+          >
+            <Clipboard className="mr-2 h-3.5 w-3.5" />
+            Copy Summary
+          </Button>
+        ) : null}
+      </div>
+
+      {result ? (
+        <div className="mt-3 space-y-3 text-foreground">
+          <div className="grid gap-2 md:grid-cols-3">
+            {CAPABILITY_GROUPS.map((group) => (
+              <div key={group.title} className="rounded-lg border border-current/10 bg-background/70 p-3">
+                <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                  {group.title}
+                </div>
+                <div className="mt-2 space-y-1.5">
+                  {group.items.map((item) => (
+                    <CapabilityRow
+                      key={item.key}
+                      label={item.label}
+                      supported={Boolean(result.capabilities[item.key])}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {result.fix_hints.length > 0 ? (
+            <ValidationList title="Fix hints" items={result.fix_hints} />
+          ) : null}
+          {result.warnings.length > 0 ? (
+            <ValidationList title="MCP readiness notes" items={result.warnings} />
+          ) : null}
+          {copyStatus ? <div className="text-[11px] text-muted-foreground">{copyStatus}</div> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const CAPABILITY_GROUPS: Array<{
+  title: string;
+  items: Array<{ key: keyof StorageValidationResult["capabilities"]; label: string }>;
+}> = [
+  {
+    title: "Browse",
+    items: [
+      { key: "list", label: "List" },
+      { key: "stat", label: "Stat" },
+      { key: "read", label: "Read" },
+    ],
+  },
+  {
+    title: "Mutate",
+    items: [
+      { key: "write", label: "Write" },
+      { key: "delete", label: "Delete" },
+      { key: "create_dir", label: "Create folder" },
+      { key: "copy", label: "Copy" },
+      { key: "rename", label: "Rename" },
+    ],
+  },
+  {
+    title: "Sharing & versions",
+    items: [
+      { key: "presign_read", label: "Download links" },
+      { key: "list_with_versions", label: "List versions" },
+      { key: "read_with_version", label: "Read versions" },
+      { key: "delete_with_version", label: "Delete versions" },
+      { key: "write_with_user_metadata", label: "User metadata" },
+    ],
+  },
+];
+
+function CapabilityRow({ label, supported }: { label: string; supported: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-2 text-[11px]">
+      <span>{label}</span>
+      <span
+        className={`rounded-full border px-2 py-0.5 ${
+          supported
+            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
+            : "border-muted-foreground/20 bg-muted/60 text-muted-foreground"
+        }`}
+      >
+        {supported ? "Supported" : "Unsupported"}
+      </span>
+    </div>
+  );
+}
+
+function ValidationList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="rounded-lg border border-current/10 bg-background/70 p-3">
+      <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+        {title}
+      </div>
+      <ul className="mt-2 list-disc space-y-1 pl-4 text-[11px] leading-relaxed">
+        {items.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function buildValidationSummary(result: StorageValidationResult): string {
+  const lines = [
+    `Validation: ${result.valid ? "passed" : "needs attention"}`,
+    `Details: ${result.details}`,
+    "Capabilities:",
+    ...Object.entries(result.capabilities).map(
+      ([key, value]) => `- ${key.split("_").join(" ")}: ${value ? "supported" : "unsupported"}`,
+    ),
+  ];
+  if (result.fix_hints.length > 0) {
+    lines.push("Fix hints:", ...result.fix_hints.map((hint) => `- ${hint}`));
+  }
+  if (result.warnings.length > 0) {
+    lines.push("MCP readiness notes:", ...result.warnings.map((warning) => `- ${warning}`));
+  }
+  return lines.join("\n");
 }
 
 function StorageFieldInput({

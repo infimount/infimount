@@ -39,7 +39,12 @@ const validResult: StorageValidationResult = {
     presign_read: false,
     create_dir: true,
     write_with_user_metadata: false,
+    list_with_versions: false,
+    read_with_version: false,
+    delete_with_version: false,
   },
+  fix_hints: [],
+  warnings: ["MCP-exposed storage is writable; review enabled tools."],
 };
 
 const renderDialog = (props: Partial<Parameters<typeof AddStorageDialog>[0]> = {}) => {
@@ -90,7 +95,9 @@ describe("AddStorageDialog", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Validate" }));
     expect(await screen.findByText("Storage validated successfully.")).toBeInTheDocument();
-    expect(screen.getByText("list")).toBeInTheDocument();
+    expect(screen.getByText("Browse")).toBeInTheDocument();
+    expect(screen.getAllByText("Supported").length).toBeGreaterThan(0);
+    expect(screen.getByText(/MCP-exposed storage is writable/)).toBeInTheDocument();
     expect(onVerify).toHaveBeenCalledWith({
       name: "Local docs",
       backend: "local",
@@ -113,6 +120,39 @@ describe("AddStorageDialog", () => {
       });
       expect(onOpenChange).toHaveBeenCalledWith(false);
     });
+  });
+
+  it("renders validation failure details and fix hints without secret values", async () => {
+    const onVerify = vi.fn().mockResolvedValue({
+      valid: false,
+      details: "storage credentials do not have permission to validate this location",
+      capabilities: validResult.capabilities,
+      fix_hints: ["Check credentials and ensure they allow at least list or stat access."],
+      warnings: ["Storage is not exposed to MCP clients."],
+    } satisfies StorageValidationResult);
+    renderDialog({
+      onVerify,
+      loadSchemas: vi.fn().mockResolvedValue([schemas[1]]),
+    });
+
+    await screen.findByLabelText(/Bucket/);
+    fireEvent.change(screen.getByLabelText("Storage Name"), {
+      target: { value: "Private bucket" },
+    });
+    fireEvent.change(screen.getByLabelText(/Bucket/), {
+      target: { value: "private" },
+    });
+    fireEvent.change(screen.getByLabelText(/Secret key/), {
+      target: { value: "top-secret" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Validate" }));
+
+    expect(await screen.findByText("Validation needs attention")).toBeInTheDocument();
+    expect(screen.getByText("Fix hints")).toBeInTheDocument();
+    expect(screen.getByText(/allow at least list or stat access/)).toBeInTheDocument();
+    expect(screen.getByText("MCP readiness notes")).toBeInTheDocument();
+    expect(screen.queryByText("top-secret")).not.toBeInTheDocument();
   });
 
   it("shows required field errors before validation", async () => {

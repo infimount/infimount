@@ -108,6 +108,10 @@ MCP clients can create scoped sessions with:
 
 Filesystem tools that receive a `session_id` enforce those restrictions before backend operations. Session path prefixes are normalized and segment-aware to avoid broad matches such as allowing `docs2` when only `docs` was scoped. Desktop MCP Settings shows active in-memory scoped sessions with their storage scope, path prefixes, read-only status, and expiry so users can inspect current agent scopes. Desktop HTTP sessions are cleared when that server stops.
 
+## Storage Validation Safety
+
+The desktop Validate action and MCP `validate_storage` tool report reachability, effective capabilities, sanitized fix hints, and MCP readiness notes. Validation output must not include raw credentials, auth tokens, storage config JSON, or file contents. MCP readiness notes are advisory only; users must still explicitly enable storage exposure, tool access, path policy, read-only mode, and confirmations.
+
 ## Backend Capability Boundaries
 
 Some capabilities are backend-dependent:

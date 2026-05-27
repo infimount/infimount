@@ -200,6 +200,11 @@ async fn validate_storage_local_root_succeeds() {
 
     assert!(out.valid);
     assert!(out.capabilities.read);
+    assert!(out.fix_hints.is_empty());
+    assert!(out
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("writable")));
 }
 
 #[tokio::test]
@@ -233,7 +238,11 @@ async fn validate_storage_invalid_root_returns_valid_false() {
     .unwrap();
 
     assert!(!out.valid);
-    assert_eq!(out.details, "storage validation failed");
+    assert_eq!(out.details, "local root is not an existing directory");
+    assert!(out
+        .fix_hints
+        .iter()
+        .any(|hint| hint.contains("existing folder")));
 }
 
 #[tokio::test]

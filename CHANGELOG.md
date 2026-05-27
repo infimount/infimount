@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Started v0.7 validation clarity work with grouped storage capability summaries, sanitized fix hints, MCP readiness notes, and copyable validation summaries in Add/Edit Storage.
+
+### Changed
+
+- `validate_storage` results now include versioning capability fields, fix hints, and advisory warnings without exposing storage secrets.
+
 ## [0.6.0] - 2026-05-27
 
 ### Added

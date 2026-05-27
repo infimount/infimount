@@ -49,12 +49,17 @@ export interface StorageValidationCapabilities {
   presign_read: boolean;
   create_dir: boolean;
   write_with_user_metadata: boolean;
+  list_with_versions: boolean;
+  read_with_version: boolean;
+  delete_with_version: boolean;
 }
 
 export interface StorageValidationResult {
   valid: boolean;
   details: string;
   capabilities: StorageValidationCapabilities;
+  fix_hints: string[];
+  warnings: string[];
 }
 
 export interface McpSettings {

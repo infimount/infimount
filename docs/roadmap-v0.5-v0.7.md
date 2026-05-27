@@ -70,6 +70,18 @@ Delivered for v0.6.0:
 - Arrow keys move between files and folders, Home/End jump to the first or last entry, Enter opens the focused item, and Space toggles selection.
 - File items now expose selection state and visible focus rings for keyboard users.
 
+## In progress for public v0.7.0: Validation Clarity
+
+Theme: make storage setup safer and more understandable before users browse or expose a backend to MCP clients.
+
+Started for v0.7.0:
+
+- Desktop Add/Edit Storage shows grouped capability summaries for browse, mutation, sharing/versioning, and metadata behavior.
+- Validation results include sanitized fix hints for common failures such as invalid local roots, missing targets, permission failures, timeouts, and invalid config.
+- Validation results include MCP readiness notes for disabled storage, non-exposed storage, writable MCP exposure, and presigned download-link capability.
+- Validation summaries are copyable without including raw credentials or full storage config.
+- TypeScript and Rust validation models include versioning capability fields, fix hints, and warnings.
+
 ## Future public v0.7.0 candidates
 
 - SFTP, if OpenDAL support meets the product-ready rule.
@@ -79,7 +91,6 @@ Delivered for v0.6.0:
 - Additional S3-compatible presets where they materially reduce setup friction.
 - TOS once OpenDAL exposes useful read/write/list/stat capability.
 - Cancel in-flight list/search work so slow storage responses do not keep the workbench feeling blocked.
-- Better storage validation UX with capability summaries and fix hints.
 
 ## Future quality work
 
