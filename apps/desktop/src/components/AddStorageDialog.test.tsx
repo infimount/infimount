@@ -103,7 +103,7 @@ describe("AddStorageDialog", () => {
       backend: "local",
       config: { root: "/Users/me/docs" },
       enabled: true,
-      mcpExposed: true,
+      mcpExposed: false,
       readOnly: false,
     });
 
@@ -115,7 +115,7 @@ describe("AddStorageDialog", () => {
         backend: "local",
         config: { root: "/Users/me/docs" },
         enabled: true,
-        mcpExposed: true,
+        mcpExposed: false,
         readOnly: false,
       });
       expect(onOpenChange).toHaveBeenCalledWith(false);
@@ -217,7 +217,7 @@ describe("AddStorageDialog", () => {
         backend: "s3",
         config: { bucket: "release-artifacts", secret: "top-secret" },
         enabled: true,
-        mcpExposed: true,
+        mcpExposed: false,
         readOnly: false,
       });
     });
@@ -249,7 +249,7 @@ describe("AddStorageDialog", () => {
           region: "auto",
         },
         enabled: true,
-        mcpExposed: true,
+        mcpExposed: false,
         readOnly: false,
       });
     });
@@ -319,11 +319,121 @@ describe("AddStorageDialog", () => {
           rootPath: "/team",
         },
         enabled: true,
-        mcpExposed: true,
+        mcpExposed: false,
         readOnly: false,
       });
     });
   });
+
+  it("submits v0.7 object storage drafts", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    renderDialog({
+      onAdd,
+      loadSchemas: vi.fn().mockResolvedValue([
+        {
+          id: "aliyun-oss",
+          label: "Aliyun OSS",
+          kind: "oss",
+          fields: [
+            { name: "bucket", label: "Bucket", input_type: "text", required: true },
+            { name: "endpoint", label: "Endpoint URL", input_type: "text", required: true },
+            { name: "accessKeyId", label: "Access Key ID", input_type: "text", secret: true },
+            {
+              name: "accessKeySecret",
+              label: "Access Key Secret",
+              input_type: "password",
+              secret: true,
+            },
+            { name: "rootPath", label: "Root Prefix", input_type: "text" },
+          ],
+        },
+      ]),
+    });
+
+    await screen.findByLabelText(/Bucket/);
+    fireEvent.change(screen.getByLabelText("Storage Name"), {
+      target: { value: "OSS Archive" },
+    });
+    fireEvent.change(screen.getByLabelText(/Bucket/), { target: { value: "archive" } });
+    fireEvent.change(screen.getByLabelText(/Endpoint URL/), {
+      target: { value: "https://oss-cn-beijing.aliyuncs.com" },
+    });
+    fireEvent.change(screen.getByLabelText(/Access Key ID/), { target: { value: "key-id" } });
+    fireEvent.change(screen.getByLabelText(/Access Key Secret/), {
+      target: { value: "key-secret" },
+    });
+    fireEvent.change(screen.getByLabelText(/Root Prefix/), { target: { value: "/team" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add Storage" }));
+
+    await waitFor(() => {
+      expect(onAdd).toHaveBeenCalledWith({
+        name: "OSS Archive",
+        backend: "oss",
+        config: {
+          bucket: "archive",
+          endpoint: "https://oss-cn-beijing.aliyuncs.com",
+          accessKeyId: "key-id",
+          accessKeySecret: "key-secret",
+          rootPath: "/team",
+        },
+        enabled: true,
+        mcpExposed: false,
+        readOnly: false,
+      });
+    });
+  });
+
+  it.each([
+    ["tencent-cos", "Tencent COS", "cos", "secretId", "Secret ID", "secretKey", "Secret Key"],
+    ["huawei-obs", "Huawei OBS", "obs", "accessKeyId", "Access Key ID", "secretAccessKey", "Secret Access Key"],
+  ])(
+    "maps %s storage drafts to %s backend",
+    async (id, label, backend, keyIdName, keyIdLabel, secretName, secretLabel) => {
+      const onAdd = vi.fn().mockResolvedValue(undefined);
+      renderDialog({
+        onAdd,
+        loadSchemas: vi.fn().mockResolvedValue([
+          {
+            id,
+            label,
+            kind: backend,
+            fields: [
+              { name: "bucket", label: "Bucket", input_type: "text", required: true },
+              { name: "endpoint", label: "Endpoint URL", input_type: "text", required: true },
+              { name: keyIdName, label: keyIdLabel, input_type: "text", secret: true },
+              { name: secretName, label: secretLabel, input_type: "password", secret: true },
+            ],
+          },
+        ]),
+      });
+
+      await screen.findByLabelText(/Bucket/);
+      fireEvent.change(screen.getByLabelText("Storage Name"), { target: { value: label } });
+      fireEvent.change(screen.getByLabelText(/Bucket/), { target: { value: "archive" } });
+      fireEvent.change(screen.getByLabelText(/Endpoint URL/), {
+        target: { value: "https://object.example.test" },
+      });
+      fireEvent.change(screen.getByLabelText(keyIdLabel), { target: { value: "key-id" } });
+      fireEvent.change(screen.getByLabelText(secretLabel), { target: { value: "key-secret" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add Storage" }));
+
+      await waitFor(() => {
+        expect(onAdd).toHaveBeenCalledWith({
+          name: label,
+          backend,
+          config: {
+            bucket: "archive",
+            endpoint: "https://object.example.test",
+            [keyIdName]: "key-id",
+            [secretName]: "key-secret",
+          },
+          enabled: true,
+          mcpExposed: false,
+          readOnly: false,
+        });
+      });
+    },
+  );
 
   it("submits WebDAV compatibility flags as booleans", async () => {
     const onAdd = vi.fn().mockResolvedValue(undefined);
@@ -365,7 +475,7 @@ describe("AddStorageDialog", () => {
           disableCreateDir: true,
         },
         enabled: true,
-        mcpExposed: true,
+        mcpExposed: false,
         readOnly: false,
       });
     });

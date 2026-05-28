@@ -16,6 +16,9 @@ For backend expansion, a backend is not considered product-ready until it has an
 | Local filesystem          | Yes               | No                       | No                       | Local paths are direct filesystem operations.                               |
 | Amazon S3 / S3-compatible | Yes               | Backend-dependent        | Backend/config-dependent | Versioning requires bucket support and versioning enabled. Optional `defaultAcl` is passed through OpenDAL for writes. |
 | Backblaze B2              | Yes               | Yes                      | No                       | Native OpenDAL B2 backend. Supports capability-gated write-time user metadata when OpenDAL reports `write_with_user_metadata`. |
+| Aliyun OSS                | Yes               | Yes                      | Backend/config-dependent | Object storage through OpenDAL. Generic rename and create-directory capabilities are not exposed. |
+| Tencent COS               | Yes               | Yes                      | Backend/config-dependent | Object storage through OpenDAL. Generic rename and create-directory capabilities are not exposed. |
+| Huawei OBS                | Yes               | Yes                      | Backend/config-dependent | Object storage through OpenDAL. Generic rename and create-directory capabilities are not exposed. |
 | Azure Blob Storage        | Yes               | Backend-dependent        | Backend/config-dependent | Version behavior depends on account/container support and configuration.    |
 | Google Cloud Storage      | Yes               | Backend-dependent        | Backend/config-dependent | Versioning requires object versioning/generation support and configuration. |
 | WebDAV                    | Yes               | No                       | No                       | Version tools return `ERR_VERSIONS_NOT_SUPPORTED`. Use `disableCreateDir` for servers that reject collection creation probes/placeholders. |

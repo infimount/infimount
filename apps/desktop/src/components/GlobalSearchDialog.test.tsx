@@ -18,6 +18,16 @@ vi.mock("@/hooks/use-toast", () => ({
   useToast: () => ({ toast: vi.fn() }),
 }));
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 const policy: StorageConfig["mcpPolicy"] = {
   default_access: "read_write",
   allowed_paths: [],
@@ -53,6 +63,72 @@ describe("GlobalSearchDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
+  });
+
+  it("cancels indexing and ignores stale storage responses", async () => {
+    const pending = deferred<Awaited<ReturnType<typeof listEntriesRecursive>>>();
+    vi.mocked(listEntriesRecursive).mockReturnValueOnce(pending.promise);
+
+    render(
+      <GlobalSearchDialog
+        open
+        storages={storages}
+        onOpenChange={vi.fn()}
+        onSelectStorage={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Index Local Docs" }));
+    expect(await screen.findByRole("button", { name: "Stop" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+
+    pending.resolve([
+      {
+        path: "reports/stale.txt",
+        name: "stale.txt",
+        is_dir: false,
+        size: 12,
+        modified_at: null,
+      },
+    ]);
+
+    await waitFor(() => {
+      expect(screen.queryByText(/1 paths/)).not.toBeInTheDocument();
+      expect(window.localStorage.getItem("infimount:storage-index:v1")).toBeNull();
+    });
+    expect(screen.getByRole("button", { name: "Index Local Docs" })).toBeEnabled();
+  });
+
+  it("ignores indexing responses after dialog unmount", async () => {
+    const pending = deferred<Awaited<ReturnType<typeof listEntriesRecursive>>>();
+    vi.mocked(listEntriesRecursive).mockReturnValueOnce(pending.promise);
+
+    const { unmount } = render(
+      <GlobalSearchDialog
+        open
+        storages={storages}
+        onOpenChange={vi.fn()}
+        onSelectStorage={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Index Local Docs" }));
+    expect(await screen.findByRole("button", { name: "Stop" })).toBeInTheDocument();
+    unmount();
+
+    pending.resolve([
+      {
+        path: "reports/closed.txt",
+        name: "closed.txt",
+        is_dir: false,
+        size: 12,
+        modified_at: null,
+      },
+    ]);
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem("infimount:storage-index:v1")).toBeNull();
+    });
   });
 
   it("indexes storage metadata locally and searches paths", async () => {

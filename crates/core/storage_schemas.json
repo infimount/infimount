@@ -105,6 +105,146 @@
     ]
   },
   {
+    "id": "aliyun-oss",
+    "label": "Aliyun OSS",
+    "kind": "oss",
+    "fields": [
+      {
+        "name": "bucket",
+        "label": "Bucket",
+        "input_type": "text",
+        "required": true,
+        "secret": false
+      },
+      {
+        "name": "endpoint",
+        "label": "Endpoint URL",
+        "input_type": "text",
+        "required": true,
+        "secret": false
+      },
+      {
+        "name": "accessKeyId",
+        "label": "Access Key ID",
+        "input_type": "text",
+        "required": false,
+        "secret": true
+      },
+      {
+        "name": "accessKeySecret",
+        "label": "Access Key Secret",
+        "input_type": "password",
+        "required": false,
+        "secret": true
+      },
+      {
+        "name": "rootPath",
+        "label": "Root Prefix",
+        "input_type": "text",
+        "required": false,
+        "secret": false
+      },
+      {
+        "name": "addressingStyle",
+        "label": "Addressing Style",
+        "input_type": "text",
+        "required": false,
+        "secret": false
+      },
+      {
+        "name": "presignEndpoint",
+        "label": "Presign Endpoint URL",
+        "input_type": "text",
+        "required": false,
+        "secret": false
+      }
+    ]
+  },
+  {
+    "id": "tencent-cos",
+    "label": "Tencent COS",
+    "kind": "cos",
+    "fields": [
+      {
+        "name": "bucket",
+        "label": "Bucket",
+        "input_type": "text",
+        "required": true,
+        "secret": false
+      },
+      {
+        "name": "endpoint",
+        "label": "Endpoint URL",
+        "input_type": "text",
+        "required": true,
+        "secret": false
+      },
+      {
+        "name": "secretId",
+        "label": "Secret ID",
+        "input_type": "text",
+        "required": false,
+        "secret": true
+      },
+      {
+        "name": "secretKey",
+        "label": "Secret Key",
+        "input_type": "password",
+        "required": false,
+        "secret": true
+      },
+      {
+        "name": "rootPath",
+        "label": "Root Prefix",
+        "input_type": "text",
+        "required": false,
+        "secret": false
+      }
+    ]
+  },
+  {
+    "id": "huawei-obs",
+    "label": "Huawei OBS",
+    "kind": "obs",
+    "fields": [
+      {
+        "name": "bucket",
+        "label": "Bucket",
+        "input_type": "text",
+        "required": true,
+        "secret": false
+      },
+      {
+        "name": "endpoint",
+        "label": "Endpoint URL",
+        "input_type": "text",
+        "required": true,
+        "secret": false
+      },
+      {
+        "name": "accessKeyId",
+        "label": "Access Key ID",
+        "input_type": "text",
+        "required": false,
+        "secret": true
+      },
+      {
+        "name": "secretAccessKey",
+        "label": "Secret Access Key",
+        "input_type": "password",
+        "required": false,
+        "secret": true
+      },
+      {
+        "name": "rootPath",
+        "label": "Root Prefix",
+        "input_type": "text",
+        "required": false,
+        "secret": false
+      }
+    ]
+  },
+  {
     "id": "azure-blob",
     "label": "Azure Blob Storage",
     "kind": "azure_blob",

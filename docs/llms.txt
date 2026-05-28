@@ -1,7 +1,7 @@
 # Infimount
 
 Infimount is a local-first desktop app for browsing and managing local files,
-Amazon S3, Backblaze B2, Azure Blob Storage, Google Cloud Storage, and WebDAV
+Amazon S3, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob Storage, Google Cloud Storage, and WebDAV
 from one native interface. It also exposes selected storages through MCP for local AI assistants
 and agent workflows.
 
@@ -22,6 +22,9 @@ and agent workflows.
 - Local filesystem
 - Amazon S3 and S3-compatible storage
 - Backblaze B2
+- Aliyun OSS
+- Tencent COS
+- Huawei OBS
 - Azure Blob Storage
 - Google Cloud Storage
 - WebDAV
@@ -32,5 +35,5 @@ and agent workflows.
 - Cross-platform: Linux, macOS, and Windows builds are published on GitHub Releases.
 - MCP-ready: stdio and local HTTP transport are supported, with tool-level exposure controls, storage/path policies, confirmations, sessions, audit filtering, and redacted audit export bundles.
 - Safe Agent Operations in v0.6.0 added guided MCP access presets, active session visibility, non-loopback HTTP bearer-token enforcement, resource/tool gating, and scenario coverage for session and policy denial.
-- Backend expansion is OpenDAL-first, including native B2, S3 default ACLs, WebDAV compatibility mode, and capability-gated user metadata writes.
+- Backend expansion is OpenDAL-first, including native B2, OSS, COS, OBS, S3 default ACLs, WebDAV compatibility mode, and capability-gated user metadata writes.
 - Built with Tauri, Rust, React, and Apache OpenDAL.

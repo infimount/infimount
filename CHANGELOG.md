@@ -9,10 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added v0.7 object storage expansion for Aliyun OSS, Tencent COS, and Huawei OBS across desktop schemas, Rust core builders, MCP builders, capability docs, and tests.
 - Started v0.7 validation clarity work with grouped storage capability summaries, sanitized fix hints, MCP readiness notes, and copyable validation summaries in Add/Edit Storage.
+- Added a stop control for global search indexing so stale in-flight recursive list responses are ignored after cancellation or dialog close.
 
 ### Changed
 
+- New storage additions and imports now default to not exposed to MCP, preserving explicit agent-access opt-in.
 - `validate_storage` results now include versioning capability fields, fix hints, and advisory warnings without exposing storage secrets.
 
 ## [0.6.0] - 2026-05-27

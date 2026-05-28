@@ -33,6 +33,7 @@ import {
   updateStorage as apiUpdateStorage,
   verifyStorage as apiVerifyStorage,
 } from "@/lib/api";
+import { backendToStorageType } from "@/lib/storageMapping";
 import { cn } from "@/lib/utils";
 import {
   getMcpNotificationPermission,
@@ -53,7 +54,6 @@ import type {
   StorageBackend,
   StorageConfig,
   StorageDraft,
-  StorageType,
   StorageValidationResult,
 } from "@/types/storage";
 
@@ -80,21 +80,12 @@ const StorageConfigEditorDialog = lazy(() =>
   })),
 );
 
-const BACKEND_TO_TYPE: Record<StorageBackend, StorageType> = {
-  local: "local-fs",
-  s3: "aws-s3",
-  b2: "backblaze-b2",
-  azure_blob: "azure-blob",
-  webdav: "webdav",
-  gcs: "gcs",
-};
-
 function mapWireStorage(storage: StorageRecordWire): StorageConfig {
   return {
     id: storage.id,
     name: storage.name,
     backend: storage.backend,
-    type: BACKEND_TO_TYPE[storage.backend] ?? "local-fs",
+    type: backendToStorageType(storage.backend),
     config: isRecord(storage.config) ? storage.config : {},
     enabled: storage.enabled,
     mcpExposed: storage.mcp_exposed,

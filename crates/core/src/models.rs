@@ -102,6 +102,12 @@ pub enum SourceKind {
     Gcs,
     #[serde(rename = "b2")]
     B2,
+    #[serde(rename = "oss")]
+    Oss,
+    #[serde(rename = "cos")]
+    Cos,
+    #[serde(rename = "obs")]
+    Obs,
 }
 
 impl fmt::Display for SourceKind {
@@ -113,6 +119,9 @@ impl fmt::Display for SourceKind {
             SourceKind::AzureBlob => write!(f, "azure_blob"),
             SourceKind::Gcs => write!(f, "gcs"),
             SourceKind::B2 => write!(f, "b2"),
+            SourceKind::Oss => write!(f, "oss"),
+            SourceKind::Cos => write!(f, "cos"),
+            SourceKind::Obs => write!(f, "obs"),
         }
     }
 }

@@ -153,6 +153,9 @@ If you installed from release binaries (not Homebrew), upgrade like this:
 | **Local Filesystem**     | ✅ Stable  | Full read/write support                                                     |
 | **Amazon S3**            | ✅ Stable  | Any S3-compatible service; versioning depends on bucket support; optional default object ACL |
 | **Backblaze B2**         | ✅ Stable  | Native OpenDAL B2 backend with read/write/list/delete, copy, presign, and capability-gated user metadata writes |
+| **Aliyun OSS**           | ✅ Stable  | Object storage via OpenDAL; read/write/list/delete/copy and presigned links; no generic rename/create-dir capability |
+| **Tencent COS**          | ✅ Stable  | Object storage via OpenDAL; read/write/list/delete/copy and presigned links; no generic rename/create-dir capability |
+| **Huawei OBS**           | ✅ Stable  | Object storage via OpenDAL; read/write/list/delete/copy and presigned links; no generic rename/create-dir capability |
 | **Azure Blob Storage**   | ✅ Stable  | Container/account key auth; advanced capabilities depend on account support |
 | **Google Cloud Storage** | ✅ Stable  | Service account JSON; advanced capabilities depend on bucket support        |
 | **WebDAV**               | ✅ Stable  | Nextcloud, ownCloud, etc.; optional compatibility mode for servers that cannot create collection placeholders |
@@ -170,7 +173,7 @@ Infimount includes a Rust MCP server for local AI clients and agent workflows.
 
 - Transports: stdio and Streamable HTTP
 - HTTP auth: bearer token required for non-loopback desktop HTTP and for headless HTTP unless explicitly started in loopback-only insecure dev mode
-- Scoped access: expose only selected storages, disable individual MCP tools, and restrict storage paths with allow/deny prefixes
+- Scoped access: new storages are not exposed to MCP by default; expose only selected storages, disable individual MCP tools, and restrict storage paths with allow/deny prefixes
 - Risk controls: write/delete/presign/version-delete operations can require approval in Infimount before execution
 - Audit trail: local bounded MCP audit log records allowed, denied, confirmed, and failed tool activity without storing secrets or presigned URL signatures
 - Version-aware tools: supported where the backend and storage configuration support object versions
@@ -228,13 +231,13 @@ Outputs:
 
 ### Current Focus
 
-- [x] Local, S3/S3-compatible, Backblaze B2, Azure Blob, GCS, and WebDAV browsing
+- [x] Local, S3/S3-compatible, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, GCS, and WebDAV browsing
 - [x] Grid and list views with file preview, drag-and-drop upload, bookmarks, recents, and transfer queue
 - [x] Dual-pane copy/move and compare/update workflows
 - [x] MCP support for local AI assistants with explicit storage exposure, tool controls, path policy, confirmations, sessions, and audit
 - [x] Version-aware MCP tools where supported by the backend
 - [x] Keyboard navigation in virtualized file grid and table views
-- [ ] Additional storage backends such as SFTP and selected object stores
+- [ ] Additional storage backends such as SFTP and FTP
 - [x] Capability-aware storage validation summaries with fix hints and MCP readiness notes
 - [ ] Additional large-directory polish
 

@@ -84,6 +84,9 @@ const getStorageIcon = (type: string) => {
     case "aws-s3":
       return s3Icon;
     case "backblaze-b2":
+    case "aliyun-oss":
+    case "tencent-cos":
+    case "huawei-obs":
       return folderNetworkIcon;
     case "azure-blob":
       return azureIcon;

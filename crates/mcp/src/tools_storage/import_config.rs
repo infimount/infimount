@@ -41,7 +41,7 @@ struct ImportedStorageWire {
     pub config: Value,
     #[serde(default = "default_true")]
     pub enabled: bool,
-    #[serde(default = "default_true")]
+    #[serde(default = "default_false")]
     pub mcp_exposed: bool,
     #[serde(default)]
     pub read_only: bool,
@@ -51,6 +51,10 @@ struct ImportedStorageWire {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_false() -> bool {
+    false
 }
 
 fn parse_import_json(input: &str) -> McpResult<Vec<ImportedStorage>> {

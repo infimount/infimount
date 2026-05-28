@@ -6,7 +6,7 @@ use crate::errors::{err_with_details, McpErrorCode, McpResult};
 use crate::registry::{ensure_unique_name, validate_storage_name, StorageRecord};
 use crate::tools_fs::FsToolsContext;
 
-use super::common::{ensure_backend_supported, ensure_config_object, masked};
+use super::common::{canonical_backend, ensure_config_object, masked};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -41,9 +41,12 @@ pub async fn edit_storage(
     ctx: &FsToolsContext,
     input: EditStorageInput,
 ) -> McpResult<EditStorageOutput> {
-    if let Some(ref backend) = input.patch.backend {
-        ensure_backend_supported(backend)?;
-    }
+    let canonical_patch_backend = input
+        .patch
+        .backend
+        .as_deref()
+        .map(canonical_backend)
+        .transpose()?;
     if let Some(ref config) = input.patch.config {
         ensure_config_object(config)?;
     }
@@ -66,7 +69,7 @@ pub async fn edit_storage(
             ensure_unique_name(storages, &normalized_name, Some(storage.id.as_str()))?;
             storage.name = normalized_name;
         }
-        if let Some(ref backend) = input.patch.backend {
+        if let Some(ref backend) = canonical_patch_backend {
             storage.backend = backend.clone();
         }
         if let Some(ref config) = input.patch.config {

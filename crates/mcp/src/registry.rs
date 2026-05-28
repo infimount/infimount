@@ -290,9 +290,16 @@ pub fn is_secret_key(key: &str) -> bool {
         "password",
         "token",
         "access_key",
+        "accesskey",
         "secret_key",
         "client_secret",
         "session_token",
+        "keyid",
+        "applicationkey",
+        "application_key",
+        "credential",
+        "serviceaccountjson",
+        "service_account_json",
     ]
     .iter()
     .any(|needle| lowered.contains(needle))
@@ -342,15 +349,29 @@ mod tests {
     fn secret_masking_recursive() {
         let input = json!({
             "token": "abc",
+            "accessKeyId": "access-key-id",
+            "applicationKey": "application-key",
+            "application_key": "application-key-snake",
+            "credential": "service-account-json",
+            "serviceAccountJson": "service-account-json",
+            "service_account_json": "service-account-json",
             "nested": {
                 "client_secret": "x",
+                "secretId": "secret-id",
                 "safe": "ok"
             }
         });
 
         let masked = mask_secrets_in_value(&input);
         assert_eq!(masked["token"], "********");
+        assert_eq!(masked["accessKeyId"], "********");
+        assert_eq!(masked["applicationKey"], "********");
+        assert_eq!(masked["application_key"], "********");
+        assert_eq!(masked["credential"], "********");
+        assert_eq!(masked["serviceAccountJson"], "********");
+        assert_eq!(masked["service_account_json"], "********");
         assert_eq!(masked["nested"]["client_secret"], "********");
+        assert_eq!(masked["nested"]["secretId"], "********");
         assert_eq!(masked["nested"]["safe"], "ok");
     }
 }

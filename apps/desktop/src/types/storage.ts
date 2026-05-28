@@ -1,5 +1,29 @@
-export type StorageType = "aws-s3" | "backblaze-b2" | "azure-blob" | "webdav" | "gcs" | "local-fs";
-export type StorageBackend = "s3" | "b2" | "azure_blob" | "webdav" | "gcs" | "local";
+export type StorageType =
+  | "aws-s3"
+  | "backblaze-b2"
+  | "aliyun-oss"
+  | "tencent-cos"
+  | "huawei-obs"
+  | "azure-blob"
+  | "webdav"
+  | "gcs"
+  | "local-fs";
+export type StorageBackend =
+  | "s3"
+  | "b2"
+  | "backblaze_b2"
+  | "oss"
+  | "aliyun_oss"
+  | "cos"
+  | "tencent_cos"
+  | "obs"
+  | "huawei_obs"
+  | "azure_blob"
+  | "azblob"
+  | "webdav"
+  | "gcs"
+  | "local"
+  | "fs";
 export type McpTransport = "stdio" | "http";
 
 export interface StorageDraft {

@@ -70,9 +70,36 @@ describe("AddStorageDialog integration", () => {
         backend: "local",
         config: { rootPath: "~/Downloads" },
         enabled: true,
-        mcpExposed: true,
+        mcpExposed: false,
         readOnly: false,
       });
+    });
+  });
+
+  it("requires explicit MCP exposure opt-in", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <AddStorageDialog
+        open
+        onOpenChange={() => undefined}
+        onAdd={onAdd}
+        loadSchemas={async () => schemas}
+      />,
+    );
+
+    await screen.findByText("Backend Fields");
+    fireEvent.change(screen.getByLabelText("Storage Name"), {
+      target: { value: "Agent Downloads" },
+    });
+    fireEvent.change(screen.getByLabelText("Root Folder Path *"), {
+      target: { value: "~/Downloads" },
+    });
+    fireEvent.click(screen.getByRole("switch", { name: /Expose to MCP/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Storage" }));
+
+    await waitFor(() => {
+      expect(onAdd).toHaveBeenCalledWith(expect.objectContaining({ mcpExposed: true }));
     });
   });
 

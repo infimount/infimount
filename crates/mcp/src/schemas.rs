@@ -169,7 +169,7 @@ pub fn schema_add_storage() -> serde_json::Value {
         "backend": { "type": "string" },
         "config": { "type": "object" },
         "enabled": { "type": "boolean", "default": true },
-        "mcp_exposed": { "type": "boolean", "default": true },
+        "mcp_exposed": { "type": "boolean", "default": false },
         "read_only": { "type": "boolean", "default": false }
       },
       "required": ["name", "backend", "config"],
@@ -313,4 +313,18 @@ pub fn schema_delete_version() -> serde_json::Value {
       "required": ["path", "version"],
       "additionalProperties": false
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_storage_schema_defaults_to_not_mcp_exposed() {
+        let schema = schema_add_storage();
+        assert_eq!(
+            schema["properties"]["mcp_exposed"]["default"],
+            serde_json::Value::Bool(false)
+        );
+    }
 }

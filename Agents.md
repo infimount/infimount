@@ -12,7 +12,7 @@ Infimount is a **cross-platform storage browser**:
 
 - Desktop app (Windows, macOS, Linux) using **Tauri + React**.
 - Storage abstraction via **Apache OpenDAL** (Rust).
-- Local filesystem, S3/S3-compatible, native Backblaze B2, Azure Blob Storage, Google Cloud Storage, and WebDAV are wired through OpenDAL builders. Treat backend capabilities as runtime/backend-dependent rather than globally guaranteed.
+- Local filesystem, S3/S3-compatible, native Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob Storage, Google Cloud Storage, and WebDAV are wired through OpenDAL builders. Treat backend capabilities as runtime/backend-dependent rather than globally guaranteed.
 - **Core principle:** *Do not re-implement filesystem/storage logic; always delegate to OpenDAL.*
 
 The backend should mainly:
@@ -135,7 +135,7 @@ When generating or modifying code, agents MUST follow these rules:
 
 ### 4.1 Adding a New Storage Backend (SourceKind)
 
-**Goal:** Support a new backend beyond the currently wired local, S3/S3-compatible, native Backblaze B2, WebDAV, Azure Blob, and GCS backends.
+**Goal:** Support a new backend beyond the currently wired local, S3/S3-compatible, native Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, WebDAV, Azure Blob, and GCS backends.
 
 1. **Update models**  
    - Add new variant to `SourceKind`.

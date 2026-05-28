@@ -247,7 +247,7 @@ describe("release zero-manual smoke path", () => {
         backend: "local",
         config: { root: "/tmp/infimount-release-smoke" },
         enabled: true,
-        mcpExposed: true,
+        mcpExposed: false,
         readOnly: false,
       });
       expect(listStorages).toHaveBeenCalledTimes(2);

@@ -27,7 +27,7 @@ The durable product wedge is not “another cloud file manager.” It is:
 - Shared core crate in `crates/core`.
 - Uses Apache OpenDAL for storage operations.
 - Desktop file operations are thin wrappers over OpenDAL: list, stat, read, write, create directory, delete, upload, transfer, versions.
-- Registry currently builds OpenDAL operators for local filesystem, S3, Backblaze B2, Azure Blob, GCS, and WebDAV.
+- Registry currently builds OpenDAL operators for local filesystem, S3, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, GCS, and WebDAV.
 
 ### MCP server
 
@@ -49,7 +49,7 @@ The durable product wedge is not “another cloud file manager.” It is:
 
 Needs:
 
-- Browse and move files across local folders, buckets, B2 buckets, containers, and WebDAV.
+- Browse and move files across local folders, buckets, B2/OSS/COS/OBS buckets, containers, and WebDAV.
 - Validate storage credentials quickly.
 - Avoid switching among cloud consoles, CLIs, Cyberduck-style apps, and filesystem windows.
 
@@ -181,7 +181,7 @@ Differentiators to preserve:
 
 - Keep docs aligned with the current backend set, MCP safety model, and release status.
 - Continue keyboard navigation hardening in the sidebar, dialogs, and MCP settings; file grid/table roving navigation is implemented.
-- Improve large directory performance: virtualized list/grid is implemented; continue pagination/cursor where possible and async progress states.
+- Improve large directory performance: virtualized list/grid is implemented, and global search indexing can ignore stale cancelled responses; continue pagination/cursor where possible and async progress states.
 - Strengthen storage validation with clearer capability summaries; grouped validation results, sanitized fix hints, MCP readiness notes, and copyable summaries are now started for v0.7.0.
 - Improve error messaging for backend-specific auth/config failures.
 
@@ -196,7 +196,7 @@ Differentiators to preserve:
 ### Storage breadth
 
 - SFTP and FTP backends.
-- More S3-compatible provider presets. Cloudflare R2, MinIO, Wasabi, Backblaze B2 S3-compatible endpoints, DigitalOcean Spaces, and Nextcloud/WebDAV presets are implemented in the add-storage flow; native Backblaze B2 is also available as a first-class OpenDAL backend.
+- More S3-compatible provider presets. Cloudflare R2, MinIO, Wasabi, Backblaze B2 S3-compatible endpoints, DigitalOcean Spaces, and Nextcloud/WebDAV presets are implemented in the add-storage flow; native Backblaze B2, Aliyun OSS, Tencent COS, and Huawei OBS are also available as first-class OpenDAL backends.
 - Better WebDAV/Nextcloud guidance.
 - Versioning UI where backend supports it.
 

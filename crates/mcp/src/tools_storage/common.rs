@@ -5,19 +5,27 @@ use crate::errors::{err, err_with_details, McpErrorCode, McpResult};
 use crate::policy::McpStoragePolicy;
 use crate::registry::{mask_storage_record, validate_storage_name, StorageRecord};
 
-pub(super) fn ensure_backend_supported(backend: &str) -> McpResult<()> {
-    if matches!(
-        backend,
-        "local" | "fs" | "s3" | "webdav" | "azure_blob" | "azblob" | "gcs"
-    ) {
-        return Ok(());
-    }
+pub(super) fn canonical_backend(backend: &str) -> McpResult<String> {
+    let canonical = match backend {
+        "local" | "fs" => "local",
+        "s3" => "s3",
+        "b2" | "backblaze_b2" => "b2",
+        "webdav" => "webdav",
+        "azure_blob" | "azblob" => "azure_blob",
+        "gcs" => "gcs",
+        "oss" | "aliyun_oss" => "oss",
+        "cos" | "tencent_cos" => "cos",
+        "obs" | "huawei_obs" => "obs",
+        other => {
+            return Err(err_with_details(
+                McpErrorCode::ERR_BACKEND_UNSUPPORTED,
+                format!("unsupported backend '{other}'"),
+                json!({ "backend": other }),
+            ));
+        }
+    };
 
-    Err(err_with_details(
-        McpErrorCode::ERR_BACKEND_UNSUPPORTED,
-        format!("unsupported backend '{backend}'"),
-        json!({ "backend": backend }),
-    ))
+    Ok(canonical.to_string())
 }
 
 pub(super) fn ensure_config_object(config: &Value) -> McpResult<()> {
@@ -62,14 +70,14 @@ pub(super) struct ImportedStorage {
 impl ImportedStorage {
     pub(super) fn into_record(self) -> McpResult<StorageRecord> {
         let name = validate_storage_name(&self.name)?;
-        ensure_backend_supported(&self.backend)?;
+        let backend = canonical_backend(&self.backend)?;
         ensure_config_object(&self.config)?;
         let now = Utc::now().to_rfc3339();
 
         Ok(StorageRecord {
             id: self.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             name,
-            backend: self.backend,
+            backend,
             config: self.config,
             enabled: self.enabled,
             mcp_exposed: self.mcp_exposed,

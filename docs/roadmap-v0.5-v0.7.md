@@ -70,27 +70,34 @@ Delivered for v0.6.0:
 - Arrow keys move between files and folders, Home/End jump to the first or last entry, Enter opens the focused item, and Space toggles selection.
 - File items now expose selection state and visible focus rings for keyboard users.
 
-## In progress for public v0.7.0: Validation Clarity
+## In progress for public v0.7.0: Object Storage Expansion and Validation Clarity
 
-Theme: make storage setup safer and more understandable before users browse or expose a backend to MCP clients.
+Theme: broaden object-store coverage without leaving OpenDAL, and make storage setup safer and more understandable before users browse or expose a backend to MCP clients.
 
-Started for v0.7.0:
+Delivered so far for v0.7.0:
 
+- Aliyun OSS, Tencent COS, and Huawei OBS builders across Rust core and MCP.
+- Desktop Add/Edit Storage schemas for OSS, COS, and OBS with secret-aware credential fields.
+- Capability and builder tests for OSS, COS, and OBS.
+- Secret masking hardening for camelCase and snake_case access key IDs, application keys, and service-account credentials.
 - Desktop Add/Edit Storage shows grouped capability summaries for browse, mutation, sharing/versioning, and metadata behavior.
 - Validation results include sanitized fix hints for common failures such as invalid local roots, missing targets, permission failures, timeouts, and invalid config.
 - Validation results include MCP readiness notes for disabled storage, non-exposed storage, writable MCP exposure, and presigned download-link capability.
 - Validation summaries are copyable without including raw credentials or full storage config.
 - TypeScript and Rust validation models include versioning capability fields, fix hints, and warnings.
+- New storage additions and imports default to not exposed to MCP, preserving explicit agent-access opt-in.
+- Global search indexing can be stopped from the dialog; stale in-flight recursive list responses are ignored so slow storage responses do not overwrite newer UI state after cancellation, close, or unmount.
 
-## Future public v0.7.0 candidates
+Remaining public v0.7.0 candidates:
 
-- SFTP, if OpenDAL support meets the product-ready rule.
-- FTP, only with clear security warnings and capability coverage.
-- OSS, COS, OBS, and similar object stores through OpenDAL.
 - Additional WebDAV presets and compatibility toggles.
 - Additional S3-compatible presets where they materially reduce setup friction.
+
+Deferred:
+
+- SFTP, until OpenDAL support, simulator coverage, private-key masking, and known-hosts UX meet the product-ready rule.
+- FTP, until clear security warnings, FTPS expectations, and capability coverage are in place.
 - TOS once OpenDAL exposes useful read/write/list/stat capability.
-- Cancel in-flight list/search work so slow storage responses do not keep the workbench feeling blocked.
 
 ## Future quality work
 

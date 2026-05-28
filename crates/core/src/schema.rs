@@ -38,7 +38,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schemas_include_v0_5_backend_expansion_fields() {
+    fn schemas_include_backend_expansion_fields() {
         let schemas = list_storage_schemas().expect("schemas should parse");
         let b2 = schemas
             .iter()
@@ -61,5 +61,27 @@ mod tests {
             .fields
             .iter()
             .any(|field| field.name == "disableCreateDir" && field.input_type == "checkbox"));
+
+        for (id, kind) in [
+            ("aliyun-oss", SourceKind::Oss),
+            ("tencent-cos", SourceKind::Cos),
+            ("huawei-obs", SourceKind::Obs),
+        ] {
+            let schema = schemas
+                .iter()
+                .find(|schema| schema.id == id)
+                .unwrap_or_else(|| panic!("{id} schema should exist"));
+            assert!(matches!(
+                (&schema.kind, &kind),
+                (SourceKind::Oss, SourceKind::Oss)
+                    | (SourceKind::Cos, SourceKind::Cos)
+                    | (SourceKind::Obs, SourceKind::Obs)
+            ));
+            assert!(schema
+                .fields
+                .iter()
+                .any(|field| field.name == "endpoint" && field.required));
+            assert!(schema.fields.iter().any(|field| field.secret));
+        }
     }
 }

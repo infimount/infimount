@@ -5,7 +5,7 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use futures::TryStreamExt;
 use indexmap::IndexMap;
-use opendal::services::{Azblob, Fs, Gcs, Webdav, B2, S3};
+use opendal::services::{Azblob, Cos, Fs, Gcs, Obs, Oss, Webdav, B2, S3};
 use opendal::ErrorKind;
 use opendal::Operator;
 use tokio::sync::RwLock;
@@ -183,6 +183,9 @@ fn build_operator(source: &Source) -> Result<Operator> {
         SourceKind::AzureBlob => build_azure_blob_operator(source),
         SourceKind::Gcs => build_gcs_operator(source),
         SourceKind::B2 => build_b2_operator(source),
+        SourceKind::Oss => build_oss_operator(source),
+        SourceKind::Cos => build_cos_operator(source),
+        SourceKind::Obs => build_obs_operator(source),
     }
 }
 
@@ -445,6 +448,122 @@ fn build_b2_operator(source: &Source) -> Result<Operator> {
     Ok(op)
 }
 
+fn build_oss_operator(source: &Source) -> Result<Operator> {
+    let mut builder = Oss::default();
+
+    if !source.root.is_empty() {
+        builder = builder.bucket(&source.root);
+    }
+
+    if let Some(config) = &source.config {
+        if let Some(bucket) = config.get("bucket").or_else(|| config.get("bucketName")) {
+            builder = builder.bucket(bucket);
+        }
+        if let Some(endpoint) = config.get("endpoint") {
+            builder = builder.endpoint(endpoint);
+        }
+        if let Some(access_key_id) = config
+            .get("accessKeyId")
+            .or_else(|| config.get("access_key_id"))
+        {
+            builder = builder.access_key_id(access_key_id);
+        }
+        if let Some(access_key_secret) = config
+            .get("accessKeySecret")
+            .or_else(|| config.get("access_key_secret"))
+            .or_else(|| config.get("secretAccessKey"))
+        {
+            builder = builder.access_key_secret(access_key_secret);
+        }
+        if let Some(root_path) = config.get("rootPath").or_else(|| config.get("root")) {
+            builder = builder.root(root_path);
+        }
+        if let Some(addressing_style) = config.get("addressingStyle") {
+            builder = builder.addressing_style(addressing_style);
+        }
+        if let Some(presign_endpoint) = config.get("presignEndpoint") {
+            builder = builder.presign_endpoint(presign_endpoint);
+        }
+        if let Some(enabled) = config.get("versioning").and_then(|v| parse_bool(v)) {
+            builder = builder.enable_versioning(enabled);
+        }
+    }
+
+    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    Ok(op)
+}
+
+fn build_cos_operator(source: &Source) -> Result<Operator> {
+    let mut builder = Cos::default();
+
+    if !source.root.is_empty() {
+        builder = builder.bucket(&source.root);
+    }
+
+    if let Some(config) = &source.config {
+        if let Some(bucket) = config.get("bucket").or_else(|| config.get("bucketName")) {
+            builder = builder.bucket(bucket);
+        }
+        if let Some(endpoint) = config.get("endpoint") {
+            builder = builder.endpoint(endpoint);
+        }
+        if let Some(secret_id) = config.get("secretId").or_else(|| config.get("secret_id")) {
+            builder = builder.secret_id(secret_id);
+        }
+        if let Some(secret_key) = config.get("secretKey").or_else(|| config.get("secret_key")) {
+            builder = builder.secret_key(secret_key);
+        }
+        if let Some(root_path) = config.get("rootPath").or_else(|| config.get("root")) {
+            builder = builder.root(root_path);
+        }
+        if let Some(enabled) = config.get("versioning").and_then(|v| parse_bool(v)) {
+            builder = builder.enable_versioning(enabled);
+        }
+    }
+
+    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    Ok(op)
+}
+
+fn build_obs_operator(source: &Source) -> Result<Operator> {
+    let mut builder = Obs::default();
+
+    if !source.root.is_empty() {
+        builder = builder.bucket(&source.root);
+    }
+
+    if let Some(config) = &source.config {
+        if let Some(bucket) = config.get("bucket").or_else(|| config.get("bucketName")) {
+            builder = builder.bucket(bucket);
+        }
+        if let Some(endpoint) = config.get("endpoint") {
+            builder = builder.endpoint(endpoint);
+        }
+        if let Some(access_key_id) = config
+            .get("accessKeyId")
+            .or_else(|| config.get("access_key_id"))
+        {
+            builder = builder.access_key_id(access_key_id);
+        }
+        if let Some(secret_access_key) = config
+            .get("secretAccessKey")
+            .or_else(|| config.get("secret_access_key"))
+            .or_else(|| config.get("accessKeySecret"))
+        {
+            builder = builder.secret_access_key(secret_access_key);
+        }
+        if let Some(root_path) = config.get("rootPath").or_else(|| config.get("root")) {
+            builder = builder.root(root_path);
+        }
+        if let Some(enabled) = config.get("versioning").and_then(|v| parse_bool(v)) {
+            builder = builder.enable_versioning(enabled);
+        }
+    }
+
+    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    Ok(op)
+}
+
 fn parse_bool(raw: &str) -> Option<bool> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "true" | "1" | "yes" | "y" | "on" => Some(true),
@@ -624,6 +743,67 @@ mod tests {
         assert!(caps.write);
         assert!(caps.presign_read);
         assert!(caps.write_with_user_metadata);
+    }
+
+    #[test]
+    fn builds_v0_7_object_store_operators() {
+        for (kind, config) in [
+            (
+                crate::models::SourceKind::Oss,
+                std::collections::HashMap::from([
+                    ("bucket".to_string(), "bucket-name".to_string()),
+                    (
+                        "endpoint".to_string(),
+                        "https://oss-cn-beijing.aliyuncs.com".to_string(),
+                    ),
+                    ("accessKeyId".to_string(), "key-id".to_string()),
+                    ("accessKeySecret".to_string(), "key-secret".to_string()),
+                    ("rootPath".to_string(), "/workspace".to_string()),
+                ]),
+            ),
+            (
+                crate::models::SourceKind::Cos,
+                std::collections::HashMap::from([
+                    ("bucket".to_string(), "bucket-name".to_string()),
+                    (
+                        "endpoint".to_string(),
+                        "https://cos.ap-singapore.myqcloud.com".to_string(),
+                    ),
+                    ("secretId".to_string(), "secret-id".to_string()),
+                    ("secretKey".to_string(), "secret-key".to_string()),
+                    ("rootPath".to_string(), "/workspace".to_string()),
+                ]),
+            ),
+            (
+                crate::models::SourceKind::Obs,
+                std::collections::HashMap::from([
+                    ("bucket".to_string(), "bucket-name".to_string()),
+                    (
+                        "endpoint".to_string(),
+                        "https://obs.cn-north-4.myhuaweicloud.com".to_string(),
+                    ),
+                    ("accessKeyId".to_string(), "key-id".to_string()),
+                    ("secretAccessKey".to_string(), "key-secret".to_string()),
+                    ("rootPath".to_string(), "/workspace".to_string()),
+                ]),
+            ),
+        ] {
+            let source = Source {
+                id: kind.to_string(),
+                name: kind.to_string(),
+                kind,
+                root: String::new(),
+                config: Some(config),
+            };
+            let op = build_operator(&source).expect("operator should build");
+            let caps = op.info().full_capability();
+            assert!(caps.list);
+            assert!(caps.read);
+            assert!(caps.write);
+            assert!(caps.copy);
+            assert!(caps.presign_read);
+            assert!(!caps.rename);
+        }
     }
 
     #[test]

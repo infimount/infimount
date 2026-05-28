@@ -1,6 +1,6 @@
 use crate::errors::{err_with_details, McpErrorCode, McpResult};
 use crate::registry::StorageRecord;
-use opendal::services::{Azblob, Fs, Gcs, Webdav, B2, S3};
+use opendal::services::{Azblob, Cos, Fs, Gcs, Obs, Oss, Webdav, B2, S3};
 use opendal::Operator;
 use serde::{Deserialize, Serialize};
 
@@ -39,7 +39,7 @@ pub fn check_versioning_disabled(storage: &StorageRecord) -> Option<bool> {
             .get("versioning")
             .and_then(|v| v.as_bool())
             .map(|enabled| !enabled),
-        "gcs" => storage
+        "gcs" | "oss" | "aliyun_oss" | "cos" | "tencent_cos" | "obs" | "huawei_obs" => storage
             .config
             .get("versioning")
             .and_then(|v| v.as_bool())
@@ -56,6 +56,9 @@ pub fn build_operator(storage: &StorageRecord) -> McpResult<Operator> {
         "azure_blob" | "azblob" => build_azblob_operator(storage),
         "gcs" => build_gcs_operator(storage),
         "b2" | "backblaze_b2" => build_b2_operator(storage),
+        "oss" | "aliyun_oss" => build_oss_operator(storage),
+        "cos" | "tencent_cos" => build_cos_operator(storage),
+        "obs" | "huawei_obs" => build_obs_operator(storage),
         other => Err(err_with_details(
             McpErrorCode::ERR_BACKEND_UNSUPPORTED,
             format!("unsupported backend '{other}'"),
@@ -254,6 +257,163 @@ fn build_b2_operator(storage: &StorageRecord) -> McpResult<Operator> {
         .map(|op| op.finish())
 }
 
+fn build_oss_operator(storage: &StorageRecord) -> McpResult<Operator> {
+    let mut builder = Oss::default();
+
+    if let Some(bucket) = storage
+        .config
+        .get("bucket")
+        .or_else(|| storage.config.get("bucketName"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.bucket(bucket);
+    }
+    if let Some(endpoint) = storage.config.get("endpoint").and_then(|v| v.as_str()) {
+        builder = builder.endpoint(endpoint);
+    }
+    if let Some(access_key_id) = storage
+        .config
+        .get("accessKeyId")
+        .or_else(|| storage.config.get("access_key_id"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.access_key_id(access_key_id);
+    }
+    if let Some(access_key_secret) = storage
+        .config
+        .get("accessKeySecret")
+        .or_else(|| storage.config.get("access_key_secret"))
+        .or_else(|| storage.config.get("secretAccessKey"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.access_key_secret(access_key_secret);
+    }
+    if let Some(root) = storage
+        .config
+        .get("rootPath")
+        .or_else(|| storage.config.get("root"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.root(root);
+    }
+    if let Some(addressing_style) = storage
+        .config
+        .get("addressingStyle")
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.addressing_style(addressing_style);
+    }
+    if let Some(presign_endpoint) = storage
+        .config
+        .get("presignEndpoint")
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.presign_endpoint(presign_endpoint);
+    }
+    if let Some(enabled) = config_bool(storage, "versioning") {
+        builder = builder.enable_versioning(enabled);
+    }
+
+    Operator::new(builder)
+        .map_err(|e| super::errors::map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))
+        .map(|op| op.finish())
+}
+
+fn build_cos_operator(storage: &StorageRecord) -> McpResult<Operator> {
+    let mut builder = Cos::default();
+
+    if let Some(bucket) = storage
+        .config
+        .get("bucket")
+        .or_else(|| storage.config.get("bucketName"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.bucket(bucket);
+    }
+    if let Some(endpoint) = storage.config.get("endpoint").and_then(|v| v.as_str()) {
+        builder = builder.endpoint(endpoint);
+    }
+    if let Some(secret_id) = storage
+        .config
+        .get("secretId")
+        .or_else(|| storage.config.get("secret_id"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.secret_id(secret_id);
+    }
+    if let Some(secret_key) = storage
+        .config
+        .get("secretKey")
+        .or_else(|| storage.config.get("secret_key"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.secret_key(secret_key);
+    }
+    if let Some(root) = storage
+        .config
+        .get("rootPath")
+        .or_else(|| storage.config.get("root"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.root(root);
+    }
+    if let Some(enabled) = config_bool(storage, "versioning") {
+        builder = builder.enable_versioning(enabled);
+    }
+
+    Operator::new(builder)
+        .map_err(|e| super::errors::map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))
+        .map(|op| op.finish())
+}
+
+fn build_obs_operator(storage: &StorageRecord) -> McpResult<Operator> {
+    let mut builder = Obs::default();
+
+    if let Some(bucket) = storage
+        .config
+        .get("bucket")
+        .or_else(|| storage.config.get("bucketName"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.bucket(bucket);
+    }
+    if let Some(endpoint) = storage.config.get("endpoint").and_then(|v| v.as_str()) {
+        builder = builder.endpoint(endpoint);
+    }
+    if let Some(access_key_id) = storage
+        .config
+        .get("accessKeyId")
+        .or_else(|| storage.config.get("access_key_id"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.access_key_id(access_key_id);
+    }
+    if let Some(secret_access_key) = storage
+        .config
+        .get("secretAccessKey")
+        .or_else(|| storage.config.get("secret_access_key"))
+        .or_else(|| storage.config.get("accessKeySecret"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.secret_access_key(secret_access_key);
+    }
+    if let Some(root) = storage
+        .config
+        .get("rootPath")
+        .or_else(|| storage.config.get("root"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.root(root);
+    }
+    if let Some(enabled) = config_bool(storage, "versioning") {
+        builder = builder.enable_versioning(enabled);
+    }
+
+    Operator::new(builder)
+        .map_err(|e| super::errors::map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))
+        .map(|op| op.finish())
+}
+
 fn config_bool(storage: &StorageRecord, key: &str) -> Option<bool> {
     match storage.config.get(key)? {
         serde_json::Value::Bool(value) => Some(*value),
@@ -311,6 +471,46 @@ mod tests {
         let caps = get_capabilities(&op);
         assert!(caps.presign_read);
         assert!(caps.write_with_user_metadata);
+    }
+
+    #[test]
+    fn builds_v0_7_object_store_operators() {
+        for (backend, config) in [
+            (
+                "oss",
+                json!({
+                    "bucket": "bucket-name",
+                    "endpoint": "https://oss-cn-beijing.aliyuncs.com",
+                    "accessKeyId": "key-id",
+                    "accessKeySecret": "key-secret",
+                    "rootPath": "/workspace"
+                }),
+            ),
+            (
+                "cos",
+                json!({
+                    "bucket": "bucket-name",
+                    "endpoint": "https://cos.ap-singapore.myqcloud.com",
+                    "secretId": "secret-id",
+                    "secretKey": "secret-key",
+                    "rootPath": "/workspace"
+                }),
+            ),
+            (
+                "obs",
+                json!({
+                    "bucket": "bucket-name",
+                    "endpoint": "https://obs.cn-north-4.myhuaweicloud.com",
+                    "accessKeyId": "key-id",
+                    "secretAccessKey": "key-secret",
+                    "rootPath": "/workspace"
+                }),
+            ),
+        ] {
+            let op = build_operator(&storage(backend, config)).expect("operator should build");
+            let caps = get_capabilities(&op);
+            assert!(caps.presign_read);
+        }
     }
 
     #[test]

@@ -36,6 +36,9 @@ import folderNetworkIcon from "@/assets/folder-network.svg";
 const STORAGE_TYPE_ICONS: Record<string, string> = {
   "aws-s3": s3Icon,
   "backblaze-b2": folderNetworkIcon,
+  "aliyun-oss": folderNetworkIcon,
+  "tencent-cos": folderNetworkIcon,
+  "huawei-obs": folderNetworkIcon,
   "azure-blob": azureIcon,
   gcs: gcsIcon,
   webdav: webdavIcon,
@@ -148,7 +151,7 @@ export function AddStorageDialog({
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [extraConfig, setExtraConfig] = useState<Record<string, unknown>>({});
   const [enabled, setEnabled] = useState(true);
-  const [mcpExposed, setMcpExposed] = useState(true);
+  const [mcpExposed, setMcpExposed] = useState(false);
   const [readOnly, setReadOnly] = useState(false);
   const [revealSecrets, setRevealSecrets] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -227,7 +230,7 @@ export function AddStorageDialog({
     setFieldValues(buildFieldValues(schema));
     setExtraConfig({});
     setEnabled(true);
-    setMcpExposed(true);
+    setMcpExposed(false);
     setReadOnly(false);
     setRevealSecrets(true);
   }, [initialStorage, open, schemas]);
@@ -446,18 +449,21 @@ export function AddStorageDialog({
 
           <div className="grid gap-3 rounded-xl border border-border/70 bg-card/40 p-4 md:grid-cols-3">
             <ToggleRow
+              id="storage-enabled"
               label="Enabled"
               description="Available in the desktop app."
               checked={enabled}
               onCheckedChange={setEnabled}
             />
             <ToggleRow
+              id="storage-mcp-exposed"
               label="Expose to MCP"
               description="Visible from the MCP virtual root."
               checked={mcpExposed}
               onCheckedChange={setMcpExposed}
             />
             <ToggleRow
+              id="storage-read-only"
               label="Read-only"
               description="Blocks writes, deletes, and moves."
               checked={readOnly}
@@ -823,11 +829,13 @@ function StorageFieldInput({
 }
 
 function ToggleRow({
+  id,
   label,
   description,
   checked,
   onCheckedChange,
 }: {
+  id: string;
   label: string;
   description: string;
   checked: boolean;
@@ -836,10 +844,12 @@ function ToggleRow({
   return (
     <div className="flex items-start justify-between gap-3 rounded-lg border border-border/60 bg-background/60 px-3 py-3">
       <div className="space-y-1">
-        <div className="text-sm font-medium text-foreground">{label}</div>
+        <Label htmlFor={id} className="text-sm font-medium text-foreground">
+          {label}
+        </Label>
         <div className="text-[11px] text-muted-foreground">{description}</div>
       </div>
-      <Switch checked={checked} onCheckedChange={onCheckedChange} />
+      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} />
     </div>
   );
 }
@@ -850,6 +860,12 @@ function mapStorageTypeToBackend(type: StorageType): StorageDraft["backend"] {
       return "s3";
     case "backblaze-b2":
       return "b2";
+    case "aliyun-oss":
+      return "oss";
+    case "tencent-cos":
+      return "cos";
+    case "huawei-obs":
+      return "obs";
     case "azure-blob":
       return "azure_blob";
     case "webdav":

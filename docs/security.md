@@ -27,6 +27,8 @@ A storage is visible to MCP only when both flags are true:
 - `enabled=true`
 - `mcp_exposed=true`
 
+New storages are not exposed to MCP by default from the desktop Add/Edit Storage flow or MCP storage import defaults. Exposure should be an explicit user choice.
+
 Set `read_only=true` to prevent write, delete, move, and version-delete operations for that storage.
 
 MCP settings also include an enabled-tool list. Disable tools such as `export_config`, `import_config`, `add_storage`, or `delete_path` when a client only needs read access.

@@ -2720,8 +2720,11 @@ dependencies = [
  "opendal-layer-timeout",
  "opendal-service-azblob",
  "opendal-service-b2",
+ "opendal-service-cos",
  "opendal-service-fs",
  "opendal-service-gcs",
+ "opendal-service-obs",
+ "opendal-service-oss",
  "opendal-service-s3",
  "opendal-service-webdav",
 ]
@@ -2844,6 +2847,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "opendal-service-cos"
+version = "0.56.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55a0765ba451b6effdbf514b7b50060530ff8a29e4231c4a3ab7792c016408e6"
+dependencies = [
+ "bytes",
+ "http",
+ "log",
+ "opendal-core",
+ "quick-xml 0.38.4",
+ "reqsign-core",
+ "reqsign-file-read-tokio",
+ "reqsign-tencent-cos",
+ "serde",
+]
+
+[[package]]
 name = "opendal-service-fs"
 version = "0.56.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2876,6 +2896,40 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "opendal-service-obs"
+version = "0.56.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44748e09c5a4b06a2df5da1f80d02273c47e708786a08031831ec501f30bf274"
+dependencies = [
+ "bytes",
+ "http",
+ "log",
+ "opendal-core",
+ "quick-xml 0.38.4",
+ "reqsign-core",
+ "reqsign-file-read-tokio",
+ "reqsign-huaweicloud-obs",
+ "serde",
+]
+
+[[package]]
+name = "opendal-service-oss"
+version = "0.56.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29c8a917829ad06d21b639558532cb0101fe49b040d946d673a73018683fac05"
+dependencies = [
+ "bytes",
+ "http",
+ "log",
+ "opendal-core",
+ "quick-xml 0.38.4",
+ "reqsign-aliyun-oss",
+ "reqsign-core",
+ "reqsign-file-read-tokio",
+ "serde",
 ]
 
 [[package]]
@@ -3679,6 +3733,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
+name = "reqsign-aliyun-oss"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57ac2757f3140aa2e213b554148ae0b52733e624fc6723f0cc6bb3d440176c95"
+dependencies = [
+ "anyhow",
+ "form_urlencoded",
+ "http",
+ "log",
+ "percent-encoding",
+ "reqsign-core",
+ "rust-ini",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "reqsign-aws-v4"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3772,6 +3843,34 @@ dependencies = [
  "serde_json",
  "sha2",
  "tokio",
+]
+
+[[package]]
+name = "reqsign-huaweicloud-obs"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8df54ec7de5d7a5b917695a67baba53ec6fa5d75ce4c4f4550db68618779a6d7"
+dependencies = [
+ "anyhow",
+ "http",
+ "log",
+ "percent-encoding",
+ "reqsign-core",
+]
+
+[[package]]
+name = "reqsign-tencent-cos"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e128f19525861dbded59e1e7c17653a8ed63d573ca04aed708d552dbef5bb32a"
+dependencies = [
+ "anyhow",
+ "http",
+ "log",
+ "percent-encoding",
+ "reqsign-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

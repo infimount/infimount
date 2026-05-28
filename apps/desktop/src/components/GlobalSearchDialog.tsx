@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Database, RefreshCw, Search } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Database, RefreshCw, Search, Square } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -63,6 +63,21 @@ export function GlobalSearchDialog({
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState<Record<string, IndexedStorage>>(() => readIndex());
   const [indexingStorageId, setIndexingStorageId] = useState<string | null>(null);
+  const activeIndexRequestIdRef = useRef(0);
+
+  useEffect(() => {
+    if (!open) {
+      activeIndexRequestIdRef.current += 1;
+      setIndexingStorageId(null);
+    }
+  }, [open]);
+
+  useEffect(
+    () => () => {
+      activeIndexRequestIdRef.current += 1;
+    },
+    [],
+  );
 
   const indexedStorages = storages.map((storage) => ({
     storage,
@@ -87,9 +102,12 @@ export function GlobalSearchDialog({
   }, [index, query]);
 
   const indexStorage = async (storage: StorageConfig) => {
+    const requestId = activeIndexRequestIdRef.current + 1;
+    activeIndexRequestIdRef.current = requestId;
     setIndexingStorageId(storage.id);
     try {
       const entries = await listEntriesRecursive(storage.id, "/");
+      if (requestId !== activeIndexRequestIdRef.current) return;
       const next = {
         ...readIndex(),
         [storage.id]: {
@@ -106,14 +124,27 @@ export function GlobalSearchDialog({
         description: `${storage.name}: ${entries.length} paths indexed locally.`,
       });
     } catch (error) {
+      if (requestId !== activeIndexRequestIdRef.current) return;
       toast({
         title: "Index failed",
         description: error instanceof Error ? error.message : String(error),
         variant: "destructive",
       });
     } finally {
-      setIndexingStorageId(null);
+      if (requestId === activeIndexRequestIdRef.current) {
+        setIndexingStorageId(null);
+      }
     }
+  };
+
+  const cancelIndexing = () => {
+    if (!indexingStorageId) return;
+    activeIndexRequestIdRef.current += 1;
+    setIndexingStorageId(null);
+    toast({
+      title: "Indexing cancelled",
+      description: "The in-flight storage response will be ignored.",
+    });
   };
 
   return (
@@ -139,9 +170,23 @@ export function GlobalSearchDialog({
 
           <div className="grid gap-4 md:grid-cols-[260px_1fr]">
             <div className="rounded-xl border border-border/70 bg-card/40 p-3">
-              <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
-                <Database className="h-3.5 w-3.5" />
-                Indexed storages
+              <div className="mb-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                <div className="flex items-center gap-2">
+                  <Database className="h-3.5 w-3.5" />
+                  Indexed storages
+                </div>
+                {indexingStorageId ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-[11px]"
+                    onClick={cancelIndexing}
+                  >
+                    <Square className="mr-1.5 h-3 w-3" />
+                    Stop
+                  </Button>
+                ) : null}
               </div>
               <div className="space-y-2">
                 {indexedStorages.map(({ storage, indexed }) => (
@@ -163,8 +208,8 @@ export function GlobalSearchDialog({
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7"
-                        disabled={indexingStorageId === storage.id}
-                        aria-label={`Index ${storage.name}`}
+                        disabled={indexingStorageId !== null}
+                        aria-label={indexingStorageId === storage.id ? `Indexing ${storage.name}` : `Index ${storage.name}`}
                         onClick={() => void indexStorage(storage)}
                       >
                         <RefreshCw

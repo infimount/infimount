@@ -313,6 +313,9 @@ fn legacy_source_to_storage(source: Source) -> StorageRecord {
         SourceKind::AzureBlob => "azure_blob",
         SourceKind::Gcs => "gcs",
         SourceKind::B2 => "b2",
+        SourceKind::Oss => "oss",
+        SourceKind::Cos => "cos",
+        SourceKind::Obs => "obs",
     }
     .to_string();
 
@@ -327,7 +330,9 @@ fn legacy_source_to_storage(source: Source) -> StorageRecord {
             .or_insert(Value::String(source.root));
     }
 
-    StorageRecord::new(source.name, backend, Value::Object(config_map))
+    let mut storage = StorageRecord::new(source.name, backend, Value::Object(config_map));
+    storage.mcp_exposed = false;
+    storage
 }
 
 pub fn mcp_error_to_core_error(err: McpError) -> CoreError {
@@ -354,4 +359,25 @@ fn map_runtime_io_error(err: std::io::Error) -> McpError {
         "failed to manage MCP HTTP runtime",
         json!({ "io_error": err.to_string() }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn legacy_source_migration_defaults_to_not_mcp_exposed() {
+        let source = Source {
+            id: "legacy-local".to_string(),
+            name: "Legacy Local".to_string(),
+            kind: SourceKind::Local,
+            root: "/tmp".to_string(),
+            config: Some(HashMap::new()),
+        };
+
+        let storage = legacy_source_to_storage(source);
+        assert_eq!(storage.backend, "local");
+        assert!(!storage.mcp_exposed);
+    }
 }

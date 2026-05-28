@@ -5,10 +5,14 @@ use crate::errors::McpResult;
 use crate::registry::{ensure_unique_name, validate_storage_name, StorageRecord};
 use crate::tools_fs::FsToolsContext;
 
-use super::common::{ensure_backend_supported, ensure_config_object, masked};
+use super::common::{canonical_backend, ensure_config_object, masked};
 
 fn default_true() -> bool {
     true
+}
+
+fn default_false() -> bool {
+    false
 }
 
 #[derive(Debug, Deserialize)]
@@ -19,7 +23,7 @@ pub struct AddStorageInput {
     pub config: Value,
     #[serde(default = "default_true")]
     pub enabled: bool,
-    #[serde(default = "default_true")]
+    #[serde(default = "default_false")]
     pub mcp_exposed: bool,
     #[serde(default)]
     pub read_only: bool,
@@ -35,13 +39,12 @@ pub async fn add_storage(
     input: AddStorageInput,
 ) -> McpResult<AddStorageOutput> {
     let name = validate_storage_name(&input.name)?;
-    ensure_backend_supported(&input.backend)?;
+    let backend = canonical_backend(&input.backend)?;
     ensure_config_object(&input.config)?;
 
     let storage = ctx.registry.with_locked_mutation(|storages| {
         ensure_unique_name(storages, &name, None)?;
-        let mut storage =
-            StorageRecord::new(name.clone(), input.backend.clone(), input.config.clone());
+        let mut storage = StorageRecord::new(name.clone(), backend.clone(), input.config.clone());
         storage.enabled = input.enabled;
         storage.mcp_exposed = input.mcp_exposed;
         storage.read_only = input.read_only;
