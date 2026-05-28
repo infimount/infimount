@@ -34,7 +34,7 @@ test("renders and submits the add storage dialog with mocked handlers", async ({
         root: "/Users/demo/Documents/design",
       },
       enabled: true,
-      mcpExposed: true,
+      mcpExposed: false,
       readOnly: false,
     });
 });
