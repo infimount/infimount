@@ -6,7 +6,7 @@
     <title>Infimount - One Surface for Every Storage</title>
     <meta
       name="description"
-      content="Infimount is a local-first desktop app for browsing local files, S3, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, Google Cloud Storage, WebDAV, and MCP-enabled storage workflows."
+      content="Infimount is a local-first desktop app for browsing local files, S3, Backblaze B2, Azure Blob, Google Cloud Storage, WebDAV, and MCP-enabled storage workflows. The main branch also includes OSS, COS, and OBS support for the next release."
     />
     <meta
       name="keywords"
@@ -29,7 +29,7 @@
     />
     <meta
       property="og:description"
-      content="Browse local files, S3, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, Google Cloud Storage, WebDAV, and MCP-enabled storage workflows from one local-first desktop app."
+      content="Browse local files, S3, Backblaze B2, Azure Blob, Google Cloud Storage, WebDAV, and MCP-enabled storage workflows from one local-first desktop app. Main branch builds also include OSS, COS, and OBS."
     />
     <meta property="og:url" content="https://infimount.github.io/infimount/" />
     <meta
@@ -712,6 +712,40 @@
         gap: 16px;
       }
 
+      .install-card {
+        grid-column: 1 / -1;
+      }
+
+      .command-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 16px;
+      }
+
+      .command-panel {
+        min-width: 0;
+        padding: 14px;
+        border: 1px solid rgba(235, 241, 249, 0.14);
+        border-radius: 14px;
+        background: rgba(0, 0, 0, 0.2);
+      }
+
+      .command-label {
+        display: block;
+        color: var(--text);
+        font-size: 0.82rem;
+        font-weight: 800;
+      }
+
+      .command-note {
+        display: block;
+        margin-top: 8px;
+        color: var(--muted-soft);
+        font-size: 0.78rem;
+        line-height: 1.45;
+      }
+
       .info-card,
       .callout {
         padding: 24px;
@@ -763,19 +797,20 @@
 
       .code-block {
         max-width: 100%;
-        margin: 16px 0 0;
-        padding: 16px;
-        overflow-x: auto;
+        margin: 12px 0 0;
+        padding: 13px;
+        overflow: hidden;
         border: 1px solid rgba(235, 241, 249, 0.14);
-        border-radius: 14px;
+        border-radius: 12px;
         color: #e8edf5;
-        background: rgba(0, 0, 0, 0.26);
+        background: rgba(0, 0, 0, 0.28);
         font-family:
           ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
           "Liberation Mono", monospace;
-        font-size: 0.84rem;
-        line-height: 1.6;
-        white-space: pre;
+        font-size: 0.8rem;
+        line-height: 1.55;
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
       }
 
       .callout {
@@ -878,8 +913,13 @@
         }
 
         .download-grid,
-        .install-grid {
+        .install-grid,
+        .command-grid {
           grid-template-columns: 1fr;
+        }
+
+        .install-card {
+          grid-column: auto;
         }
 
         .download-card {
@@ -1010,9 +1050,9 @@
             <h1 id="hero-title">Infimount</h1>
             <p class="hero-subtitle">One surface for every storage.</p>
             <p class="lead">
-              Infimount brings S3, Backblaze B2, OSS, COS, OBS, Azure Blob, GCS, WebDAV, and local files into
-              one unified surface for humans and AI agents. Browse, search, and
-              interact with your data securely and consistently.
+              Infimount brings local files, S3, Backblaze B2, Azure Blob, GCS, and WebDAV into
+              one unified surface for humans and AI agents. Current main builds also add OSS, COS, and OBS for the next release.
+              Browse, search, and expose storage with explicit local controls.
             </p>
             <div class="cta-row">
               <a class="btn primary" href="#downloads">Get Started</a>
@@ -1056,7 +1096,7 @@
       <section id="features" class="feature-strip" aria-label="Key features">
         <article class="feature-card">
           <h2>Multi-cloud access</h2>
-          <p>Connect to S3, Backblaze B2, OSS, COS, OBS, Azure Blob, GCS, WebDAV, and more in minutes.</p>
+          <p>Connect stable releases to S3, Backblaze B2, Azure Blob, GCS, WebDAV, and local files. OSS, COS, and OBS are on main for v0.7.0.</p>
         </article>
         <article class="feature-card">
           <h2>Local and cloud storage</h2>
@@ -1066,11 +1106,11 @@
         </article>
         <article class="feature-card">
           <h2>MCP and agent-ready</h2>
-          <p>Built for AI agents with MCP support and tool integrations.</p>
+          <p>Expose only selected storages through MCP, with tool controls, path policies, confirmations, and local audit logs.</p>
         </article>
         <article class="feature-card">
-          <h2>Backend compatibility</h2>
-          <p>Safe MCP presets, session visibility, audit export, and HTTP bearer-token safeguards ship in v0.6.0.</p>
+          <h2>Validation clarity</h2>
+          <p>Main builds report grouped backend capabilities, fix hints, and MCP readiness notes before exposure.</p>
         </article>
         <article class="feature-card">
           <h2>Unified browsing</h2>
@@ -1089,7 +1129,7 @@
       >
         <div class="section-head">
           <h2 id="connectors-title">Connectors</h2>
-          <p>Plug into the storage you already use.</p>
+          <p>Stable downloads are v0.6.0. OSS, COS, and OBS are available on main and planned for v0.7.0.</p>
         </div>
         <div class="connector-rail">
           <div class="connector">
@@ -1267,27 +1307,40 @@
         aria-label="Install options"
       >
         <div class="install-grid">
-          <article class="info-card">
-            <h3>Single-command install</h3>
-            <pre class="code-block">
-curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh
-
-# Windows PowerShell
-irm https://github.com/infimount/infimount/releases/latest/download/install.ps1 | iex</pre
-            >
+          <article class="info-card install-card">
+            <h3>Install with one command</h3>
             <p>
-              The scripts select the latest release asset for your platform and
-              verify checksums before installing. Set <code>INFIMOUNT_VERSION=v0.6.0</code>
-              to pin this release.
+              Choose your platform. The scripts select the matching latest release asset and verify it against <code>SHA256SUMS.txt</code> before installing.
+            </p>
+            <div class="command-grid" aria-label="Single-command install options">
+              <div class="command-panel">
+                <span class="command-label">Linux</span>
+                <pre class="code-block">curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh</pre>
+                <span class="command-note">Auto-selects DEB, RPM, or AppImage. Override with <code>INFIMOUNT_INSTALL_FORMAT</code>.</span>
+              </div>
+              <div class="command-panel">
+                <span class="command-label">macOS</span>
+                <pre class="code-block">curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh</pre>
+                <span class="command-note">Installs the latest DMG release. Unsigned builds may require right-click then Open.</span>
+              </div>
+              <div class="command-panel">
+                <span class="command-label">Windows PowerShell</span>
+                <pre class="code-block">irm https://github.com/infimount/infimount/releases/latest/download/install.ps1 | iex</pre>
+                <span class="command-note">Run in PowerShell. Unsigned installers may trigger SmartScreen.</span>
+              </div>
+            </div>
+            <p>
+              To pin this stable release, set <code>INFIMOUNT_VERSION=v0.6.0</code> before running the command.
             </p>
           </article>
           <article id="homebrew" class="info-card">
             <h3>Install with Homebrew</h3>
-            <pre class="code-block">
-brew tap infimount/infimount
+            <pre class="code-block">brew tap infimount/infimount
+# Linux formula
 brew install infimount
-brew install --cask infimount</pre
-            >
+
+# macOS cask
+brew install --cask infimount</pre>
             <p>
               Linux uses the formula. macOS can use the cask. The tap tracks published
               stable releases after assets and checksums are available.

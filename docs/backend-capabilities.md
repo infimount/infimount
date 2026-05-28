@@ -3,6 +3,8 @@
 Infimount uses OpenDAL capabilities at runtime. A backend being listed here does not mean every account, bucket, container, or server has every feature enabled.
 Use `validate_storage` in MCP or the desktop Validate action to check the effective capabilities for a configured storage. Validation reports grouped browse, mutation, sharing/versioning, and metadata capabilities, plus sanitized fix hints and MCP readiness notes.
 
+This matrix tracks the current `main` branch. The latest stable public release is v0.6.0; Aliyun OSS, Tencent COS, Huawei OBS, and the expanded validation output are part of the v0.7.0 work on `main` until v0.7.0 is tagged.
+
 ## OpenDAL-First Storage Policy
 
 OpenDAL is Infimount's storage abstraction boundary. File operations should stay routed through OpenDAL-backed core/MCP layers rather than provider-specific SDKs or custom per-provider implementations.

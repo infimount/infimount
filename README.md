@@ -3,24 +3,9 @@
 </p>
 
 <p align="center">
-  <strong>Unified Storage Browser</strong><br/>
-  Browse local and cloud storage through a single interface.
+  <strong>Local-first storage browser for desktop and MCP workflows.</strong><br/>
+  Browse local folders, object storage, and WebDAV from one native app. Expose only selected storages to AI clients.
 </p>
-
-<p align="center">
-  <img src="docs/assets/infimount-banner.png" alt="Infimount - one surface for every storage" width="900" />
-</p>
-
-<p align="center">
-  <img src="docs/assets/screenshot-infimount.png" alt="Infimount desktop app screenshot" width="900" />
-</p>
-
-> 🔐 **LOCAL-FIRST BY DEFAULT**
->
-> Infimount stores your storage sources, app config, and credentials on your own machine.
-> Default storage registry: `~/.infimount/storages.json`.
-> MCP runtime settings: `~/.infimount/mcp_settings.json`.
-> No Infimount-hosted backend is required.
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"/></a>
@@ -30,139 +15,108 @@
   <a href="https://github.com/sponsors/infimount"><img src="https://img.shields.io/github/sponsors/infimount?style=social" alt="GitHub Sponsors"/></a>
 </p>
 
----
+<p align="center">
+  <img src="docs/assets/screenshot-infimount.png" alt="Infimount desktop app screenshot" width="900" />
+</p>
 
-## ✨ Features
+> **Local-first by default**
+>
+> Infimount stores storage sources, app config, MCP settings, and credentials on your machine.
+> Default storage registry: `~/.infimount/storages.json`.
+> MCP runtime settings: `~/.infimount/mcp_settings.json`.
+> No Infimount-hosted backend is required.
 
-- 🗂️ **Unified File Browser** — Browse local files, S3, Backblaze B2, Azure Blob, GCS, and WebDAV from one app
-- 🔐 **Local-First Storage of Config + Credentials** — Sources and credentials persist locally on your machine
-- 🖼️ **Rich Previews** — View images, text files, and documents inline
-- 📁 **Grid & List Views** — Switch between visual layouts
-- 🔄 **Drag & Drop** — Upload files by dropping them into any storage
-- 🤖 **MCP for AI Assistants** — Expose selected storages and tools over stdio or local HTTP
-- ⚡ **Fast & Native** — Built with Tauri + Rust for minimal resource usage
-- 🎨 **Modern UI** — Dark mode, keyboard shortcuts, and polished UX
+## Install
 
-## 📥 Installation
+**Current stable release:** [v0.6.0](https://github.com/infimount/infimount/releases/tag/v0.6.0)
 
-### Single-command install
-
-macOS/Linux:
+### Linux
 
 ```bash
 curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh
 ```
 
-Windows PowerShell:
+The script verifies checksums and chooses `.deb`, `.rpm`, or AppImage automatically. Override with `INFIMOUNT_INSTALL_FORMAT=deb|rpm|appimage`.
+
+Manual downloads:
+
+- [DEB for Debian/Ubuntu](https://github.com/infimount/infimount/releases/latest/download/Infimount-amd64.deb)
+- [RPM for Fedora/RHEL](https://github.com/infimount/infimount/releases/latest/download/Infimount-x86_64.rpm)
+- [AppImage for portable use](https://github.com/infimount/infimount/releases/latest/download/Infimount-x86_64.AppImage)
+
+### macOS
+
+```bash
+curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh
+```
+
+Or use Homebrew:
+
+```bash
+brew tap infimount/infimount
+brew install --cask infimount
+```
+
+Manual download: [Infimount.dmg](https://github.com/infimount/infimount/releases/latest/download/Infimount.dmg)
+
+### Windows
+
+Run in PowerShell:
 
 ```powershell
 irm https://github.com/infimount/infimount/releases/latest/download/install.ps1 | iex
 ```
 
-The install scripts download the latest release asset for your platform and verify it against `SHA256SUMS.txt` before installing. To pin a version, set `INFIMOUNT_VERSION` first, for example `INFIMOUNT_VERSION=v0.6.0`.
+Manual downloads:
 
-Linux chooses `.deb`, `.rpm`, or AppImage automatically. Override with `INFIMOUNT_INSTALL_FORMAT=deb|rpm|appimage`.
+- [MSI installer](https://github.com/infimount/infimount/releases/latest/download/Infimount.msi)
+- [Setup EXE](https://github.com/infimount/infimount/releases/latest/download/Infimount-setup.exe)
 
-### Download
+### Install notes
 
-Pre-built binaries for **Linux**, **macOS**, and **Windows** are available on:
+Install scripts verify selected downloads against `SHA256SUMS.txt`. To pin a version, set `INFIMOUNT_VERSION=v0.6.0` before running the command. macOS and Windows binaries may be unsigned for some releases, see [Installation Notes](#installation-notes).
 
-- GitHub Pages download hub: [infimount.github.io/infimount](https://infimount.github.io/infimount/)
-- Releases page: [github.com/infimount/infimount/releases](https://github.com/infimount/infimount/releases)
+## What Infimount does
 
-**Current stable release:** [v0.6.0](https://github.com/infimount/infimount/releases/tag/v0.6.0)
+- **Browse storage in one place:** local files, S3/S3-compatible storage, Backblaze B2, Azure Blob, Google Cloud Storage, and WebDAV in the stable release. Main branch builds also include Aliyun OSS, Tencent COS, and Huawei OBS for v0.7.0.
+- **Work like a desktop file manager:** grid and list views, rich previews, drag-and-drop upload, bookmarks, recents, keyboard navigation, and transfer queue.
+- **Validate before you trust a backend:** stable releases check reachability. Main branch builds add grouped capabilities, sanitized fix hints, and MCP readiness notes for v0.7.0.
+- **Control MCP access explicitly:** new storages are not exposed to MCP by default. Enable selected storages, tool lists, path policies, read-only mode, confirmations, and local audit logs.
+- **Stay backend-agnostic:** file operations route through Apache OpenDAL so capabilities are detected and documented per backend.
 
-| Platform              | Download Link (`latest stable`)                                                                                        | Format      |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------- |
-| Linux (Debian/Ubuntu) | [Infimount-amd64.deb](https://github.com/infimount/infimount/releases/latest/download/Infimount-amd64.deb)             | `.deb`      |
-| Linux (Fedora/RHEL)   | [Infimount-x86_64.rpm](https://github.com/infimount/infimount/releases/latest/download/Infimount-x86_64.rpm)           | `.rpm`      |
-| Linux (Universal)     | [Infimount-x86_64.AppImage](https://github.com/infimount/infimount/releases/latest/download/Infimount-x86_64.AppImage) | `.AppImage` |
-| macOS                 | [Infimount.dmg](https://github.com/infimount/infimount/releases/latest/download/Infimount.dmg)                         | `.dmg`      |
-| Windows (Installer)   | [Infimount.msi](https://github.com/infimount/infimount/releases/latest/download/Infimount.msi)                         | `.msi`      |
-| Windows (NSIS)        | [Infimount-setup.exe](https://github.com/infimount/infimount/releases/latest/download/Infimount-setup.exe)             | `.exe`      |
+## First run and upgrades
 
-> ℹ️ **Tip:** Use assets from the **GitHub Release page**.
-> The `linux-artifacts.zip` from Actions is a temporary CI artifact and is not the canonical public download link.
+- Linux AppImage: `chmod +x Infimount-*.AppImage && ./Infimount-*.AppImage`
+- Linux DEB: `sudo apt install ./Infimount-amd64.deb`
+- Linux RPM: `sudo rpm -i Infimount-x86_64.rpm`
+- macOS DMG: open the DMG, drag Infimount to Applications, then right-click and choose `Open` on first launch if Gatekeeper warns.
+- Windows MSI or EXE: run the installer. If SmartScreen appears, choose `More info` then `Run anyway`.
 
-> 🔐 **Integrity:** Every release includes `SHA256SUMS.txt` and per-file `.sha256` assets.
-> The install scripts verify selected downloads automatically. After manual download, verify with:
-> `sha256sum -c SHA256SUMS.txt`
+Upgrade by running the latest installer again. For Homebrew installs, run `brew update` and then `brew upgrade infimount` or `brew upgrade --cask infimount`.
 
-> ⚠️ **Note**: macOS/Windows binaries may be unsigned for some releases. See [Installation Notes](#installation-notes) below.
+## Build from source
 
-### Quick First Run (After Download)
-
-1. Linux (`.AppImage`)
-   `chmod +x Infimount-*.AppImage && ./Infimount-*.AppImage`
-2. Linux (`.deb`)
-   `sudo apt install ./Infimount-amd64.deb`
-3. Linux (`.rpm`)
-   `sudo rpm -i Infimount-x86_64.rpm`
-4. macOS (`.dmg`)
-   Open DMG, drag Infimount to Applications, then right-click app -> `Open` on first launch.
-5. Windows (`.msi` or `.exe`)
-   Run installer. If SmartScreen appears: `More info` -> `Run anyway`.
-
-### Build from Source
-
-See [Building from Source](#️-building-from-source) section below.
-
-### Install with Homebrew (macOS and Linux)
-
-The Homebrew tap tracks published stable releases after release assets and checksums are available.
-
-```bash
-brew tap infimount/infimount
-# Linux (formula)
-brew install infimount
-
-# macOS (cask)
-brew install --cask infimount
-```
-
-Upgrade later with:
-
-```bash
-brew update
-brew upgrade infimount
-brew upgrade --cask infimount
-```
-
-### Upgrade to a New Release
-
-If you installed from release binaries (not Homebrew), upgrade like this:
-
-1. Linux (`.deb`)
-   `sudo apt install ./Infimount-amd64.deb`
-2. Linux (`.rpm`)
-   `sudo rpm -Uvh ./Infimount-x86_64.rpm`
-3. Linux (`.AppImage`)
-   Download the latest AppImage, replace your old file, then run:
-   `chmod +x Infimount-*.AppImage && ./Infimount-*.AppImage`
-4. macOS (`.dmg`)
-   Download latest DMG and replace `Infimount.app` in Applications.
-5. Windows (`.msi` or `.exe`)
-   Run the latest installer; it upgrades the existing install.
+See [Building from Source](#️-building-from-source) below.
 
 ---
 
-## 📦 Supported Storage Backends
+## Supported Storage Backends
 
-| Backend                  | Status     | Notes                                                                       |
-| ------------------------ | ---------- | --------------------------------------------------------------------------- |
-| **Local Filesystem**     | ✅ Stable  | Full read/write support                                                     |
-| **Amazon S3**            | ✅ Stable  | Any S3-compatible service; versioning depends on bucket support; optional default object ACL |
-| **Backblaze B2**         | ✅ Stable  | Native OpenDAL B2 backend with read/write/list/delete, copy, presign, and capability-gated user metadata writes |
-| **Aliyun OSS**           | ✅ Stable  | Object storage via OpenDAL; read/write/list/delete/copy and presigned links; no generic rename/create-dir capability |
-| **Tencent COS**          | ✅ Stable  | Object storage via OpenDAL; read/write/list/delete/copy and presigned links; no generic rename/create-dir capability |
-| **Huawei OBS**           | ✅ Stable  | Object storage via OpenDAL; read/write/list/delete/copy and presigned links; no generic rename/create-dir capability |
-| **Azure Blob Storage**   | ✅ Stable  | Container/account key auth; advanced capabilities depend on account support |
-| **Google Cloud Storage** | ✅ Stable  | Service account JSON; advanced capabilities depend on bucket support        |
-| **WebDAV**               | ✅ Stable  | Nextcloud, ownCloud, etc.; optional compatibility mode for servers that cannot create collection placeholders |
-| **SFTP**                 | 🔜 Planned | Coming soon                                                                 |
-| **FTP**                  | 🔜 Planned | Coming soon                                                                 |
+| Backend                  | Status                  | Notes                                                                       |
+| ------------------------ | ----------------------- | --------------------------------------------------------------------------- |
+| **Local Filesystem**     | ✅ Stable               | Full read/write support                                                     |
+| **Amazon S3**            | ✅ Stable               | Any S3-compatible service; versioning depends on bucket support; optional default object ACL |
+| **Backblaze B2**         | ✅ Stable               | Native OpenDAL B2 backend with read/write/list/delete, copy, presign, and capability-gated user metadata writes |
+| **Azure Blob Storage**   | ✅ Stable               | Container/account key auth; advanced capabilities depend on account support |
+| **Google Cloud Storage** | ✅ Stable               | Service account JSON; advanced capabilities depend on bucket support        |
+| **WebDAV**               | ✅ Stable               | Nextcloud, ownCloud, etc.; optional compatibility mode for servers that cannot create collection placeholders |
+| **Aliyun OSS**           | ✅ On main for v0.7.0   | Object storage via OpenDAL; read/write/list/delete/copy and presigned links; no generic rename/create-dir capability |
+| **Tencent COS**          | ✅ On main for v0.7.0   | Object storage via OpenDAL; read/write/list/delete/copy and presigned links; no generic rename/create-dir capability |
+| **Huawei OBS**           | ✅ On main for v0.7.0   | Object storage via OpenDAL; read/write/list/delete/copy and presigned links; no generic rename/create-dir capability |
+| **SFTP**                 | 🔜 Planned              | Coming soon                                                                 |
+| **FTP**                  | 🔜 Planned              | Coming soon                                                                 |
 
-Use **Validate** in Add/Edit Storage to check reachability, grouped capabilities, fix hints, and MCP readiness notes before browsing or exposing a storage to agents.
+Use **Validate** in Add/Edit Storage to check reachability before browsing or exposing a storage to agents. Main branch builds add grouped capability summaries, sanitized fix hints, and MCP readiness notes for v0.7.0.
 For MCP/versioning details, see [Backend Capability Matrix](docs/backend-capabilities.md).
 
 ---
@@ -231,14 +185,14 @@ Outputs:
 
 ### Current Focus
 
-- [x] Local, S3/S3-compatible, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, GCS, and WebDAV browsing
+- [x] Stable browsing for local, S3/S3-compatible, Backblaze B2, Azure Blob, GCS, and WebDAV; main branch adds Aliyun OSS, Tencent COS, and Huawei OBS for v0.7.0
 - [x] Grid and list views with file preview, drag-and-drop upload, bookmarks, recents, and transfer queue
 - [x] Dual-pane copy/move and compare/update workflows
 - [x] MCP support for local AI assistants with explicit storage exposure, tool controls, path policy, confirmations, sessions, and audit
 - [x] Version-aware MCP tools where supported by the backend
 - [x] Keyboard navigation in virtualized file grid and table views
 - [ ] Additional storage backends such as SFTP and FTP
-- [x] Capability-aware storage validation summaries with fix hints and MCP readiness notes
+- [x] Main branch v0.7.0 work: capability-aware storage validation summaries with fix hints and MCP readiness notes
 - [ ] Additional large-directory polish
 
 ### Future Plans

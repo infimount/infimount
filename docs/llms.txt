@@ -1,15 +1,17 @@
 # Infimount
 
 Infimount is a local-first desktop app for browsing and managing local files,
-Amazon S3, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob Storage, Google Cloud Storage, and WebDAV
-from one native interface. It also exposes selected storages through MCP for local AI assistants
-and agent workflows.
+Amazon S3, Backblaze B2, Azure Blob Storage, Google Cloud Storage, and WebDAV
+from one native interface. The main branch also includes Aliyun OSS, Tencent COS,
+and Huawei OBS support for the next release. Infimount can expose selected storages
+through MCP for local AI assistants and agent workflows.
 
 ## Useful Links
 
 - Website: https://infimount.github.io/infimount/
 - Repository: https://github.com/infimount/infimount
-- Current release: v0.6.0
+- Current stable release: v0.6.0
+- Main branch: v0.7.0 work in progress, including OSS/COS/OBS backend support and validation clarity
 - Releases: https://github.com/infimount/infimount/releases/latest
 - Homebrew tap: https://github.com/infimount/homebrew-infimount
 - LinkedIn: https://www.linkedin.com/company/infimount
@@ -22,9 +24,9 @@ and agent workflows.
 - Local filesystem
 - Amazon S3 and S3-compatible storage
 - Backblaze B2
-- Aliyun OSS
-- Tencent COS
-- Huawei OBS
+- Aliyun OSS (main branch, planned v0.7.0)
+- Tencent COS (main branch, planned v0.7.0)
+- Huawei OBS (main branch, planned v0.7.0)
 - Azure Blob Storage
 - Google Cloud Storage
 - WebDAV

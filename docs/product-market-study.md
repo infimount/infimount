@@ -41,7 +41,7 @@ The durable product wedge is not “another cloud file manager.” It is:
 
 ### Documentation status
 
-`Agents.md` now reflects the wired OpenDAL backends: local filesystem, S3/S3-compatible, native Backblaze B2, Azure Blob, Google Cloud Storage, and WebDAV. Future backend work should keep this guide aligned with the registry and desktop schema.
+`Agents.md` now reflects the wired OpenDAL backends: local filesystem, S3/S3-compatible, native Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, Google Cloud Storage, and WebDAV. Future backend work should keep this guide aligned with the registry and desktop schema.
 
 ## 3. Primary user segments
 

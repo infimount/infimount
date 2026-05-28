@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Refined the GitHub Pages install section and README presentation with clearer Linux, macOS, and Windows install paths, mobile-friendlier download links, and explicit stable-vs-main capability language.
 - New storage additions and imports now default to not exposed to MCP, preserving explicit agent-access opt-in.
 - `validate_storage` results now include versioning capability fields, fix hints, and advisory warnings without exposing storage secrets.
 
