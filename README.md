@@ -86,13 +86,38 @@ Install scripts verify selected downloads against `SHA256SUMS.txt`. To pin a ver
 
 ## First run and upgrades
 
-- Linux AppImage: `chmod +x Infimount-*.AppImage && ./Infimount-*.AppImage`
-- Linux DEB: `sudo apt install ./Infimount-amd64.deb`
-- Linux RPM: `sudo rpm -i Infimount-x86_64.rpm`
-- macOS DMG: open the DMG, drag Infimount to Applications, then right-click and choose `Open` on first launch if Gatekeeper warns.
-- Windows MSI or EXE: run the installer. If SmartScreen appears, choose `More info` then `Run anyway`.
+GitHub shows a copy button on each fenced command block in this README.
 
-Upgrade by running the latest installer again. For Homebrew installs, run `brew update` and then `brew upgrade infimount` or `brew upgrade --cask infimount`.
+Linux AppImage:
+
+```bash
+chmod +x Infimount-*.AppImage
+./Infimount-*.AppImage
+```
+
+Linux DEB:
+
+```bash
+sudo apt install ./Infimount-amd64.deb
+```
+
+Linux RPM:
+
+```bash
+sudo rpm -i Infimount-x86_64.rpm
+```
+
+macOS DMG: open the DMG, drag Infimount to Applications, then right-click and choose `Open` on first launch if Gatekeeper warns.
+
+Windows MSI or EXE: run the installer. If SmartScreen appears, choose `More info` then `Run anyway`.
+
+Upgrade by running the latest installer again. For Homebrew installs:
+
+```bash
+brew update
+brew upgrade infimount
+brew upgrade --cask infimount
+```
 
 ## Build from source
 

@@ -795,6 +795,49 @@
         margin: 0 0.18rem;
       }
 
+      .copyable-code {
+        position: relative;
+        min-width: 0;
+        margin-top: 12px;
+      }
+
+      .copyable-code .code-block {
+        margin-top: 0;
+        padding-right: 74px;
+      }
+
+      .copy-command {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        min-height: 30px;
+        padding: 6px 10px;
+        border: 1px solid rgba(235, 241, 249, 0.18);
+        border-radius: 9px;
+        color: #f0f4f8;
+        background: rgba(255, 255, 255, 0.08);
+        font: inherit;
+        font-size: 0.75rem;
+        font-weight: 800;
+        cursor: pointer;
+        transition:
+          border-color 160ms ease,
+          background-color 160ms ease,
+          color 160ms ease;
+      }
+
+      .copy-command:hover,
+      .copy-command:focus-visible {
+        border-color: rgba(235, 241, 249, 0.38);
+        background: rgba(255, 255, 255, 0.14);
+        outline: none;
+      }
+
+      .copy-command[data-copied="true"] {
+        color: #d6eadc;
+        border-color: rgba(169, 214, 179, 0.34);
+      }
+
       .code-block {
         max-width: 100%;
         margin: 12px 0 0;
@@ -1315,17 +1358,26 @@
             <div class="command-grid" aria-label="Single-command install options">
               <div class="command-panel">
                 <span class="command-label">Linux</span>
-                <pre class="code-block">curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh</pre>
+                <div class="copyable-code">
+                  <button class="copy-command" type="button" aria-label="Copy Linux install command">Copy</button>
+                  <pre class="code-block">curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh</pre>
+                </div>
                 <span class="command-note">Auto-selects DEB, RPM, or AppImage. Override with <code>INFIMOUNT_INSTALL_FORMAT</code>.</span>
               </div>
               <div class="command-panel">
                 <span class="command-label">macOS</span>
-                <pre class="code-block">curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh</pre>
+                <div class="copyable-code">
+                  <button class="copy-command" type="button" aria-label="Copy macOS install command">Copy</button>
+                  <pre class="code-block">curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh</pre>
+                </div>
                 <span class="command-note">Installs the latest DMG release. Unsigned builds may require right-click then Open.</span>
               </div>
               <div class="command-panel">
                 <span class="command-label">Windows PowerShell</span>
-                <pre class="code-block">irm https://github.com/infimount/infimount/releases/latest/download/install.ps1 | iex</pre>
+                <div class="copyable-code">
+                  <button class="copy-command" type="button" aria-label="Copy Windows PowerShell install command">Copy</button>
+                  <pre class="code-block">irm https://github.com/infimount/infimount/releases/latest/download/install.ps1 | iex</pre>
+                </div>
                 <span class="command-note">Run in PowerShell. Unsigned installers may trigger SmartScreen.</span>
               </div>
             </div>
@@ -1335,12 +1387,15 @@
           </article>
           <article id="homebrew" class="info-card">
             <h3>Install with Homebrew</h3>
-            <pre class="code-block">brew tap infimount/infimount
+            <div class="copyable-code">
+              <button class="copy-command" type="button" aria-label="Copy Homebrew install commands">Copy</button>
+              <pre class="code-block">brew tap infimount/infimount
 # Linux formula
 brew install infimount
 
 # macOS cask
 brew install --cask infimount</pre>
+            </div>
             <p>
               Linux uses the formula. macOS can use the cask. The tap tracks published
               stable releases after assets and checksums are available.
@@ -1431,5 +1486,29 @@ brew install --cask infimount</pre>
         </div>
       </footer>
     </main>
+    <script>
+      document.querySelectorAll(".copy-command").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const wrapper = button.closest(".copyable-code");
+          const command = wrapper?.querySelector(".code-block")?.textContent?.trim();
+          if (!command) return;
+
+          try {
+            await navigator.clipboard.writeText(command);
+            button.textContent = "Copied";
+            button.dataset.copied = "true";
+            window.setTimeout(() => {
+              button.textContent = "Copy";
+              delete button.dataset.copied;
+            }, 1800);
+          } catch {
+            button.textContent = "Select";
+            window.setTimeout(() => {
+              button.textContent = "Copy";
+            }, 1800);
+          }
+        });
+      });
+    </script>
   </body>
 </html>
