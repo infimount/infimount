@@ -94,7 +94,7 @@ Pi does not ship built-in MCP support, so the recommended path is a Pi extension
 examples/agent-integrations/pi-infimount-extension/
 ```
 
-It registers read-first Infimount tools for Pi:
+It is structured as a publishable Pi package (`@infimount/pi-infimount-extension`) and registers read-first Infimount tools for Pi:
 
 - `infimount_list_storages`
 - `infimount_list_dir`
@@ -107,8 +107,17 @@ Install it into Pi's extension directory or load it for testing:
 ```bash
 cd examples/agent-integrations/pi-infimount-extension
 npm install
+npm run smoke
 pi -e ./index.ts
 ```
+
+Or install the local package into Pi:
+
+```bash
+pi install ./examples/agent-integrations/pi-infimount-extension
+```
+
+The smoke test creates a temporary local storage and verifies list/read/search calls through Infimount MCP. `npm pack --dry-run` verifies the package contents for publishing.
 
 The extension uses `infimount_mcp --transport stdio` by default. Override the command with:
 

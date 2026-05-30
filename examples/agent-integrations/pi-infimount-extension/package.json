@@ -1,9 +1,40 @@
 {
-  "name": "pi-infimount-extension-starter",
-  "private": true,
+  "name": "@infimount/pi-infimount-extension",
   "version": "0.1.0",
-  "description": "Pi extension starter for Infimount MCP storage tools.",
+  "description": "Pi extension for read-first Infimount MCP storage tools.",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "infimount",
+    "mcp",
+    "storage"
+  ],
+  "files": [
+    "index.ts",
+    "README.md",
+    "package.json"
+  ],
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "scripts": {
+    "smoke": "node smoke.mjs"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
   }
 }
