@@ -77,9 +77,62 @@ claude mcp add infimount -- infimount_mcp --transport stdio
 
 For safer project work, create an Infimount Agent Workspace first, apply the workspace-scoped MCP policy, then connect Claude Code.
 
-## OpenCode and Codex-style agents
+## OpenCode
 
-For OpenCode, Codex-style CLIs, and editor agents, use the client's MCP configuration mechanism if available and point it at Infimount using either:
+OpenCode supports MCP directly. Add an `opencode.jsonc` file to a project or your OpenCode config with a local Infimount MCP server:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "infimount": {
+      "type": "local",
+      "command": ["infimount_mcp", "--transport", "stdio"],
+      "enabled": true,
+      "timeout": 10000
+    }
+  }
+}
+```
+
+For an already-running local HTTP server:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "infimount": {
+      "type": "remote",
+      "url": "http://127.0.0.1:7331/mcp",
+      "headers": {
+        "Authorization": "Bearer replace-with-a-random-token"
+      },
+      "enabled": true,
+      "timeout": 10000
+    }
+  }
+}
+```
+
+Example files are included at:
+
+```text
+examples/agent-integrations/opencode-local.jsonc
+examples/agent-integrations/opencode-http.jsonc
+```
+
+Validation commands:
+
+```bash
+opencode debug config --pure
+opencode mcp list --pure
+```
+
+The local stdio setup has been smoke-tested with OpenCode: OpenCode connected to the Infimount MCP server and invoked `infimount_read_file` against a temporary local storage.
+
+## Codex-style agents
+
+For Codex-style CLIs and editor agents, use the client's MCP configuration mechanism if available and point it at Infimount using either:
 
 - stdio: `infimount_mcp --transport stdio`
 - local HTTP: `http://127.0.0.1:7331/mcp`

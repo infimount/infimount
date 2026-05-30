@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "infimount": {
+      "type": "local",
+      "command": ["infimount_mcp", "--transport", "stdio"],
+      "enabled": true,
+      "timeout": 10000
+    }
+  }
+}
