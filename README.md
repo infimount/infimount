@@ -220,8 +220,7 @@ Outputs:
 - **macOS**: `target/release/bundle/dmg/`, `bundle/macos/`
 - **Windows**: `target/release/bundle/msi/`, `bundle/nsis/`
 
-> 📖 For detailed platform-specific instructions, see [build.md](build.md).
-> For release operations and checklist, see [docs/releasing.md](docs/releasing.md).
+> 📖 For release operations and checklist, see [docs/releasing.md](docs/releasing.md).
 > To verify public download links before announcing a release, run `scripts/check-release-links.sh`.
 
 ---
