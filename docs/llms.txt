@@ -1,17 +1,15 @@
 # Infimount
 
 Infimount is a local-first desktop app for browsing and managing local files,
-Amazon S3, Backblaze B2, Azure Blob Storage, Google Cloud Storage, and WebDAV
-from one native interface. The main branch also includes Aliyun OSS, Tencent COS,
-and Huawei OBS support for the next release. Infimount can expose selected storages
-through MCP for local AI assistants and agent workflows.
+Amazon S3, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob Storage,
+Google Cloud Storage, and WebDAV from one native interface. Infimount can expose
+selected storages through MCP for local AI assistants and agent workflows.
 
 ## Useful Links
 
 - Website: https://infimount.github.io/infimount/
 - Repository: https://github.com/infimount/infimount
-- Current stable release: v0.6.0
-- Main branch: v0.7.0 work in progress, including OSS/COS/OBS backend support and validation clarity
+- Current stable release: v0.7.0
 - Releases: https://github.com/infimount/infimount/releases/latest
 - Homebrew tap: https://github.com/infimount/homebrew-infimount
 - LinkedIn: https://www.linkedin.com/company/infimount
@@ -24,9 +22,9 @@ through MCP for local AI assistants and agent workflows.
 - Local filesystem
 - Amazon S3 and S3-compatible storage
 - Backblaze B2
-- Aliyun OSS (main branch, planned v0.7.0)
-- Tencent COS (main branch, planned v0.7.0)
-- Huawei OBS (main branch, planned v0.7.0)
+- Aliyun OSS
+- Tencent COS
+- Huawei OBS
 - Azure Blob Storage
 - Google Cloud Storage
 - WebDAV
@@ -37,5 +35,6 @@ through MCP for local AI assistants and agent workflows.
 - Cross-platform: Linux, macOS, and Windows builds are published on GitHub Releases.
 - MCP-ready: stdio and local HTTP transport are supported, with tool-level exposure controls, storage/path policies, confirmations, sessions, audit filtering, and redacted audit export bundles.
 - Safe Agent Operations in v0.6.0 added guided MCP access presets, active session visibility, non-loopback HTTP bearer-token enforcement, resource/tool gating, and scenario coverage for session and policy denial.
+- v0.7.0 added OSS/COS/OBS backend support, capability-aware validation with sanitized fix hints and MCP readiness notes, a global search stop control, safer MCP exposure defaults for new/imported storages, and clearer install docs.
 - Backend expansion is OpenDAL-first, including native B2, OSS, COS, OBS, S3 default ACLs, WebDAV compatibility mode, and capability-gated user metadata writes.
 - Built with Tauri, Rust, React, and Apache OpenDAL.

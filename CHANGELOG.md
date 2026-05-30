@@ -7,17 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-30
+
 ### Added
 
-- Added v0.7 object storage expansion for Aliyun OSS, Tencent COS, and Huawei OBS across desktop schemas, Rust core builders, MCP builders, capability docs, and tests.
-- Started v0.7 validation clarity work with grouped storage capability summaries, sanitized fix hints, MCP readiness notes, and copyable validation summaries in Add/Edit Storage.
+- Added OpenDAL-backed storage support for Aliyun OSS, Tencent COS, and Huawei OBS across desktop schemas, Rust core builders, MCP builders, capability docs, and tests.
+- Added capability-aware storage validation with grouped browse/mutation/sharing summaries, sanitized fix hints, MCP readiness notes, and copyable validation summaries in Add/Edit Storage.
 - Added a stop control for global search indexing so stale in-flight recursive list responses are ignored after cancellation or dialog close.
 
 ### Changed
 
-- Refined the GitHub Pages install section and README presentation with clearer Linux, macOS, and Windows install paths, mobile-friendlier download links, and explicit stable-vs-main capability language.
-- New storage additions and imports now default to not exposed to MCP, preserving explicit agent-access opt-in.
+- New storage additions, imports, and legacy migrations now default to not exposed to MCP, preserving explicit agent-access opt-in.
 - `validate_storage` results now include versioning capability fields, fix hints, and advisory warnings without exposing storage secrets.
+- Storage-management tools canonicalize backend aliases such as `aliyun_oss`, `tencent_cos`, and `huawei_obs` before persistence.
+- Refined the GitHub Pages install section and README presentation with clearer Linux, macOS, and Windows install paths, copy buttons, and mobile-friendlier download links.
 
 ## [0.6.0] - 2026-05-27
 
@@ -140,7 +143,8 @@ First stable release of Infimount — a unified desktop storage browser powered 
 
 ---
 
-[Unreleased]: https://github.com/infimount/infimount/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/infimount/infimount/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/infimount/infimount/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/infimount/infimount/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/infimount/infimount/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/infimount/infimount/compare/v0.3.0...v0.4.0

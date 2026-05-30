@@ -812,19 +812,15 @@ jobs:
           body: |
             ## Infimount ${{ steps.get_version.outputs.VERSION }}
 
-            ### Downloads
+            ### Install with one command
 
-            | Platform | File |
-            |----------|------|
-            | Linux (Debian/Ubuntu) | `.deb` |
-            | Linux (Fedora/RHEL) | `.rpm` |
-            | Linux (Universal) | `.AppImage` |
-            | macOS | `.dmg` |
-            | Windows | `.msi` or `.exe` |
+            Linux:
 
-            ### Single-command install
+            ```bash
+            curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh
+            ```
 
-            macOS/Linux:
+            macOS:
 
             ```bash
             curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh
@@ -835,6 +831,16 @@ jobs:
             ```powershell
             irm https://github.com/infimount/infimount/releases/latest/download/install.ps1 | iex
             ```
+
+            ### Manual downloads
+
+            | Platform | File |
+            |----------|------|
+            | Linux (Debian/Ubuntu) | `.deb` |
+            | Linux (Fedora/RHEL) | `.rpm` |
+            | Linux (Universal) | `.AppImage` |
+            | macOS | `.dmg` |
+            | Windows | `.msi` or `.exe` |
 
             ### Integrity
 

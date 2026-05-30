@@ -28,7 +28,7 @@
 
 ## Install
 
-**Current stable release:** [v0.6.0](https://github.com/infimount/infimount/releases/tag/v0.6.0)
+**Current stable release:** [v0.7.0](https://github.com/infimount/infimount/releases/tag/v0.7.0)
 
 ### Linux
 
@@ -74,13 +74,13 @@ Manual downloads:
 
 ### Install notes
 
-Install scripts verify selected downloads against `SHA256SUMS.txt`. To pin a version, set `INFIMOUNT_VERSION=v0.6.0` before running the command. macOS and Windows binaries may be unsigned for some releases, see [Installation Notes](#installation-notes).
+Install scripts verify selected downloads against `SHA256SUMS.txt`. To pin a version, set `INFIMOUNT_VERSION=v0.7.0` before running the command. macOS and Windows binaries may be unsigned for some releases, see [Installation Notes](#installation-notes).
 
 ## What Infimount does
 
-- **Browse storage in one place:** local files, S3/S3-compatible storage, Backblaze B2, Azure Blob, Google Cloud Storage, and WebDAV in the stable release. Main branch builds also include Aliyun OSS, Tencent COS, and Huawei OBS for v0.7.0.
-- **Work like a desktop file manager:** grid and list views, rich previews, drag-and-drop upload, bookmarks, recents, keyboard navigation, and transfer queue.
-- **Validate before you trust a backend:** stable releases check reachability. Main branch builds add grouped capabilities, sanitized fix hints, and MCP readiness notes for v0.7.0.
+- **Browse storage in one place:** local files, S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, Google Cloud Storage, and WebDAV.
+- **Work like a desktop file manager:** grid and list views, rich previews, drag-and-drop upload, bookmarks, recents, keyboard navigation, global search stop, and transfer queue.
+- **Validate before you trust a backend:** reachability checks report grouped capabilities, sanitized fix hints, and MCP readiness notes.
 - **Control MCP access explicitly:** new storages are not exposed to MCP by default. Enable selected storages, tool lists, path policies, read-only mode, confirmations, and local audit logs.
 - **Stay backend-agnostic:** file operations route through Apache OpenDAL so capabilities are detected and documented per backend.
 
@@ -132,16 +132,16 @@ See [Building from Source](#️-building-from-source) below.
 | **Local Filesystem**     | ✅ Stable               | Full read/write support                                                     |
 | **Amazon S3**            | ✅ Stable               | Any S3-compatible service; versioning depends on bucket support; optional default object ACL |
 | **Backblaze B2**         | ✅ Stable               | Native OpenDAL B2 backend with read/write/list/delete, copy, presign, and capability-gated user metadata writes |
+| **Aliyun OSS**           | ✅ Stable               | Object storage via OpenDAL; read/write/list/delete/copy and presigned links; no generic rename/create-dir capability |
+| **Tencent COS**          | ✅ Stable               | Object storage via OpenDAL; read/write/list/delete/copy and presigned links; no generic rename/create-dir capability |
+| **Huawei OBS**           | ✅ Stable               | Object storage via OpenDAL; read/write/list/delete/copy and presigned links; no generic rename/create-dir capability |
 | **Azure Blob Storage**   | ✅ Stable               | Container/account key auth; advanced capabilities depend on account support |
 | **Google Cloud Storage** | ✅ Stable               | Service account JSON; advanced capabilities depend on bucket support        |
 | **WebDAV**               | ✅ Stable               | Nextcloud, ownCloud, etc.; optional compatibility mode for servers that cannot create collection placeholders |
-| **Aliyun OSS**           | ✅ On main for v0.7.0   | Object storage via OpenDAL; read/write/list/delete/copy and presigned links; no generic rename/create-dir capability |
-| **Tencent COS**          | ✅ On main for v0.7.0   | Object storage via OpenDAL; read/write/list/delete/copy and presigned links; no generic rename/create-dir capability |
-| **Huawei OBS**           | ✅ On main for v0.7.0   | Object storage via OpenDAL; read/write/list/delete/copy and presigned links; no generic rename/create-dir capability |
 | **SFTP**                 | 🔜 Planned              | Coming soon                                                                 |
 | **FTP**                  | 🔜 Planned              | Coming soon                                                                 |
 
-Use **Validate** in Add/Edit Storage to check reachability before browsing or exposing a storage to agents. Main branch builds add grouped capability summaries, sanitized fix hints, and MCP readiness notes for v0.7.0.
+Use **Validate** in Add/Edit Storage to check reachability, grouped capability summaries, sanitized fix hints, and MCP readiness notes before browsing or exposing a storage to agents.
 For MCP/versioning details, see [Backend Capability Matrix](docs/backend-capabilities.md).
 
 ---
@@ -210,14 +210,14 @@ Outputs:
 
 ### Current Focus
 
-- [x] Stable browsing for local, S3/S3-compatible, Backblaze B2, Azure Blob, GCS, and WebDAV; main branch adds Aliyun OSS, Tencent COS, and Huawei OBS for v0.7.0
+- [x] Local, S3/S3-compatible, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, GCS, and WebDAV browsing
 - [x] Grid and list views with file preview, drag-and-drop upload, bookmarks, recents, and transfer queue
 - [x] Dual-pane copy/move and compare/update workflows
 - [x] MCP support for local AI assistants with explicit storage exposure, tool controls, path policy, confirmations, sessions, and audit
 - [x] Version-aware MCP tools where supported by the backend
 - [x] Keyboard navigation in virtualized file grid and table views
 - [ ] Additional storage backends such as SFTP and FTP
-- [x] Main branch v0.7.0 work: capability-aware storage validation summaries with fix hints and MCP readiness notes
+- [x] Capability-aware storage validation summaries with fix hints and MCP readiness notes
 - [ ] Additional large-directory polish
 
 ### Future Plans
