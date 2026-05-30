@@ -43,6 +43,14 @@ Override args with a JSON array or simple whitespace-separated string:
 INFIMOUNT_MCP_ARGS='["--transport","stdio"]' pi -e ./index.ts
 ```
 
+Use a separate Infimount config home for tests or sandboxes:
+
+```bash
+INFIMOUNT_MCP_HOME=/tmp/infimount-fixture pi -e ./index.ts
+```
+
+Set `INFIMOUNT_MCP_STDERR=inherit` if you need to debug the child MCP server. Stderr is hidden by default to keep Pi answers clean.
+
 ## Smoke test
 
 From this directory:

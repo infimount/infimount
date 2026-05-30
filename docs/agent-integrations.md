@@ -125,6 +125,14 @@ The extension uses `infimount_mcp --transport stdio` by default. Override the co
 INFIMOUNT_MCP_COMMAND=/absolute/path/to/infimount_mcp pi -e ./index.ts
 ```
 
+Use a separate Infimount config home for tests or sandboxes:
+
+```bash
+INFIMOUNT_MCP_HOME=/tmp/infimount-fixture pi -e ./index.ts
+```
+
+Set `INFIMOUNT_MCP_STDERR=inherit` if you need to debug the child MCP server. Stderr is hidden by default to keep Pi answers clean.
+
 ## Safe defaults for agents
 
 Use these defaults unless a task needs more access:

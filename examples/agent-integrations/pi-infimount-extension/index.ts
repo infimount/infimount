@@ -10,46 +10,43 @@ const PathParams = Type.Object({
 
 type PathInput = Static<typeof PathParams>;
 
-const ReadFileParams = Type.Intersect([
-  PathParams,
-  Type.Object({
-    max_bytes: Type.Optional(Type.Number({ minimum: 1, maximum: 2_097_152, default: 65536 })),
-    as_text: Type.Optional(Type.Boolean({ default: true })),
-  }),
-]);
+const ReadFileParams = Type.Object({
+  path: Type.String({ description: "Infimount MCP file path, for example /StorageName/path/to/file.txt" }),
+  session_id: Type.Optional(Type.String({ description: "Optional Infimount MCP scoped session id" })),
+  max_bytes: Type.Optional(Type.Number({ minimum: 1, maximum: 2_097_152, default: 65536 })),
+  as_text: Type.Optional(Type.Boolean({ default: true })),
+});
 
 type ReadFileInput = Static<typeof ReadFileParams>;
 
-const ListDirParams = Type.Intersect([
-  PathParams,
-  Type.Object({
-    recursive: Type.Optional(Type.Boolean({ default: false })),
-    limit: Type.Optional(Type.Number({ minimum: 1, maximum: 1000, default: 200 })),
-  }),
-]);
+const ListDirParams = Type.Object({
+  path: Type.String({ description: "Infimount MCP directory path, for example /StorageName/path/to/folder" }),
+  session_id: Type.Optional(Type.String({ description: "Optional Infimount MCP scoped session id" })),
+  recursive: Type.Optional(Type.Boolean({ default: false })),
+  limit: Type.Optional(Type.Number({ minimum: 1, maximum: 1000, default: 200 })),
+});
 
 type ListDirInput = Static<typeof ListDirParams>;
 
-const SearchParams = Type.Intersect([
-  PathParams,
-  Type.Object({
-    pattern: Type.String({ description: "Substring to match in paths" }),
-    max_results: Type.Optional(Type.Number({ minimum: 1, maximum: 2000, default: 200 })),
-  }),
-]);
+const SearchParams = Type.Object({
+  path: Type.String({ description: "Infimount MCP directory path to search under" }),
+  session_id: Type.Optional(Type.String({ description: "Optional Infimount MCP scoped session id" })),
+  pattern: Type.String({ description: "Substring to match in paths" }),
+  max_results: Type.Optional(Type.Number({ minimum: 1, maximum: 2000, default: 200 })),
+});
 
 type SearchInput = Static<typeof SearchParams>;
 
-const DownloadLinkParams = Type.Intersect([
-  PathParams,
-  Type.Object({
-    expires_seconds: Type.Optional(Type.Number({ minimum: 60, maximum: 86400, default: 900 })),
-  }),
-]);
+const DownloadLinkParams = Type.Object({
+  path: Type.String({ description: "Infimount MCP file path to link" }),
+  session_id: Type.Optional(Type.String({ description: "Optional Infimount MCP scoped session id" })),
+  expires_seconds: Type.Optional(Type.Number({ minimum: 60, maximum: 86400, default: 900 })),
+});
 
 type DownloadLinkInput = Static<typeof DownloadLinkParams>;
 
 let clientPromise: Promise<Client> | undefined;
+let connectedClient: Client | undefined;
 
 function parseArgs(): string[] {
   const raw = process.env.INFIMOUNT_MCP_ARGS;
@@ -63,19 +60,43 @@ function parseArgs(): string[] {
   return raw.split(/\s+/).filter(Boolean);
 }
 
+function childEnv(): Record<string, string> | undefined {
+  const home = process.env.INFIMOUNT_MCP_HOME;
+  if (!home) return undefined;
+
+  return Object.fromEntries(
+    Object.entries({ ...process.env, HOME: home })
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+}
+
+function stderrMode(): "ignore" | "inherit" {
+  return process.env.INFIMOUNT_MCP_STDERR === "inherit" ? "inherit" : "ignore";
+}
+
 async function getClient(): Promise<Client> {
   if (!clientPromise) {
     clientPromise = (async () => {
       const transport = new StdioClientTransport({
         command: process.env.INFIMOUNT_MCP_COMMAND ?? "infimount_mcp",
         args: parseArgs(),
+        env: childEnv(),
+        stderr: stderrMode(),
       });
       const client = new Client({ name: "pi-infimount-extension", version: "0.1.0" });
       await client.connect(transport);
+      connectedClient = client;
       return client;
     })();
   }
   return clientPromise;
+}
+
+async function closeClient() {
+  const client = connectedClient;
+  connectedClient = undefined;
+  clientPromise = undefined;
+  if (client) await client.close().catch(() => undefined);
 }
 
 async function callInfimountTool(name: string, args: Record<string, unknown>) {
@@ -92,6 +113,10 @@ function withOptionalSession<T extends { session_id?: string }>(input: T): Recor
 }
 
 export default function (pi: ExtensionAPI) {
+  pi.on("session_shutdown", async () => {
+    await closeClient();
+  });
+
   pi.registerCommand("infimount", {
     description: "Show Infimount MCP extension status and setup notes",
     handler: async (_args, ctx) => {
