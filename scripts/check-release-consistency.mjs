@@ -12,7 +12,7 @@ const contains = (path, needle) => {
   if (!read(path).includes(needle)) fail(`${path} must contain: ${needle}`);
 };
 
-const rawTag = process.env.GITHUB_REF_NAME || process.argv[2] || "";
+const rawTag = process.argv[2] || process.env.GITHUB_REF_NAME || "";
 if (!rawTag) fail("pass a tag/version argument or set GITHUB_REF_NAME");
 
 const tag = rawTag.startsWith("v") ? rawTag : `v${rawTag}`;
