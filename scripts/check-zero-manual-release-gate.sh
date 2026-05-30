@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELEASE_WORKFLOW="$ROOT_DIR/.github/workflows/release.yml"
+POST_RELEASE_WORKFLOW="$ROOT_DIR/.github/workflows/post-release.yml"
 RELEASE_GATE_SCRIPT="$ROOT_DIR/scripts/release-test-gate.sh"
 RELEASING_DOC="$ROOT_DIR/docs/releasing.md"
 
@@ -39,6 +40,7 @@ required_gates=(
   release-rust-gate
   release-desktop-smoke
   release-storage-simulator
+  release-consistency-gate
   release-policy-gate
 )
 
@@ -62,6 +64,8 @@ required_release_commands=(
   "test:integration"
   "test:coverage:frontend"
   "test:ui"
+  "check-release-consistency.mjs"
+  "smoke-install-scripts.sh"
   "cargo fmt --all -- --check"
   "cargo clippy --workspace --all-targets"
   "cargo test --workspace"
@@ -75,6 +79,14 @@ for command in "${required_release_commands[@]}"; do
 done
 
 require_file_contains "$RELEASE_WORKFLOW" "smoke-linux-release-artifacts.sh"
+require_file_contains "$RELEASE_WORKFLOW" "check-release-assets.sh"
+require_file_contains "$RELEASE_WORKFLOW" "smoke-install-scripts.sh"
+require_file_contains "$RELEASE_WORKFLOW" "check-release-consistency.mjs"
+
+require_file_contains "$POST_RELEASE_WORKFLOW" "types: [published]"
+require_file_contains "$POST_RELEASE_WORKFLOW" "check-release-links.sh"
+require_file_contains "$POST_RELEASE_WORKFLOW" "check-homebrew-update.sh"
+require_file_contains "$POST_RELEASE_WORKFLOW" "homebrew-infimount/dispatches"
 
 require_file_contains "$RELEASING_DOC" "Zero manual product test execution"
 require_file_contains "$RELEASING_DOC" "Manual product test execution must not be a release gate"

@@ -29,6 +29,8 @@ fi
 run pnpm --dir "$DESKTOP_DIR" build
 
 cd "$ROOT_DIR"
+run node "$ROOT_DIR/scripts/check-release-consistency.mjs" "$(node -p 'require("./apps/desktop/package.json").version')"
+run "$ROOT_DIR/scripts/smoke-install-scripts.sh"
 run cargo fmt --all -- --check
 run cargo clippy --workspace --all-targets -- -D warnings -A clippy::result_large_err -A clippy::needless_borrows_for_generic_args
 run cargo test --workspace

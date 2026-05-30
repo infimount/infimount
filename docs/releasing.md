@@ -6,7 +6,7 @@ This document is the operational checklist for cutting a release.
 
 ### Zero manual product test execution
 
-Infimount releases are intended to require **zero manual product test execution**. Manual product test execution must not be a release gate. Before a tag can produce release artifacts, the `Release` workflow runs automated release-gate jobs for frontend tests, Playwright UI tests, Rust tests/coverage, desktop smoke, OpenDAL storage simulator verification, and a release-policy guard that verifies artifact build jobs still depend on those gates.
+Infimount releases are intended to require **zero manual product test execution**. Manual product test execution must not be a release gate. Before a tag can produce release artifacts, the `Release` workflow runs automated release-gate jobs for frontend tests, Playwright UI tests, Rust tests/coverage, desktop smoke, OpenDAL storage simulator verification, release consistency, install-script smoke, and a release-policy guard that verifies artifact build jobs still depend on those gates.
 
 Optional local dry run before tagging:
 
@@ -63,12 +63,15 @@ The `Release` workflow is triggered by `v*` tags and will:
   - Rust format, clippy, workspace tests, and coverage gate
   - desktop launch/migration smoke test under Xvfb
   - OpenDAL storage simulator verification, including read/write/list/stat/delete round trips where supported and WebDAV list reachability
+  - release consistency checks for app versions, README, GitHub Pages, `CHANGELOG.md`, `docs/llms.txt`, and `docs/release-notes-X.Y.Z.md`
+  - install-script checksum smoke tests for Linux/macOS shell and Windows PowerShell installers
   - zero-manual release policy check (`scripts/check-zero-manual-release-gate.sh`)
 - sync app manifest versions from the pushed tag via `scripts/sync-release-version.mjs`
 - build Linux, macOS, Windows binaries
 - sign/notarize macOS artifacts if Apple signing secrets are present
 - sign Windows installers if Windows signing secrets are present
 - run artifact smoke checks, including Linux AppImage launch/migration, `.deb` install/launch/migration, and RPM package metadata checks
+- validate release asset presence, updater metadata, checksum entries, and per-file `.sha256` files
 - generate SHA256 checksum files
 - generate `SBOM.spdx.json`
 - create GitHub release draft with all assets, including single-command install scripts
@@ -76,7 +79,7 @@ The `Release` workflow is triggered by `v*` tags and will:
 
 ## 3. Validate draft release
 
-The release workflow already performs automated artifact presence, checksum, updater metadata, package, and provenance checks. The remaining human action is release approval/publishing, not manual product testing.
+The release workflow already performs automated artifact presence, checksum, updater metadata, install-script, package, and provenance checks. The remaining human action is release approval/publishing, not manual product testing.
 
 In the release draft:
 
@@ -99,18 +102,21 @@ Manual checksum or install sanity checks are optional spot audits only; they are
 
 ## 4. Post-release checks
 
-1. Confirm `/releases/latest/download/...` links resolve, including `install.sh` and `install.ps1`.
-2. Confirm GitHub Pages download page still works.
-3. Confirm release notes render as expected.
-4. Update Homebrew tap repo (`infimount/homebrew-infimount`):
+The `Post Release Validation` workflow runs automatically when a release is published. It verifies tag-specific release links, release/docs consistency, and Homebrew checksum resolution. If `HOMEBREW_TAP_DISPATCH_TOKEN` is configured, it dispatches the Homebrew tap update workflow.
+
+Manual spot checks remain optional:
+
+1. Confirm GitHub Pages download page still works.
+2. Confirm release notes render as expected.
+3. Update Homebrew tap repo (`infimount/homebrew-infimount`) if the dispatch token is not configured:
    - bump Formula and Cask to the released tag
    - update checksums from release assets
    - validate locally:
      - `brew tap infimount/infimount`
      - `brew install infimount`
      - `brew install --cask infimount` (macOS)
-5. Merge/publish Homebrew tap changes.
-6. Merge the automated version-sync PR (workflow: `Sync Version After Release`) so `main` app manifests reflect the published tag.
+4. Merge/publish Homebrew tap changes when not handled by automation.
+5. Merge the automated version-sync PR (workflow: `Sync Version After Release`) so `main` app manifests reflect the published tag when such a PR is opened.
 
 ## 5. Rollback strategy
 

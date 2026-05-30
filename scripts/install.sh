@@ -46,6 +46,11 @@ run_root() {
 }
 
 release_base_url() {
+  if [ -n "${INFIMOUNT_RELEASE_BASE_URL:-}" ]; then
+    printf '%s' "$INFIMOUNT_RELEASE_BASE_URL"
+    return
+  fi
+
   if [ "$VERSION" = "latest" ]; then
     printf 'https://github.com/%s/releases/latest/download' "$REPO"
   else
@@ -214,6 +219,11 @@ main() {
   download "$base_url/$asset" "$TMP_DIR/$asset"
   verify_checksum "$asset"
   log "Checksum verified."
+
+  if [ "${INFIMOUNT_INSTALL_DRY_RUN:-0}" = "1" ]; then
+    log "Dry run requested; skipping installation."
+    return
+  fi
 
   case "$(uname -s)" in
     Linux) install_linux "$asset" ;;

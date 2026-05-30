@@ -2,7 +2,9 @@ param(
   [string]$Version = $env:INFIMOUNT_VERSION,
   [ValidateSet("msi", "exe")]
   [string]$Installer = $(if ($env:INFIMOUNT_WINDOWS_INSTALLER) { $env:INFIMOUNT_WINDOWS_INSTALLER } else { "msi" }),
-  [string]$Repo = $(if ($env:INFIMOUNT_REPO) { $env:INFIMOUNT_REPO } else { "infimount/infimount" })
+  [string]$Repo = $(if ($env:INFIMOUNT_REPO) { $env:INFIMOUNT_REPO } else { "infimount/infimount" }),
+  [string]$ReleaseBaseUrl = $env:INFIMOUNT_RELEASE_BASE_URL,
+  [switch]$DryRun = $([bool]$env:INFIMOUNT_INSTALL_DRY_RUN)
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,6 +16,10 @@ function Fail($Message) {
 }
 
 function Get-ReleaseBaseUrl {
+  if (-not [string]::IsNullOrWhiteSpace($ReleaseBaseUrl)) {
+    return $ReleaseBaseUrl
+  }
+
   if ($Version -eq "latest") {
     return "https://github.com/$Repo/releases/latest/download"
   }
@@ -77,6 +83,11 @@ try {
   Invoke-Download "$baseUrl/$assetName" $assetPath
   Test-Checksum $assetPath $sumsPath $assetName
   Write-Host "Checksum verified."
+
+  if ($DryRun) {
+    Write-Host "Dry run requested; skipping installation."
+    return
+  }
 
   Install-Infimount $assetPath $assetName
   Write-Host "Infimount installation complete."

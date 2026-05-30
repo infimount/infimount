@@ -1,0 +1,64 @@
+name: Post Release Validation
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to validate, for example v0.7.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  validate-release:
+    name: Validate Published Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve release tag
+        id: release
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify version, docs, changelog, and release notes
+        run: node scripts/check-release-consistency.mjs "${{ steps.release.outputs.tag }}"
+
+      - name: Verify published release links
+        env:
+          INFIMOUNT_RELEASE_BASE_URL: https://github.com/infimount/infimount/releases/download/${{ steps.release.outputs.tag }}
+        run: ./scripts/check-release-links.sh
+
+      - name: Verify Homebrew update can resolve checksums
+        run: ./scripts/check-homebrew-update.sh "${{ steps.release.outputs.tag }}"
+
+      - name: Dispatch Homebrew tap update when token is configured
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_DISPATCH_TOKEN }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          if [[ -z "${TAP_TOKEN}" ]]; then
+            echo "HOMEBREW_TAP_DISPATCH_TOKEN is not configured; skipping tap dispatch."
+            exit 0
+          fi
+
+          version="${RELEASE_TAG#v}"
+          curl --fail --silent --show-error --location \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${TAP_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/infimount/homebrew-infimount/dispatches \
+            -d "{\"event_type\":\"infimount-release\",\"client_payload\":{\"version\":\"${version}\"}}"

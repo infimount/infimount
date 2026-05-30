@@ -187,6 +187,24 @@ jobs:
       - name: Run storage simulator gate
         run: ./scripts/storage-simulator-gate.sh
 
+  release-consistency-gate:
+    name: Release Gate / Release Consistency
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Verify version, docs, changelog, and release notes
+        run: node scripts/check-release-consistency.mjs "${GITHUB_REF_NAME}"
+
+      - name: Smoke install scripts with checksum fixtures
+        run: ./scripts/smoke-install-scripts.sh
+
   release-policy-gate:
     name: Release Gate / Zero Manual Policy
     runs-on: ubuntu-latest
@@ -206,6 +224,7 @@ jobs:
       - release-rust-gate
       - release-desktop-smoke
       - release-storage-simulator
+      - release-consistency-gate
       - release-policy-gate
 
     steps:
@@ -347,6 +366,7 @@ jobs:
       - release-rust-gate
       - release-desktop-smoke
       - release-storage-simulator
+      - release-consistency-gate
       - release-policy-gate
 
     steps:
@@ -523,6 +543,7 @@ jobs:
       - release-rust-gate
       - release-desktop-smoke
       - release-storage-simulator
+      - release-consistency-gate
       - release-policy-gate
 
     steps:
@@ -769,10 +790,16 @@ jobs:
       - name: Generate checksums
         run: |
           cd release-assets
-          sha256sum Infimount-* Infimount.dmg install.sh install.ps1 > SHA256SUMS.txt
-          for file in Infimount-* Infimount.dmg install.sh install.ps1; do
+          sha256sum Infimount-* Infimount.dmg Infimount.msi install.sh install.ps1 > SHA256SUMS.txt
+          for file in Infimount-* Infimount.dmg Infimount.msi install.sh install.ps1; do
             sha256sum "$file" > "$file.sha256"
           done
+
+      - name: Validate release assets and checksums
+        run: ./scripts/check-release-assets.sh release-assets
+
+      - name: Smoke install scripts against release assets
+        run: ./scripts/smoke-install-scripts.sh release-assets
 
       - name: Generate SBOM (SPDX JSON)
         uses: anchore/sbom-action@v0
@@ -785,6 +812,9 @@ jobs:
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: release-assets/*
+
+      - name: Validate final release asset set
+        run: ./scripts/check-release-assets.sh release-assets
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
