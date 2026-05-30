@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "infimount": {
+      "command": "infimount_mcp",
+      "args": ["--transport", "stdio"]
+    }
+  }
+}

@@ -179,6 +179,8 @@ Infimount includes a Rust MCP server for local AI clients and agent workflows.
 
 Setup guide: [MCP Client Setup](docs/mcp-client-setup.md)
 
+Agent integration guide: [Agent Integrations](docs/agent-integrations.md)
+
 Security model: [Security Model](docs/security.md)
 
 ---

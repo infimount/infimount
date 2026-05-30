@@ -1,0 +1,9 @@
+{
+  "name": "pi-infimount-extension-starter",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Pi extension starter for Infimount MCP storage tools.",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.4"
+  }
+}

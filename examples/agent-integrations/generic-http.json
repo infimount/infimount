@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "infimount": {
+      "url": "http://127.0.0.1:7331/mcp",
+      "headers": {
+        "Authorization": "Bearer replace-with-a-random-token"
+      }
+    }
+  }
+}

@@ -14,6 +14,7 @@ selected storages through MCP for local AI assistants and agent workflows.
 - Homebrew tap: https://github.com/infimount/homebrew-infimount
 - LinkedIn: https://www.linkedin.com/company/infimount
 - MCP setup: https://github.com/infimount/infimount/blob/main/docs/mcp-client-setup.md
+- Agent integrations: https://github.com/infimount/infimount/blob/main/docs/agent-integrations.md
 - Security model: https://github.com/infimount/infimount/blob/main/docs/security.md
 - Backend capability matrix: https://github.com/infimount/infimount/blob/main/docs/backend-capabilities.md
 
