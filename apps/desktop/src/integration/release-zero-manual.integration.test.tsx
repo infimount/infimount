@@ -8,6 +8,7 @@ import {
   getAppSettings,
   getMcpClientSnippets,
   getMcpStatus,
+  listActiveMcpSessions,
   listMcpAuditEvents,
   listMcpTools,
   listPendingMcpConfirmations,
@@ -83,6 +84,7 @@ vi.mock("@/lib/api", () => ({
   getMcpClientSnippets: vi.fn(),
   getMcpStatus: vi.fn(),
   importStorageConfig: vi.fn(),
+  listActiveMcpSessions: vi.fn(),
   listEntries: vi.fn(),
   listMcpAuditEvents: vi.fn(),
   listMcpTools: vi.fn(),
@@ -212,6 +214,7 @@ describe("release zero-manual smoke path", () => {
       { name: "list_dir", description: "List directories" },
       { name: "read_file", description: "Read files" },
     ]);
+    vi.mocked(listActiveMcpSessions).mockResolvedValue([]);
     vi.mocked(listMcpAuditEvents).mockResolvedValue([]);
     vi.mocked(listPendingMcpConfirmations).mockResolvedValue([]);
     vi.mocked(updateMcpSettings).mockResolvedValue({

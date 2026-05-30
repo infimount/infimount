@@ -89,13 +89,24 @@ describe("AddStorageDialog integration", () => {
     );
 
     await screen.findByText("Backend Fields");
-    fireEvent.change(screen.getByLabelText("Storage Name"), {
+    const nameInput = screen.getByLabelText("Storage Name");
+    const rootInput = screen.getByLabelText("Root Folder Path *");
+    const mcpSwitch = screen.getByRole("switch", { name: /Expose to MCP/i });
+
+    fireEvent.change(nameInput, {
       target: { value: "Agent Downloads" },
     });
-    fireEvent.change(screen.getByLabelText("Root Folder Path *"), {
+    fireEvent.change(rootInput, {
       target: { value: "~/Downloads" },
     });
-    fireEvent.click(screen.getByRole("switch", { name: /Expose to MCP/i }));
+    fireEvent.click(mcpSwitch);
+
+    await waitFor(() => {
+      expect(nameInput).toHaveValue("Agent Downloads");
+      expect(rootInput).toHaveValue("~/Downloads");
+      expect(mcpSwitch).toHaveAttribute("aria-checked", "true");
+    });
+
     fireEvent.click(screen.getByRole("button", { name: "Add Storage" }));
 
     await waitFor(() => {
