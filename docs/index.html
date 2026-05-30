@@ -6,7 +6,7 @@
     <title>Infimount - One Surface for Every Storage</title>
     <meta
       name="description"
-      content="Infimount is a local-first desktop app for browsing local files, S3, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, Google Cloud Storage, WebDAV, and MCP-enabled storage workflows."
+      content="Infimount is a local-first desktop app for browsing local files, S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, Google Cloud Storage, WebDAV, and MCP-enabled storage workflows."
     />
     <meta
       name="keywords"
@@ -29,7 +29,7 @@
     />
     <meta
       property="og:description"
-      content="Browse local files, S3, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, Google Cloud Storage, WebDAV, and MCP-enabled storage workflows from one local-first desktop app."
+      content="Browse local files, S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, Google Cloud Storage, WebDAV, and MCP-enabled storage workflows from one local-first desktop app."
     />
     <meta property="og:url" content="https://infimount.github.io/infimount/" />
     <meta
@@ -1093,7 +1093,7 @@
             <h1 id="hero-title">Infimount</h1>
             <p class="hero-subtitle">One surface for every storage.</p>
             <p class="lead">
-              Infimount brings local files, S3, Backblaze B2, OSS, COS, OBS, Azure Blob, GCS, and WebDAV into
+              Infimount brings local files, S3/S3-compatible storage, Backblaze B2, OSS, COS, OBS, Azure Blob, GCS, and WebDAV into
               one unified surface for humans and AI agents. Browse, search, validate capabilities, and expose storage with explicit local controls.
             </p>
             <div class="cta-row">
@@ -1138,7 +1138,7 @@
       <section id="features" class="feature-strip" aria-label="Key features">
         <article class="feature-card">
           <h2>Multi-cloud access</h2>
-          <p>Connect to local files, S3, Backblaze B2, OSS, COS, OBS, Azure Blob, GCS, and WebDAV.</p>
+          <p>Connect to local files, S3/S3-compatible storage, Backblaze B2, OSS, COS, OBS, Azure Blob, GCS, and WebDAV.</p>
         </article>
         <article class="feature-card">
           <h2>Local and cloud storage</h2>
@@ -1178,7 +1178,7 @@
             <span class="connector-icon"
               ><img src="./assets/amazon-s3.svg" alt="" aria-hidden="true"
             /></span>
-            <span>Amazon S3</span>
+            <span>S3/S3-compatible</span>
           </div>
           <div class="connector">
             <span class="connector-icon"
@@ -1234,6 +1234,32 @@
         </div>
       </section>
 
+      <section class="install-section" aria-labelledby="workbench-title">
+        <div class="section-head">
+          <h2 id="workbench-title">Workbench for real file operations</h2>
+          <p>Infimount is built for day-to-day storage work, not just connection testing.</p>
+        </div>
+        <div class="install-grid">
+          <article class="info-card">
+            <h3>Desktop file-manager flows</h3>
+            <ul>
+              <li>Grid and list views with previews, bookmarks, recents, drag-and-drop upload, and keyboard navigation.</li>
+              <li>Dual-pane copy, move, compare, and update workflows across supported storages.</li>
+              <li>Transfer queue with progress, retry, active or queued cancellation, persisted history, and keep-both conflict handling.</li>
+              <li>Opt-in global search indexing with a Stop control for slow or cancelled storage responses.</li>
+            </ul>
+          </article>
+          <article class="info-card">
+            <h3>Agent Workspaces</h3>
+            <ul>
+              <li>Create coding, research, or data-analysis workspaces on OpenDAL-backed storage.</li>
+              <li>Apply workspace-scoped MCP policy so agents only see the workspace root you allow.</li>
+              <li>Keep visible memory files, checkpoint manifests, restoreable notes, and grouped workspace audit activity.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
       <section id="mcp" class="agent-section" aria-labelledby="mcp-title">
         <div class="section-head">
           <h2 id="mcp-title">Built for humans and AI agents</h2>
@@ -1261,7 +1287,7 @@
               <span>read_file</span><span>Read file contents</span>
               <span>search_paths</span><span>Search across storage</span>
               <span>stat_path</span><span>Fetch metadata</span>
-              <span>download_link</span><span>Create download links</span>
+              <span>generate_download_link</span><span>Create download links</span>
             </div>
           </article>
         </div>

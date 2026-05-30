@@ -1,7 +1,7 @@
 # Infimount Product and Market Study
 
 Status: working product/market brief for agents and contributors  
-Last reviewed: 2026-05-24
+Last reviewed: 2026-05-30
 
 ## 1. Product thesis
 
@@ -27,7 +27,7 @@ The durable product wedge is not “another cloud file manager.” It is:
 - Shared core crate in `crates/core`.
 - Uses Apache OpenDAL for storage operations.
 - Desktop file operations are thin wrappers over OpenDAL: list, stat, read, write, create directory, delete, upload, transfer, versions.
-- Registry currently builds OpenDAL operators for local filesystem, S3, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, GCS, and WebDAV.
+- Registry currently builds OpenDAL operators for local filesystem, S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, GCS, and WebDAV.
 
 ### MCP server
 

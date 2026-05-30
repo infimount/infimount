@@ -6,7 +6,7 @@ This document is the operational checklist for cutting a release.
 
 ### Zero manual product test execution
 
-Infimount releases are intended to require **zero manual product test execution**. Manual product test execution must not be a release gate. Before a tag can produce release artifacts, the `Release` workflow runs automated release-gate jobs for frontend tests, Playwright UI tests, Rust tests/coverage, desktop smoke, OpenDAL storage simulator verification, release consistency, install-script smoke, and a release-policy guard that verifies artifact build jobs still depend on those gates.
+Infimount releases are intended to require **zero manual product test execution**. Manual product test execution must not be a release gate. Before a tag can produce release artifacts, the `Release` workflow runs automated release-gate jobs for frontend tests, Playwright UI tests, Rust tests/coverage, desktop smoke, OpenDAL storage simulator verification, release consistency, feature-doc consistency, install-script smoke, and a release-policy guard that verifies artifact build jobs still depend on those gates.
 
 Optional local dry run before tagging:
 
@@ -64,6 +64,7 @@ The `Release` workflow is triggered by `v*` tags and will:
   - desktop launch/migration smoke test under Xvfb
   - OpenDAL storage simulator verification, including read/write/list/stat/delete round trips where supported and WebDAV list reachability
   - release consistency checks for app versions, README, GitHub Pages, `CHANGELOG.md`, `docs/llms.txt`, and `docs/release-notes-X.Y.Z.md`
+  - feature-doc consistency checks for supported backend names, S3-compatible wording, representative MCP tool names, Workbench copy, and Agent Workspaces copy
   - install-script checksum smoke tests for Linux/macOS shell and Windows PowerShell installers
   - zero-manual release policy check (`scripts/check-zero-manual-release-gate.sh`)
 - sync app manifest versions from the pushed tag via `scripts/sync-release-version.mjs`

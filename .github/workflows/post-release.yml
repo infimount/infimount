@@ -36,6 +36,9 @@ jobs:
       - name: Verify version, docs, changelog, and release notes
         run: node scripts/check-release-consistency.mjs "${{ steps.release.outputs.tag }}"
 
+      - name: Verify feature documentation consistency
+        run: node scripts/check-feature-docs.mjs
+
       - name: Verify published release links
         env:
           INFIMOUNT_RELEASE_BASE_URL: https://github.com/infimount/infimount/releases/download/${{ steps.release.outputs.tag }}

@@ -1,6 +1,7 @@
 {
 	"scripts": {
 		"setup:hooks": "bash scripts/setup-git-hooks.sh",
+		"test:docs": "node scripts/check-feature-docs.mjs",
 		"test:release": "bash scripts/release-test-gate.sh",
 		"test:release:policy": "bash scripts/check-zero-manual-release-gate.sh"
 	},

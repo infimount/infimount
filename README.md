@@ -79,10 +79,30 @@ Install scripts verify selected downloads against `SHA256SUMS.txt`. To pin a ver
 ## What Infimount does
 
 - **Browse storage in one place:** local files, S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, Google Cloud Storage, and WebDAV.
-- **Work like a desktop file manager:** grid and list views, rich previews, drag-and-drop upload, bookmarks, recents, keyboard navigation, global search stop, and transfer queue.
+- **Work like a desktop file manager:** grid and list views, rich previews, drag-and-drop upload, bookmarks, recents, keyboard navigation, global search stop, dual-pane transfer workflows, conflict handling, and transfer queue.
 - **Validate before you trust a backend:** reachability checks report grouped capabilities, sanitized fix hints, and MCP readiness notes.
 - **Control MCP access explicitly:** new storages are not exposed to MCP by default. Enable selected storages, tool lists, path policies, read-only mode, confirmations, and local audit logs.
 - **Stay backend-agnostic:** file operations route through Apache OpenDAL so capabilities are detected and documented per backend.
+
+## Workbench
+
+Infimount includes daily file-manager workflows beyond basic browsing:
+
+- Dual-pane copy, move, compare, and update flows across supported storages.
+- Transfer queue with queued/running/completed/failed states, retry, active or queued cancellation, progress visibility, and persisted transfer history.
+- Conflict handling for overwrite, discard, or keep-both transfers.
+- Bookmarks, recent folders, drag-and-drop upload, rich preview, and roving keyboard navigation in grid/table views.
+- Opt-in global search indexing with a Stop control so stale slow-storage responses do not overwrite newer UI state.
+
+## Agent Workspaces
+
+Agent Workspaces give AI workflows a safer project-shaped storage area:
+
+- Create coding, research, or data-analysis workspaces on OpenDAL-backed storage.
+- Apply a workspace-scoped MCP policy that defaults to no access and allows only the workspace root.
+- Keep visible memory files under `memory/` for task notes and handoff context.
+- Capture checkpoint manifests under `.infimount/checkpoints` and restore workspace memory when needed.
+- Review workspace activity grouped from local events and MCP audit events that fall under the workspace root.
 
 ## First run and upgrades
 
@@ -127,19 +147,19 @@ See [Building from Source](#️-building-from-source) below.
 
 ## Supported Storage Backends
 
-| Backend                  | Status                  | Notes                                                                       |
-| ------------------------ | ----------------------- | --------------------------------------------------------------------------- |
-| **Local Filesystem**     | ✅ Stable               | Full read/write support                                                     |
-| **Amazon S3**            | ✅ Stable               | Any S3-compatible service; versioning depends on bucket support; optional default object ACL |
-| **Backblaze B2**         | ✅ Stable               | Native OpenDAL B2 backend with read/write/list/delete, copy, presign, and capability-gated user metadata writes |
-| **Aliyun OSS**           | ✅ Stable               | Object storage via OpenDAL; read/write/list/delete/copy and presigned links; no generic rename/create-dir capability |
-| **Tencent COS**          | ✅ Stable               | Object storage via OpenDAL; read/write/list/delete/copy and presigned links; no generic rename/create-dir capability |
-| **Huawei OBS**           | ✅ Stable               | Object storage via OpenDAL; read/write/list/delete/copy and presigned links; no generic rename/create-dir capability |
-| **Azure Blob Storage**   | ✅ Stable               | Container/account key auth; advanced capabilities depend on account support |
-| **Google Cloud Storage** | ✅ Stable               | Service account JSON; advanced capabilities depend on bucket support        |
-| **WebDAV**               | ✅ Stable               | Nextcloud, ownCloud, etc.; optional compatibility mode for servers that cannot create collection placeholders |
-| **SFTP**                 | 🔜 Planned              | Coming soon                                                                 |
-| **FTP**                  | 🔜 Planned              | Coming soon                                                                 |
+| Backend                         | Status     | Notes                                                                       |
+| ------------------------------- | ---------- | --------------------------------------------------------------------------- |
+| **Local Filesystem**            | ✅ Stable  | Full read/write support                                                     |
+| **Amazon S3 / S3-compatible**   | ✅ Stable  | Any S3-compatible service; versioning depends on bucket support; optional default object ACL |
+| **Backblaze B2**                | ✅ Stable  | Native OpenDAL B2 backend with read/write/list/delete, copy, presign, and capability-gated user metadata writes |
+| **Aliyun OSS**                  | ✅ Stable  | Object storage via OpenDAL; read/write/list/delete/copy and presigned links; no generic rename/create-dir capability |
+| **Tencent COS**                 | ✅ Stable  | Object storage via OpenDAL; read/write/list/delete/copy and presigned links; no generic rename/create-dir capability |
+| **Huawei OBS**                  | ✅ Stable  | Object storage via OpenDAL; read/write/list/delete/copy and presigned links; no generic rename/create-dir capability |
+| **Azure Blob Storage**          | ✅ Stable  | Container/account key auth; advanced capabilities depend on account support |
+| **Google Cloud Storage**        | ✅ Stable  | Service account JSON; advanced capabilities depend on bucket support        |
+| **WebDAV**                      | ✅ Stable  | Nextcloud, ownCloud, etc.; optional compatibility mode for servers that cannot create collection placeholders |
+| **SFTP**                        | 🔜 Planned | Coming soon                                                                |
+| **FTP**                         | 🔜 Planned | Coming soon                                                                |
 
 Use **Validate** in Add/Edit Storage to check reachability, grouped capability summaries, sanitized fix hints, and MCP readiness notes before browsing or exposing a storage to agents.
 For MCP/versioning details, see [Backend Capability Matrix](docs/backend-capabilities.md).

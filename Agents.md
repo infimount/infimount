@@ -102,8 +102,8 @@ When generating or modifying code, agents MUST follow these rules:
     - `read_bytes(source_id, path, offset, length)`
     - `write_bytes(source_id, path, data)`
     - `delete_entry(source_id, path)`
-  - Managing config (load/save source list + preferences).
-- Config is stored as `~/.infimount/config.json` (override with `INFIMOUNT_CONFIG`); keep it JSON-only until we add other stores.
+  - Managing legacy/source config helpers where `infimount_core` is the owner.
+- Current desktop/MCP storage records are persisted through the MCP storage registry at `~/.infimount/storages.json`; MCP runtime settings live at `~/.infimount/mcp_settings.json`. The legacy core config helper still uses `~/.infimount/config.json` when called directly (override with `INFIMOUNT_CONFIG`). Keep these stores JSON-only until we add other stores.
   - Defining shared models (`Source`, `Entry`, `SourceKind`, error types).
 - Should be **portable**: usable by CLI, desktop, mobile, or any future app.
 

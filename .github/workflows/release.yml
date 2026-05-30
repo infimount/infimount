@@ -202,6 +202,9 @@ jobs:
       - name: Verify version, docs, changelog, and release notes
         run: node scripts/check-release-consistency.mjs "${GITHUB_REF_NAME}"
 
+      - name: Verify feature documentation consistency
+        run: node scripts/check-feature-docs.mjs
+
       - name: Smoke install scripts with checksum fixtures
         run: ./scripts/smoke-install-scripts.sh
 

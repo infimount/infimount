@@ -10,9 +10,9 @@ Infimount is for people who work across more than one storage system and need a 
 
 Primary users:
 
-- Desktop users who move between local folders, S3, Azure Blob Storage, Google Cloud Storage, and WebDAV.
+- Desktop users who move between local folders, S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob Storage, Google Cloud Storage, and WebDAV.
 - Developers and technical operators who want one storage browser instead of a separate tool for every backend.
-- AI workflow users who expose selected storage sources to MCP clients such as local coding agents, LM Studio, or editor integrations.
+- AI workflow users who expose selected storage sources or workspace-scoped folders to MCP clients such as local coding agents, LM Studio, or editor integrations.
 - Operators who may run the MCP server in a local or controlled environment and need clear auth, scoping, and observability behavior.
 
 The user is usually in a task, not exploring a marketing site. They are scanning file lists, checking file details, moving data, validating storage config, or deciding exactly what an MCP client can access.
@@ -26,8 +26,8 @@ The product should help users:
 - Add and validate storage backends without memorizing backend-specific tooling.
 - Browse files in grid and list views with predictable navigation.
 - Preview files and inspect metadata without leaving the app.
-- Move and copy files between supported storages where possible.
-- Expose a controlled virtual filesystem to MCP clients.
+- Move and copy files between supported storages where possible, including dual-pane compare/update and transfer queue workflows.
+- Expose a controlled virtual filesystem or workspace-scoped storage root to MCP clients.
 - Keep storage registry, credentials, and MCP settings local by default.
 
 Success means the app feels trustworthy, native, and quiet. A user should understand what is exposed, what is read-only, what is local, and what action is currently running without needing to study the implementation.
