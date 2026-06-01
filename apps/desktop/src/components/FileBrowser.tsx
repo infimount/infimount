@@ -242,6 +242,9 @@ interface FileBrowserProps {
   paneTransferTarget?: FileBrowserPaneTransferTarget | null;
   onPaneStateChange?: (state: FileBrowserPaneState) => void;
   onTransferCompleted?: (storageIds: string[]) => void;
+  initialPath?: string;
+  headerVariant?: "full" | "pane";
+  paneLabel?: string;
 }
 
 interface LoadError {
@@ -301,11 +304,14 @@ export function FileBrowser({
   paneTransferTarget = null,
   onPaneStateChange,
   onTransferCompleted,
+  initialPath = "/",
+  headerVariant = "full",
+  paneLabel,
 }: FileBrowserProps) {
   const { zoom } = useAppZoom();
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
   const [searchQuery, setSearchQuery] = useState('');
-  const [currentPath, setCurrentPath] = useState<string>("/");
+  const [currentPath, setCurrentPath] = useState<string>(initialPath || "/");
   const [allFiles, setAllFiles] = useState<FileItem[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [history, setHistory] = useState<string[]>(["/"]);
@@ -521,17 +527,20 @@ export function FileBrowser({
 
   useEffect(() => {
     loadRequestIdRef.current += 1;
-    setCurrentPath("/");
+    const nextPath = initialPath || "/";
+    setCurrentPath(nextPath);
     setError(null);
     setLoading(false);
     setAllFiles([]); // Clear files when switching sources
     setSelectedFiles(new Set());
-    setHistory(["/"]);
+    setHistory([nextPath]);
     setHistoryIndex(0);
     setPreviewFile(null);
     setEditTargetId(null);
     setCreateTargetType(null);
     setNewEntryName("");
+  // initialPath is only used when the pane is created or its storage changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceId]);
 
   useEffect(() => {
@@ -1231,22 +1240,24 @@ export function FileBrowser({
       >
         <div className="flex flex-1 flex-col">
           {/* Header with navigation */}
-          <div className="border-b bg-muted/30" data-tauri-drag-region>
-            <div className="flex items-center gap-2 px-4 py-3" data-tauri-drag-region>
+          <div className={headerVariant === "pane" ? "border-b bg-background" : "border-b bg-muted/30"} data-tauri-drag-region={headerVariant === "full" ? true : undefined}>
+            <div className={headerVariant === "pane" ? "flex items-center gap-2 px-3 py-2" : "flex items-center gap-2 px-4 py-3"} data-tauri-drag-region={headerVariant === "full" ? true : undefined}>
               <div className="flex items-center gap-1 tauri-no-drag">
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-8 w-8 mr-1 text-foreground/70 hover:bg-black/5 dark:hover:bg-white/5"
-                  onClick={onToggleSidebar}
-                  title={isSidebarOpen ? "Hide Storage Sidebar" : "Show Storage Sidebar"}
-                >
-                  {isSidebarOpen ? (
-                    <PanelRight className="h-4 w-4" />
-                  ) : (
-                    <PanelLeft className="h-4 w-4" />
-                  )}
-                </Button>
+                {headerVariant === "full" ? (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8 mr-1 text-foreground/70 hover:bg-black/5 dark:hover:bg-white/5"
+                    onClick={onToggleSidebar}
+                    title={isSidebarOpen ? "Hide Storage Sidebar" : "Show Storage Sidebar"}
+                  >
+                    {isSidebarOpen ? (
+                      <PanelRight className="h-4 w-4" />
+                    ) : (
+                      <PanelLeft className="h-4 w-4" />
+                    )}
+                  </Button>
+                ) : null}
                 <Button
                   size="icon"
                   variant="ghost"
@@ -1267,7 +1278,12 @@ export function FileBrowser({
                 </Button>
               </div>
 
-              <div className="flex min-w-0 flex-1 items-center gap-2" data-tauri-drag-region>
+              <div className="flex min-w-0 flex-1 items-center gap-2" data-tauri-drag-region={headerVariant === "full" ? true : undefined}>
+                {paneLabel ? (
+                  <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-[11px] font-medium text-muted-foreground select-none pointer-events-none">
+                    {paneLabel}
+                  </span>
+                ) : null}
                 <span className="truncate text-sm font-medium select-none pointer-events-none">
                   {currentLabel}
                 </span>
@@ -1445,7 +1461,7 @@ export function FileBrowser({
                     <PanelRight className="h-4 w-4" />
                   </Button>
                 )}
-                {onToggleDualPane ? (
+                {onToggleDualPane && headerVariant === "full" ? (
                   <Button
                     size="icon"
                     variant="ghost"
@@ -1457,7 +1473,7 @@ export function FileBrowser({
                     <PanelRight className="h-4 w-4" />
                   </Button>
                 ) : null}
-                {showWindowControls ? (
+                {showWindowControls && headerVariant === "full" ? (
                   <div className="ml-2 pl-2 border-l border-border/50">
                     <WindowControls />
                   </div>

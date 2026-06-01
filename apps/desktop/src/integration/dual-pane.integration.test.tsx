@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import Index from "@/pages/Index";
@@ -175,19 +175,18 @@ describe("dual-pane browsing", () => {
     ] as unknown as Awaited<ReturnType<typeof listStorages>>);
   });
 
-  it("opens a destination pane and switches its storage independently", async () => {
+  it("opens a same-storage side pane under one split header", async () => {
     render(<Index />);
 
     expect(await screen.findByLabelText("browser Local Docs")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open split pane" }));
 
     expect(await screen.findAllByText(/Browsing Local Docs/)).toHaveLength(2);
-    const destinationPane = screen.getByLabelText("Destination pane").closest("div")!;
-    fireEvent.change(within(destinationPane).getByLabelText("Destination pane"), {
-      target: { value: "archive" },
-    });
+    expect(screen.getByText("Split view, two panes in the same storage")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Destination pane")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("browser Archive Bucket")).not.toBeInTheDocument();
 
-    expect(await screen.findByLabelText("browser Archive Bucket")).toBeInTheDocument();
-    expect(screen.getByLabelText("browser Local Docs")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close split pane" }));
+    expect(await screen.findAllByText(/Browsing Local Docs/)).toHaveLength(1);
   });
 });
