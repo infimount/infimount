@@ -8,6 +8,8 @@ This document is the operational checklist for cutting a release.
 
 Infimount releases are intended to require **zero manual product test execution**. Manual product test execution must not be a release gate. Before a tag can produce release artifacts, the `Release` workflow runs automated release-gate jobs for frontend tests, Playwright UI tests, Rust tests/coverage, desktop smoke, OpenDAL storage simulator verification, release consistency, feature-doc consistency, install-script smoke, and a release-policy guard that verifies artifact build jobs still depend on those gates.
 
+For UI work, every newly added or changed visible action must be covered by an automated test that performs the action, not just asserts that the control renders. At least one Playwright component/UI test should capture a screenshot snapshot of the intended post-action state for each changed screen-level flow. The split-pane regression test is the reference pattern: open the visible action, assert the resulting controls/copy, assert removed controls stay absent, close the mode, and keep the screenshot under `apps/desktop/playwright/__snapshots__/`.
+
 Optional local dry run before tagging:
 
 ```bash
@@ -59,7 +61,7 @@ The `Release` workflow is triggered by `v*` tags and will:
 
 - block release builds until automated release gates pass:
   - frontend lint, typecheck, unit tests, integration tests, coverage, and production build
-  - Playwright component/UI tests
+  - Playwright component/UI tests, including screenshot snapshots for changed screen-level visible-action flows
   - Rust format, clippy, workspace tests, and coverage gate
   - desktop launch/migration smoke test under Xvfb
   - OpenDAL storage simulator verification, including read/write/list/stat/delete round trips where supported and WebDAV list reachability
