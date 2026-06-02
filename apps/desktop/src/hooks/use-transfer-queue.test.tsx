@@ -72,6 +72,7 @@ function QueueHarness() {
       <div data-testid="first-status">{jobs[0]?.status ?? "none"}</div>
       <div data-testid="last-status">{jobs[jobs.length - 1]?.status ?? "none"}</div>
       <div data-testid="first-progress">{jobs[0]?.progress ?? 0}</div>
+      <div data-testid="first-current-path">{jobs[0]?.currentPath ?? "none"}</div>
     </div>
   );
 }
@@ -125,6 +126,39 @@ describe("useTransferQueue", () => {
       "fail",
       expect.stringMatching(/^transfer-/),
     );
+  });
+
+  it("shows planning state before native transfer starts", async () => {
+    let resolvePlan!: (value: Awaited<ReturnType<typeof planTransferEntries>>) => void;
+    vi.mocked(planTransferEntries).mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolvePlan = resolve;
+      }),
+    );
+    vi.mocked(transferEntries).mockResolvedValueOnce(undefined);
+    renderQueue();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add transfer" }));
+
+    await waitFor(() => expect(screen.getByTestId("first-status")).toHaveTextContent("running"));
+    expect(screen.getByTestId("first-current-path")).toHaveTextContent("Planning transfer...");
+    resolvePlan({
+      operation: "copy",
+      conflictPolicy: "fail",
+      entries: [],
+      summary: {
+        create: 1,
+        overwrite: 0,
+        skip: 0,
+        rename: 0,
+        noop: 0,
+        conflict: 0,
+        totalItems: 1,
+        totalBytes: 12,
+      },
+    });
+
+    await waitFor(() => expect(screen.getByTestId("first-status")).toHaveTextContent("completed"));
   });
 
   it("updates running transfer progress from Tauri events", async () => {

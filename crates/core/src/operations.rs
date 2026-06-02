@@ -339,6 +339,47 @@ async fn ensure_parent_dir(op: &Operator, path: &str) -> Result<()> {
     Ok(())
 }
 
+async fn path_exists_for_transfer(op: &Operator, path: &str) -> Result<bool> {
+    match op.exists(path).await {
+        Ok(exists) => Ok(exists),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+        Err(error) => match path_exists_by_listing(op, path).await {
+            Ok(exists) => Ok(exists),
+            Err(_) => Err(error.into()),
+        },
+    }
+}
+
+async fn path_exists_by_listing(op: &Operator, path: &str) -> Result<bool> {
+    let normalized = normalize_opendal_path(path);
+    if normalized.is_empty() {
+        return Ok(true);
+    }
+
+    let parent = parent_dir_path(&normalized).unwrap_or_default();
+    let list_base = if parent.is_empty() {
+        String::new()
+    } else {
+        ensure_dir_path(&parent)
+    };
+    let mut lister = match op.lister(&list_base).await {
+        Ok(lister) => lister,
+        Err(error) if list_base.is_empty() && error.kind() == ErrorKind::NotFound => {
+            op.lister("/").await?
+        }
+        Err(error) => return Err(error.into()),
+    };
+
+    let expected = normalized.trim_end_matches('/');
+    while let Some(obj) = lister.try_next().await? {
+        if obj.path().trim_end_matches('/') == expected {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
 async fn copy_file_across_operators(
     from_op: &Operator,
     to_op: &Operator,
@@ -418,7 +459,7 @@ async fn unique_destination_path(
         base_path
     };
 
-    if !op.exists(&candidate).await? {
+    if !path_exists_for_transfer(op, &candidate).await? {
         return Ok(candidate);
     }
 
@@ -432,7 +473,7 @@ async fn unique_destination_path(
             };
             let next_name = format!("{}{}", base_name, suffix);
             candidate = ensure_dir_path(&join_target_dir(target_dir, &next_name));
-            if !op.exists(&candidate).await? {
+            if !path_exists_for_transfer(op, &candidate).await? {
                 return Ok(candidate);
             }
         }
@@ -446,7 +487,7 @@ async fn unique_destination_path(
             };
             let next_name = format!("{}{}{}", stem, suffix, ext);
             candidate = join_target_dir(target_dir, &next_name);
-            if !op.exists(&candidate).await? {
+            if !path_exists_for_transfer(op, &candidate).await? {
                 return Ok(candidate);
             }
         }
@@ -511,7 +552,7 @@ async fn plan_path_action(
         }
     }
 
-    if !to_op.exists(&normalized_destination).await? {
+    if !path_exists_for_transfer(to_op, &normalized_destination).await? {
         return Ok((normalized_destination, TransferPlanAction::Create));
     }
 
@@ -995,7 +1036,7 @@ pub async fn transfer_entries(
                     continue;
                 }
 
-                if to_op.exists(&dest_dir).await? {
+                if path_exists_for_transfer(to_op, &dest_dir).await? {
                     return Err(opendal::Error::new(
                         ErrorKind::AlreadyExists,
                         "Destination directory already exists",
@@ -1015,7 +1056,7 @@ pub async fn transfer_entries(
                     }
                 }
 
-                if to_op.exists(&dest_file).await? {
+                if path_exists_for_transfer(to_op, &dest_file).await? {
                     return Err(opendal::Error::new(
                         ErrorKind::AlreadyExists,
                         "Destination file already exists",
@@ -1057,7 +1098,7 @@ pub async fn transfer_entries(
                 base_dest_dir
             };
 
-            if to_op.exists(&dest_dir).await? {
+            if path_exists_for_transfer(to_op, &dest_dir).await? {
                 match conflict_policy {
                     TransferConflictPolicy::Fail => {
                         return Err(opendal::Error::new(
@@ -1079,7 +1120,7 @@ pub async fn transfer_entries(
             }
 
             let dest_dir = if conflict_policy == TransferConflictPolicy::Rename
-                && to_op.exists(&dest_dir).await?
+                && path_exists_for_transfer(to_op, &dest_dir).await?
             {
                 unique_destination_path(to_op, target_dir, &dir_name, true).await?
             } else {
@@ -1111,7 +1152,7 @@ pub async fn transfer_entries(
                 continue;
             }
 
-            if to_op.exists(&dest_file).await? {
+            if path_exists_for_transfer(to_op, &dest_file).await? {
                 match conflict_policy {
                     TransferConflictPolicy::Fail => {
                         return Err(opendal::Error::new(
@@ -1132,7 +1173,7 @@ pub async fn transfer_entries(
                 }
             }
             let dest_file = if conflict_policy == TransferConflictPolicy::Rename
-                && to_op.exists(&dest_file).await?
+                && path_exists_for_transfer(to_op, &dest_file).await?
             {
                 unique_destination_path(to_op, target_dir, &file_name, false).await?
             } else {
@@ -1211,7 +1252,7 @@ where
                     continue;
                 }
 
-                if to_op.exists(&dest_dir).await? {
+                if path_exists_for_transfer(to_op, &dest_dir).await? {
                     return Err(opendal::Error::new(
                         ErrorKind::AlreadyExists,
                         "Destination directory already exists",
@@ -1231,7 +1272,7 @@ where
                     }
                 }
 
-                if to_op.exists(&dest_file).await? {
+                if path_exists_for_transfer(to_op, &dest_file).await? {
                     return Err(opendal::Error::new(
                         ErrorKind::AlreadyExists,
                         "Destination file already exists",
@@ -1274,7 +1315,7 @@ where
                 base_dest_dir
             };
 
-            if to_op.exists(&dest_dir).await? {
+            if path_exists_for_transfer(to_op, &dest_dir).await? {
                 match conflict_policy {
                     TransferConflictPolicy::Fail => {
                         return Err(opendal::Error::new(
@@ -1296,7 +1337,7 @@ where
             }
 
             let dest_dir = if conflict_policy == TransferConflictPolicy::Rename
-                && to_op.exists(&dest_dir).await?
+                && path_exists_for_transfer(to_op, &dest_dir).await?
             {
                 unique_destination_path(to_op, target_dir, &dir_name, true).await?
             } else {
@@ -1331,7 +1372,7 @@ where
                 continue;
             }
 
-            if to_op.exists(&dest_file).await? {
+            if path_exists_for_transfer(to_op, &dest_file).await? {
                 match conflict_policy {
                     TransferConflictPolicy::Fail => {
                         return Err(opendal::Error::new(
@@ -1352,7 +1393,7 @@ where
                 }
             }
             let dest_file = if conflict_policy == TransferConflictPolicy::Rename
-                && to_op.exists(&dest_file).await?
+                && path_exists_for_transfer(to_op, &dest_file).await?
             {
                 unique_destination_path(to_op, target_dir, &file_name, false).await?
             } else {

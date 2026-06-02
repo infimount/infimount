@@ -1,6 +1,23 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+fn format_storage_error(error: &opendal::Error) -> String {
+    let status = if error.is_temporary() {
+        "temporary"
+    } else if error.is_persistent() {
+        "persistent"
+    } else {
+        "permanent"
+    };
+
+    let message = error.message().trim();
+    if message.is_empty() || message.contains("http://") || message.contains("https://") {
+        format!("{} ({})", error.kind(), status)
+    } else {
+        format!("{} ({}) => {}", error.kind(), status, message)
+    }
+}
+
 /// Core error type used across the backend.
 #[derive(thiserror::Error, Debug)]
 pub enum CoreError {
@@ -13,7 +30,7 @@ pub enum CoreError {
     #[error("config error: {0}")]
     Config(String),
 
-    #[error("storage error: {0}")]
+    #[error("storage error: {}", format_storage_error(.0))]
     Storage(#[from] opendal::Error),
 
     #[error("I/O error: {0}")]
@@ -180,5 +197,23 @@ mod tests {
     fn test_error_code_mapping() {
         let err = CoreError::Config("bad config".to_string());
         assert_eq!(err.code(), ErrorCode::ConfigError);
+    }
+
+    #[test]
+    fn storage_errors_are_sanitized_before_serialization() {
+        let err = CoreError::Storage(
+            opendal::Error::new(opendal::ErrorKind::Unexpected, "backend failed")
+                .with_operation("stat")
+                .with_context("uri", "https://storage.example/private/path?token=secret"),
+        );
+
+        let value = serde_json::to_value(&err).unwrap();
+        let message = value["message"].as_str().unwrap();
+        assert_eq!(
+            message,
+            "storage error: Unexpected (permanent) => backend failed"
+        );
+        assert!(!message.contains("https://storage.example"));
+        assert!(!message.contains("token=secret"));
     }
 }

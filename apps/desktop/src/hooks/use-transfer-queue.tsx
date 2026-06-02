@@ -291,6 +291,7 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
         status: "running",
         progress: 12,
         attempts: nextJob.attempts + 1,
+        currentPath: "Planning transfer...",
         error: undefined,
       });
 
@@ -318,7 +319,12 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
           nextJob.operation,
           effectiveConflictPolicy,
         );
-        patchJob(nextJob.id, { progress: 20, manifest, conflictPolicy: effectiveConflictPolicy });
+        patchJob(nextJob.id, {
+          progress: 20,
+          manifest,
+          conflictPolicy: effectiveConflictPolicy,
+          currentPath: "Transfer plan ready.",
+        });
         appendActivityLogEvent({
           type: "transfer_planned",
           jobId: nextJob.id,
@@ -328,7 +334,7 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
           pathCount: nextJob.paths.length,
           summary: manifest.summary as unknown as Record<string, unknown>,
         });
-        patchJob(nextJob.id, { progress: 35 });
+        patchJob(nextJob.id, { progress: 35, currentPath: "Starting transfer..." });
         appendActivityLogEvent({
           type: "transfer_started",
           jobId: nextJob.id,
@@ -362,6 +368,7 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
           conflictPolicy: effectiveConflictPolicy,
           manifest,
           recoveryMode: false,
+          currentPath: undefined,
         });
         appendActivityLogEvent({
           type: "transfer_completed",
@@ -378,6 +385,7 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
           patchJob(nextJob.id, {
             status: "cancelled",
             progress: 0,
+            currentPath: undefined,
             error: undefined,
           });
           appendActivityLogEvent({
@@ -402,6 +410,7 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
         patchJob(nextJob.id, {
           status: "failed",
           progress: 100,
+          currentPath: undefined,
           error: failedJob.error,
         });
         appendActivityLogEvent({
