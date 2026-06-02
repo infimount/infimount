@@ -526,6 +526,25 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
         });
     });
 
+    it("shows visible progress while deletion is in progress", async () => {
+        const pendingDelete = deferred<void>();
+        vi.mocked(deletePath).mockReturnValueOnce(pendingDelete.promise);
+        renderFileBrowser();
+
+        fireEvent.click(await screen.findByRole("button", { name: "report.txt" }));
+        fireEvent.keyDown(window, { key: "Delete" });
+        fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+
+        expect(await screen.findByLabelText("Deletion in progress")).toBeInTheDocument();
+        expect(screen.getByText("Deleting 1 item")).toBeInTheDocument();
+        expect(screen.getByText(/Removing report\.txt/)).toBeInTheDocument();
+
+        pendingDelete.resolve();
+        await waitFor(() => {
+            expect(screen.queryByLabelText("Deletion in progress")).not.toBeInTheDocument();
+        });
+    });
+
     it("uploads from the upload control and external drop handler", async () => {
         const { container } = renderFileBrowser();
 

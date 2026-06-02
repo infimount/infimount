@@ -13,9 +13,11 @@ import {
   MoveRight,
   Star,
   Clock,
+  Trash2,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -326,6 +328,12 @@ export function FileBrowser({
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteProgress, setDeleteProgress] = useState<{
+    total: number;
+    completed: number;
+    currentName: string;
+    failed: number;
+  } | null>(null);
   const [pasteConflict, setPasteConflict] = useState<{
     fromSourceId: string;
     toSourceId: string;
@@ -1053,29 +1061,81 @@ export function FileBrowser({
     }
   };
 
-  const deleteOne = async (file: FileItem) => {
-    try {
-      await deletePath(sourceId, file.id);
-    } catch (error: unknown) {
+  const runDeleteItems = async (items: FileItem[]) => {
+    if (items.length === 0) return;
+
+    let failed = 0;
+    setDeleteProgress({
+      total: items.length,
+      completed: 0,
+      currentName: items[0]?.name ?? "",
+      failed: 0,
+    });
+
+    for (const [index, file] of items.entries()) {
+      setDeleteProgress((current) =>
+        current
+          ? {
+              ...current,
+              completed: index,
+              currentName: file.name,
+            }
+          : current,
+      );
+
+      try {
+        await deletePath(sourceId, file.id);
+      } catch (error: unknown) {
+        failed += 1;
+        setDeleteProgress((current) =>
+          current
+            ? {
+                ...current,
+                failed,
+              }
+            : current,
+        );
+        toast({
+          title: "Delete failed",
+          description: error instanceof Error ? error.message : String(error),
+          variant: "destructive",
+        });
+      }
+
+      setDeleteProgress((current) =>
+        current
+          ? {
+              ...current,
+              completed: index + 1,
+            }
+          : current,
+      );
+    }
+
+    await loadFiles(currentPath);
+    setDeleteProgress(null);
+    if (failed === 0) {
       toast({
-        title: "Delete failed",
-        description: error instanceof Error ? error.message : String(error),
-        variant: "destructive",
+        title: items.length === 1 ? "Item deleted" : "Items deleted",
+        description: `${items.length} item${items.length === 1 ? "" : "s"} removed.`,
+        variant: "default",
+      });
+    } else if (failed < items.length) {
+      toast({
+        title: "Delete partly completed",
+        description: `${items.length - failed} of ${items.length} item${items.length === 1 ? "" : "s"} removed.`,
+        variant: "default",
       });
     }
   };
 
+  const deleteOne = async (file: FileItem) => {
+    await runDeleteItems([file]);
+  };
+
   const handleBulkDelete = async () => {
     const toDelete = filteredFiles.filter((f) => selectedFiles.has(f.id));
-    for (const file of toDelete) {
-      await deleteOne(file);
-    }
-    await loadFiles(currentPath);
-    toast({
-      title: "Items deleted",
-      description: `${toDelete.length} item(s) removed.`,
-      variant: "default",
-    });
+    await runDeleteItems(toDelete);
   };
 
   const handleOpenFile = (file: FileItem) => {
@@ -1194,6 +1254,10 @@ export function FileBrowser({
     const items = Array.from(dt.items ?? []);
     return items.some((item) => item.kind === "file");
   };
+
+  const deleteProgressValue = deleteProgress
+    ? Math.max(8, Math.round((deleteProgress.completed / deleteProgress.total) * 100))
+    : 0;
 
   return (
     <>
@@ -1727,7 +1791,42 @@ export function FileBrowser({
             )}
           </ResizablePanelGroup>
         </div>
-        {showTransferQueue ? <TransferQueuePanel /> : null}
+        {deleteProgress ? (
+          <section
+            className="absolute bottom-12 right-4 z-30 w-[360px] max-w-[calc(100%-2rem)] rounded-xl border border-border bg-card text-card-foreground shadow-lg"
+            aria-label="Deletion in progress"
+            aria-live="polite"
+          >
+            <div className="flex items-start gap-3 px-3 py-3">
+              <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="text-sm font-medium leading-tight">
+                    Deleting {deleteProgress.total} item{deleteProgress.total === 1 ? "" : "s"}
+                  </h2>
+                  <span className="shrink-0 text-[11px] text-muted-foreground">
+                    {deleteProgress.completed}/{deleteProgress.total}
+                  </span>
+                </div>
+                <p className="mt-1 truncate text-[11px] text-muted-foreground">
+                  Removing {deleteProgress.currentName}
+                  {deleteProgress.failed > 0 ? ` · ${deleteProgress.failed} failed` : ""}
+                </p>
+                <Progress
+                  value={deleteProgressValue}
+                  className="mt-2 h-1.5 bg-muted"
+                  aria-label="Delete progress"
+                />
+                <p className="mt-2 text-[11px] text-muted-foreground">
+                  Large folders can take a while. Keep this window open until deletion finishes.
+                </p>
+              </div>
+            </div>
+          </section>
+        ) : null}
+        {showTransferQueue && !deleteProgress ? <TransferQueuePanel /> : null}
       </div>
 
       <AlertDialog
@@ -1790,11 +1889,10 @@ export function FileBrowser({
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={!!deleteProgress}
               onClick={() => {
-                void (async () => {
-                  await handleBulkDelete();
-                  setShowDeleteConfirm(false);
-                })();
+                setShowDeleteConfirm(false);
+                void handleBulkDelete();
               }}
             >
               Delete
