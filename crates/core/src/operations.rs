@@ -2,7 +2,7 @@ use futures::io::{AsyncReadExt, AsyncWriteExt};
 use futures::TryStreamExt;
 use opendal::{ErrorKind, Metadata, Operator};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use tokio::fs;
 
@@ -161,7 +161,7 @@ pub async fn list_entries_recursive(op: &Operator, path: &str) -> Result<Vec<Ent
         while let Some(obj) = lister.try_next().await? {
             let full_path = obj.path().to_string();
             let name = extract_filename(&full_path);
-            if full_path.is_empty() || name == "." {
+            if full_path.is_empty() || name == "." || is_current_dir_marker(&base, &full_path) {
                 continue;
             }
 
@@ -278,6 +278,11 @@ pub async fn create_directory(op: &Operator, path: &str) -> Result<()> {
 /// Delete a path (file or directory).
 pub async fn delete(op: &Operator, path: &str) -> Result<()> {
     let p = normalize_opendal_path(path);
+    if p.is_empty() {
+        return Err(crate::models::CoreError::Config(
+            "refusing to delete storage root".to_string(),
+        ));
+    }
     delete_recursive(op, &p).await?;
     Ok(())
 }
@@ -331,6 +336,10 @@ fn parent_dir_path(path: &str) -> Option<String> {
     }
 }
 
+fn is_current_dir_marker(base: &str, child_path: &str) -> bool {
+    ensure_dir_path(base) == ensure_dir_path(child_path)
+}
+
 fn normalize_transfer_inputs(paths: Vec<String>, target_dir: &str) -> (Vec<String>, String) {
     (
         paths
@@ -339,6 +348,32 @@ fn normalize_transfer_inputs(paths: Vec<String>, target_dir: &str) -> (Vec<Strin
             .collect(),
         normalize_opendal_path(target_dir),
     )
+}
+
+async fn ensure_no_batch_destination_conflicts(
+    from_op: &Operator,
+    paths: &[String],
+    target_dir: &str,
+) -> Result<()> {
+    let mut destinations = HashSet::new();
+    for from_path in paths {
+        let meta = stat_for_transfer(from_op, from_path).await?;
+        let name = extract_filename(from_path);
+        let destination = if meta.is_dir() {
+            ensure_dir_path(&join_target_dir(target_dir, &name))
+        } else {
+            join_target_dir(target_dir, &name)
+        };
+        let key = destination.trim_end_matches('/').to_string();
+        if !destinations.insert(key) {
+            return Err(opendal::Error::new(
+                ErrorKind::AlreadyExists,
+                "Multiple selected items resolve to the same destination name",
+            )
+            .into());
+        }
+    }
+    Ok(())
 }
 
 fn ensure_not_folder_into_descendant(
@@ -665,6 +700,9 @@ async fn collect_transfer_plan_entries(
         let mut lister = from_op.lister(&from_base).await?;
         while let Some(obj) = lister.try_next().await? {
             let child_path = obj.path().to_string();
+            if is_current_dir_marker(&from_base, &child_path) {
+                continue;
+            }
             let child_meta = stat_for_transfer(from_op, &child_path).await?;
             let name = extract_filename(&child_path);
             let child_destination = if child_meta.is_dir() {
@@ -738,7 +776,10 @@ async fn estimate_path_totals(op: &Operator, path: &str) -> Result<(u64, u64)> {
         let mut lister = op.lister(&dir).await?;
         while let Some(obj) = lister.try_next().await? {
             let child_path = obj.path().to_string();
-            let child_meta = op.stat(&child_path).await?;
+            if is_current_dir_marker(&dir, &child_path) {
+                continue;
+            }
+            let child_meta = stat_for_transfer(op, &child_path).await?;
             if child_meta.is_dir() {
                 stack.push(ensure_dir_path(&child_path));
             } else {
@@ -899,6 +940,9 @@ async fn transfer_dir_recursive(
         let mut lister = from_op.lister(&from_base).await?;
         while let Some(obj) = lister.try_next().await? {
             let child_path = obj.path().to_string();
+            if is_current_dir_marker(&from_base, &child_path) {
+                continue;
+            }
             let meta = stat_for_transfer(from_op, &child_path).await?;
             let name = extract_filename(&child_path);
 
@@ -958,6 +1002,9 @@ where
         while let Some(obj) = lister.try_next().await? {
             ensure_not_cancelled(is_cancelled)?;
             let child_path = obj.path().to_string();
+            if is_current_dir_marker(&from_base, &child_path) {
+                continue;
+            }
             let meta = stat_for_transfer(from_op, &child_path).await?;
             let name = extract_filename(&child_path);
 
@@ -1057,6 +1104,7 @@ pub async fn transfer_entries(
     let target_dir = target_dir.as_str();
 
     if conflict_policy == TransferConflictPolicy::Fail {
+        ensure_no_batch_destination_conflicts(from_op, &paths, target_dir).await?;
         for from_path in &paths {
             let meta = stat_for_transfer(from_op, from_path).await?;
 
@@ -1275,6 +1323,7 @@ where
     emit_progress(&mut progress, &state, "");
 
     if conflict_policy == TransferConflictPolicy::Fail {
+        ensure_no_batch_destination_conflicts(from_op, &paths, target_dir).await?;
         for from_path in &paths {
             ensure_not_cancelled(&is_cancelled)?;
             let meta = stat_for_transfer(from_op, from_path).await?;
@@ -1741,6 +1790,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_delete_refuses_storage_root() {
+        let op = create_test_operator().await;
+        op.write("keep.txt", "safe".as_bytes()).await.unwrap();
+
+        let slash_error = delete(&op, "/").await.unwrap_err().to_string();
+        let empty_error = delete(&op, "").await.unwrap_err().to_string();
+
+        assert!(slash_error.contains("refusing to delete storage root"));
+        assert!(empty_error.contains("refusing to delete storage root"));
+        assert_eq!(op.read("keep.txt").await.unwrap().to_vec(), b"safe");
+    }
+
+    #[tokio::test]
     async fn test_create_directory() {
         let op = create_test_operator().await;
         create_directory(&op, "new-folder").await.unwrap();
@@ -1931,6 +1993,36 @@ mod tests {
             to_op.read("target/source copy.txt").await.unwrap().to_vec(),
             b"new"
         );
+    }
+
+    #[tokio::test]
+    async fn test_transfer_entries_fail_policy_rejects_duplicate_batch_destinations_before_mutation(
+    ) {
+        let from_op = create_test_operator().await;
+        let to_op = create_test_operator().await;
+        from_op.write("a/file.txt", "a".as_bytes()).await.unwrap();
+        from_op.write("b/file.txt", "b".as_bytes()).await.unwrap();
+        create_directory(&to_op, "target").await.unwrap();
+
+        let result = transfer_entries(
+            &from_op,
+            &to_op,
+            vec!["a/file.txt".to_string(), "b/file.txt".to_string()],
+            "target",
+            TransferOperation::Copy,
+            false,
+            TransferConflictPolicy::Fail,
+        )
+        .await;
+
+        let err = result.expect_err("duplicate destination names must fail before copying");
+        assert!(
+            err.to_string().contains("same destination name"),
+            "unexpected error: {err}"
+        );
+        assert!(!to_op.exists("target/file.txt").await.unwrap());
+        assert_eq!(from_op.read("a/file.txt").await.unwrap().to_vec(), b"a");
+        assert_eq!(from_op.read("b/file.txt").await.unwrap().to_vec(), b"b");
     }
 
     #[tokio::test]
