@@ -1,6 +1,6 @@
 use futures::io::{AsyncReadExt, AsyncWriteExt};
 use futures::TryStreamExt;
-use opendal::{ErrorKind, Operator};
+use opendal::{ErrorKind, Metadata, Operator};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -331,12 +331,56 @@ fn parent_dir_path(path: &str) -> Option<String> {
     }
 }
 
+fn normalize_transfer_inputs(paths: Vec<String>, target_dir: &str) -> (Vec<String>, String) {
+    (
+        paths
+            .into_iter()
+            .map(|path| normalize_opendal_path(&path))
+            .collect(),
+        normalize_opendal_path(target_dir),
+    )
+}
+
+fn ensure_not_folder_into_descendant(
+    from_dir: &str,
+    to_dir: &str,
+    same_source: bool,
+) -> Result<()> {
+    if !same_source {
+        return Ok(());
+    }
+
+    let normalized_src = ensure_dir_path(&normalize_opendal_path(from_dir));
+    let normalized_dest = ensure_dir_path(&normalize_opendal_path(to_dir));
+    if normalized_dest.starts_with(&normalized_src) && normalized_dest != normalized_src {
+        return Err(opendal::Error::new(
+            ErrorKind::IsSameFile,
+            "Cannot copy or move a folder into itself",
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
 async fn ensure_parent_dir(op: &Operator, path: &str) -> Result<()> {
     if let Some(parent) = parent_dir_path(path) {
         let parent_dir = ensure_dir_path(&parent);
         op.create_dir(&parent_dir).await?;
     }
     Ok(())
+}
+
+async fn stat_for_transfer(op: &Operator, path: &str) -> Result<Metadata> {
+    match op.stat(path).await {
+        Ok(meta) => Ok(meta),
+        Err(error)
+            if error.kind() == ErrorKind::NotFound && !path.is_empty() && !path.ends_with('/') =>
+        {
+            op.stat(&ensure_dir_path(path)).await.map_err(Into::into)
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 async fn path_exists_for_transfer(op: &Operator, path: &str) -> Result<bool> {
@@ -400,7 +444,7 @@ async fn copy_file_across_operators_with_progress<P>(
 where
     P: FnMut(u64),
 {
-    let meta = from_op.stat(from).await?;
+    let meta = stat_for_transfer(from_op, from).await?;
     let size = meta.content_length();
     let mut reader = from_op
         .reader(from)
@@ -583,7 +627,7 @@ async fn collect_transfer_plan_entries(
     conflict_policy: TransferConflictPolicy,
     entries: &mut Vec<TransferPlanEntry>,
 ) -> Result<()> {
-    let meta = from_op.stat(source_path).await?;
+    let meta = stat_for_transfer(from_op, source_path).await?;
     let is_dir = meta.is_dir();
     let size = if is_dir { 0 } else { meta.content_length() };
     let (planned_destination, action) = plan_path_action(
@@ -621,7 +665,7 @@ async fn collect_transfer_plan_entries(
         let mut lister = from_op.lister(&from_base).await?;
         while let Some(obj) = lister.try_next().await? {
             let child_path = obj.path().to_string();
-            let child_meta = from_op.stat(&child_path).await?;
+            let child_meta = stat_for_transfer(from_op, &child_path).await?;
             let name = extract_filename(&child_path);
             let child_destination = if child_meta.is_dir() {
                 ensure_dir_path(&join_target_dir(&to_base, &name))
@@ -681,7 +725,7 @@ async fn estimate_transfer_totals(op: &Operator, paths: &[String]) -> Result<(u6
 }
 
 async fn estimate_path_totals(op: &Operator, path: &str) -> Result<(u64, u64)> {
-    let meta = op.stat(path).await?;
+    let meta = stat_for_transfer(op, path).await?;
     if !meta.is_dir() {
         return Ok((1, meta.content_length()));
     }
@@ -782,7 +826,9 @@ where
 {
     ensure_not_cancelled(is_cancelled)?;
     ensure_parent_dir(to_op, to_path).await?;
-    let size = from_op.stat(from_path).await?.content_length();
+    let size = stat_for_transfer(from_op, from_path)
+        .await?
+        .content_length();
 
     match operation {
         TransferOperation::Copy => {
@@ -843,6 +889,7 @@ async fn transfer_dir_recursive(
     operation: TransferOperation,
     same_source: bool,
 ) -> Result<()> {
+    ensure_not_folder_into_descendant(from_dir, to_dir, same_source)?;
     let from_root = ensure_dir_path(from_dir);
     let to_root = ensure_dir_path(to_dir);
     to_op.create_dir(&to_root).await?;
@@ -852,7 +899,7 @@ async fn transfer_dir_recursive(
         let mut lister = from_op.lister(&from_base).await?;
         while let Some(obj) = lister.try_next().await? {
             let child_path = obj.path().to_string();
-            let meta = from_op.stat(&child_path).await?;
+            let meta = stat_for_transfer(from_op, &child_path).await?;
             let name = extract_filename(&child_path);
 
             if meta.is_dir() {
@@ -899,6 +946,7 @@ where
     C: Fn() -> bool + Sync,
 {
     ensure_not_cancelled(is_cancelled)?;
+    ensure_not_folder_into_descendant(from_dir, to_dir, same_source)?;
     let from_root = ensure_dir_path(from_dir);
     let to_root = ensure_dir_path(to_dir);
     to_op.create_dir(&to_root).await?;
@@ -910,7 +958,7 @@ where
         while let Some(obj) = lister.try_next().await? {
             ensure_not_cancelled(is_cancelled)?;
             let child_path = obj.path().to_string();
-            let meta = from_op.stat(&child_path).await?;
+            let meta = stat_for_transfer(from_op, &child_path).await?;
             let name = extract_filename(&child_path);
 
             if meta.is_dir() {
@@ -956,10 +1004,12 @@ pub async fn plan_transfer_entries(
     same_source: bool,
     conflict_policy: TransferConflictPolicy,
 ) -> Result<TransferPlan> {
+    let (paths, target_dir) = normalize_transfer_inputs(paths, target_dir);
+    let target_dir = target_dir.as_str();
     let mut entries = Vec::new();
 
     for source_path in &paths {
-        let meta = from_op.stat(source_path).await?;
+        let meta = stat_for_transfer(from_op, source_path).await?;
         let name = extract_filename(source_path);
         let destination = if meta.is_dir() {
             ensure_dir_path(&join_target_dir(target_dir, &name))
@@ -1003,9 +1053,12 @@ pub async fn transfer_entries(
     same_source: bool,
     conflict_policy: TransferConflictPolicy,
 ) -> Result<()> {
+    let (paths, target_dir) = normalize_transfer_inputs(paths, target_dir);
+    let target_dir = target_dir.as_str();
+
     if conflict_policy == TransferConflictPolicy::Fail {
         for from_path in &paths {
-            let meta = from_op.stat(from_path).await?;
+            let meta = stat_for_transfer(from_op, from_path).await?;
 
             if meta.is_dir() {
                 let dir_name = extract_filename(from_path);
@@ -1068,7 +1121,7 @@ pub async fn transfer_entries(
     }
 
     for from_path in paths {
-        let meta = from_op.stat(&from_path).await?;
+        let meta = stat_for_transfer(from_op, &from_path).await?;
         if meta.is_dir() {
             let dir_name = extract_filename(&from_path);
             let base_dest_dir = ensure_dir_path(&join_target_dir(target_dir, &dir_name));
@@ -1210,6 +1263,8 @@ where
     P: FnMut(TransferProgress),
     C: Fn() -> bool + Sync,
 {
+    let (paths, target_dir) = normalize_transfer_inputs(paths, target_dir);
+    let target_dir = target_dir.as_str();
     let (total_items, total_bytes) = estimate_transfer_totals(from_op, &paths).await?;
     let mut state = TransferProgressState {
         completed_items: 0,
@@ -1222,7 +1277,7 @@ where
     if conflict_policy == TransferConflictPolicy::Fail {
         for from_path in &paths {
             ensure_not_cancelled(&is_cancelled)?;
-            let meta = from_op.stat(from_path).await?;
+            let meta = stat_for_transfer(from_op, from_path).await?;
 
             if meta.is_dir() {
                 let dir_name = extract_filename(from_path);
@@ -1285,7 +1340,7 @@ where
 
     for from_path in paths {
         ensure_not_cancelled(&is_cancelled)?;
-        let meta = from_op.stat(&from_path).await?;
+        let meta = stat_for_transfer(from_op, &from_path).await?;
         if meta.is_dir() {
             let dir_name = extract_filename(&from_path);
             let base_dest_dir = ensure_dir_path(&join_target_dir(target_dir, &dir_name));
@@ -1876,6 +1931,36 @@ mod tests {
             to_op.read("target/source copy.txt").await.unwrap().to_vec(),
             b"new"
         );
+    }
+
+    #[tokio::test]
+    async fn test_transfer_entries_rejects_folder_copy_into_own_descendant_with_absolute_paths() {
+        let op = create_test_operator().await;
+        op.create_dir("demo/").await.unwrap();
+        op.create_dir("demo/child/").await.unwrap();
+        op.write("demo/file.txt", "hello".as_bytes()).await.unwrap();
+        op.write("demo/child/existing.txt", "child".as_bytes())
+            .await
+            .unwrap();
+
+        let result = transfer_entries(
+            &op,
+            &op,
+            vec!["/demo".to_string()],
+            "/demo/child",
+            TransferOperation::Copy,
+            true,
+            TransferConflictPolicy::Fail,
+        )
+        .await;
+
+        let err = result.expect_err("copying a folder into itself must fail before recursion");
+        assert!(
+            err.to_string().contains("Cannot copy")
+                && err.to_string().contains("folder into itself"),
+            "unexpected error: {err}"
+        );
+        assert!(!op.exists("demo/child/demo/").await.unwrap());
     }
 
     #[tokio::test]
