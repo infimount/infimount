@@ -1,8 +1,6 @@
-import { useCallback, useState, forwardRef, useImperativeHandle } from "react";
+import { useCallback, forwardRef, useImperativeHandle } from "react";
 import type React from "react";
-import { Upload, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
+import { Upload } from "lucide-react";
 
 // Minimal interface we need for uploads.
 export interface UploadFileLike {
@@ -21,36 +19,9 @@ interface UploadZoneProps {
 
 export const UploadZone = forwardRef<UploadZoneRef, UploadZoneProps>(
   ({ onUpload, isDragging }, ref) => {
-    const [uploadProgress, setUploadProgress] = useState<
-      { name: string; progress: number }[]
-    >([]);
-
     const handleFiles = useCallback((files: UploadFileLike[]) => {
-      const progressData = files.map((file) => ({ name: file.name, progress: 0 }));
-      setUploadProgress(progressData);
-
-      files.forEach((_, index) => {
-        const interval = setInterval(() => {
-          setUploadProgress((previous) => {
-            const updated = [...previous];
-            if (!updated[index]) {
-              clearInterval(interval);
-              return previous;
-            }
-            if (updated[index].progress < 100) {
-              updated[index].progress += 10;
-            } else {
-              clearInterval(interval);
-            }
-            return updated;
-          });
-        }, 200);
-      });
-
-      setTimeout(() => {
-        onUpload(files);
-        setUploadProgress([]);
-      }, 2500);
+      if (files.length === 0) return;
+      onUpload(files);
     }, [onUpload]);
 
     useImperativeHandle(ref, () => ({
@@ -80,36 +51,6 @@ export const UploadZone = forwardRef<UploadZoneRef, UploadZoneProps>(
       },
       [handleFiles],
     );
-
-    const cancelUpload = (index: number) => {
-      setUploadProgress((previous) => previous.filter((_, i) => i !== index));
-    };
-
-    if (uploadProgress.length > 0) {
-      return (
-        <div className="absolute inset-0 z-40 flex items-center justify-center bg-background/95 p-8 backdrop-blur-sm">
-          <div className="w-full max-w-md space-y-4">
-            <h3 className="text-lg font-semibold">Uploading Files</h3>
-            {uploadProgress.map((item, index) => (
-              <div key={item.name + index} className="space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="flex-1 truncate">{item.name}</span>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-6 w-6"
-                    onClick={() => cancelUpload(index)}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-                <Progress value={item.progress} />
-              </div>
-            ))}
-          </div>
-        </div>
-      );
-    }
 
     return (
       <div

@@ -1,14 +1,10 @@
 import { createRef } from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { UploadZone, type UploadZoneRef } from "./UploadZone";
 
 describe("UploadZone", () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
   it("renders the drag affordance only while dragging", () => {
     const { rerender } = render(<UploadZone onUpload={vi.fn()} isDragging={false} />);
 
@@ -19,8 +15,7 @@ describe("UploadZone", () => {
     expect(screen.getByText("Drop files here to upload")).toBeInTheDocument();
   });
 
-  it("accepts file input selection and forwards files to onUpload", async () => {
-    vi.useFakeTimers();
+  it("accepts file input selection and forwards files to onUpload immediately", () => {
     const onUpload = vi.fn();
 
     const { container } = render(<UploadZone onUpload={onUpload} isDragging={false} />);
@@ -30,13 +25,6 @@ describe("UploadZone", () => {
     const file = new File(["hello"], "hello.txt", { type: "text/plain" });
     fireEvent.change(input!, { target: { files: [file] } });
 
-    expect(screen.getByText("Uploading Files")).toBeInTheDocument();
-    expect(screen.getByText("hello.txt")).toBeInTheDocument();
-
-    await act(async () => {
-      vi.advanceTimersByTime(2600);
-    });
-
     expect(onUpload).toHaveBeenCalledTimes(1);
     const uploaded = onUpload.mock.calls[0][0];
     expect(uploaded).toHaveLength(1);
@@ -45,8 +33,7 @@ describe("UploadZone", () => {
     expect(screen.queryByText("Uploading Files")).not.toBeInTheDocument();
   });
 
-  it("uses relative paths for directory picks and ignores empty selections", async () => {
-    vi.useFakeTimers();
+  it("uses relative paths for directory picks and ignores empty selections", () => {
     const onUpload = vi.fn();
 
     const { container } = render(<UploadZone onUpload={onUpload} />);
@@ -63,16 +50,11 @@ describe("UploadZone", () => {
 
     fireEvent.change(input, { target: { files: [file] } });
 
-    await act(async () => {
-      vi.advanceTimersByTime(2600);
-    });
-
     expect(onUpload).toHaveBeenCalledTimes(1);
     expect(onUpload.mock.calls[0][0][0].name).toBe("folder/hello.txt");
   });
 
-  it("exposes imperative uploads and lets in-flight rows be cancelled", async () => {
-    vi.useFakeTimers();
+  it("exposes imperative uploads", () => {
     const onUpload = vi.fn();
     const ref = createRef<UploadZoneRef>();
     const file = {
@@ -82,20 +64,8 @@ describe("UploadZone", () => {
 
     render(<UploadZone ref={ref} onUpload={onUpload} />);
 
-    act(() => {
-      ref.current?.handleFiles([file]);
-    });
-
-    expect(screen.getByText("manual.txt")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button"));
-    expect(screen.queryByText("manual.txt")).not.toBeInTheDocument();
-
-    await act(async () => {
-      vi.advanceTimersByTime(2600);
-    });
+    ref.current?.handleFiles([file]);
 
     expect(onUpload).toHaveBeenCalledWith([file]);
-    expect(screen.queryByText("Uploading Files")).not.toBeInTheDocument();
   });
 });

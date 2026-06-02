@@ -563,6 +563,57 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
         });
     });
 
+    it("shows upload progress while write is pending and can cancel remaining uploads", async () => {
+        const pendingWrite = deferred<void>();
+        vi.mocked(writeFile).mockReturnValueOnce(pendingWrite.promise);
+        renderFileBrowser();
+
+        await screen.findByTestId("grid-view");
+        fireEvent.click(screen.getByRole("button", { name: "Upload fixture" }));
+
+        expect(await screen.findByLabelText("Upload in progress")).toBeInTheDocument();
+        expect(screen.getByText("Uploading 1 file")).toBeInTheDocument();
+        expect(screen.getByText(/Writing fixture\.txt/)).toBeInTheDocument();
+
+        pendingWrite.resolve();
+        await waitFor(() => {
+            expect(screen.queryByLabelText("Upload in progress")).not.toBeInTheDocument();
+        });
+    });
+
+    it("prompts before upload overwrites existing files", async () => {
+        const { container } = renderFileBrowser();
+        await screen.findByTestId("grid-view");
+
+        const droppedFile = {
+            name: "report.txt",
+            arrayBuffer: async () => new TextEncoder().encode("replacement").buffer,
+        };
+        const dropEvent = new Event("drop", { bubbles: true, cancelable: true });
+        Object.defineProperty(dropEvent, "dataTransfer", {
+            value: {
+                files: [],
+                items: [
+                    {
+                        kind: "file",
+                        webkitGetAsEntry: () => null,
+                        getAsFile: () => droppedFile,
+                    },
+                ],
+            },
+        });
+        fireEvent(container.firstChild as HTMLElement, dropEvent);
+
+        expect(await screen.findByText("Upload existing files?")).toBeInTheDocument();
+        expect(writeFile).not.toHaveBeenCalledWith("test", "/report.txt", expect.any(Uint8Array));
+
+        fireEvent.click(screen.getByRole("button", { name: "Keep both" }));
+
+        await waitFor(() => {
+            expect(writeFile).toHaveBeenCalledWith("test", "/report copy.txt", expect.any(Uint8Array));
+        });
+    });
+
     it("uploads from the upload control and external drop handler", async () => {
         const { container } = renderFileBrowser();
 

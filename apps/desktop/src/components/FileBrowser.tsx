@@ -335,6 +335,14 @@ export function FileBrowser({
     currentName: string;
     failed: number;
   } | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{
+    total: number;
+    completed: number;
+    currentName: string;
+    failed: number;
+    cancelled: boolean;
+  } | null>(null);
+  const uploadCancelRef = useRef(false);
   const [pasteConflict, setPasteConflict] = useState<{
     fromSourceId: string;
     toSourceId: string;
@@ -349,6 +357,7 @@ export function FileBrowser({
     changedPaths: string[];
     sameCount: number;
   } | null>(null);
+  const [uploadConflict, setUploadConflict] = useState<{ files: UploadFileLike[] } | null>(null);
   const [editTargetId, setEditTargetId] = useState<string | null>(null);
   const { theme: iconTheme, setTheme: setIconTheme } = useIconTheme();
   const { clipboard, setClipboard, clearClipboard } = useFileClipboard();
@@ -1162,33 +1171,142 @@ export function FileBrowser({
     void downloadOne(file);
   };
 
-  const handleUpload = (files: UploadFileLike[]) => {
+  type UploadConflictPolicy = "overwrite" | "skip" | "rename";
+
+  const uploadTargetPath = (fileName: string) => {
+    const basePath = currentPath === "/" ? "" : currentPath.replace(/\/$/, "");
+    return `${basePath}/${fileName}`;
+  };
+
+  const existingUploadPaths = () => new Set(allFiles.map((file) => file.id));
+
+  const splitUploadName = (name: string) => {
+    const slashIndex = name.lastIndexOf("/");
+    const dir = slashIndex >= 0 ? name.slice(0, slashIndex + 1) : "";
+    const leaf = slashIndex >= 0 ? name.slice(slashIndex + 1) : name;
+    if (leaf.startsWith(".")) return { dir, stem: leaf, ext: "" };
+    const dotIndex = leaf.lastIndexOf(".");
+    if (dotIndex <= 0) return { dir, stem: leaf, ext: "" };
+    return { dir, stem: leaf.slice(0, dotIndex), ext: leaf.slice(dotIndex) };
+  };
+
+  const uniqueUploadName = (name: string, reservedPaths: Set<string>) => {
+    const { dir, stem, ext } = splitUploadName(name);
+    for (let index = 1; index <= 9999; index += 1) {
+      const suffix = index === 1 ? " copy" : ` copy ${index}`;
+      const candidateName = `${dir}${stem}${suffix}${ext}`;
+      const candidatePath = uploadTargetPath(candidateName);
+      if (!reservedPaths.has(candidatePath)) {
+        reservedPaths.add(candidatePath);
+        return candidateName;
+      }
+    }
+    return name;
+  };
+
+  const performUpload = (files: UploadFileLike[], conflictPolicy: UploadConflictPolicy) => {
     void (async () => {
       if (!files.length) return;
+      uploadCancelRef.current = false;
+      const reservedPaths = existingUploadPaths();
+      setUploadProgress({
+        total: files.length,
+        completed: 0,
+        currentName: files[0]?.name ?? "",
+        failed: 0,
+        cancelled: false,
+      });
+
       let successCount = 0;
-      for (const file of files) {
+      let skippedCount = 0;
+      let failedCount = 0;
+      for (const [index, file] of files.entries()) {
+        if (uploadCancelRef.current) break;
+        setUploadProgress((current) =>
+          current
+            ? {
+                ...current,
+                completed: index,
+                currentName: file.name,
+                cancelled: uploadCancelRef.current,
+              }
+            : current,
+        );
         try {
+          let targetName = file.name;
+          let targetPath = uploadTargetPath(targetName);
+          const exists = reservedPaths.has(targetPath);
+          if (exists && conflictPolicy === "skip") {
+            skippedCount += 1;
+            setUploadProgress((current) => current ? { ...current, completed: index + 1 } : current);
+            continue;
+          }
+          if (exists && conflictPolicy === "rename") {
+            targetName = uniqueUploadName(file.name, reservedPaths);
+            targetPath = uploadTargetPath(targetName);
+          } else {
+            reservedPaths.add(targetPath);
+          }
+
           const buffer = await file.arrayBuffer();
-          const basePath = currentPath === "/" ? "" : currentPath.replace(/\/$/, "");
-          const targetPath = `${basePath}/${file.name}`;
+          if (uploadCancelRef.current) break;
           await writeFile(sourceId, targetPath, new Uint8Array(buffer));
           successCount += 1;
         } catch (error: unknown) {
+          failedCount += 1;
+          setUploadProgress((current) =>
+            current
+              ? {
+                  ...current,
+                  failed: failedCount,
+                }
+              : current,
+          );
           toast({
             title: "Upload failed",
             description: error instanceof Error ? error.message : String(error),
             variant: "destructive",
           });
         }
+        setUploadProgress((current) =>
+          current
+            ? {
+                ...current,
+                completed: index + 1,
+                cancelled: uploadCancelRef.current,
+              }
+            : current,
+        );
       }
       await loadFiles(currentPath);
+      setUploadProgress(null);
       if (successCount > 0) {
         toast({
-          title: "Upload complete",
-          description: `${successCount} file${successCount > 1 ? "s" : ""} uploaded successfully.`,
+          title: uploadCancelRef.current ? "Upload stopped" : "Upload complete",
+          description: `${successCount} file${successCount > 1 ? "s" : ""} uploaded successfully.${skippedCount > 0 ? ` ${skippedCount} skipped.` : ""}`,
+        });
+      } else if (uploadCancelRef.current) {
+        toast({
+          title: "Upload cancelled",
+          description: "No additional files will be uploaded.",
+        });
+      } else if (skippedCount > 0) {
+        toast({
+          title: "Upload skipped",
+          description: `${skippedCount} existing file${skippedCount === 1 ? "" : "s"} skipped.`,
         });
       }
     })();
+  };
+
+  const handleUpload = (files: UploadFileLike[]) => {
+    if (!files.length) return;
+    const existingPaths = existingUploadPaths();
+    if (files.some((file) => existingPaths.has(uploadTargetPath(file.name)))) {
+      setUploadConflict({ files });
+      return;
+    }
+    performUpload(files, "overwrite");
   };
 
   const toggleSort = (field: SortField) => {
@@ -1262,6 +1380,9 @@ export function FileBrowser({
 
   const deleteProgressValue = deleteProgress
     ? Math.max(8, Math.round((deleteProgress.completed / deleteProgress.total) * 100))
+    : 0;
+  const uploadProgressValue = uploadProgress
+    ? Math.max(8, Math.round((uploadProgress.completed / uploadProgress.total) * 100))
     : 0;
 
   return (
@@ -1831,7 +1952,56 @@ export function FileBrowser({
             </div>
           </section>
         ) : null}
-        {showTransferQueue && !deleteProgress ? <TransferQueuePanel /> : null}
+        {uploadProgress ? (
+          <section
+            className="absolute bottom-12 right-4 z-30 w-[360px] max-w-[calc(100%-2rem)] rounded-xl border border-border bg-card text-card-foreground shadow-lg"
+            aria-label="Upload in progress"
+            aria-live="polite"
+          >
+            <div className="flex items-start gap-3 px-3 py-3">
+              <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <Upload className="h-4 w-4" aria-hidden="true" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="text-sm font-medium leading-tight">
+                    Uploading {uploadProgress.total} file{uploadProgress.total === 1 ? "" : "s"}
+                  </h2>
+                  <span className="shrink-0 text-[11px] text-muted-foreground">
+                    {uploadProgress.completed}/{uploadProgress.total}
+                  </span>
+                </div>
+                <p className="mt-1 truncate text-[11px] text-muted-foreground">
+                  {uploadProgress.cancelled ? "Stopping after current file" : `Writing ${uploadProgress.currentName}`}
+                  {uploadProgress.failed > 0 ? ` · ${uploadProgress.failed} failed` : ""}
+                </p>
+                <Progress
+                  value={uploadProgressValue}
+                  className="mt-2 h-1.5 bg-muted"
+                  aria-label="Upload progress"
+                />
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <p className="text-[11px] text-muted-foreground">
+                    Keep this window open until upload finishes.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => {
+                      uploadCancelRef.current = true;
+                      setUploadProgress((current) => current ? { ...current, cancelled: true } : current);
+                    }}
+                  >
+                    Cancel remaining
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </section>
+        ) : null}
+        {showTransferQueue && !deleteProgress && !uploadProgress ? <TransferQueuePanel /> : null}
       </div>
 
       <AlertDialog
@@ -1876,6 +2046,58 @@ export function FileBrowser({
               }}
             >
               Create
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={!!uploadConflict}
+        onOpenChange={(open) => {
+          if (!open) setUploadConflict(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-md rounded-2xl border border-border bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] shadow-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Upload existing files?</AlertDialogTitle>
+            <AlertDialogDescription>
+              One or more files already exist in <span className="font-medium">{storageName}</span>. Choose how to handle matching names.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                const files = uploadConflict?.files ?? [];
+                setUploadConflict(null);
+                performUpload(files, "skip");
+              }}
+            >
+              Discard existing
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                const files = uploadConflict?.files ?? [];
+                setUploadConflict(null);
+                performUpload(files, "rename");
+              }}
+            >
+              Keep both
+            </Button>
+            <AlertDialogAction
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+              onClick={(event) => {
+                event.preventDefault();
+                const files = uploadConflict?.files ?? [];
+                setUploadConflict(null);
+                performUpload(files, "overwrite");
+              }}
+            >
+              Overwrite
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
