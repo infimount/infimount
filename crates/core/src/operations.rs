@@ -831,14 +831,27 @@ async fn transfer_file(
     match operation {
         TransferOperation::Copy => {
             if same_source {
-                from_op.copy(from_path, to_path).await?;
+                match from_op.copy(from_path, to_path).await {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == ErrorKind::Unsupported => {
+                        copy_file_across_operators(from_op, to_op, from_path, to_path).await?;
+                    }
+                    Err(error) => return Err(error.into()),
+                }
             } else {
                 copy_file_across_operators(from_op, to_op, from_path, to_path).await?;
             }
         }
         TransferOperation::Move => {
             if same_source {
-                from_op.rename(from_path, to_path).await?;
+                match from_op.rename(from_path, to_path).await {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == ErrorKind::Unsupported => {
+                        copy_file_across_operators(from_op, to_op, from_path, to_path).await?;
+                        delete_recursive(from_op, from_path).await?;
+                    }
+                    Err(error) => return Err(error.into()),
+                }
             } else {
                 copy_file_across_operators(from_op, to_op, from_path, to_path).await?;
                 delete_recursive(from_op, from_path).await?;
@@ -874,9 +887,28 @@ where
     match operation {
         TransferOperation::Copy => {
             if same_source {
-                from_op.copy(from_path, to_path).await?;
-                state.bytes_transferred = state.bytes_transferred.saturating_add(size);
-                emit_progress(progress, state, from_path);
+                match from_op.copy(from_path, to_path).await {
+                    Ok(()) => {
+                        state.bytes_transferred = state.bytes_transferred.saturating_add(size);
+                        emit_progress(progress, state, from_path);
+                    }
+                    Err(error) if error.kind() == ErrorKind::Unsupported => {
+                        copy_file_across_operators_with_progress(
+                            from_op,
+                            to_op,
+                            from_path,
+                            to_path,
+                            Some(|bytes| {
+                                state.bytes_transferred =
+                                    state.bytes_transferred.saturating_add(bytes);
+                                emit_progress(progress, state, from_path);
+                            }),
+                            Some(is_cancelled as &(dyn Fn() -> bool + Sync)),
+                        )
+                        .await?;
+                    }
+                    Err(error) => return Err(error.into()),
+                }
             } else {
                 copy_file_across_operators_with_progress(
                     from_op,
@@ -894,9 +926,30 @@ where
         }
         TransferOperation::Move => {
             if same_source {
-                from_op.rename(from_path, to_path).await?;
-                state.bytes_transferred = state.bytes_transferred.saturating_add(size);
-                emit_progress(progress, state, from_path);
+                match from_op.rename(from_path, to_path).await {
+                    Ok(()) => {
+                        state.bytes_transferred = state.bytes_transferred.saturating_add(size);
+                        emit_progress(progress, state, from_path);
+                    }
+                    Err(error) if error.kind() == ErrorKind::Unsupported => {
+                        copy_file_across_operators_with_progress(
+                            from_op,
+                            to_op,
+                            from_path,
+                            to_path,
+                            Some(|bytes| {
+                                state.bytes_transferred =
+                                    state.bytes_transferred.saturating_add(bytes);
+                                emit_progress(progress, state, from_path);
+                            }),
+                            Some(is_cancelled as &(dyn Fn() -> bool + Sync)),
+                        )
+                        .await?;
+                        ensure_not_cancelled(is_cancelled)?;
+                        delete_recursive(from_op, from_path).await?;
+                    }
+                    Err(error) => return Err(error.into()),
+                }
             } else {
                 copy_file_across_operators_with_progress(
                     from_op,
@@ -1991,6 +2044,128 @@ mod tests {
         );
         assert_eq!(
             to_op.read("target/source copy.txt").await.unwrap().to_vec(),
+            b"new"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_transfer_entries_copies_directory_recursively() {
+        let from_op = create_test_operator().await;
+        let to_op = create_test_operator().await;
+        from_op.create_dir("docs/").await.unwrap();
+        from_op.create_dir("docs/empty/").await.unwrap();
+        from_op.write("docs/a.txt", "a".as_bytes()).await.unwrap();
+        from_op
+            .write("docs/nested/b.txt", "b".as_bytes())
+            .await
+            .unwrap();
+        create_directory(&to_op, "target").await.unwrap();
+
+        transfer_entries(
+            &from_op,
+            &to_op,
+            vec!["docs".to_string()],
+            "target",
+            TransferOperation::Copy,
+            false,
+            TransferConflictPolicy::Fail,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            to_op.read("target/docs/a.txt").await.unwrap().to_vec(),
+            b"a"
+        );
+        assert_eq!(
+            to_op
+                .read("target/docs/nested/b.txt")
+                .await
+                .unwrap()
+                .to_vec(),
+            b"b"
+        );
+        assert!(to_op.exists("target/docs/empty/").await.unwrap());
+        assert!(from_op.exists("docs/a.txt").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_transfer_entries_moves_directory_recursively_and_deletes_source() {
+        let op = create_test_operator().await;
+        op.write("docs/a.txt", "a".as_bytes()).await.unwrap();
+        op.write("docs/nested/b.txt", "b".as_bytes()).await.unwrap();
+        create_directory(&op, "target").await.unwrap();
+
+        transfer_entries(
+            &op,
+            &op,
+            vec!["docs".to_string()],
+            "target",
+            TransferOperation::Move,
+            true,
+            TransferConflictPolicy::Fail,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(op.read("target/docs/a.txt").await.unwrap().to_vec(), b"a");
+        assert_eq!(
+            op.read("target/docs/nested/b.txt").await.unwrap().to_vec(),
+            b"b"
+        );
+        assert!(!op.exists("docs/a.txt").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_transfer_entries_overwrites_directory_and_removes_stale_children() {
+        let op = create_test_operator().await;
+        op.write("docs/a.txt", "new".as_bytes()).await.unwrap();
+        op.write("target/docs/stale.txt", "old".as_bytes())
+            .await
+            .unwrap();
+
+        transfer_entries(
+            &op,
+            &op,
+            vec!["docs".to_string()],
+            "target",
+            TransferOperation::Copy,
+            true,
+            TransferConflictPolicy::Overwrite,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(op.read("target/docs/a.txt").await.unwrap().to_vec(), b"new");
+        assert!(!op.exists("target/docs/stale.txt").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_transfer_entries_renames_existing_directory_destination() {
+        let op = create_test_operator().await;
+        op.write("docs/a.txt", "new".as_bytes()).await.unwrap();
+        op.write("target/docs/old.txt", "old".as_bytes())
+            .await
+            .unwrap();
+
+        transfer_entries(
+            &op,
+            &op,
+            vec!["docs".to_string()],
+            "target",
+            TransferOperation::Copy,
+            true,
+            TransferConflictPolicy::Rename,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            op.read("target/docs/old.txt").await.unwrap().to_vec(),
+            b"old"
+        );
+        assert_eq!(
+            op.read("target/docs copy/a.txt").await.unwrap().to_vec(),
             b"new"
         );
     }
