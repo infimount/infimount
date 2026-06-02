@@ -526,6 +526,24 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
         });
     });
 
+    it("requires confirmation before deleting from a visible file action", async () => {
+        renderFileBrowser();
+
+        fireEvent.click(await screen.findByRole("button", { name: "Delete report.txt" }));
+
+        expect(await screen.findByText("Delete report.txt?")).toBeInTheDocument();
+        expect(deletePath).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+        expect(deletePath).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByRole("button", { name: "Delete report.txt" }));
+        fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+
+        await waitFor(() => {
+            expect(deletePath).toHaveBeenCalledWith("test", "/report.txt");
+        });
+    });
+
     it("shows visible progress while deletion is in progress", async () => {
         const pendingDelete = deferred<void>();
         vi.mocked(deletePath).mockReturnValueOnce(pendingDelete.promise);

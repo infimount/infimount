@@ -165,6 +165,7 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
   const [jobs, setJobs] = useState<TransferJob[]>(() => readPersistedJobs());
   const callbacksRef = useRef(new Map<string, TransferJobCallbacks>());
   const processingRef = useRef(false);
+  const cancelledJobIdsRef = useRef(new Set<string>());
 
   const patchJob = useCallback((jobId: string, patch: Partial<TransferJob>) => {
     setJobs((current) =>
@@ -191,6 +192,7 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
   );
 
   const retryTransfer = useCallback((jobId: string) => {
+    cancelledJobIdsRef.current.delete(jobId);
     setJobs((current) =>
       current.map((job) =>
         job.id === jobId && (job.status === "failed" || job.status === "cancelled")
@@ -208,6 +210,7 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const cancelTransfer = useCallback((jobId: string) => {
+    cancelledJobIdsRef.current.add(jobId);
     setJobs((current) =>
       current.map((job) => {
         if (job.id !== jobId) return job;
@@ -319,6 +322,10 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
           nextJob.operation,
           effectiveConflictPolicy,
         );
+        if (cancelledJobIdsRef.current.has(nextJob.id)) {
+          throw new Error("Transfer cancelled");
+        }
+
         patchJob(nextJob.id, {
           progress: 20,
           manifest,

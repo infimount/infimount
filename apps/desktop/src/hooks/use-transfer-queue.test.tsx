@@ -161,6 +161,39 @@ describe("useTransferQueue", () => {
     await waitFor(() => expect(screen.getByTestId("first-status")).toHaveTextContent("completed"));
   });
 
+  it("cancels while transfer planning is still pending", async () => {
+    let resolvePlan!: (value: Awaited<ReturnType<typeof planTransferEntries>>) => void;
+    vi.mocked(planTransferEntries).mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolvePlan = resolve;
+      }),
+    );
+    renderQueue();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add transfer" }));
+    await waitFor(() => expect(screen.getByTestId("first-status")).toHaveTextContent("running"));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel last" }));
+
+    resolvePlan({
+      operation: "copy",
+      conflictPolicy: "fail",
+      entries: [],
+      summary: {
+        create: 1,
+        overwrite: 0,
+        skip: 0,
+        rename: 0,
+        noop: 0,
+        conflict: 0,
+        totalItems: 1,
+        totalBytes: 12,
+      },
+    });
+
+    await waitFor(() => expect(screen.getByTestId("first-status")).toHaveTextContent("cancelled"));
+    expect(transferEntries).not.toHaveBeenCalled();
+  });
+
   it("updates running transfer progress from Tauri events", async () => {
     let resolveTransfer!: () => void;
     vi.mocked(transferEntries).mockImplementationOnce(

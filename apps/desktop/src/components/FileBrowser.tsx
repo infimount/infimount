@@ -328,6 +328,7 @@ export function FileBrowser({
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [pendingDeleteItems, setPendingDeleteItems] = useState<FileItem[] | null>(null);
   const [deleteProgress, setDeleteProgress] = useState<{
     total: number;
     completed: number;
@@ -1022,6 +1023,7 @@ export function FileBrowser({
         return;
       }
       event.preventDefault();
+      setPendingDeleteItems(null);
       setShowDeleteConfirm(true);
     };
 
@@ -1129,12 +1131,15 @@ export function FileBrowser({
     }
   };
 
-  const deleteOne = async (file: FileItem) => {
-    await runDeleteItems([file]);
+  const requestDeleteOne = (file: FileItem) => {
+    setPendingDeleteItems([file]);
+    setShowDeleteConfirm(true);
   };
 
-  const handleBulkDelete = async () => {
-    const toDelete = filteredFiles.filter((f) => selectedFiles.has(f.id));
+  const handleConfirmedDelete = async () => {
+    const toDelete = pendingDeleteItems ?? filteredFiles.filter((f) => selectedFiles.has(f.id));
+    setShowDeleteConfirm(false);
+    setPendingDeleteItems(null);
     await runDeleteItems(toDelete);
   };
 
@@ -1623,7 +1628,7 @@ export function FileBrowser({
                             onOpenFile={handleOpenFile}
                             onEditFile={handleEditFile}
                             onDownloadFile={handleDownloadFile}
-                            onDeleteFile={(file) => void deleteOne(file)}
+                            onDeleteFile={requestDeleteOne}
                             onCutSelected={() => setClipboardFromSelection("move")}
                             onCopySelected={() => setClipboardFromSelection("copy")}
                             canPaste={!!clipboard}
@@ -1643,7 +1648,7 @@ export function FileBrowser({
                             onOpenFile={handleOpenFile}
                             onEditFile={handleEditFile}
                             onDownloadFile={handleDownloadFile}
-                            onDeleteFile={(file) => void deleteOne(file)}
+                            onDeleteFile={requestDeleteOne}
                             sortField={sortField}
                             sortDirection={sortDirection}
                             onSortChange={toggleSort}
@@ -1876,12 +1881,20 @@ export function FileBrowser({
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+      <AlertDialog
+        open={showDeleteConfirm}
+        onOpenChange={(open) => {
+          setShowDeleteConfirm(open);
+          if (!open) setPendingDeleteItems(null);
+        }}
+      >
         <AlertDialogContent className="max-w-md rounded-2xl border border-border bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] shadow-2xl">
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete selected items?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {pendingDeleteItems?.length === 1 ? `Delete ${pendingDeleteItems[0].name}?` : "Delete selected items?"}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete the selected files and folders from{" "}
+              This will permanently delete {pendingDeleteItems?.length === 1 ? "this item" : "the selected files and folders"} from{" "}
               <span className="font-medium">{storageName}</span>. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -1891,8 +1904,7 @@ export function FileBrowser({
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               disabled={!!deleteProgress}
               onClick={() => {
-                setShowDeleteConfirm(false);
-                void handleBulkDelete();
+                void handleConfirmedDelete();
               }}
             >
               Delete
