@@ -1,7 +1,6 @@
 use infimount_core::{config, CoreError, Source, SourceKind};
 use infimount_mcp::confirmation::ConfirmationManager;
 use infimount_mcp::errors::{err_with_details, McpError, McpErrorCode, McpResult};
-use infimount_mcp::opendal_adapter::build_operator;
 use infimount_mcp::registry::{StorageRecord, StorageRegistry};
 use infimount_mcp::runtime::{
     start_http_server_from_settings, McpHttpServerHandle, HTTP_ENDPOINT_PATH,
@@ -111,7 +110,9 @@ impl AppState {
         let storage = self
             .find_storage_by_id(storage_id)
             .map_err(mcp_error_to_core_error)?;
-        build_operator(&storage).map_err(mcp_error_to_core_error)
+        let source = storage_record_to_source(storage)?;
+        infimount_core::registry::build_operator(&source)
+            .map_err(|e| CoreError::Config(e.to_string()))
     }
 
     pub async fn apply_mcp_settings(&self, settings: McpSettings) -> McpResult<McpRuntimeStatus> {
@@ -320,8 +321,10 @@ fn legacy_source_to_storage(source: Source) -> StorageRecord {
     .to_string();
 
     let mut config_map = Map::new();
-    for (key, value) in source.config.unwrap_or_default() {
-        config_map.insert(key, Value::String(value));
+    if let Some(map) = source.config.as_object() {
+        for (key, value) in map {
+            config_map.insert(key.clone(), value.clone());
+        }
     }
 
     if matches!(backend.as_str(), "local" | "fs") && !source.root.trim().is_empty() {
@@ -333,6 +336,20 @@ fn legacy_source_to_storage(source: Source) -> StorageRecord {
     let mut storage = StorageRecord::new(source.name, backend, Value::Object(config_map));
     storage.mcp_exposed = false;
     storage
+}
+
+fn storage_record_to_source(storage: StorageRecord) -> Result<Source, CoreError> {
+    use std::str::FromStr;
+    let kind = SourceKind::from_str(&storage.backend)
+        .map_err(|_| CoreError::Config(format!("unsupported backend '{}'", storage.backend)))?;
+
+    Ok(Source {
+        id: storage.id,
+        name: storage.name,
+        kind,
+        root: String::new(),
+        config: storage.config,
+    })
 }
 
 pub fn mcp_error_to_core_error(err: McpError) -> CoreError {
@@ -364,7 +381,18 @@ fn map_runtime_io_error(err: std::io::Error) -> McpError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+
+    #[test]
+    fn storage_record_conversion_rejects_unsupported_backend() {
+        let storage = StorageRecord::new(
+            "Unsupported".to_string(),
+            "mystery".to_string(),
+            serde_json::json!({}),
+        );
+
+        let err = storage_record_to_source(storage).unwrap_err();
+        assert!(err.to_string().contains("unsupported backend 'mystery'"));
+    }
 
     #[test]
     fn legacy_source_migration_defaults_to_not_mcp_exposed() {
@@ -373,7 +401,7 @@ mod tests {
             name: "Legacy Local".to_string(),
             kind: SourceKind::Local,
             root: "/tmp".to_string(),
-            config: Some(HashMap::new()),
+            config: serde_json::json!({}),
         };
 
         let storage = legacy_source_to_storage(source);
