@@ -9,24 +9,32 @@ pub fn get_capabilities(op: &Operator) -> StorageBackendCapabilities {
 }
 
 pub fn check_versioning_disabled(storage: &StorageRecord) -> Option<bool> {
-    let source = storage_record_to_source(storage);
+    let source = storage_record_to_source(storage).ok()?;
     registry::check_versioning_disabled(&source)
 }
 
 pub fn build_operator(storage: &StorageRecord) -> McpResult<Operator> {
-    let source = storage_record_to_source(storage);
+    let source = storage_record_to_source(storage)?;
     registry::build_operator(&source).map_err(core_error_to_mcp_error)
 }
 
-fn storage_record_to_source(storage: &StorageRecord) -> Source {
+fn storage_record_to_source(storage: &StorageRecord) -> McpResult<Source> {
     use std::str::FromStr;
-    Source {
+    let kind = SourceKind::from_str(&storage.backend).map_err(|_| {
+        crate::errors::err_with_details(
+            McpErrorCode::ERR_BACKEND_UNSUPPORTED,
+            format!("unsupported backend '{}'", storage.backend),
+            serde_json::json!({ "backend": storage.backend }),
+        )
+    })?;
+
+    Ok(Source {
         id: storage.id.clone(),
         name: storage.name.clone(),
-        kind: SourceKind::from_str(&storage.backend).unwrap_or(SourceKind::Local),
+        kind,
         root: String::new(),
         config: storage.config.clone(),
-    }
+    })
 }
 
 fn core_error_to_mcp_error(err: infimount_core::CoreError) -> McpError {
@@ -64,6 +72,18 @@ mod tests {
         let caps = get_capabilities(&op);
         assert!(caps.presign_read);
         assert!(caps.write_with_user_metadata);
+    }
+
+    #[test]
+    fn unsupported_backend_returns_explicit_error() {
+        let err = build_operator(&storage("mystery", json!({}))).unwrap_err();
+
+        assert_eq!(err.code, McpErrorCode::ERR_BACKEND_UNSUPPORTED);
+        assert_eq!(err.details["backend"], "mystery");
+        assert_eq!(
+            check_versioning_disabled(&storage("mystery", json!({}))),
+            None
+        );
     }
 
     #[test]

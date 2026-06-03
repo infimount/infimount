@@ -148,7 +148,7 @@ impl std::str::FromStr for SourceKind {
     type Err = ();
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "local" | "fs" => Ok(SourceKind::Local),
             "s3" => Ok(SourceKind::S3),
             "webdav" => Ok(SourceKind::WebDav),

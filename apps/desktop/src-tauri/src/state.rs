@@ -110,7 +110,7 @@ impl AppState {
         let storage = self
             .find_storage_by_id(storage_id)
             .map_err(mcp_error_to_core_error)?;
-        let source = storage_record_to_source(storage);
+        let source = storage_record_to_source(storage)?;
         infimount_core::registry::build_operator(&source)
             .map_err(|e| CoreError::Config(e.to_string()))
     }
@@ -338,15 +338,18 @@ fn legacy_source_to_storage(source: Source) -> StorageRecord {
     storage
 }
 
-fn storage_record_to_source(storage: StorageRecord) -> Source {
+fn storage_record_to_source(storage: StorageRecord) -> Result<Source, CoreError> {
     use std::str::FromStr;
-    Source {
+    let kind = SourceKind::from_str(&storage.backend)
+        .map_err(|_| CoreError::Config(format!("unsupported backend '{}'", storage.backend)))?;
+
+    Ok(Source {
         id: storage.id,
         name: storage.name,
-        kind: SourceKind::from_str(&storage.backend).unwrap_or(SourceKind::Local),
+        kind,
         root: String::new(),
         config: storage.config,
-    }
+    })
 }
 
 pub fn mcp_error_to_core_error(err: McpError) -> CoreError {
@@ -378,6 +381,18 @@ fn map_runtime_io_error(err: std::io::Error) -> McpError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn storage_record_conversion_rejects_unsupported_backend() {
+        let storage = StorageRecord::new(
+            "Unsupported".to_string(),
+            "mystery".to_string(),
+            serde_json::json!({}),
+        );
+
+        let err = storage_record_to_source(storage).unwrap_err();
+        assert!(err.to_string().contains("unsupported backend 'mystery'"));
+    }
 
     #[test]
     fn legacy_source_migration_defaults_to_not_mcp_exposed() {
