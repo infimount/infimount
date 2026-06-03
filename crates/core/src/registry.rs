@@ -453,7 +453,7 @@ fn build_gcs_operator(source: &Source) -> Result<Operator> {
                 .get("serviceAccountJson")
                 .and_then(|v| v.as_str())
         })
-        .and_then(|v| normalize_gcs_credential(v));
+        .and_then(normalize_gcs_credential);
 
     if let Some(encoded) = &credential {
         builder = builder.credential(encoded);
