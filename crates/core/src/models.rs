@@ -96,9 +96,10 @@ pub struct Source {
     pub name: String,
     pub kind: SourceKind,
     /// Root path for this source (for local filesystem).
+    #[serde(default)]
     pub root: String,
     /// Configuration for the source (credentials, endpoint, etc.).
-    pub config: Option<std::collections::HashMap<String, String>>,
+    pub config: serde_json::Value,
 }
 
 /// Types of storage that can back a Source.
@@ -141,6 +142,36 @@ impl fmt::Display for SourceKind {
             SourceKind::Obs => write!(f, "obs"),
         }
     }
+}
+
+impl std::str::FromStr for SourceKind {
+    type Err = ();
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "local" | "fs" => Ok(SourceKind::Local),
+            "s3" => Ok(SourceKind::S3),
+            "webdav" => Ok(SourceKind::WebDav),
+            "azure_blob" | "azblob" => Ok(SourceKind::AzureBlob),
+            "gcs" => Ok(SourceKind::Gcs),
+            "b2" | "backblaze_b2" => Ok(SourceKind::B2),
+            "oss" | "aliyun_oss" => Ok(SourceKind::Oss),
+            "cos" | "tencent_cos" => Ok(SourceKind::Cos),
+            "obs" | "huawei_obs" => Ok(SourceKind::Obs),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageBackendCapabilities {
+    pub list_with_versions: bool,
+    pub read_with_version: bool,
+    pub delete_with_version: bool,
+    pub presign_read: bool,
+    pub versioning_disabled: bool,
+    pub write_with_user_metadata: bool,
 }
 
 /// A single entry returned from listing or stat operations.

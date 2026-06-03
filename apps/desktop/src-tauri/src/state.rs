@@ -1,7 +1,6 @@
 use infimount_core::{config, CoreError, Source, SourceKind};
 use infimount_mcp::confirmation::ConfirmationManager;
 use infimount_mcp::errors::{err_with_details, McpError, McpErrorCode, McpResult};
-use infimount_mcp::opendal_adapter::build_operator;
 use infimount_mcp::registry::{StorageRecord, StorageRegistry};
 use infimount_mcp::runtime::{
     start_http_server_from_settings, McpHttpServerHandle, HTTP_ENDPOINT_PATH,
@@ -111,7 +110,8 @@ impl AppState {
         let storage = self
             .find_storage_by_id(storage_id)
             .map_err(mcp_error_to_core_error)?;
-        build_operator(&storage).map_err(mcp_error_to_core_error)
+        let source = storage_record_to_source(storage);
+        infimount_core::registry::build_operator(&source).map_err(|e| CoreError::Config(e.to_string()))
     }
 
     pub async fn apply_mcp_settings(&self, settings: McpSettings) -> McpResult<McpRuntimeStatus> {
@@ -333,6 +333,17 @@ fn legacy_source_to_storage(source: Source) -> StorageRecord {
     let mut storage = StorageRecord::new(source.name, backend, Value::Object(config_map));
     storage.mcp_exposed = false;
     storage
+}
+
+fn storage_record_to_source(storage: StorageRecord) -> Source {
+    use std::str::FromStr;
+    Source {
+        id: storage.id,
+        name: storage.name,
+        kind: SourceKind::from_str(&storage.backend).unwrap_or(SourceKind::Local),
+        root: String::new(),
+        config: storage.config,
+    }
 }
 
 pub fn mcp_error_to_core_error(err: McpError) -> CoreError {
