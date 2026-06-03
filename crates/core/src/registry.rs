@@ -472,7 +472,8 @@ fn build_gcs_operator(source: &Source) -> Result<Operator> {
     // treat this as an anonymous/emulator connection:
     // - don't try to load credentials from env or VM metadata
     // - allow unsigned requests.
-    if source.config.get("endpoint").is_some() && credential.is_none() && credential_path.is_none() {
+    if source.config.get("endpoint").is_some() && credential.is_none() && credential_path.is_none()
+    {
         builder = builder
             .allow_anonymous()
             .disable_vm_metadata()

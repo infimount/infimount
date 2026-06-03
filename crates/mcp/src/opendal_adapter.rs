@@ -1,8 +1,8 @@
 use crate::errors::{McpError, McpErrorCode, McpResult};
 use crate::registry::StorageRecord;
+pub use infimount_core::models::StorageBackendCapabilities;
 use infimount_core::{registry, Source, SourceKind};
 use opendal::Operator;
-pub use infimount_core::models::StorageBackendCapabilities;
 
 pub fn get_capabilities(op: &Operator) -> StorageBackendCapabilities {
     registry::get_capabilities(op)
@@ -105,5 +105,4 @@ mod tests {
             assert!(caps.presign_read);
         }
     }
-
 }
