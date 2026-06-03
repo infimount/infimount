@@ -378,7 +378,6 @@ fn map_runtime_io_error(err: std::io::Error) -> McpError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     #[test]
     fn legacy_source_migration_defaults_to_not_mcp_exposed() {
