@@ -6,9 +6,11 @@ use crate::opendal_adapter;
 use crate::path::{enforce_root_operation, parse_mcp_path, resolve_storage_path, FsOp};
 use crate::policy::McpOperation;
 
+use infimount_core::operations::{TransferConflictPolicy, TransferOperation};
+
 use super::common::{
-    copy_directory, copy_file_chunked, delete_existing_on_operator, enforce_storage_policy,
-    ensure_parent_exists_for_copy, preflight_copy_directory, FsToolsContext,
+    collect_entries_with_policy, core_error_to_mcp_error, enforce_storage_policy, FsToolsContext,
+    DeniedDescendantBehavior,
 };
 
 #[derive(Debug, Deserialize)]
@@ -69,7 +71,7 @@ pub async fn copy_path(ctx: &FsToolsContext, input: CopyPathInput) -> McpResult<
             json!({ "session_id": input.session_id }),
         ));
     }
-    let cross_storage = src_resolved.storage.id != dst_resolved.storage.id;
+    let same_storage = src_resolved.storage.id == dst_resolved.storage.id;
     enforce_storage_policy(
         &src_resolved.storage,
         &src_resolved.parsed.backend_path,
@@ -82,12 +84,10 @@ pub async fn copy_path(ctx: &FsToolsContext, input: CopyPathInput) -> McpResult<
         &dst_resolved.parsed.backend_path,
         McpOperation::Copy,
         input.overwrite,
-        cross_storage,
+        !same_storage,
     )?;
 
-    if src_resolved.storage.id == dst_resolved.storage.id
-        && src_parsed.backend_path == dst_parsed.backend_path
-    {
+    if same_storage && src_parsed.backend_path == dst_parsed.backend_path {
         return Err(err_with_details(
             McpErrorCode::ERR_ALREADY_EXISTS,
             "source and destination are the same path",
@@ -101,12 +101,17 @@ pub async fn copy_path(ctx: &FsToolsContext, input: CopyPathInput) -> McpResult<
     let src_meta = if src_parsed.backend_path.is_empty() {
         None
     } else {
-        Some(
-            src_op
-                .stat(&src_parsed.backend_path)
-                .await
-                .map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?,
-        )
+        match src_op.stat(&src_parsed.backend_path).await {
+            Ok(meta) => Some(meta),
+            Err(e) if e.kind() == opendal::ErrorKind::NotFound => {
+                return Err(err_with_details(
+                    McpErrorCode::ERR_PATH_NOT_FOUND,
+                    "source path not found",
+                    json!({ "path": src_parsed.normalized }),
+                ));
+            }
+            Err(e) => return Err(map_opendal_error(&e, McpErrorCode::ERR_INTERNAL)),
+        }
     };
     let src_is_dir = src_parsed.backend_path.is_empty()
         || src_meta.as_ref().map(|meta| meta.is_dir()).unwrap_or(false);
@@ -119,84 +124,34 @@ pub async fn copy_path(ctx: &FsToolsContext, input: CopyPathInput) -> McpResult<
         ));
     }
 
-    let dst_meta = if dst_parsed.backend_path.is_empty() {
-        None
-    } else {
-        match dst_op.stat(&dst_parsed.backend_path).await {
-            Ok(meta) => Some(meta),
-            Err(err) if err.kind() == opendal::ErrorKind::NotFound => None,
-            Err(err) => return Err(map_opendal_error(&err, McpErrorCode::ERR_INTERNAL)),
-        }
-    };
-
-    let dst_exists = dst_parsed.backend_path.is_empty() || dst_meta.is_some();
-    if dst_exists && !input.overwrite {
-        return Err(err_with_details(
-            McpErrorCode::ERR_ALREADY_EXISTS,
-            "destination path already exists",
-            json!({ "dst": dst_parsed.normalized }),
-        ));
-    }
-
     if src_is_dir {
-        preflight_copy_directory(
+        // MCP-specific pre-flight check for descendant policies
+        collect_entries_with_policy(
             &src_op,
             &src_resolved.storage,
-            &dst_resolved.storage,
             &src_parsed.backend_path,
-            &dst_parsed.backend_path,
-            src_resolved.storage.id == dst_resolved.storage.id,
+            true,
+            McpOperation::Read,
+            DeniedDescendantBehavior::Fail,
         )
         .await?;
     }
 
-    if dst_exists && input.overwrite && !dst_parsed.backend_path.is_empty() {
-        delete_existing_on_operator(
-            &dst_op,
-            &dst_resolved.storage,
-            &dst_resolved.storage.name,
-            &dst_parsed.backend_path,
-            dst_meta.as_ref().map(|meta| meta.is_dir()).unwrap_or(false),
-        )
-        .await?;
-    }
-
-    if src_is_dir {
-        copy_directory(
-            &src_op,
-            &dst_op,
-            &src_resolved.storage,
-            &dst_resolved.storage,
-            &src_parsed.backend_path,
-            &dst_parsed.backend_path,
-            src_resolved.storage.id == dst_resolved.storage.id,
-        )
-        .await?;
-    } else {
-        ensure_parent_exists_for_copy(
-            &dst_op,
-            &dst_resolved.storage.name,
-            &dst_parsed.backend_path,
-        )
-        .await?;
-
-        if src_resolved.storage.id == dst_resolved.storage.id {
-            src_op
-                .copy(&src_parsed.backend_path, &dst_parsed.backend_path)
-                .await
-                .map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?;
+    infimount_core::operations::transfer_path(
+        &src_op,
+        &dst_op,
+        &src_parsed.backend_path,
+        &dst_parsed.backend_path,
+        TransferOperation::Copy,
+        same_storage,
+        if input.overwrite {
+            TransferConflictPolicy::Overwrite
         } else {
-            let src_meta = src_meta.expect("file copy must have source metadata");
-            copy_file_chunked(
-                &src_op,
-                &dst_op,
-                &src_parsed.backend_path,
-                &dst_parsed.backend_path,
-                src_meta.content_length(),
-            )
-            .await?;
-        }
-    }
+            TransferConflictPolicy::Fail
+        },
+    )
+    .await
+    .map_err(core_error_to_mcp_error)?;
 
     Ok(CopyPathOutput {
         src: src_parsed.normalized,

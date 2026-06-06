@@ -351,7 +351,7 @@ async fn list_dir_recursive_is_flat_and_sorted_by_full_path() {
         .collect::<Vec<_>>();
     assert_eq!(
         paths,
-        vec!["/Local/docs", "/Local/docs/a.txt", "/Local/z.txt"]
+        vec!["/Local/docs/", "/Local/docs/a.txt", "/Local/z.txt"]
     );
 }
 
@@ -1579,7 +1579,7 @@ async fn copy_path_cross_storage_streams_large_file() {
     let dst_root = dir.path().join("dst");
     std::fs::create_dir_all(&src_root).unwrap();
     std::fs::create_dir_all(&dst_root).unwrap();
-    let payload = vec![b'x'; (common::COPY_CHUNK_SIZE as usize) + 17];
+    let payload = vec![b'x'; (8 * 1024 * 1024) + 17];
     std::fs::write(src_root.join("large.bin"), &payload).unwrap();
 
     let registry = registry_in(&dir);

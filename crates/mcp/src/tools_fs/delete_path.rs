@@ -7,9 +7,8 @@ use crate::path::{enforce_root_operation, parse_mcp_path, resolve_storage_path, 
 use crate::policy::McpOperation;
 
 use super::common::{
-    backend_path_from_virtual, collect_entries_with_policy, enforce_storage_policy,
-    enforce_storage_policy_for_virtual_path, normalize_list_prefix, path_depth, sort_entries,
-    DeniedDescendantBehavior, EntryType, FsToolsContext,
+    collect_entries_with_policy, enforce_storage_policy,
+    DeniedDescendantBehavior, FsToolsContext,
 };
 
 #[derive(Debug, Deserialize)]
@@ -103,7 +102,8 @@ pub async fn delete_path(
         ));
     }
 
-    let mut entries = collect_entries_with_policy(
+    // MCP-specific pre-flight check for descendant policies
+    collect_entries_with_policy(
         &op,
         &storage,
         &parsed.backend_path,
@@ -112,55 +112,10 @@ pub async fn delete_path(
         DeniedDescendantBehavior::Fail,
     )
     .await?;
-    for entry in &entries {
-        enforce_storage_policy_for_virtual_path(
-            &storage,
-            &storage.name,
-            &entry.path,
-            McpOperation::Delete,
-            false,
-            false,
-        )?;
-    }
-    sort_entries(&mut entries, true);
 
-    let mut delete_order = entries;
-    delete_order.sort_by(|a, b| {
-        path_depth(&b.path).cmp(&path_depth(&a.path)).then_with(|| {
-            match (a.entry_type, b.entry_type) {
-                (EntryType::File, EntryType::Dir) => std::cmp::Ordering::Less,
-                (EntryType::Dir, EntryType::File) => std::cmp::Ordering::Greater,
-                _ => a.path.cmp(&b.path),
-            }
-        })
-    });
-
-    for entry in delete_order {
-        let backend_path = backend_path_from_virtual(&storage.name, &entry.path);
-        let delete_target = match entry.entry_type {
-            EntryType::File => backend_path,
-            EntryType::Dir => normalize_list_prefix(&backend_path),
-        };
-
-        if delete_target.is_empty() {
-            continue;
-        }
-
-        match op.delete(&delete_target).await {
-            Ok(()) => {}
-            Err(err) if err.kind() == opendal::ErrorKind::NotFound => {}
-            Err(err) => return Err(map_opendal_error(&err, McpErrorCode::ERR_INTERNAL)),
-        }
-    }
-
-    if !parsed.backend_path.is_empty() {
-        let dir_target = normalize_list_prefix(&parsed.backend_path);
-        match op.delete(&dir_target).await {
-            Ok(()) => {}
-            Err(err) if err.kind() == opendal::ErrorKind::NotFound => {}
-            Err(err) => return Err(map_opendal_error(&err, McpErrorCode::ERR_INTERNAL)),
-        }
-    }
+    infimount_core::operations::delete(&op, &parsed.backend_path)
+        .await
+        .map_err(super::common::core_error_to_mcp_error)?;
 
     Ok(DeletePathOutput {
         path: parsed.normalized,

@@ -1,8 +1,5 @@
-use futures::io::AsyncWriteExt;
-use futures::TryStreamExt;
 use serde::Serialize;
 use serde_json::json;
-use std::collections::HashSet;
 
 use crate::errors::{err_with_details, map_opendal_error, McpErrorCode, McpResult};
 use crate::policy::{evaluate_storage_policy, McpOperation, PolicyDecision};
@@ -10,7 +7,6 @@ use crate::registry::StorageRecord;
 use crate::registry::StorageRegistry;
 use crate::session::SessionManager;
 
-pub const COPY_CHUNK_SIZE: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug)]
 pub struct FsToolsContext {
@@ -58,17 +54,6 @@ pub(super) fn enforce_storage_policy(
     }
 }
 
-pub(super) fn enforce_storage_policy_for_virtual_path(
-    storage: &StorageRecord,
-    storage_name: &str,
-    full_path: &str,
-    operation: McpOperation,
-    overwrite: bool,
-    cross_storage: bool,
-) -> McpResult<()> {
-    let backend_path = backend_path_from_virtual(storage_name, full_path);
-    enforce_storage_policy(storage, &backend_path, operation, overwrite, cross_storage)
-}
 
 #[derive(Debug, Serialize, Clone)]
 pub struct ListDirEntry {
@@ -139,92 +124,52 @@ async fn collect_entries_inner(
     recursive: bool,
     policy: Option<(&StorageRecord, McpOperation, DeniedDescendantBehavior)>,
 ) -> McpResult<Vec<ListDirEntry>> {
-    let mut out = Vec::new();
-    let mut stack = vec![normalize_list_prefix(backend_path)];
-    let mut visited = HashSet::new();
-
-    while let Some(current_prefix) = stack.pop() {
-        if recursive && !visited.insert(current_prefix.clone()) {
-            continue;
-        }
-
-        let mut lister = if current_prefix.is_empty() {
-            match op.lister("").await {
-                Ok(l) => l,
-                Err(e) if e.kind() == opendal::ErrorKind::NotFound => op
-                    .lister("/")
-                    .await
-                    .map_err(|err| map_opendal_error(&err, McpErrorCode::ERR_PATH_NOT_FOUND))?,
-                Err(e) => return Err(map_opendal_error(&e, McpErrorCode::ERR_PATH_NOT_FOUND)),
+    let filter = |full_path: &str| -> infimount_core::models::Result<bool> {
+        if let Some((storage, operation, denied_behavior)) = policy {
+            match enforce_storage_policy(storage, full_path, operation, false, false) {
+                Ok(()) => Ok(true),
+                Err(error) if error.code == McpErrorCode::ERR_MCP_POLICY_DENIED => {
+                    if denied_behavior == DeniedDescendantBehavior::Filter {
+                        Ok(false)
+                    } else {
+                        Err(infimount_core::models::CoreError::Config(format!(
+                            "[ERR_MCP_POLICY_DENIED] {}",
+                            error.message
+                        )))
+                    }
+                }
+                Err(e) => Err(infimount_core::models::CoreError::Config(e.to_string())),
             }
         } else {
-            op.lister(&current_prefix)
-                .await
-                .map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_PATH_NOT_FOUND))?
-        };
+            Ok(true)
+        }
+    };
 
-        while let Some(obj) = lister
-            .try_next()
+    let core_entries = if recursive {
+        infimount_core::operations::list_entries_recursive_with_filter(op, backend_path, filter)
             .await
-            .map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?
-        {
-            let object_path = obj.path().to_string();
-            let normalized_object = object_path.trim_end_matches('/').to_string();
-            if normalized_object.is_empty() {
-                continue;
-            }
-            if normalized_object == current_prefix.trim_end_matches('/') {
-                continue;
-            }
+            .map_err(core_error_to_mcp_error)?
+    } else {
+        infimount_core::operations::list_entries_with_filter(op, backend_path, filter)
+            .await
+            .map_err(core_error_to_mcp_error)?
+    };
 
-            if let Some((storage, operation, denied_behavior)) = policy {
-                match enforce_storage_policy(storage, &normalized_object, operation, false, false) {
-                    Ok(()) => {}
-                    Err(error) if error.code == McpErrorCode::ERR_MCP_POLICY_DENIED => {
-                        if denied_behavior == DeniedDescendantBehavior::Filter {
-                            continue;
-                        }
-                        return Err(error);
-                    }
-                    Err(error) => return Err(error),
-                }
-            }
-
-            let meta = op
-                .stat(&object_path)
-                .await
-                .map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?;
-
-            let is_dir = meta.is_dir();
-            let name = extract_name(&normalized_object);
-            let full_path = format!("/{storage_name}/{}", normalized_object);
-
-            out.push(ListDirEntry {
-                name,
-                path: full_path,
-                entry_type: if is_dir {
-                    EntryType::Dir
-                } else {
-                    EntryType::File
-                },
-                size_bytes: if is_dir {
-                    None
-                } else {
-                    Some(meta.content_length())
-                },
-                modified_at: meta.last_modified().map(|dt| dt.to_string()),
-                etag: meta.etag().map(|s| s.to_string()),
-            });
-
-            if recursive && is_dir {
-                stack.push(normalize_list_prefix(&normalized_object));
-            }
-        }
-
-        if !recursive {
-            break;
-        }
-    }
+    let out = core_entries
+        .into_iter()
+        .map(|e| ListDirEntry {
+            name: e.name,
+            path: format!("/{storage_name}/{}", e.path.trim_start_matches('/')),
+            entry_type: if e.is_dir {
+                EntryType::Dir
+            } else {
+                EntryType::File
+            },
+            size_bytes: if e.is_dir { None } else { Some(e.size) },
+            modified_at: e.modified_at,
+            etag: e.etag,
+        })
+        .collect();
 
     Ok(out)
 }
@@ -291,284 +236,22 @@ pub(super) async fn create_dir_chain(
     Ok(())
 }
 
-pub(super) async fn ensure_parent_exists_for_copy(
-    op: &opendal::Operator,
-    storage_name: &str,
-    backend_path: &str,
-) -> McpResult<()> {
-    if let Some(parent) = parent_path(backend_path) {
-        match op.stat(&parent).await {
-            Ok(meta) if meta.is_dir() => Ok(()),
-            Ok(_) => Err(err_with_details(
-                McpErrorCode::ERR_PARENT_NOT_FOUND,
-                "parent directory does not exist",
-                json!({ "parent": format!("/{}/{}", storage_name, parent) }),
-            )),
-            Err(err) if err.kind() == opendal::ErrorKind::NotFound => Err(err_with_details(
-                McpErrorCode::ERR_PARENT_NOT_FOUND,
-                "parent directory does not exist",
-                json!({ "parent": format!("/{}/{}", storage_name, parent) }),
-            )),
-            Err(err) => Err(map_opendal_error(&err, McpErrorCode::ERR_INTERNAL)),
-        }?
-    }
 
-    Ok(())
-}
 
-pub(super) async fn copy_file_chunked(
-    src_op: &opendal::Operator,
-    dst_op: &opendal::Operator,
-    src_backend_path: &str,
-    dst_backend_path: &str,
-    size: u64,
-) -> McpResult<()> {
-    let mut writer = dst_op
-        .writer(dst_backend_path)
-        .await
-        .map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?
-        .into_futures_async_write();
 
-    let mut offset = 0_u64;
-    while offset < size {
-        let end = (offset + COPY_CHUNK_SIZE).min(size);
-        let chunk = src_op
-            .read_with(src_backend_path)
-            .range(offset..end)
-            .await
-            .map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?
-            .to_vec();
-        writer.write_all(&chunk).await.map_err(|e| {
-            err_with_details(
-                McpErrorCode::ERR_INTERNAL,
-                "failed to write destination file",
-                json!({ "io_error": e.to_string() }),
-            )
-        })?;
-        offset = end;
-    }
 
-    writer.close().await.map_err(|e| {
-        err_with_details(
-            McpErrorCode::ERR_INTERNAL,
-            "failed to finalize destination file",
-            json!({ "io_error": e.to_string() }),
-        )
-    })?;
-
-    Ok(())
-}
-
-pub(super) async fn delete_existing_on_operator(
-    op: &opendal::Operator,
-    storage: &StorageRecord,
-    storage_name: &str,
-    backend_path: &str,
-    is_dir: bool,
-) -> McpResult<()> {
-    enforce_storage_policy(storage, backend_path, McpOperation::Delete, false, false)?;
-
-    if !is_dir {
-        op.delete(backend_path)
-            .await
-            .map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?;
-        return Ok(());
-    }
-
-    let mut entries = collect_entries_with_policy(
-        op,
-        storage,
-        backend_path,
-        true,
-        McpOperation::Delete,
-        DeniedDescendantBehavior::Fail,
-    )
-    .await?;
-    sort_entries(&mut entries, true);
-    entries.sort_by(|a, b| {
-        path_depth(&b.path).cmp(&path_depth(&a.path)).then_with(|| {
-            match (a.entry_type, b.entry_type) {
-                (EntryType::File, EntryType::Dir) => std::cmp::Ordering::Less,
-                (EntryType::Dir, EntryType::File) => std::cmp::Ordering::Greater,
-                _ => a.path.cmp(&b.path),
-            }
-        })
-    });
-
-    for entry in &entries {
-        enforce_storage_policy_for_virtual_path(
-            storage,
-            storage_name,
-            &entry.path,
-            McpOperation::Delete,
-            false,
-            false,
-        )?;
-    }
-
-    for entry in entries {
-        let child_backend = backend_path_from_virtual(storage_name, &entry.path);
-        let delete_target = match entry.entry_type {
-            EntryType::File => child_backend,
-            EntryType::Dir => normalize_list_prefix(&child_backend),
-        };
-
-        if delete_target.is_empty() {
-            continue;
+pub(super) fn core_error_to_mcp_error(err: infimount_core::CoreError) -> crate::errors::McpError {
+    match err {
+        infimount_core::CoreError::Storage(e) => map_opendal_error(&e, McpErrorCode::ERR_INTERNAL),
+        infimount_core::CoreError::Config(msg) if msg.contains("[ERR_MCP_POLICY_DENIED]") => {
+            // This is a hack to pass through MCP policy errors that were wrapped in CoreError::Config
+            // by our fallible filters. In a real system, CoreError might have a dedicated Policy variant.
+            err_with_details(McpErrorCode::ERR_MCP_POLICY_DENIED, msg, json!({}))
         }
-
-        match op.delete(&delete_target).await {
-            Ok(()) => {}
-            Err(err) if err.kind() == opendal::ErrorKind::NotFound => {}
-            Err(err) => return Err(map_opendal_error(&err, McpErrorCode::ERR_INTERNAL)),
-        }
+        _ => err_with_details(McpErrorCode::ERR_INTERNAL, err.to_string(), json!({})),
     }
-
-    let dir_target = normalize_list_prefix(backend_path);
-    match op.delete(&dir_target).await {
-        Ok(()) => {}
-        Err(err) if err.kind() == opendal::ErrorKind::NotFound => {}
-        Err(err) => return Err(map_opendal_error(&err, McpErrorCode::ERR_INTERNAL)),
-    }
-
-    Ok(())
 }
 
-pub(super) async fn preflight_copy_directory(
-    src_op: &opendal::Operator,
-    src_storage: &StorageRecord,
-    dst_storage: &StorageRecord,
-    src_backend_root: &str,
-    dst_backend_root: &str,
-    same_storage: bool,
-) -> McpResult<()> {
-    let mut entries = collect_entries_with_policy(
-        src_op,
-        src_storage,
-        src_backend_root,
-        true,
-        McpOperation::Read,
-        DeniedDescendantBehavior::Fail,
-    )
-    .await?;
-    sort_entries(&mut entries, true);
-
-    for entry in &entries {
-        let src_backend = backend_path_from_virtual(&src_storage.name, &entry.path);
-        let relative = relative_backend_path(src_backend_root, &src_backend);
-        let dst_backend = join_backend_path(dst_backend_root, &relative);
-        enforce_storage_policy(src_storage, &src_backend, McpOperation::Read, false, false)?;
-        enforce_storage_policy(
-            dst_storage,
-            &dst_backend,
-            McpOperation::Copy,
-            false,
-            !same_storage,
-        )?;
-    }
-
-    Ok(())
-}
-
-pub(super) async fn copy_directory(
-    src_op: &opendal::Operator,
-    dst_op: &opendal::Operator,
-    src_storage: &StorageRecord,
-    dst_storage: &StorageRecord,
-    src_backend_root: &str,
-    dst_backend_root: &str,
-    same_storage: bool,
-) -> McpResult<()> {
-    preflight_copy_directory(
-        src_op,
-        src_storage,
-        dst_storage,
-        src_backend_root,
-        dst_backend_root,
-        same_storage,
-    )
-    .await?;
-
-    let mut entries = collect_entries_with_policy(
-        src_op,
-        src_storage,
-        src_backend_root,
-        true,
-        McpOperation::Read,
-        DeniedDescendantBehavior::Fail,
-    )
-    .await?;
-    sort_entries(&mut entries, true);
-
-    if !dst_backend_root.is_empty() {
-        create_dir_chain(
-            dst_op,
-            dst_backend_root,
-            &dst_storage.name,
-            dst_backend_root,
-        )
-        .await?;
-    }
-
-    for entry in entries {
-        let src_backend = backend_path_from_virtual(&src_storage.name, &entry.path);
-        let relative = relative_backend_path(src_backend_root, &src_backend);
-        let dst_backend = join_backend_path(dst_backend_root, &relative);
-
-        match entry.entry_type {
-            EntryType::Dir => {
-                create_dir_chain(dst_op, &dst_backend, &dst_storage.name, &entry.path).await?;
-            }
-            EntryType::File => {
-                ensure_parent_exists_for_copy(dst_op, &dst_storage.name, &dst_backend).await?;
-                if same_storage {
-                    src_op
-                        .copy(&src_backend, &dst_backend)
-                        .await
-                        .map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?;
-                } else {
-                    let meta = src_op
-                        .stat(&src_backend)
-                        .await
-                        .map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?;
-                    copy_file_chunked(
-                        src_op,
-                        dst_op,
-                        &src_backend,
-                        &dst_backend,
-                        meta.content_length(),
-                    )
-                    .await?;
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-pub(super) fn backend_path_from_virtual(storage_name: &str, full_path: &str) -> String {
-    let storage_root = format!("/{storage_name}");
-    if full_path == storage_root {
-        return String::new();
-    }
-
-    full_path
-        .strip_prefix(&(storage_root + "/"))
-        .unwrap_or("")
-        .to_string()
-}
-
-pub(super) fn path_depth(path: &str) -> usize {
-    path.trim_matches('/')
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .count()
-}
-
-pub(super) fn extract_name(path: &str) -> String {
-    path.rsplit('/').next().unwrap_or(path).to_string()
-}
 
 pub(super) fn sort_entries(entries: &mut [ListDirEntry], recursive: bool) {
     if recursive {
@@ -583,22 +266,3 @@ pub(super) fn sort_entries(entries: &mut [ListDirEntry], recursive: bool) {
     });
 }
 
-pub(super) fn relative_backend_path(root: &str, full: &str) -> String {
-    if root.is_empty() {
-        return full.to_string();
-    }
-
-    full.strip_prefix(&(root.to_string() + "/"))
-        .unwrap_or(full)
-        .to_string()
-}
-
-pub(super) fn join_backend_path(base: &str, relative: &str) -> String {
-    if base.is_empty() {
-        return relative.to_string();
-    }
-    if relative.is_empty() {
-        return base.to_string();
-    }
-    format!("{base}/{relative}")
-}

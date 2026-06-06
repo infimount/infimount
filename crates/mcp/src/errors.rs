@@ -40,6 +40,12 @@ pub struct McpError {
     pub details: serde_json::Value,
 }
 
+impl std::fmt::Display for McpError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{:?}] {}: {}", self.code, self.message, self.details)
+    }
+}
+
 pub type McpResult<T> = Result<T, McpError>;
 
 #[derive(Debug, Clone, Serialize)]

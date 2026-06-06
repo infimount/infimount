@@ -300,7 +300,7 @@
       },
       {
         "name": "password",
-        "label": "Password",
+        "label": "Password or App Token",
         "input_type": "password",
         "required": false,
         "secret": true
@@ -346,6 +346,83 @@
         "input_type": "textarea",
         "required": false,
         "secret": true
+      }
+    ]
+  },
+  {
+    "id": "sftp",
+    "label": "SFTP",
+    "kind": "sftp",
+    "fields": [
+      {
+        "name": "endpoint",
+        "label": "Endpoint (e.g. sftp://example.com:22)",
+        "input_type": "text",
+        "required": true,
+        "secret": false
+      },
+      {
+        "name": "user",
+        "label": "User",
+        "input_type": "text",
+        "required": false,
+        "secret": false
+      },
+      {
+        "name": "key",
+        "label": "Private Key",
+        "input_type": "textarea",
+        "required": false,
+        "secret": true
+      },
+      {
+        "name": "password",
+        "label": "Password",
+        "input_type": "password",
+        "required": false,
+        "secret": true
+      },
+      {
+        "name": "rootPath",
+        "label": "Root Path",
+        "input_type": "text",
+        "required": false,
+        "secret": false
+      }
+    ]
+  },
+  {
+    "id": "ftp",
+    "label": "FTP",
+    "kind": "ftp",
+    "fields": [
+      {
+        "name": "endpoint",
+        "label": "Endpoint (e.g. ftp://example.com:21)",
+        "input_type": "text",
+        "required": true,
+        "secret": false
+      },
+      {
+        "name": "user",
+        "label": "User",
+        "input_type": "text",
+        "required": false,
+        "secret": false
+      },
+      {
+        "name": "password",
+        "label": "Password",
+        "input_type": "password",
+        "required": false,
+        "secret": true
+      },
+      {
+        "name": "rootPath",
+        "label": "Root Path",
+        "input_type": "text",
+        "required": false,
+        "secret": false
       }
     ]
   }

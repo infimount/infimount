@@ -1,5 +1,6 @@
 use crate::errors::{err, err_with_details, map_io_error, McpErrorCode, McpResult};
 use crate::policy::McpStoragePolicy;
+use infimount_core::{Source, SourceKind};
 use chrono::Utc;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
@@ -28,6 +29,17 @@ pub struct StorageRecord {
 }
 
 impl StorageRecord {
+    pub fn to_source(&self) -> Source {
+        use std::str::FromStr;
+        Source {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            kind: SourceKind::from_str(&self.backend).unwrap_or(SourceKind::Local),
+            root: String::new(),
+            config: self.config.clone(),
+        }
+    }
+
     pub fn new(name: String, backend: String, config: Value) -> Self {
         let now = Utc::now().to_rfc3339();
         Self {

@@ -5,13 +5,39 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use futures::TryStreamExt;
 use indexmap::IndexMap;
-use opendal::services::{Azblob, Cos, Fs, Gcs, Obs, Oss, Webdav, B2, S3};
+use opendal::services::{Azblob, B2, Cos, Fs, Ftp, Gcs, Obs, Oss, S3, Sftp, Webdav};
 use opendal::ErrorKind;
 use opendal::Operator;
+use serde_json::Value;
 use tokio::sync::RwLock;
 
 use crate::config;
-use crate::models::{CoreError, Result, Source, SourceKind};
+use crate::models::{CoreError, Result, Source, SourceKind, StorageBackendCapabilities};
+
+pub fn get_capabilities(op: &Operator) -> StorageBackendCapabilities {
+    let info = op.info();
+    let full = info.full_capability();
+    StorageBackendCapabilities {
+        list_with_versions: full.list_with_versions,
+        read_with_version: full.read_with_version,
+        delete_with_version: full.delete_with_version,
+        presign_read: full.presign_read,
+        versioning_disabled: false,
+        write_with_user_metadata: full.write_with_user_metadata,
+    }
+}
+
+pub fn check_versioning_disabled(source: &Source) -> Option<bool> {
+    match source.kind {
+        SourceKind::S3
+        | SourceKind::AzureBlob
+        | SourceKind::Gcs
+        | SourceKind::Oss
+        | SourceKind::Cos
+        | SourceKind::Obs => config_bool(&source.config, "versioning").map(|enabled| !enabled),
+        _ => None,
+    }
+}
 
 /// Registry that maps source IDs to OpenDAL operators.
 ///
@@ -175,9 +201,9 @@ impl OperatorRegistry {
     }
 }
 
-fn build_operator(source: &Source) -> Result<Operator> {
+pub fn build_operator(source: &Source) -> Result<Operator> {
     match source.kind {
-        SourceKind::Local => build_local_operator(&source.root),
+        SourceKind::Local => build_local_operator(source),
         SourceKind::S3 => build_s3_operator(source),
         SourceKind::WebDav => build_webdav_operator(source),
         SourceKind::AzureBlob => build_azure_blob_operator(source),
@@ -186,6 +212,8 @@ fn build_operator(source: &Source) -> Result<Operator> {
         SourceKind::Oss => build_oss_operator(source),
         SourceKind::Cos => build_cos_operator(source),
         SourceKind::Obs => build_obs_operator(source),
+        SourceKind::Sftp => build_sftp_operator(source),
+        SourceKind::Ftp => build_ftp_operator(source),
     }
 }
 
@@ -215,9 +243,81 @@ fn validate_local_root(root: &str) -> Result<()> {
     Ok(())
 }
 
-fn build_local_operator(root: &str) -> Result<Operator> {
+fn build_local_operator(source: &Source) -> Result<Operator> {
+    let root = source
+        .config
+        .get("root")
+        .and_then(|v| v.as_str())
+        .or_else(|| source.config.get("rootPath").and_then(|v| v.as_str()))
+        .or_else(|| source.config.get("path").and_then(|v| v.as_str()))
+        .unwrap_or(&source.root);
+
+    if root.trim().is_empty() {
+        return Err(CoreError::Config(
+            "local backend requires a root path".to_string(),
+        ));
+    }
+
     let expanded = expand_tilde_home(root);
     let builder = Fs::default().root(&expanded);
+    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    Ok(op)
+}
+
+fn build_sftp_operator(source: &Source) -> Result<Operator> {
+    let mut builder = Sftp::default();
+
+    if !source.root.is_empty() {
+        builder = builder.endpoint(&source.root);
+    }
+
+    if let Some(endpoint) = source
+        .config
+        .get("endpoint")
+        .or_else(|| source.config.get("serverUrl"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.endpoint(endpoint);
+    }
+    if let Some(user) = source.config.get("user").and_then(|v| v.as_str()) {
+        builder = builder.user(user);
+    }
+    if let Some(key) = source.config.get("key").and_then(|v| v.as_str()) {
+        builder = builder.key(key);
+    }
+    if let Some(root) = source.config.get("rootPath").and_then(|v| v.as_str()) {
+        builder = builder.root(root);
+    }
+
+    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    Ok(op)
+}
+
+fn build_ftp_operator(source: &Source) -> Result<Operator> {
+    let mut builder = Ftp::default();
+
+    if !source.root.is_empty() {
+        builder = builder.endpoint(&source.root);
+    }
+
+    if let Some(endpoint) = source
+        .config
+        .get("endpoint")
+        .or_else(|| source.config.get("serverUrl"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.endpoint(endpoint);
+    }
+    if let Some(user) = source.config.get("user").and_then(|v| v.as_str()) {
+        builder = builder.user(user);
+    }
+    if let Some(password) = source.config.get("password").and_then(|v| v.as_str()) {
+        builder = builder.password(password);
+    }
+    if let Some(root) = source.config.get("rootPath").and_then(|v| v.as_str()) {
+        builder = builder.root(root);
+    }
+
     let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
     Ok(op)
 }
@@ -259,39 +359,48 @@ fn build_s3_operator(source: &Source) -> Result<Operator> {
 
     // root format: "bucket@region" or just "bucket"
     // Legacy support for root string
-    let mut parts = source.root.split('@');
-    if let Some(bucket) = parts.next() {
-        if !bucket.is_empty() {
-            builder = builder.bucket(bucket);
+    if !source.root.is_empty() {
+        let mut parts = source.root.split('@');
+        if let Some(bucket) = parts.next() {
+            if !bucket.is_empty() {
+                builder = builder.bucket(bucket);
+            }
         }
-    }
-    if let Some(region) = parts.next() {
-        if !region.is_empty() {
-            builder = builder.region(region);
+        if let Some(region) = parts.next() {
+            if !region.is_empty() {
+                builder = builder.region(region);
+            }
         }
     }
 
     // Config overrides
-    if let Some(config) = &source.config {
-        if let Some(bucket) = config.get("bucketName") {
-            builder = builder.bucket(bucket);
-        }
-        if let Some(region) = config.get("region") {
-            builder = builder.region(region);
-        }
-        if let Some(access_key_id) = config.get("accessKeyId") {
-            builder = builder.access_key_id(access_key_id);
-        }
-        if let Some(secret_access_key) = config.get("secretAccessKey") {
-            builder = builder.secret_access_key(secret_access_key);
-        }
-        if let Some(endpoint) = config.get("endpoint") {
-            builder = builder.endpoint(endpoint);
-        }
-        if let Some(default_acl) = config.get("defaultAcl") {
-            if !default_acl.trim().is_empty() {
-                builder = builder.default_acl(default_acl);
-            }
+    if let Some(bucket) = source
+        .config
+        .get("bucket")
+        .or_else(|| source.config.get("bucketName"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.bucket(bucket);
+    }
+    if let Some(region) = source.config.get("region").and_then(|v| v.as_str()) {
+        builder = builder.region(region);
+    }
+    if let Some(ak) = source.config.get("accessKeyId").and_then(|v| v.as_str()) {
+        builder = builder.access_key_id(ak);
+    }
+    if let Some(sk) = source
+        .config
+        .get("secretAccessKey")
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.secret_access_key(sk);
+    }
+    if let Some(endpoint) = source.config.get("endpoint").and_then(|v| v.as_str()) {
+        builder = builder.endpoint(endpoint);
+    }
+    if let Some(default_acl) = source.config.get("defaultAcl").and_then(|v| v.as_str()) {
+        if !default_acl.trim().is_empty() {
+            builder = builder.default_acl(default_acl);
         }
     }
 
@@ -306,26 +415,25 @@ fn build_webdav_operator(source: &Source) -> Result<Operator> {
         builder = builder.endpoint(&source.root);
     }
 
-    if let Some(config) = &source.config {
-        if let Some(server_url) = config.get("serverUrl") {
-            builder = builder.endpoint(server_url);
-        }
-        if let Some(username) = config.get("username") {
-            builder = builder.username(username);
-        }
-        if let Some(password) = config.get("password") {
-            builder = builder.password(password);
-        }
-        if let Some(root_path) = config.get("rootPath") {
-            builder = builder.root(root_path);
-        }
-        if config
-            .get("disableCreateDir")
-            .and_then(|v| parse_bool(v))
-            .unwrap_or(false)
-        {
-            builder = builder.disable_create_dir(true);
-        }
+    if let Some(endpoint) = source
+        .config
+        .get("serverUrl")
+        .or_else(|| source.config.get("endpoint"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.endpoint(endpoint);
+    }
+    if let Some(username) = source.config.get("username").and_then(|v| v.as_str()) {
+        builder = builder.username(username);
+    }
+    if let Some(password) = source.config.get("password").and_then(|v| v.as_str()) {
+        builder = builder.password(password);
+    }
+    if let Some(root) = source.config.get("rootPath").and_then(|v| v.as_str()) {
+        builder = builder.root(root);
+    }
+    if config_bool(&source.config, "disableCreateDir").unwrap_or(false) {
+        builder = builder.disable_create_dir(true);
     }
 
     let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
@@ -336,31 +444,36 @@ fn build_azure_blob_operator(source: &Source) -> Result<Operator> {
     let mut builder = Azblob::default();
 
     // root format: "account/container"
-    let mut parts = source.root.split('/');
-    if let Some(account) = parts.next() {
-        if !account.is_empty() {
-            builder = builder.account_name(account);
+    if !source.root.is_empty() {
+        let mut parts = source.root.split('/');
+        if let Some(account) = parts.next() {
+            if !account.is_empty() {
+                builder = builder.account_name(account);
+            }
         }
-    }
-    if let Some(container) = parts.next() {
-        if !container.is_empty() {
-            builder = builder.container(container);
+        if let Some(container) = parts.next() {
+            if !container.is_empty() {
+                builder = builder.container(container);
+            }
         }
     }
 
-    if let Some(config) = &source.config {
-        if let Some(account_name) = config.get("accountName") {
-            builder = builder.account_name(account_name);
-        }
-        if let Some(container_name) = config.get("containerName") {
-            builder = builder.container(container_name);
-        }
-        if let Some(account_key) = config.get("accountKey") {
-            builder = builder.account_key(account_key);
-        }
-        if let Some(endpoint) = config.get("endpoint") {
-            builder = builder.endpoint(endpoint);
-        }
+    if let Some(container) = source
+        .config
+        .get("container")
+        .or_else(|| source.config.get("containerName"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.container(container);
+    }
+    if let Some(account_name) = source.config.get("accountName").and_then(|v| v.as_str()) {
+        builder = builder.account_name(account_name);
+    }
+    if let Some(account_key) = source.config.get("accountKey").and_then(|v| v.as_str()) {
+        builder = builder.account_key(account_key);
+    }
+    if let Some(endpoint) = source.config.get("endpoint").and_then(|v| v.as_str()) {
+        builder = builder.endpoint(endpoint);
     }
 
     let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
@@ -375,37 +488,56 @@ fn build_gcs_operator(source: &Source) -> Result<Operator> {
         builder = builder.bucket(&source.root);
     }
 
-    if let Some(config) = &source.config {
-        if let Some(bucket) = config.get("bucket") {
-            builder = builder.bucket(bucket);
-        }
+    if let Some(bucket) = source
+        .config
+        .get("bucket")
+        .or_else(|| source.config.get("bucketName"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.bucket(bucket);
+    }
+    if let Some(endpoint) = source.config.get("endpoint").and_then(|v| v.as_str()) {
+        builder = builder.endpoint(endpoint);
+    }
+    if let Some(root) = source.config.get("root").and_then(|v| v.as_str()) {
+        builder = builder.root(root);
+    }
 
-        let credential = config
-            .get("credential")
-            .and_then(|v| normalize_gcs_credential(v));
-        if let Some(encoded) = &credential {
-            builder = builder.credential(encoded);
-        }
+    let credential = source
+        .config
+        .get("credential")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            source
+                .config
+                .get("serviceAccountJson")
+                .and_then(|v| v.as_str())
+        })
+        .and_then(normalize_gcs_credential);
 
-        let credential_path = config.get("credentialPath").filter(|s| !s.is_empty());
-        if let Some(cp) = credential_path {
-            builder = builder.credential_path(cp);
-        }
+    if let Some(encoded) = &credential {
+        builder = builder.credential(encoded);
+    }
 
-        if let Some(endpoint) = config.get("endpoint") {
-            builder = builder.endpoint(endpoint);
-        }
+    let credential_path = source
+        .config
+        .get("credentialPath")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    if let Some(cp) = credential_path {
+        builder = builder.credential_path(cp);
+    }
 
-        // If endpoint is set (emulator) and no credentials provided,
-        // treat this as an anonymous/emulator connection:
-        // - don't try to load credentials from env or VM metadata
-        // - allow unsigned requests.
-        if config.get("endpoint").is_some() && credential.is_none() && credential_path.is_none() {
-            builder = builder
-                .allow_anonymous()
-                .disable_vm_metadata()
-                .disable_config_load();
-        }
+    // If endpoint is set (emulator) and no credentials provided,
+    // treat this as an anonymous/emulator connection:
+    // - don't try to load credentials from env or VM metadata
+    // - allow unsigned requests.
+    if source.config.get("endpoint").is_some() && credential.is_none() && credential_path.is_none()
+    {
+        builder = builder
+            .allow_anonymous()
+            .disable_vm_metadata()
+            .disable_config_load();
     }
 
     let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
@@ -419,29 +551,41 @@ fn build_b2_operator(source: &Source) -> Result<Operator> {
         builder = builder.bucket(&source.root);
     }
 
-    if let Some(config) = &source.config {
-        if let Some(bucket) = config.get("bucket").or_else(|| config.get("bucketName")) {
-            builder = builder.bucket(bucket);
-        }
-        if let Some(bucket_id) = config.get("bucketId") {
-            builder = builder.bucket_id(bucket_id);
-        }
-        if let Some(application_key_id) = config
-            .get("applicationKeyId")
-            .or_else(|| config.get("keyId"))
-            .or_else(|| config.get("application_key_id"))
-        {
-            builder = builder.application_key_id(application_key_id);
-        }
-        if let Some(application_key) = config
-            .get("applicationKey")
-            .or_else(|| config.get("application_key"))
-        {
-            builder = builder.application_key(application_key);
-        }
-        if let Some(root_path) = config.get("rootPath").or_else(|| config.get("root")) {
-            builder = builder.root(root_path);
-        }
+    if let Some(bucket) = source
+        .config
+        .get("bucket")
+        .or_else(|| source.config.get("bucketName"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.bucket(bucket);
+    }
+    if let Some(bucket_id) = source.config.get("bucketId").and_then(|v| v.as_str()) {
+        builder = builder.bucket_id(bucket_id);
+    }
+    if let Some(application_key_id) = source
+        .config
+        .get("applicationKeyId")
+        .or_else(|| source.config.get("keyId"))
+        .or_else(|| source.config.get("application_key_id"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.application_key_id(application_key_id);
+    }
+    if let Some(application_key) = source
+        .config
+        .get("applicationKey")
+        .or_else(|| source.config.get("application_key"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.application_key(application_key);
+    }
+    if let Some(root) = source
+        .config
+        .get("rootPath")
+        .or_else(|| source.config.get("root"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.root(root);
     }
 
     let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
@@ -455,38 +599,58 @@ fn build_oss_operator(source: &Source) -> Result<Operator> {
         builder = builder.bucket(&source.root);
     }
 
-    if let Some(config) = &source.config {
-        if let Some(bucket) = config.get("bucket").or_else(|| config.get("bucketName")) {
-            builder = builder.bucket(bucket);
-        }
-        if let Some(endpoint) = config.get("endpoint") {
-            builder = builder.endpoint(endpoint);
-        }
-        if let Some(access_key_id) = config
-            .get("accessKeyId")
-            .or_else(|| config.get("access_key_id"))
-        {
-            builder = builder.access_key_id(access_key_id);
-        }
-        if let Some(access_key_secret) = config
-            .get("accessKeySecret")
-            .or_else(|| config.get("access_key_secret"))
-            .or_else(|| config.get("secretAccessKey"))
-        {
-            builder = builder.access_key_secret(access_key_secret);
-        }
-        if let Some(root_path) = config.get("rootPath").or_else(|| config.get("root")) {
-            builder = builder.root(root_path);
-        }
-        if let Some(addressing_style) = config.get("addressingStyle") {
-            builder = builder.addressing_style(addressing_style);
-        }
-        if let Some(presign_endpoint) = config.get("presignEndpoint") {
-            builder = builder.presign_endpoint(presign_endpoint);
-        }
-        if let Some(enabled) = config.get("versioning").and_then(|v| parse_bool(v)) {
-            builder = builder.enable_versioning(enabled);
-        }
+    if let Some(bucket) = source
+        .config
+        .get("bucket")
+        .or_else(|| source.config.get("bucketName"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.bucket(bucket);
+    }
+    if let Some(endpoint) = source.config.get("endpoint").and_then(|v| v.as_str()) {
+        builder = builder.endpoint(endpoint);
+    }
+    if let Some(access_key_id) = source
+        .config
+        .get("accessKeyId")
+        .or_else(|| source.config.get("access_key_id"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.access_key_id(access_key_id);
+    }
+    if let Some(access_key_secret) = source
+        .config
+        .get("accessKeySecret")
+        .or_else(|| source.config.get("access_key_secret"))
+        .or_else(|| source.config.get("secretAccessKey"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.access_key_secret(access_key_secret);
+    }
+    if let Some(root) = source
+        .config
+        .get("rootPath")
+        .or_else(|| source.config.get("root"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.root(root);
+    }
+    if let Some(addressing_style) = source
+        .config
+        .get("addressingStyle")
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.addressing_style(addressing_style);
+    }
+    if let Some(presign_endpoint) = source
+        .config
+        .get("presignEndpoint")
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.presign_endpoint(presign_endpoint);
+    }
+    if let Some(enabled) = config_bool(&source.config, "versioning") {
+        builder = builder.enable_versioning(enabled);
     }
 
     let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
@@ -500,25 +664,43 @@ fn build_cos_operator(source: &Source) -> Result<Operator> {
         builder = builder.bucket(&source.root);
     }
 
-    if let Some(config) = &source.config {
-        if let Some(bucket) = config.get("bucket").or_else(|| config.get("bucketName")) {
-            builder = builder.bucket(bucket);
-        }
-        if let Some(endpoint) = config.get("endpoint") {
-            builder = builder.endpoint(endpoint);
-        }
-        if let Some(secret_id) = config.get("secretId").or_else(|| config.get("secret_id")) {
-            builder = builder.secret_id(secret_id);
-        }
-        if let Some(secret_key) = config.get("secretKey").or_else(|| config.get("secret_key")) {
-            builder = builder.secret_key(secret_key);
-        }
-        if let Some(root_path) = config.get("rootPath").or_else(|| config.get("root")) {
-            builder = builder.root(root_path);
-        }
-        if let Some(enabled) = config.get("versioning").and_then(|v| parse_bool(v)) {
-            builder = builder.enable_versioning(enabled);
-        }
+    if let Some(bucket) = source
+        .config
+        .get("bucket")
+        .or_else(|| source.config.get("bucketName"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.bucket(bucket);
+    }
+    if let Some(endpoint) = source.config.get("endpoint").and_then(|v| v.as_str()) {
+        builder = builder.endpoint(endpoint);
+    }
+    if let Some(secret_id) = source
+        .config
+        .get("secretId")
+        .or_else(|| source.config.get("secret_id"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.secret_id(secret_id);
+    }
+    if let Some(secret_key) = source
+        .config
+        .get("secretKey")
+        .or_else(|| source.config.get("secret_key"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.secret_key(secret_key);
+    }
+    if let Some(root) = source
+        .config
+        .get("rootPath")
+        .or_else(|| source.config.get("root"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.root(root);
+    }
+    if let Some(enabled) = config_bool(&source.config, "versioning") {
+        builder = builder.enable_versioning(enabled);
     }
 
     let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
@@ -532,42 +714,58 @@ fn build_obs_operator(source: &Source) -> Result<Operator> {
         builder = builder.bucket(&source.root);
     }
 
-    if let Some(config) = &source.config {
-        if let Some(bucket) = config.get("bucket").or_else(|| config.get("bucketName")) {
-            builder = builder.bucket(bucket);
-        }
-        if let Some(endpoint) = config.get("endpoint") {
-            builder = builder.endpoint(endpoint);
-        }
-        if let Some(access_key_id) = config
-            .get("accessKeyId")
-            .or_else(|| config.get("access_key_id"))
-        {
-            builder = builder.access_key_id(access_key_id);
-        }
-        if let Some(secret_access_key) = config
-            .get("secretAccessKey")
-            .or_else(|| config.get("secret_access_key"))
-            .or_else(|| config.get("accessKeySecret"))
-        {
-            builder = builder.secret_access_key(secret_access_key);
-        }
-        if let Some(root_path) = config.get("rootPath").or_else(|| config.get("root")) {
-            builder = builder.root(root_path);
-        }
-        if let Some(enabled) = config.get("versioning").and_then(|v| parse_bool(v)) {
-            builder = builder.enable_versioning(enabled);
-        }
+    if let Some(bucket) = source
+        .config
+        .get("bucket")
+        .or_else(|| source.config.get("bucketName"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.bucket(bucket);
+    }
+    if let Some(endpoint) = source.config.get("endpoint").and_then(|v| v.as_str()) {
+        builder = builder.endpoint(endpoint);
+    }
+    if let Some(access_key_id) = source
+        .config
+        .get("accessKeyId")
+        .or_else(|| source.config.get("access_key_id"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.access_key_id(access_key_id);
+    }
+    if let Some(secret_access_key) = source
+        .config
+        .get("secret_access_key")
+        .or_else(|| source.config.get("access_key_secret"))
+        .or_else(|| source.config.get("secretAccessKey"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.secret_access_key(secret_access_key);
+    }
+    if let Some(root) = source
+        .config
+        .get("rootPath")
+        .or_else(|| source.config.get("root"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.root(root);
+    }
+    if let Some(enabled) = config_bool(&source.config, "versioning") {
+        builder = builder.enable_versioning(enabled);
     }
 
     let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
     Ok(op)
 }
 
-fn parse_bool(raw: &str) -> Option<bool> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "true" | "1" | "yes" | "y" | "on" => Some(true),
-        "false" | "0" | "no" | "n" | "off" => Some(false),
+fn config_bool(config: &Value, key: &str) -> Option<bool> {
+    match config.get(key)? {
+        Value::Bool(v) => Some(*v),
+        Value::String(s) => match s.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" | "y" | "on" => Some(true),
+            "false" | "0" | "no" | "n" | "off" => Some(false),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -633,7 +831,7 @@ mod tests {
             name: "Test1".to_string(),
             kind: crate::models::SourceKind::Local,
             root: "/tmp".to_string(),
-            config: None,
+            config: serde_json::json!({}),
         };
 
         registry.add_source(s.clone()).await.unwrap();
@@ -662,7 +860,7 @@ mod tests {
             name: id.to_string(),
             kind: crate::models::SourceKind::Local,
             root: "/tmp".to_string(),
-            config: None,
+            config: serde_json::json!({}),
         };
 
         registry.add_source(mk("a")).await.unwrap();
@@ -727,13 +925,13 @@ mod tests {
             name: "B2".to_string(),
             kind: crate::models::SourceKind::B2,
             root: String::new(),
-            config: Some(std::collections::HashMap::from([
-                ("bucket".to_string(), "bucket-name".to_string()),
-                ("bucketId".to_string(), "bucket-id".to_string()),
-                ("applicationKeyId".to_string(), "key-id".to_string()),
-                ("applicationKey".to_string(), "application-key".to_string()),
-                ("rootPath".to_string(), "/workspace".to_string()),
-            ])),
+            config: serde_json::json!({
+                "bucket": "bucket-name",
+                "bucketId": "bucket-id",
+                "applicationKeyId": "key-id",
+                "applicationKey": "application-key",
+                "rootPath": "/workspace"
+            }),
         };
 
         let op = build_operator(&source).expect("operator should build");
@@ -750,42 +948,33 @@ mod tests {
         for (kind, config) in [
             (
                 crate::models::SourceKind::Oss,
-                std::collections::HashMap::from([
-                    ("bucket".to_string(), "bucket-name".to_string()),
-                    (
-                        "endpoint".to_string(),
-                        "https://oss-cn-beijing.aliyuncs.com".to_string(),
-                    ),
-                    ("accessKeyId".to_string(), "key-id".to_string()),
-                    ("accessKeySecret".to_string(), "key-secret".to_string()),
-                    ("rootPath".to_string(), "/workspace".to_string()),
-                ]),
+                serde_json::json!({
+                    "bucket": "bucket-name",
+                    "endpoint": "https://oss-cn-beijing.aliyuncs.com",
+                    "accessKeyId": "key-id",
+                    "accessKeySecret": "key-secret",
+                    "rootPath": "/workspace"
+                }),
             ),
             (
                 crate::models::SourceKind::Cos,
-                std::collections::HashMap::from([
-                    ("bucket".to_string(), "bucket-name".to_string()),
-                    (
-                        "endpoint".to_string(),
-                        "https://cos.ap-singapore.myqcloud.com".to_string(),
-                    ),
-                    ("secretId".to_string(), "secret-id".to_string()),
-                    ("secretKey".to_string(), "secret-key".to_string()),
-                    ("rootPath".to_string(), "/workspace".to_string()),
-                ]),
+                serde_json::json!({
+                    "bucket": "bucket-name",
+                    "endpoint": "https://cos.ap-singapore.myqcloud.com",
+                    "secretId": "secret-id",
+                    "secretKey": "secret-key",
+                    "rootPath": "/workspace"
+                }),
             ),
             (
                 crate::models::SourceKind::Obs,
-                std::collections::HashMap::from([
-                    ("bucket".to_string(), "bucket-name".to_string()),
-                    (
-                        "endpoint".to_string(),
-                        "https://obs.cn-north-4.myhuaweicloud.com".to_string(),
-                    ),
-                    ("accessKeyId".to_string(), "key-id".to_string()),
-                    ("secretAccessKey".to_string(), "key-secret".to_string()),
-                    ("rootPath".to_string(), "/workspace".to_string()),
-                ]),
+                serde_json::json!({
+                    "bucket": "bucket-name",
+                    "endpoint": "https://obs.cn-north-4.myhuaweicloud.com",
+                    "accessKeyId": "key-id",
+                    "secret_access_key": "key-secret",
+                    "rootPath": "/workspace"
+                }),
             ),
         ] {
             let source = Source {
@@ -793,7 +982,7 @@ mod tests {
                 name: kind.to_string(),
                 kind,
                 root: String::new(),
-                config: Some(config),
+                config,
             };
             let op = build_operator(&source).expect("operator should build");
             let caps = op.info().full_capability();
@@ -804,15 +993,64 @@ mod tests {
             assert!(caps.presign_read);
             assert!(!caps.rename);
         }
+
+        for (kind, config) in [
+            (
+                crate::models::SourceKind::Sftp,
+                serde_json::json!({
+                    "endpoint": "sftp://localhost:22",
+                    "user": "test",
+                    "rootPath": "/home/test"
+                }),
+            ),
+            (
+                crate::models::SourceKind::Ftp,
+                serde_json::json!({
+                    "endpoint": "ftp://localhost:21",
+                    "user": "test",
+                    "password": "pass",
+                    "rootPath": "/home/test"
+                }),
+            ),
+        ] {
+            let source = Source {
+                id: kind.to_string(),
+                name: kind.to_string(),
+                kind,
+                root: String::new(),
+                config,
+            };
+            let op = build_operator(&source).expect("operator should build");
+            let caps = op.info().full_capability();
+            assert!(caps.list);
+            assert!(caps.read);
+            assert!(caps.write);
+        }
     }
 
     #[test]
-    fn parse_bool_accepts_storage_config_values() {
-        assert_eq!(parse_bool("true"), Some(true));
-        assert_eq!(parse_bool("on"), Some(true));
-        assert_eq!(parse_bool("false"), Some(false));
-        assert_eq!(parse_bool("off"), Some(false));
-        assert_eq!(parse_bool("maybe"), None);
+    fn config_bool_accepts_storage_config_values() {
+        assert_eq!(config_bool(&serde_json::json!(true), "key"), None); // it checks nested key
+        assert_eq!(
+            config_bool(&serde_json::json!({"key": true}), "key"),
+            Some(true)
+        );
+        assert_eq!(
+            config_bool(&serde_json::json!({"key": "on"}), "key"),
+            Some(true)
+        );
+        assert_eq!(
+            config_bool(&serde_json::json!({"key": "false"}), "key"),
+            Some(false)
+        );
+        assert_eq!(
+            config_bool(&serde_json::json!({"key": "off"}), "key"),
+            Some(false)
+        );
+        assert_eq!(
+            config_bool(&serde_json::json!({"key": "maybe"}), "key"),
+            None
+        );
     }
 
     #[test]
@@ -835,7 +1073,7 @@ mod tests {
             name: "Missing Dir".to_string(),
             kind: crate::models::SourceKind::Local,
             root: "/tmp/infimount-this-path-does-not-exist".to_string(),
-            config: None,
+            config: serde_json::json!({}),
         };
 
         let err = registry.add_source(s).await.unwrap_err();
