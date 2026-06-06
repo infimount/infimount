@@ -107,6 +107,13 @@ fn normalize_list_path(path: &str) -> String {
 
 /// List entries at the given path using the provided operator.
 pub async fn list_entries(op: &Operator, path: &str) -> Result<Vec<Entry>> {
+    list_entries_with_filter(op, path, |_| Ok(true)).await
+}
+
+pub async fn list_entries_with_filter<F>(op: &Operator, path: &str, filter: F) -> Result<Vec<Entry>>
+where
+    F: Fn(&str) -> Result<bool>,
+{
     let p = normalize_list_path(path);
     let mut lister = if p.is_empty() {
         match op.lister("").await {
@@ -121,18 +128,29 @@ pub async fn list_entries(op: &Operator, path: &str) -> Result<Vec<Entry>> {
 
     while let Some(obj) = lister.try_next().await? {
         let full_path = obj.path().to_string();
+        let normalized_path = full_path.trim_end_matches('/');
+
+        if normalized_path.is_empty() {
+            continue;
+        }
+
+        if !filter(normalized_path)? {
+            continue;
+        }
+
         let name = extract_filename(&full_path);
 
         // Use op.stat on the full path to ensure we get full metadata.
         // If the entry no longer exists (e.g., broken symlink), keep the
         // entry but leave size/modified blank instead of failing or skipping.
-        let (is_dir, size, modified_at) = match op.stat(&full_path).await {
+        let (is_dir, size, modified_at, etag) = match op.stat(&full_path).await {
             Ok(meta) => (
                 meta.is_dir(),
                 meta.content_length(),
                 meta.last_modified().map(|dt| dt.to_string()),
+                meta.etag().map(|s| s.to_string()),
             ),
-            Err(e) if e.kind() == ErrorKind::NotFound => (false, 0, None),
+            Err(e) if e.kind() == ErrorKind::NotFound => (false, 0, None, None),
             Err(e) => return Err(e.into()),
         };
 
@@ -142,6 +160,7 @@ pub async fn list_entries(op: &Operator, path: &str) -> Result<Vec<Entry>> {
             is_dir,
             size,
             modified_at,
+            etag,
         };
 
         out.push(entry);
@@ -152,6 +171,17 @@ pub async fn list_entries(op: &Operator, path: &str) -> Result<Vec<Entry>> {
 
 /// Recursively list entries below the given path using the provided operator.
 pub async fn list_entries_recursive(op: &Operator, path: &str) -> Result<Vec<Entry>> {
+    list_entries_recursive_with_filter(op, path, |_| Ok(true)).await
+}
+
+pub async fn list_entries_recursive_with_filter<F>(
+    op: &Operator,
+    path: &str,
+    filter: F,
+) -> Result<Vec<Entry>>
+where
+    F: Fn(&str) -> Result<bool>,
+{
     let root = normalize_list_path(path);
     let mut out = Vec::new();
     let mut stack = vec![root];
@@ -165,22 +195,31 @@ pub async fn list_entries_recursive(op: &Operator, path: &str) -> Result<Vec<Ent
                 continue;
             }
 
-            let meta = op.stat(&full_path).await?;
-            if meta.is_dir() {
-                stack.push(ensure_dir_path(&full_path));
+            let normalized_path = full_path.trim_end_matches('/');
+            if !filter(normalized_path)? {
+                continue;
             }
 
+            let meta = op.stat(&full_path).await?;
+            let is_dir = meta.is_dir();
+            let entry_path = if is_dir {
+                ensure_dir_path(&full_path)
+            } else {
+                full_path.clone()
+            };
+
             out.push(Entry {
-                path: full_path,
+                path: entry_path,
                 name,
-                is_dir: meta.is_dir(),
-                size: if meta.is_dir() {
-                    0
-                } else {
-                    meta.content_length()
-                },
+                is_dir,
+                size: if is_dir { 0 } else { meta.content_length() },
                 modified_at: meta.last_modified().map(|dt| dt.to_string()),
+                etag: meta.etag().map(|s| s.to_string()),
             });
+
+            if is_dir {
+                stack.push(ensure_dir_path(&full_path));
+            }
         }
     }
 
@@ -201,6 +240,7 @@ pub async fn stat_entry(op: &Operator, path: &str) -> Result<Entry> {
         is_dir: meta.is_dir(),
         size: meta.content_length(),
         modified_at: meta.last_modified().map(|dt| dt.to_string()),
+        etag: meta.etag().map(|s| s.to_string()),
     })
 }
 
@@ -1136,6 +1176,121 @@ pub async fn plan_transfer_entries(
         entries,
         summary,
     })
+}
+
+/// Transfer a single path (file or directory) to a specific destination path.
+///
+/// This is a lower-level primitive than `transfer_entries` because it allows
+/// renaming the top-level item during the transfer.
+pub async fn transfer_path(
+    from_op: &Operator,
+    to_op: &Operator,
+    source_path: &str,
+    destination_path: &str,
+    operation: TransferOperation,
+    same_source: bool,
+    conflict_policy: TransferConflictPolicy,
+) -> Result<()> {
+    let source_path = normalize_opendal_path(source_path);
+    let destination_path = normalize_opendal_path(destination_path);
+
+    let meta = stat_for_transfer(from_op, &source_path).await?;
+    if meta.is_dir() {
+        let normalized_src = ensure_dir_path(&source_path);
+        let normalized_dest = ensure_dir_path(&destination_path);
+
+        if same_source {
+            if operation == TransferOperation::Move && normalized_src == normalized_dest {
+                return Ok(());
+            }
+            if normalized_dest.starts_with(&normalized_src) && normalized_dest != normalized_src {
+                return Err(opendal::Error::new(
+                    ErrorKind::IsSameFile,
+                    "Cannot copy a folder into itself",
+                )
+                .into());
+            }
+        }
+
+        if path_exists_for_transfer(to_op, &normalized_dest).await? {
+            match conflict_policy {
+                TransferConflictPolicy::Fail => {
+                    return Err(opendal::Error::new(
+                        ErrorKind::AlreadyExists,
+                        "Destination directory already exists",
+                    )
+                    .into())
+                }
+                TransferConflictPolicy::Overwrite => {
+                    delete_recursive(to_op, &normalized_dest).await?;
+                }
+                TransferConflictPolicy::Skip => {
+                    return Ok(());
+                }
+                TransferConflictPolicy::Rename => {
+                    // Rename logic for a specific destination path is complex if it already exists.
+                    // Usually transfer_entries handles this by generating a unique name in target_dir.
+                    // For transfer_path, we expect the caller to have resolved the destination.
+                    return Err(opendal::Error::new(
+                        ErrorKind::AlreadyExists,
+                        "Destination directory already exists and Rename policy not implemented for transfer_path",
+                    )
+                    .into());
+                }
+            }
+        }
+
+        transfer_dir_recursive(
+            from_op,
+            to_op,
+            &normalized_src,
+            &normalized_dest,
+            operation,
+            same_source,
+        )
+        .await?;
+    } else {
+        if operation == TransferOperation::Move && same_source && source_path == destination_path {
+            return Ok(());
+        }
+
+        if path_exists_for_transfer(to_op, &destination_path).await? {
+            match conflict_policy {
+                TransferConflictPolicy::Fail => {
+                    return Err(opendal::Error::new(
+                        ErrorKind::AlreadyExists,
+                        "Destination file already exists",
+                    )
+                    .into())
+                }
+                TransferConflictPolicy::Overwrite => {
+                    delete_recursive(to_op, &destination_path).await?;
+                }
+                TransferConflictPolicy::Skip => {
+                    return Ok(());
+                }
+                TransferConflictPolicy::Rename => {
+                    return Err(opendal::Error::new(
+                        ErrorKind::AlreadyExists,
+                        "Destination file already exists and Rename policy not implemented for transfer_path",
+                    )
+                    .into());
+                }
+            }
+        }
+
+        transfer_file(
+            from_op,
+            to_op,
+            &source_path,
+            &destination_path,
+            operation,
+            same_source,
+        )
+        .await?;
+    }
+
+    Ok(())
 }
 
 /// Copy or move a set of file/folder paths into `target_dir`.

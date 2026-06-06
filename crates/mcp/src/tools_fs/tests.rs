@@ -206,6 +206,63 @@ async fn recursive_operations_enforce_denied_descendant_policy() {
 }
 
 #[tokio::test]
+async fn copy_path_recursive_enforces_destination_descendant_policy_before_mutation() {
+    let dir = TempDir::new().unwrap();
+    let src_root = dir.path().join("src");
+    let dst_root = dir.path().join("dst");
+    std::fs::create_dir_all(src_root.join("public").join("private")).unwrap();
+    std::fs::create_dir_all(&dst_root).unwrap();
+    std::fs::write(src_root.join("public").join("visible.txt"), "visible").unwrap();
+    std::fs::write(
+        src_root.join("public").join("private").join("secret.txt"),
+        "secret",
+    )
+    .unwrap();
+
+    let registry = registry_in(&dir);
+    let src = StorageRecord::new(
+        "Src".to_string(),
+        "local".to_string(),
+        json!({"root": src_root.clone()}),
+    );
+    let mut dst = StorageRecord::new(
+        "Dst".to_string(),
+        "local".to_string(),
+        json!({"root": dst_root.clone()}),
+    );
+    dst.mcp_policy = McpStoragePolicy {
+        allowed_paths: vec!["public".to_string()],
+        denied_paths: vec!["public/private".to_string()],
+        ..Default::default()
+    };
+    registry.save_all_atomic(&[src, dst]).unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+
+    let err = copy_path(
+        &ctx,
+        CopyPathInput {
+            session_id: None,
+            confirmation_id: None,
+            src: "/Src/public".to_string(),
+            dst: "/Dst/public".to_string(),
+            overwrite: false,
+            recursive: true,
+        },
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code, McpErrorCode::ERR_MCP_POLICY_DENIED);
+    assert!(!dst_root.join("public").join("visible.txt").exists());
+    assert!(!dst_root.join("public").join("private").exists());
+}
+
+#[tokio::test]
 async fn list_dir_root_is_sorted_and_filtered() {
     let dir = TempDir::new().unwrap();
     let registry = registry_in(&dir);
@@ -1530,6 +1587,45 @@ async fn copy_path_overwrite_false_rejects_existing_destination() {
 }
 
 #[tokio::test]
+async fn copy_path_requires_existing_parent_for_file_destination() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("local");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.txt"), "hello").unwrap();
+    let registry = registry_in(&dir);
+    registry
+        .save_all_atomic(&[StorageRecord::new(
+            "Local".to_string(),
+            "local".to_string(),
+            json!({"root": root}),
+        )])
+        .unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+
+    let err = copy_path(
+        &ctx,
+        CopyPathInput {
+            session_id: None,
+            confirmation_id: None,
+            src: "/Local/a.txt".to_string(),
+            dst: "/Local/missing/b.txt".to_string(),
+            overwrite: false,
+            recursive: false,
+        },
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code, McpErrorCode::ERR_PARENT_NOT_FOUND);
+    assert!(!root.join("missing").exists());
+}
+
+#[tokio::test]
 async fn copy_path_same_storage_file_success() {
     let dir = TempDir::new().unwrap();
     let root = dir.path().join("root");
@@ -1579,7 +1675,7 @@ async fn copy_path_cross_storage_streams_large_file() {
     let dst_root = dir.path().join("dst");
     std::fs::create_dir_all(&src_root).unwrap();
     std::fs::create_dir_all(&dst_root).unwrap();
-    let payload = vec![b'x'; (common::COPY_CHUNK_SIZE as usize) + 17];
+    let payload = vec![b'x'; (8 * 1024 * 1024) + 17];
     std::fs::write(src_root.join("large.bin"), &payload).unwrap();
 
     let registry = registry_in(&dir);
@@ -1673,6 +1769,45 @@ async fn copy_path_recursive_preserves_structure() {
         std::fs::read_to_string(dst_root.join("copied").join("nested").join("b.txt")).unwrap(),
         "b"
     );
+}
+
+#[tokio::test]
+async fn move_path_requires_existing_parent_for_file_destination() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("local");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.txt"), "hello").unwrap();
+    let registry = registry_in(&dir);
+    registry
+        .save_all_atomic(&[StorageRecord::new(
+            "Local".to_string(),
+            "local".to_string(),
+            json!({"root": root.clone()}),
+        )])
+        .unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+
+    let err = move_path(
+        &ctx,
+        MovePathInput {
+            session_id: None,
+            confirmation_id: None,
+            src: "/Local/a.txt".to_string(),
+            dst: "/Local/missing/b.txt".to_string(),
+            overwrite: false,
+        },
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code, McpErrorCode::ERR_PARENT_NOT_FOUND);
+    assert!(root.join("a.txt").exists());
+    assert!(!root.join("missing").exists());
 }
 
 #[tokio::test]

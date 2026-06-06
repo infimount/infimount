@@ -183,6 +183,7 @@ pub struct Entry {
     pub is_dir: bool,
     pub size: u64,
     pub modified_at: Option<String>,
+    pub etag: Option<String>,
 }
 
 /// Request to list entries under a path.
