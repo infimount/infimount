@@ -16,6 +16,8 @@ pub(super) fn canonical_backend(backend: &str) -> McpResult<String> {
         "oss" | "aliyun_oss" => "oss",
         "cos" | "tencent_cos" => "cos",
         "obs" | "huawei_obs" => "obs",
+        "sftp" => "sftp",
+        "ftp" => "ftp",
         other => {
             return Err(err_with_details(
                 McpErrorCode::ERR_BACKEND_UNSUPPORTED,

@@ -66,6 +66,8 @@ mod tests {
             ("aliyun-oss", SourceKind::Oss),
             ("tencent-cos", SourceKind::Cos),
             ("huawei-obs", SourceKind::Obs),
+            ("sftp", SourceKind::Sftp),
+            ("ftp", SourceKind::Ftp),
         ] {
             let schema = schemas
                 .iter()
@@ -76,6 +78,8 @@ mod tests {
                 (SourceKind::Oss, SourceKind::Oss)
                     | (SourceKind::Cos, SourceKind::Cos)
                     | (SourceKind::Obs, SourceKind::Obs)
+                    | (SourceKind::Sftp, SourceKind::Sftp)
+                    | (SourceKind::Ftp, SourceKind::Ftp)
             ));
             assert!(schema
                 .fields
@@ -83,5 +87,15 @@ mod tests {
                 .any(|field| field.name == "endpoint" && field.required));
             assert!(schema.fields.iter().any(|field| field.secret));
         }
+
+        let sftp = schemas
+            .iter()
+            .find(|schema| schema.id == "sftp")
+            .expect("SFTP schema should exist");
+        assert!(sftp
+            .fields
+            .iter()
+            .any(|field| field.name == "privateKeyPath" && field.secret));
+        assert!(!sftp.fields.iter().any(|field| field.name == "password"));
     }
 }

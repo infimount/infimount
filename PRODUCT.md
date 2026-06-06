@@ -10,7 +10,7 @@ Infimount is for people who work across more than one storage system and need a 
 
 Primary users:
 
-- Desktop users who move between local folders, S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob Storage, Google Cloud Storage, and WebDAV.
+- Desktop users who move between local folders, S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob Storage, Google Cloud Storage, WebDAV, SFTP, and FTP.
 - Developers and technical operators who want one storage browser instead of a separate tool for every backend.
 - AI workflow users who expose selected storage sources or workspace-scoped folders to MCP clients such as local coding agents, LM Studio, or editor integrations.
 - Operators who may run the MCP server in a local or controlled environment and need clear auth, scoping, and observability behavior.
@@ -19,7 +19,7 @@ The user is usually in a task, not exploring a marketing site. They are scanning
 
 ## Product Purpose
 
-Infimount exists to make storage feel like one local file-browser experience, even when the backend is local disk, object storage, or a remote WebDAV source.
+Infimount exists to make storage feel like one local file-browser experience, even when the backend is local disk, object storage, WebDAV, SFTP, or FTP.
 
 The product should help users:
 

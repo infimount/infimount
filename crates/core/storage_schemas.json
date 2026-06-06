@@ -348,5 +348,89 @@
         "secret": true
       }
     ]
+  },
+  {
+    "id": "sftp",
+    "label": "SFTP",
+    "kind": "sftp",
+    "fields": [
+      {
+        "name": "endpoint",
+        "label": "Endpoint (for example ssh://user@example.com:22)",
+        "input_type": "text",
+        "required": true,
+        "secret": false
+      },
+      {
+        "name": "user",
+        "label": "Username",
+        "input_type": "text",
+        "required": false,
+        "secret": false
+      },
+      {
+        "name": "privateKeyPath",
+        "label": "Private Key Path",
+        "input_type": "text",
+        "required": false,
+        "secret": true
+      },
+      {
+        "name": "rootPath",
+        "label": "Root Path",
+        "input_type": "text",
+        "required": false,
+        "secret": false
+      },
+      {
+        "name": "knownHostsStrategy",
+        "label": "Known Hosts Strategy (Strict, Accept, Add)",
+        "input_type": "text",
+        "required": false,
+        "secret": false
+      },
+      {
+        "name": "enableCopy",
+        "label": "Enable remote copy extension",
+        "input_type": "checkbox",
+        "required": false,
+        "secret": false
+      }
+    ]
+  },
+  {
+    "id": "ftp",
+    "label": "FTP",
+    "kind": "ftp",
+    "fields": [
+      {
+        "name": "endpoint",
+        "label": "Endpoint (for example ftp://example.com:21)",
+        "input_type": "text",
+        "required": true,
+        "secret": false
+      },
+      {
+        "name": "user",
+        "label": "Username",
+        "input_type": "text",
+        "required": false,
+        "secret": false
+      },
+      {
+        "name": "password",
+        "label": "Password",
+        "input_type": "password",
+        "required": false,
+        "secret": true
+      },
+      {
+        "name": "rootPath",
+        "label": "Root Path",
+        "input_type": "text",
+        "required": false,
+        "secret": false
+      }
+    ]
   }
 ]

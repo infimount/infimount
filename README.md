@@ -78,7 +78,7 @@ Install scripts verify selected downloads against `SHA256SUMS.txt`. To pin a ver
 
 ## What Infimount does
 
-- **Browse storage in one place:** local files, S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, Google Cloud Storage, and WebDAV.
+- **Browse storage in one place:** local files, S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, Google Cloud Storage, WebDAV, SFTP, and FTP.
 - **Work like a desktop file manager:** grid and list views, rich previews, drag-and-drop upload, bookmarks, recents, keyboard navigation, global search stop, dual-pane transfer workflows, conflict handling, and transfer queue.
 - **Validate before you trust a backend:** reachability checks report grouped capabilities, sanitized fix hints, and MCP readiness notes.
 - **Control MCP access explicitly:** new storages are not exposed to MCP by default. Enable selected storages, tool lists, path policies, read-only mode, confirmations, and local audit logs.
@@ -158,8 +158,8 @@ See [Building from Source](#️-building-from-source) below.
 | **Azure Blob Storage**          | ✅ Stable  | Container/account key auth; advanced capabilities depend on account support |
 | **Google Cloud Storage**        | ✅ Stable  | Service account JSON; advanced capabilities depend on bucket support        |
 | **WebDAV**                      | ✅ Stable  | Nextcloud, ownCloud, etc.; optional compatibility mode for servers that cannot create collection placeholders |
-| **SFTP**                        | 🔜 Planned | Coming soon                                                                |
-| **FTP**                         | 🔜 Planned | Coming soon                                                                |
+| **SFTP**                        | ✅ Stable  | Key-based SFTP via OpenDAL; password login is intentionally not exposed because OpenDAL SFTP does not support it |
+| **FTP**                         | ✅ Stable  | FTP via OpenDAL with username/password auth; no presigned links or object versions |
 
 Use **Validate** in Add/Edit Storage to check reachability, grouped capability summaries, sanitized fix hints, and MCP readiness notes before browsing or exposing a storage to agents.
 For MCP/versioning details, see [Backend Capability Matrix](docs/backend-capabilities.md).
@@ -231,7 +231,7 @@ Outputs:
 
 ### Current Focus
 
-- [x] Local, S3/S3-compatible, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, GCS, and WebDAV browsing
+- [x] Local, S3/S3-compatible, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, GCS, WebDAV, SFTP, and FTP browsing
 - [x] Grid and list views with file preview, drag-and-drop upload, bookmarks, recents, and transfer queue
 - [x] Dual-pane copy/move and compare/update workflows
 - [x] MCP support for local AI assistants with explicit storage exposure, tool controls, path policy, confirmations, sessions, and audit

@@ -127,6 +127,10 @@ pub enum SourceKind {
     Cos,
     #[serde(rename = "obs")]
     Obs,
+    #[serde(rename = "sftp")]
+    Sftp,
+    #[serde(rename = "ftp")]
+    Ftp,
 }
 
 impl fmt::Display for SourceKind {
@@ -141,6 +145,8 @@ impl fmt::Display for SourceKind {
             SourceKind::Oss => write!(f, "oss"),
             SourceKind::Cos => write!(f, "cos"),
             SourceKind::Obs => write!(f, "obs"),
+            SourceKind::Sftp => write!(f, "sftp"),
+            SourceKind::Ftp => write!(f, "ftp"),
         }
     }
 }
@@ -159,6 +165,8 @@ impl std::str::FromStr for SourceKind {
             "oss" | "aliyun_oss" => Ok(SourceKind::Oss),
             "cos" | "tencent_cos" => Ok(SourceKind::Cos),
             "obs" | "huawei_obs" => Ok(SourceKind::Obs),
+            "sftp" => Ok(SourceKind::Sftp),
+            "ftp" => Ok(SourceKind::Ftp),
             _ => Err(()),
         }
     }

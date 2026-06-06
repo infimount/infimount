@@ -1,4 +1,4 @@
-export type SourceKind = "local" | "s3" | "webdav" | "azure_blob" | "gcs" | "b2" | "oss" | "cos" | "obs";
+export type SourceKind = "local" | "s3" | "webdav" | "azure_blob" | "gcs" | "b2" | "oss" | "cos" | "obs" | "sftp" | "ftp";
 
 export interface Source {
   id: string;

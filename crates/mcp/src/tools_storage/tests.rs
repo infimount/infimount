@@ -147,7 +147,7 @@ async fn add_storage_rejects_unsupported_backend() {
 }
 
 #[tokio::test]
-async fn storage_management_accepts_v0_7_object_store_backends() {
+async fn storage_management_accepts_v0_7_and_remote_file_backends() {
     let dir = TempDir::new().unwrap();
     let registry = registry_in(&dir);
     let sessions = sessions_in();
@@ -187,6 +187,24 @@ async fn storage_management_accepts_v0_7_object_store_backends() {
                 "endpoint": "https://obs.cn-north-4.myhuaweicloud.com",
                 "accessKeyId": "key-id",
                 "secretAccessKey": "key-secret"
+            }),
+        ),
+        (
+            "SFTP",
+            "sftp",
+            serde_json::json!({
+                "endpoint": "ssh://example.com:22",
+                "user": "alice",
+                "privateKeyPath": "/home/alice/.ssh/id_ed25519"
+            }),
+        ),
+        (
+            "FTP",
+            "ftp",
+            serde_json::json!({
+                "endpoint": "ftp://example.com:21",
+                "user": "alice",
+                "password": "password"
             }),
         ),
     ] {

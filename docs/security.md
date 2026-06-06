@@ -120,6 +120,6 @@ Some capabilities are backend-dependent:
 
 - Object versions require backend and bucket/container support.
 - Presigned download links require backend support.
-- WebDAV does not expose object-version tools.
+- WebDAV, SFTP, and FTP do not expose object-version tools.
 
 See [Backend Capability Matrix](backend-capabilities.md) for the public support matrix.

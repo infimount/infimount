@@ -721,7 +721,17 @@ fn validate_storage_draft(storage: &StorageDraft) -> McpResult<()> {
 
     if !matches!(
         storage.backend.as_str(),
-        "local" | "s3" | "b2" | "oss" | "cos" | "obs" | "azure_blob" | "webdav" | "gcs"
+        "local"
+            | "s3"
+            | "b2"
+            | "oss"
+            | "cos"
+            | "obs"
+            | "azure_blob"
+            | "webdav"
+            | "gcs"
+            | "sftp"
+            | "ftp"
     ) {
         return Err(err_with_details(
             McpErrorCode::ERR_BACKEND_UNSUPPORTED,
@@ -749,6 +759,8 @@ mod tests {
             "azure_blob",
             "webdav",
             "gcs",
+            "sftp",
+            "ftp",
         ] {
             let storage = StorageDraft {
                 name: format!("{backend} storage"),

@@ -317,6 +317,8 @@ fn legacy_source_to_storage(source: Source) -> StorageRecord {
         SourceKind::Oss => "oss",
         SourceKind::Cos => "cos",
         SourceKind::Obs => "obs",
+        SourceKind::Sftp => "sftp",
+        SourceKind::Ftp => "ftp",
     }
     .to_string();
 

@@ -298,6 +298,13 @@ pub fn is_secret_key(key: &str) -> bool {
         "applicationkey",
         "application_key",
         "credential",
+        "privatekey",
+        "private_key",
+        "privatekeypath",
+        "private_key_path",
+        "keypath",
+        "key_path",
+        "key",
         "serviceaccountjson",
         "service_account_json",
     ]
@@ -355,6 +362,9 @@ mod tests {
             "credential": "service-account-json",
             "serviceAccountJson": "service-account-json",
             "service_account_json": "service-account-json",
+            "privateKeyPath": "/home/alice/.ssh/id_ed25519",
+            "keyPath": "/home/alice/.ssh/id_rsa",
+            "key": "/home/alice/.ssh/id_ecdsa",
             "nested": {
                 "client_secret": "x",
                 "secretId": "secret-id",
@@ -370,6 +380,9 @@ mod tests {
         assert_eq!(masked["credential"], "********");
         assert_eq!(masked["serviceAccountJson"], "********");
         assert_eq!(masked["service_account_json"], "********");
+        assert_eq!(masked["privateKeyPath"], "********");
+        assert_eq!(masked["keyPath"], "********");
+        assert_eq!(masked["key"], "********");
         assert_eq!(masked["nested"]["client_secret"], "********");
         assert_eq!(masked["nested"]["secretId"], "********");
         assert_eq!(masked["nested"]["safe"], "ok");

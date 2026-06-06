@@ -5,7 +5,7 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use futures::TryStreamExt;
 use indexmap::IndexMap;
-use opendal::services::{Azblob, Cos, Fs, Gcs, Obs, Oss, Webdav, B2, S3};
+use opendal::services::{Azblob, Cos, Fs, Ftp, Gcs, Obs, Oss, Sftp, Webdav, B2, S3};
 use opendal::ErrorKind;
 use opendal::Operator;
 use serde_json::Value;
@@ -212,6 +212,8 @@ pub fn build_operator(source: &Source) -> Result<Operator> {
         SourceKind::Oss => build_oss_operator(source),
         SourceKind::Cos => build_cos_operator(source),
         SourceKind::Obs => build_obs_operator(source),
+        SourceKind::Sftp => build_sftp_operator(source),
+        SourceKind::Ftp => build_ftp_operator(source),
     }
 }
 
@@ -262,6 +264,101 @@ fn build_local_operator(source: &Source) -> Result<Operator> {
 
     let expanded = expand_tilde_home(root);
     let builder = Fs::default().root(&expanded);
+    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    Ok(op)
+}
+
+fn build_sftp_operator(source: &Source) -> Result<Operator> {
+    let mut builder = Sftp::default();
+
+    if !source.root.is_empty() {
+        builder = builder.endpoint(&source.root);
+    }
+    if let Some(endpoint) = source
+        .config
+        .get("endpoint")
+        .or_else(|| source.config.get("serverUrl"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.endpoint(endpoint);
+    }
+    if let Some(user) = source
+        .config
+        .get("user")
+        .or_else(|| source.config.get("username"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.user(user);
+    }
+    if let Some(key_path) = source
+        .config
+        .get("privateKeyPath")
+        .or_else(|| source.config.get("keyPath"))
+        .or_else(|| source.config.get("key"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.key(key_path);
+    }
+    if let Some(root) = source
+        .config
+        .get("rootPath")
+        .or_else(|| source.config.get("root"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.root(root);
+    }
+    if let Some(strategy) = source
+        .config
+        .get("knownHostsStrategy")
+        .or_else(|| source.config.get("known_hosts_strategy"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.known_hosts_strategy(strategy);
+    }
+    if let Some(enabled) = config_bool(&source.config, "enableCopy")
+        .or_else(|| config_bool(&source.config, "enable_copy"))
+    {
+        builder = builder.enable_copy(enabled);
+    }
+
+    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    Ok(op)
+}
+
+fn build_ftp_operator(source: &Source) -> Result<Operator> {
+    let mut builder = Ftp::default();
+
+    if !source.root.is_empty() {
+        builder = builder.endpoint(&source.root);
+    }
+    if let Some(endpoint) = source
+        .config
+        .get("endpoint")
+        .or_else(|| source.config.get("serverUrl"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.endpoint(endpoint);
+    }
+    if let Some(user) = source
+        .config
+        .get("user")
+        .or_else(|| source.config.get("username"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.user(user);
+    }
+    if let Some(password) = source.config.get("password").and_then(|v| v.as_str()) {
+        builder = builder.password(password);
+    }
+    if let Some(root) = source
+        .config
+        .get("rootPath")
+        .or_else(|| source.config.get("root"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.root(root);
+    }
+
     let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
     Ok(op)
 }
@@ -936,6 +1033,50 @@ mod tests {
             assert!(caps.copy);
             assert!(caps.presign_read);
             assert!(!caps.rename);
+        }
+    }
+
+    #[test]
+    fn builds_ftp_and_sftp_operators() {
+        for (kind, config, expected_copy) in [
+            (
+                crate::models::SourceKind::Sftp,
+                serde_json::json!({
+                    "endpoint": "ssh://example.com:22",
+                    "user": "alice",
+                    "privateKeyPath": "/home/alice/.ssh/id_ed25519",
+                    "rootPath": "/workspace",
+                    "knownHostsStrategy": "Strict",
+                    "enableCopy": true,
+                }),
+                true,
+            ),
+            (
+                crate::models::SourceKind::Ftp,
+                serde_json::json!({
+                    "endpoint": "ftp://example.com:21",
+                    "user": "alice",
+                    "password": "password",
+                    "rootPath": "/workspace",
+                }),
+                false,
+            ),
+        ] {
+            let source = Source {
+                id: kind.to_string(),
+                name: kind.to_string(),
+                kind,
+                root: String::new(),
+                config,
+            };
+
+            let op = build_operator(&source).expect("operator should build");
+            let caps = op.info().full_capability();
+            assert!(caps.list);
+            assert!(caps.read);
+            assert!(caps.write);
+            assert_eq!(caps.copy, expected_copy);
+            assert!(!caps.presign_read);
         }
     }
 
