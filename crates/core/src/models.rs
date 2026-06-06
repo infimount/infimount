@@ -99,6 +99,7 @@ pub struct Source {
     #[serde(default)]
     pub root: String,
     /// Configuration for the source (credentials, endpoint, etc.).
+    #[serde(default)]
     pub config: serde_json::Value,
 }
 
@@ -228,6 +229,19 @@ mod tests {
     fn test_error_code_mapping() {
         let err = CoreError::Config("bad config".to_string());
         assert_eq!(err.code(), ErrorCode::ConfigError);
+    }
+
+    #[test]
+    fn source_deserializes_legacy_missing_config() {
+        let source: Source = serde_json::from_value(json!({
+            "id": "legacy",
+            "name": "Legacy",
+            "kind": "local",
+            "root": "/tmp"
+        }))
+        .unwrap();
+
+        assert_eq!(source.config, serde_json::Value::Null);
     }
 
     #[test]

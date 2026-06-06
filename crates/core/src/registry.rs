@@ -217,7 +217,7 @@ pub fn build_operator(source: &Source) -> Result<Operator> {
 
 fn validate_source(source: &Source) -> Result<()> {
     if matches!(source.kind, SourceKind::Local) {
-        validate_local_root(&source.root)?;
+        validate_local_root(local_root(source))?;
     }
     Ok(())
 }
@@ -241,14 +241,18 @@ fn validate_local_root(root: &str) -> Result<()> {
     Ok(())
 }
 
-fn build_local_operator(source: &Source) -> Result<Operator> {
-    let root = source
+fn local_root(source: &Source) -> &str {
+    source
         .config
         .get("root")
         .and_then(|v| v.as_str())
         .or_else(|| source.config.get("rootPath").and_then(|v| v.as_str()))
         .or_else(|| source.config.get("path").and_then(|v| v.as_str()))
-        .unwrap_or(&source.root);
+        .unwrap_or(&source.root)
+}
+
+fn build_local_operator(source: &Source) -> Result<Operator> {
+    let root = local_root(source);
 
     if root.trim().is_empty() {
         return Err(CoreError::Config(
@@ -958,6 +962,19 @@ mod tests {
             config_bool(&serde_json::json!({"key": "maybe"}), "key"),
             None
         );
+    }
+
+    #[test]
+    fn local_validation_accepts_config_root() {
+        let source = Source {
+            id: "local-config-root".to_string(),
+            name: "Local Config Root".to_string(),
+            kind: crate::models::SourceKind::Local,
+            root: String::new(),
+            config: serde_json::json!({ "root": std::env::temp_dir().to_string_lossy() }),
+        };
+
+        validate_source(&source).expect("local source should use config.root");
     }
 
     #[test]
