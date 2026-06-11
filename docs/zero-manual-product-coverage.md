@@ -8,22 +8,20 @@ This is the active checklist for replacing manual product testing with automated
 - Delete-in-progress panel with Playwright screenshot coverage.
 - Transfer queue completion, progress events, retry, sequential queueing, cancellation, and planning-state cancellation.
 - Split-pane open/close same-storage UX with Playwright screenshot coverage.
+- Upload progress and upload conflict choices with Playwright screenshot coverage.
 - Core transfer guards for root delete refusal, self-descendant folder copy, duplicate batch destinations, sanitized storage errors, and basic copy/move/rename/skip.
 
 ## Remaining high-priority gaps
 
-1. Upload conflict and progress Playwright coverage.
-   - Unit coverage exists for upload progress and conflicts.
-   - Add a screen-level Playwright snapshot for upload progress and upload conflict choices.
-2. Delete cancel/retry.
+1. Delete cancel/retry.
    - Current delete progress is visible but cannot cancel remaining queued selected items or retry failed items from the panel.
-3. Recursive transfer semantics.
+2. Recursive transfer semantics.
    - Add core tests for recursive folder copy/move success, overwrite removing stale destination children, skip leaving destination untouched, folder rename, cancellation during recursive move, and source preservation after failed move.
-4. Transfer queue Playwright coverage.
+3. Transfer queue Playwright coverage.
    - Add screen-level tests for visible progress, cancel, retry, and conflict resolution from a FileBrowser flow.
-5. Browse/preview Playwright coverage.
+4. Browse/preview Playwright coverage.
    - Add real FileBrowser-to-FilePreviewPanel tests for browse into folder, search/sort/view switch, preview open, download failure/success, and error/empty states.
-6. Simulator-backed product flows.
+5. Simulator-backed product flows.
    - Add desktop/Tauri-level smoke for add/validate/browse/transfer against simulator-backed local/S3/WebDAV-compatible storages where practical.
 
 ## Policy direction
