@@ -24,7 +24,7 @@ For backend expansion, a backend is not considered product-ready until it has an
 | Azure Blob Storage        | Yes               | Backend-dependent        | Backend/config-dependent | Version behavior depends on account/container support and configuration.    |
 | Google Cloud Storage      | Yes               | Backend-dependent        | Backend/config-dependent | Versioning requires object versioning/generation support and configuration. |
 | WebDAV                    | Yes               | No                       | No                       | Version tools return `ERR_VERSIONS_NOT_SUPPORTED`. Use `disableCreateDir` for servers that reject collection creation probes/placeholders. |
-| SFTP                      | Yes               | No                       | No                       | Key-based SFTP through OpenDAL. Password login is not exposed because the OpenDAL SFTP backend does not support it. Optional remote copy depends on server extension support and `enableCopy`. |
+| SFTP                      | Yes               | No                       | No                       | Linux/macOS only. Key-based SFTP through OpenDAL. Password login is not exposed because the OpenDAL SFTP backend does not support it. Optional remote copy depends on server extension support and `enableCopy`. |
 | FTP                       | Yes               | No                       | No                       | FTP through OpenDAL with username/password auth. Generic copy and rename are not exposed by the backend, so Infimount falls back to stream-copy plus delete for moves where safe. |
 
 ## Error Semantics

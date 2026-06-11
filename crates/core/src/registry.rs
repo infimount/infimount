@@ -5,7 +5,9 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use futures::TryStreamExt;
 use indexmap::IndexMap;
-use opendal::services::{Azblob, Cos, Fs, Ftp, Gcs, Obs, Oss, Sftp, Webdav, B2, S3};
+#[cfg(not(windows))]
+use opendal::services::Sftp;
+use opendal::services::{Azblob, Cos, Fs, Ftp, Gcs, Obs, Oss, Webdav, B2, S3};
 use opendal::ErrorKind;
 use opendal::Operator;
 use serde_json::Value;
@@ -268,6 +270,7 @@ fn build_local_operator(source: &Source) -> Result<Operator> {
     Ok(op)
 }
 
+#[cfg(not(windows))]
 fn build_sftp_operator(source: &Source) -> Result<Operator> {
     let mut builder = Sftp::default();
 
@@ -323,6 +326,13 @@ fn build_sftp_operator(source: &Source) -> Result<Operator> {
 
     let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
     Ok(op)
+}
+
+#[cfg(windows)]
+fn build_sftp_operator(_source: &Source) -> Result<Operator> {
+    Err(CoreError::Config(
+        "SFTP is not available in Windows builds because OpenDAL's SFTP backend depends on Unix-only OpenSSH support".to_string(),
+    ))
 }
 
 fn build_ftp_operator(source: &Source) -> Result<Operator> {
@@ -1037,47 +1047,54 @@ mod tests {
     }
 
     #[test]
-    fn builds_ftp_and_sftp_operators() {
-        for (kind, config, expected_copy) in [
-            (
-                crate::models::SourceKind::Sftp,
-                serde_json::json!({
-                    "endpoint": "ssh://example.com:22",
-                    "user": "alice",
-                    "privateKeyPath": "/home/alice/.ssh/id_ed25519",
-                    "rootPath": "/workspace",
-                    "knownHostsStrategy": "Strict",
-                    "enableCopy": true,
-                }),
-                true,
-            ),
-            (
-                crate::models::SourceKind::Ftp,
-                serde_json::json!({
-                    "endpoint": "ftp://example.com:21",
-                    "user": "alice",
-                    "password": "password",
-                    "rootPath": "/workspace",
-                }),
-                false,
-            ),
-        ] {
-            let source = Source {
-                id: kind.to_string(),
-                name: kind.to_string(),
-                kind,
-                root: String::new(),
-                config,
-            };
+    fn builds_ftp_operator() {
+        let source = Source {
+            id: "ftp".to_string(),
+            name: "ftp".to_string(),
+            kind: crate::models::SourceKind::Ftp,
+            root: String::new(),
+            config: serde_json::json!({
+                "endpoint": "ftp://example.com:21",
+                "user": "alice",
+                "password": "password",
+                "rootPath": "/workspace",
+            }),
+        };
 
-            let op = build_operator(&source).expect("operator should build");
-            let caps = op.info().full_capability();
-            assert!(caps.list);
-            assert!(caps.read);
-            assert!(caps.write);
-            assert_eq!(caps.copy, expected_copy);
-            assert!(!caps.presign_read);
-        }
+        let op = build_operator(&source).expect("operator should build");
+        let caps = op.info().full_capability();
+        assert!(caps.list);
+        assert!(caps.read);
+        assert!(caps.write);
+        assert!(!caps.copy);
+        assert!(!caps.presign_read);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn builds_sftp_operator() {
+        let source = Source {
+            id: "sftp".to_string(),
+            name: "sftp".to_string(),
+            kind: crate::models::SourceKind::Sftp,
+            root: String::new(),
+            config: serde_json::json!({
+                "endpoint": "ssh://example.com:22",
+                "user": "alice",
+                "privateKeyPath": "/home/alice/.ssh/id_ed25519",
+                "rootPath": "/workspace",
+                "knownHostsStrategy": "Strict",
+                "enableCopy": true,
+            }),
+        };
+
+        let op = build_operator(&source).expect("operator should build");
+        let caps = op.info().full_capability();
+        assert!(caps.list);
+        assert!(caps.read);
+        assert!(caps.write);
+        assert!(caps.copy);
+        assert!(!caps.presign_read);
     }
 
     #[test]

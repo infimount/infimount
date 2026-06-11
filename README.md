@@ -158,7 +158,7 @@ See [Building from Source](#️-building-from-source) below.
 | **Azure Blob Storage**          | ✅ Stable  | Container/account key auth; advanced capabilities depend on account support |
 | **Google Cloud Storage**        | ✅ Stable  | Service account JSON; advanced capabilities depend on bucket support        |
 | **WebDAV**                      | ✅ Stable  | Nextcloud, ownCloud, etc.; optional compatibility mode for servers that cannot create collection placeholders |
-| **SFTP**                        | ✅ Stable  | Key-based SFTP via OpenDAL; password login is intentionally not exposed because OpenDAL SFTP does not support it |
+| **SFTP**                        | ✅ Stable  | Linux/macOS only; key-based SFTP via OpenDAL. Password login is intentionally not exposed because OpenDAL SFTP does not support it |
 | **FTP**                         | ✅ Stable  | FTP via OpenDAL with username/password auth; no presigned links or object versions |
 
 Use **Validate** in Add/Edit Storage to check reachability, grouped capability summaries, sanitized fix hints, and MCP readiness notes before browsing or exposing a storage to agents.

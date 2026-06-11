@@ -87,36 +87,41 @@ mod tests {
     }
 
     #[test]
-    fn builds_ftp_and_sftp_operators() {
-        for (backend, config, expected_copy) in [
-            (
-                "sftp",
-                json!({
-                    "endpoint": "ssh://example.com:22",
-                    "user": "alice",
-                    "privateKeyPath": "/home/alice/.ssh/id_ed25519",
-                    "rootPath": "/workspace",
-                    "enableCopy": true,
-                }),
-                true,
-            ),
-            (
-                "ftp",
-                json!({
-                    "endpoint": "ftp://example.com:21",
-                    "user": "alice",
-                    "password": "password",
-                    "rootPath": "/workspace",
-                }),
-                false,
-            ),
-        ] {
-            let op = build_operator(&storage(backend, config)).expect("operator should build");
-            let caps = get_capabilities(&op);
-            assert!(!caps.read_with_version);
-            assert_eq!(op.info().full_capability().copy, expected_copy);
-            assert!(!caps.presign_read);
-        }
+    fn builds_ftp_operator() {
+        let op = build_operator(&storage(
+            "ftp",
+            json!({
+                "endpoint": "ftp://example.com:21",
+                "user": "alice",
+                "password": "password",
+                "rootPath": "/workspace",
+            }),
+        ))
+        .expect("operator should build");
+        let caps = get_capabilities(&op);
+        assert!(!caps.read_with_version);
+        assert!(!op.info().full_capability().copy);
+        assert!(!caps.presign_read);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn builds_sftp_operator() {
+        let op = build_operator(&storage(
+            "sftp",
+            json!({
+                "endpoint": "ssh://example.com:22",
+                "user": "alice",
+                "privateKeyPath": "/home/alice/.ssh/id_ed25519",
+                "rootPath": "/workspace",
+                "enableCopy": true,
+            }),
+        ))
+        .expect("operator should build");
+        let caps = get_capabilities(&op);
+        assert!(!caps.read_with_version);
+        assert!(op.info().full_capability().copy);
+        assert!(!caps.presign_read);
     }
 
     #[test]

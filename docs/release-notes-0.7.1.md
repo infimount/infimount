@@ -20,7 +20,7 @@ Release: <https://github.com/infimount/infimount/releases/tag/v0.7.1>
 - Refused destructive storage-root deletes in core.
 - Rejected duplicate batch transfer destinations before mutation.
 - Continued sanitizing storage errors so backend URLs, query strings, credentials, and file contents are not exposed in UI summaries or MCP output.
-- SFTP uses key-based OpenDAL configuration; SFTP password login is not exposed because the OpenDAL SFTP backend does not support it.
+- SFTP uses key-based OpenDAL configuration and is available on Linux/macOS. SFTP password login is not exposed because the OpenDAL SFTP backend does not support it.
 
 ## Release and test hardening
 
@@ -30,4 +30,4 @@ Release: <https://github.com/infimount/infimount/releases/tag/v0.7.1>
 
 ## Notes
 
-SFTP and FTP capabilities depend on the configured server and OpenDAL-reported backend capabilities. Use Validate before browsing a new remote file server or exposing it to MCP clients. New/imported storages remain not exposed to MCP by default; agent access remains explicit.
+SFTP and FTP capabilities depend on the configured server and OpenDAL-reported backend capabilities. SFTP is Linux/macOS-only in this release because OpenDAL's SFTP dependency uses Unix-only OpenSSH support. Use Validate before browsing a new remote file server or exposing it to MCP clients. New/imported storages remain not exposed to MCP by default; agent access remains explicit.
