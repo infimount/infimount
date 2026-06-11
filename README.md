@@ -28,7 +28,7 @@
 
 ## Install
 
-**Current stable release:** [v0.7.0](https://github.com/infimount/infimount/releases/tag/v0.7.0)
+**Current stable release:** [v0.7.1](https://github.com/infimount/infimount/releases/tag/v0.7.1)
 
 ### Linux
 
@@ -74,7 +74,7 @@ Manual downloads:
 
 ### Install notes
 
-Install scripts verify selected downloads against `SHA256SUMS.txt`. To pin a version, set `INFIMOUNT_VERSION=v0.7.0` before running the command. macOS and Windows binaries may be unsigned for some releases, see [Installation Notes](#installation-notes).
+Install scripts verify selected downloads against `SHA256SUMS.txt`. To pin a version, set `INFIMOUNT_VERSION=v0.7.1` before running the command. macOS and Windows binaries may be unsigned for some releases, see [Installation Notes](#installation-notes).
 
 ## What Infimount does
 
@@ -237,7 +237,7 @@ Outputs:
 - [x] MCP support for local AI assistants with explicit storage exposure, tool controls, path policy, confirmations, sessions, and audit
 - [x] Version-aware MCP tools where supported by the backend
 - [x] Keyboard navigation in virtualized file grid and table views
-- [ ] Additional storage backends such as SFTP and FTP
+- [x] SFTP and FTP remote-file backends through OpenDAL
 - [x] Capability-aware storage validation summaries with fix hints and MCP readiness notes
 - [ ] Additional large-directory polish
 

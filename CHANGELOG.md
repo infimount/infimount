@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-06-05
+
+### Added
+
+- Added OpenDAL-backed SFTP and FTP storage backends across desktop schemas, Rust core builders, MCP storage management, capability docs, and tests.
+- Added SFTP configuration for endpoint, username, private key path, remote root, known-hosts strategy, and optional remote-copy extension use.
+- Added FTP configuration for endpoint, username, password, and remote root.
+- Added agent integration examples for Claude Desktop, generic HTTP MCP clients, OpenCode, and a Pi extension wrapper.
+
+### Changed
+
+- Reworked split-pane browsing into a same-storage, same-folder native file-manager mode with a shared header, left/right pane labels, and a visible close control.
+- Consolidated OpenDAL operator construction and shared filesystem operations through `infimount_core` so desktop and MCP behavior stay aligned.
+- Centralized MCP recursive list/copy/move/delete flows around core operations while preserving explicit MCP storage policy, session, read-only, and confirmation checks.
+- Strengthened release automation with post-release validation, release consistency checks, install-script smoke checks, feature-doc drift checks, and zero-manual release gate policy checks.
+
+### Fixed
+
+- Fixed recursive folder transfer safety by blocking self-descendant copies such as copying `/demo` into `/demo/child`.
+- Fixed transfer planning feedback, cancellation during planning, fallback destination checks, and sanitized storage errors so backend URLs and query strings are not exposed in UI messages.
+- Fixed delete UX by showing visible delete progress and requiring confirmation for visible single-file delete actions.
+- Fixed upload UX so progress is tied to actual writes, cancellation stops remaining uploads, and existing-name conflicts require an explicit skip/keep-both/overwrite decision.
+- Fixed destructive core mutation guards by refusing storage-root delete, ignoring current-directory markers during recursive traversal, and rejecting duplicate batch destinations before mutation.
+- Fixed unsupported backend handling so unknown backends are rejected explicitly instead of falling back to local storage.
+- Fixed macOS/app icon corner rounding.
+
+### Tests
+
+- Added Playwright snapshot coverage for split-pane same-storage browsing and delete progress.
+- Added regression coverage for upload progress/conflict handling, transfer cancellation, recursive transfer semantics, root delete refusal, duplicate transfer destinations, MCP policy-aware recursion, and secret masking for SFTP private key paths.
+
 ## [0.7.0] - 2026-05-30
 
 ### Added
@@ -143,7 +174,8 @@ First stable release of Infimount — a unified desktop storage browser powered 
 
 ---
 
-[Unreleased]: https://github.com/infimount/infimount/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/infimount/infimount/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/infimount/infimount/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/infimount/infimount/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/infimount/infimount/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/infimount/infimount/compare/v0.4.0...v0.5.0
