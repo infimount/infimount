@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useRef, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef, type CSSProperties } from "react";
 import {
   Search,
   LayoutGrid,
@@ -440,13 +440,24 @@ export function FileBrowser({
     });
   }, [currentPath, onPaneStateChange, selectedFiles, sourceId, storageName]);
 
-  const filteredFiles = allFiles.filter((file) =>
-    file.name.toLowerCase().includes(searchQuery.toLowerCase())
+  const normalizedSearchQuery = searchQuery.toLowerCase();
+  const filteredFiles = useMemo(
+    () => allFiles.filter((file) => file.name.toLowerCase().includes(normalizedSearchQuery)),
+    [allFiles, normalizedSearchQuery],
   );
 
-  const storageBookmarks = bookmarks.filter((item) => item.sourceId === sourceId);
-  const storageRecents = recents.filter((item) => item.sourceId === sourceId && item.path !== currentPath);
-  const isCurrentPathBookmarked = storageBookmarks.some((item) => item.path === currentPath);
+  const storageBookmarks = useMemo(
+    () => bookmarks.filter((item) => item.sourceId === sourceId),
+    [bookmarks, sourceId],
+  );
+  const storageRecents = useMemo(
+    () => recents.filter((item) => item.sourceId === sourceId && item.path !== currentPath),
+    [currentPath, recents, sourceId],
+  );
+  const isCurrentPathBookmarked = useMemo(
+    () => storageBookmarks.some((item) => item.path === currentPath),
+    [currentPath, storageBookmarks],
+  );
 
   const persistBookmarks = useCallback((next: StoredLocation[]) => {
     setBookmarks(next);
@@ -1324,30 +1335,32 @@ export function FileBrowser({
     setSortDirection(field === "modified" || field === "size" ? "desc" : "asc");
   };
 
-  const sortedFiles = [...filteredFiles].sort((a, b) => {
+  const sortedFiles = useMemo(() => {
     const dir = sortDirection === "asc" ? 1 : -1;
-    switch (sortField) {
-      case "name":
-        return a.name.localeCompare(b.name) * dir;
-      case "type": {
-        const ta = a.type === "folder" ? "0" : (a.extension || "z");
-        const tb = b.type === "folder" ? "0" : (b.extension || "z");
-        return ta.localeCompare(tb) * dir;
+    return [...filteredFiles].sort((a, b) => {
+      switch (sortField) {
+        case "name":
+          return a.name.localeCompare(b.name) * dir;
+        case "type": {
+          const ta = a.type === "folder" ? "0" : (a.extension || "z");
+          const tb = b.type === "folder" ? "0" : (b.extension || "z");
+          return ta.localeCompare(tb) * dir;
+        }
+        case "size": {
+          const sa = a.size ?? 0;
+          const sb = b.size ?? 0;
+          return (sa - sb) * dir;
+        }
+        case "modified": {
+          const ma = a.modified ? a.modified.getTime() : 0;
+          const mb = b.modified ? b.modified.getTime() : 0;
+          return (ma - mb) * dir;
+        }
+        default:
+          return 0;
       }
-      case "size": {
-        const sa = a.size ?? 0;
-        const sb = b.size ?? 0;
-        return (sa - sb) * dir;
-      }
-      case "modified": {
-        const ma = a.modified ? a.modified.getTime() : 0;
-        const mb = b.modified ? b.modified.getTime() : 0;
-        return (ma - mb) * dir;
-      }
-      default:
-        return 0;
-    }
-  });
+    });
+  }, [filteredFiles, sortDirection, sortField]);
 
   const getBreadcrumbs = () => {
     const parts = currentPath.split("/").filter(Boolean);

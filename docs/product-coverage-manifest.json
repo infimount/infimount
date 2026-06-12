@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "description": "Required high-risk product behavior coverage files. This manifest prevents critical visible-action tests from disappearing; it does not claim complete coverage.",
+  "requiredFlows": [
+    {
+      "id": "delete-progress",
+      "path": "apps/desktop/playwright/delete-progress.spec.tsx",
+      "reason": "Destructive delete actions must show visible progress."
+    },
+    {
+      "id": "upload-progress-conflicts",
+      "path": "apps/desktop/playwright/upload-flow.spec.tsx",
+      "reason": "Uploads must show real progress and explicit conflict choices."
+    },
+    {
+      "id": "transfer-queue-visible-actions",
+      "path": "apps/desktop/playwright/transfer-queue.spec.tsx",
+      "reason": "Queued transfer progress, cancel, and retry must remain visible and actionable."
+    },
+    {
+      "id": "split-pane-native-browsing",
+      "path": "apps/desktop/playwright/split-pane.spec.tsx",
+      "reason": "Split pane must remain a native same-storage browsing mode."
+    },
+    {
+      "id": "file-browser-core-flows",
+      "path": "apps/desktop/playwright/file-browser-flow.spec.tsx",
+      "reason": "Browse, search, view switch, empty, and error states must be covered at screen level."
+    },
+    {
+      "id": "file-preview-panel",
+      "path": "apps/desktop/playwright/file-preview-panel.spec.tsx",
+      "reason": "Preview rendering must remain covered while full FileBrowser preview flows are expanded."
+    }
+  ]
+}

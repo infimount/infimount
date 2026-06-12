@@ -6,6 +6,8 @@ RELEASE_WORKFLOW="$ROOT_DIR/.github/workflows/release.yml"
 POST_RELEASE_WORKFLOW="$ROOT_DIR/.github/workflows/post-release.yml"
 RELEASE_GATE_SCRIPT="$ROOT_DIR/scripts/release-test-gate.sh"
 RELEASING_DOC="$ROOT_DIR/docs/releasing.md"
+PRODUCT_COVERAGE_MANIFEST="$ROOT_DIR/docs/product-coverage-manifest.json"
+PRODUCT_COVERAGE_CHECK="$ROOT_DIR/scripts/check-product-coverage-manifest.mjs"
 
 fail() {
   echo "zero-manual release policy check failed: $*" >&2
@@ -93,5 +95,9 @@ require_file_contains "$POST_RELEASE_WORKFLOW" "homebrew-infimount/dispatches"
 
 require_file_contains "$RELEASING_DOC" "Zero manual product test execution"
 require_file_contains "$RELEASING_DOC" "Manual product test execution must not be a release gate"
+
+[[ -f "$PRODUCT_COVERAGE_MANIFEST" ]] || fail "docs/product-coverage-manifest.json must exist"
+[[ -f "$PRODUCT_COVERAGE_CHECK" ]] || fail "scripts/check-product-coverage-manifest.mjs must exist"
+node "$PRODUCT_COVERAGE_CHECK"
 
 printf 'Zero-manual release policy check passed.\n'
