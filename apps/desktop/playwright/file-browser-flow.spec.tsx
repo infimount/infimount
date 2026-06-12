@@ -38,7 +38,26 @@ const entriesByPath: Record<string, Array<Record<string, unknown>>> = {
   "/empty": [],
 };
 
-const installTauriMocks = ({ entriesByPath, failRoot = false }: { entriesByPath: Record<string, Array<Record<string, unknown>>>; failRoot?: boolean }) => {
+const installTauriMocks = ({ entriesByPath, failRoot = false, transferConflict = false }: { entriesByPath: Record<string, Array<Record<string, unknown>>>; failRoot?: boolean; transferConflict?: boolean }) => {
+  const defaultPlan = {
+    operation: "copy",
+    conflictPolicy: "fail",
+    entries: [
+      {
+        sourcePath: "/report.txt",
+        destinationPath: "/report.txt",
+        action: "create",
+        isDir: false,
+        size: 1200,
+      },
+    ],
+    summary: { create: 1, overwrite: 0, skip: 0, rename: 0, noop: 0, conflict: 0, totalItems: 1, totalBytes: 1200 },
+  };
+  let transferCalls = 0;
+  Object.defineProperty(window, "__infimountTransferPolicies", {
+    configurable: true,
+    value: [] as string[],
+  });
   Object.defineProperty(window, "__TAURI_EVENT_PLUGIN_INTERNALS__", {
     configurable: true,
     value: {
@@ -63,6 +82,16 @@ const installTauriMocks = ({ entriesByPath, failRoot = false }: { entriesByPath:
           }
           const path = typeof args?.path === "string" ? args.path : "/";
           return entriesByPath[path] ?? [];
+        }
+        if (cmd === "plan_transfer_entries") return { ...defaultPlan, conflictPolicy: args?.conflictPolicy ?? "fail" };
+        if (cmd === "transfer_entries") {
+          transferCalls += 1;
+          const policy = typeof args?.conflictPolicy === "string" ? args.conflictPolicy : "";
+          (window as unknown as { __infimountTransferPolicies: string[] }).__infimountTransferPolicies.push(policy);
+          if (transferConflict && transferCalls === 1) {
+            throw { code: "ALREADY_EXISTS", message: "already exists" };
+          }
+          return null;
         }
         return null;
       },
@@ -89,8 +118,12 @@ const installTauriMocks = ({ entriesByPath, failRoot = false }: { entriesByPath:
   });
 };
 
-async function mountFileBrowser(mount: Parameters<Parameters<typeof test>[1]>[0]["mount"], page: Parameters<Parameters<typeof test>[1]>[0]["page"], options: { initialEntries?: typeof entriesByPath; failRoot?: boolean } = {}) {
-  const mockOptions = { entriesByPath: options.initialEntries ?? entriesByPath, failRoot: options.failRoot ?? false };
+async function mountFileBrowser(mount: Parameters<Parameters<typeof test>[1]>[0]["mount"], page: Parameters<Parameters<typeof test>[1]>[0]["page"], options: { initialEntries?: typeof entriesByPath; failRoot?: boolean; transferConflict?: boolean } = {}) {
+  const mockOptions = {
+    entriesByPath: options.initialEntries ?? entriesByPath,
+    failRoot: options.failRoot ?? false,
+    transferConflict: options.transferConflict ?? false,
+  };
   await page.addInitScript(installTauriMocks, mockOptions);
   await page.evaluate(installTauriMocks, mockOptions);
 
@@ -124,6 +157,23 @@ test("filters files through search and switches to list view", async ({ mount, p
   await expect(page.getByRole("columnheader", { name: "Modified" })).toBeVisible();
   await expect(page.getByRole("row", { name: /photo\.jpg/ })).toBeVisible();
   await expect(page).toHaveScreenshot("file-browser-search-list.png");
+});
+
+test("resolves copy paste conflicts from the FileBrowser flow", async ({ mount, page }) => {
+  await mountFileBrowser(mount, page, { transferConflict: true });
+
+  await page.getByRole("option", { name: "report.txt" }).click();
+  await page.keyboard.press("Control+C");
+  await page.keyboard.press("Control+V");
+
+  await expect(page.getByText("Item already exists")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Overwrite" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Keep both" })).toBeVisible();
+  await page.getByRole("button", { name: "Keep both" }).click();
+
+  await expect
+    .poll(async () => page.evaluate(() => (window as unknown as { __infimountTransferPolicies: string[] }).__infimountTransferPolicies))
+    .toEqual(["fail", "rename"]);
 });
 
 test("shows a friendly empty folder state", async ({ mount, page }) => {

@@ -83,6 +83,79 @@ test("delete action shows visible progress while a large folder is being removed
   await expect(page.getByText("Deleting 1 item")).toBeVisible();
   await expect(page.getByText(/Removing demo/)).toBeVisible();
   await expect(page.getByText("Large folders can take a while. Keep this window open until deletion finishes.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Cancel remaining" })).toBeVisible();
 
   await expect(page).toHaveScreenshot("delete-progress.png");
+});
+
+test("delete failures can be retried from the visible progress panel", async ({ mount, page }) => {
+  const installTauriMocks = ({ entries }: { entries: Array<Record<string, unknown>> }) => {
+    let deleteCalls = 0;
+    Object.defineProperty(window, "__TAURI_EVENT_PLUGIN_INTERNALS__", {
+      configurable: true,
+      value: {
+        unregisterListener: () => undefined,
+      },
+    });
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {
+        metadata: {
+          currentWindow: { label: "main" },
+          currentWebview: { windowLabel: "main", label: "main" },
+        },
+        invoke: async (cmd: string, args?: Record<string, unknown>) => {
+          if (cmd === "plugin:app|version") return "0.7.1";
+          if (cmd === "plugin:event|listen") return args?.handler ?? 1;
+          if (cmd === "plugin:event|unlisten") return null;
+          if (cmd.includes("updater") || cmd.includes("window")) return null;
+          if (cmd === "list_entries") return entries;
+          if (cmd === "delete_path") {
+            deleteCalls += 1;
+            if (deleteCalls === 1) throw "Permission denied";
+            return null;
+          }
+          return null;
+        },
+        transformCallback: (() => {
+          let nextId = 1;
+          return () => nextId++;
+        })(),
+        unregisterCallback: () => undefined,
+      },
+    });
+
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: (query: string) => ({
+        matches: query.includes("max-width: 767px") ? false : false,
+        media: query,
+        onchange: null,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+        addListener: () => undefined,
+        removeListener: () => undefined,
+        dispatchEvent: () => false,
+      }),
+    });
+  };
+
+  await page.addInitScript(installTauriMocks, { entries });
+  await page.evaluate(installTauriMocks, { entries });
+
+  await mount(
+    <div className="h-screen w-screen bg-background p-4">
+      <DeleteProgressHarness />
+    </div>,
+  );
+
+  await page.getByRole("option", { name: "report.txt" }).click();
+  await page.keyboard.press("Delete");
+  await page.getByRole("button", { name: "Delete" }).click();
+
+  await expect(page.getByText("1 delete failed")).toBeVisible();
+  await expect(page.getByText("Review failed items or dismiss this status.")).toBeVisible();
+  await page.getByRole("button", { name: "Retry failed" }).click();
+
+  await expect(page.getByText("1 delete failed")).toHaveCount(0);
 });

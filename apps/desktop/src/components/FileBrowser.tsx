@@ -334,6 +334,9 @@ export function FileBrowser({
     completed: number;
     currentName: string;
     failed: number;
+    failedItems: FileItem[];
+    cancelled: boolean;
+    done: boolean;
   } | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{
     total: number;
@@ -342,6 +345,7 @@ export function FileBrowser({
     failed: number;
     cancelled: boolean;
   } | null>(null);
+  const deleteCancelRef = useRef(false);
   const uploadCancelRef = useRef(false);
   const [pasteConflict, setPasteConflict] = useState<{
     fromSourceId: string;
@@ -1087,20 +1091,27 @@ export function FileBrowser({
     if (items.length === 0) return;
 
     let failed = 0;
+    const failedItems: FileItem[] = [];
+    deleteCancelRef.current = false;
     setDeleteProgress({
       total: items.length,
       completed: 0,
       currentName: items[0]?.name ?? "",
       failed: 0,
+      failedItems: [],
+      cancelled: false,
+      done: false,
     });
 
     for (const [index, file] of items.entries()) {
+      if (deleteCancelRef.current) break;
       setDeleteProgress((current) =>
         current
           ? {
               ...current,
               completed: index,
               currentName: file.name,
+              cancelled: deleteCancelRef.current,
             }
           : current,
       );
@@ -1109,11 +1120,13 @@ export function FileBrowser({
         await deletePath(sourceId, file.id);
       } catch (error: unknown) {
         failed += 1;
+        failedItems.push(file);
         setDeleteProgress((current) =>
           current
             ? {
                 ...current,
                 failed,
+                failedItems: [...failedItems],
               }
             : current,
         );
@@ -1129,17 +1142,40 @@ export function FileBrowser({
           ? {
               ...current,
               completed: index + 1,
+              cancelled: deleteCancelRef.current,
             }
           : current,
       );
     }
 
     await loadFiles(currentPath);
-    setDeleteProgress(null);
-    if (failed === 0) {
+    const wasCancelled = deleteCancelRef.current;
+    if (failed > 0 || wasCancelled) {
+      setDeleteProgress((current) =>
+        current
+          ? {
+              ...current,
+              failed,
+              failedItems: [...failedItems],
+              cancelled: wasCancelled,
+              done: true,
+            }
+          : current,
+      );
+    } else {
+      setDeleteProgress(null);
+    }
+
+    if (failed === 0 && !wasCancelled) {
       toast({
         title: items.length === 1 ? "Item deleted" : "Items deleted",
         description: `${items.length} item${items.length === 1 ? "" : "s"} removed.`,
+        variant: "default",
+      });
+    } else if (wasCancelled) {
+      toast({
+        title: "Delete stopped",
+        description: "No additional selected items will be deleted.",
         variant: "default",
       });
     } else if (failed < items.length) {
@@ -1943,14 +1979,18 @@ export function FileBrowser({
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-3">
                   <h2 className="text-sm font-medium leading-tight">
-                    Deleting {deleteProgress.total} item{deleteProgress.total === 1 ? "" : "s"}
+                    {deleteProgress.done
+                      ? deleteProgress.failed > 0
+                        ? `${deleteProgress.failed} delete failed${deleteProgress.failed === 1 ? "" : "s"}`
+                        : "Delete stopped"
+                      : `Deleting ${deleteProgress.total} item${deleteProgress.total === 1 ? "" : "s"}`}
                   </h2>
                   <span className="shrink-0 text-[11px] text-muted-foreground">
                     {deleteProgress.completed}/{deleteProgress.total}
                   </span>
                 </div>
                 <p className="mt-1 truncate text-[11px] text-muted-foreground">
-                  Removing {deleteProgress.currentName}
+                  {deleteProgress.cancelled && !deleteProgress.done ? "Stopping after current item" : `Removing ${deleteProgress.currentName}`}
                   {deleteProgress.failed > 0 ? ` · ${deleteProgress.failed} failed` : ""}
                 </p>
                 <Progress
@@ -1958,9 +1998,50 @@ export function FileBrowser({
                   className="mt-2 h-1.5 bg-muted"
                   aria-label="Delete progress"
                 />
-                <p className="mt-2 text-[11px] text-muted-foreground">
-                  Large folders can take a while. Keep this window open until deletion finishes.
-                </p>
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <p className="text-[11px] text-muted-foreground">
+                    {deleteProgress.done
+                      ? "Review failed items or dismiss this status."
+                      : "Large folders can take a while. Keep this window open until deletion finishes."}
+                  </p>
+                  {deleteProgress.done ? (
+                    <div className="flex shrink-0 items-center gap-1">
+                      {deleteProgress.failedItems.length > 0 ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs"
+                          onClick={() => void runDeleteItems(deleteProgress.failedItems)}
+                        >
+                          Retry failed
+                        </Button>
+                      ) : null}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => setDeleteProgress(null)}
+                      >
+                        Dismiss
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => {
+                        deleteCancelRef.current = true;
+                        setDeleteProgress((current) => current ? { ...current, cancelled: true } : current);
+                      }}
+                    >
+                      Cancel remaining
+                    </Button>
+                  )}
+                </div>
               </div>
             </div>
           </section>

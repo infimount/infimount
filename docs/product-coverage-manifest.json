@@ -28,9 +28,9 @@
       "reason": "Browse, search, view switch, empty, and error states must be covered at screen level."
     },
     {
-      "id": "file-preview-panel",
-      "path": "apps/desktop/playwright/file-preview-panel.spec.tsx",
-      "reason": "Preview rendering must remain covered while full FileBrowser preview flows are expanded."
+      "id": "file-browser-preview-download",
+      "path": "apps/desktop/playwright/file-browser-preview.spec.tsx",
+      "reason": "Opening previews and downloading from FileBrowser must remain covered."
     }
   ]
 }
