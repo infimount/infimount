@@ -1888,15 +1888,33 @@ pub async fn delete_file_version(op: &Operator, path: &str, version: &str) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use opendal::services::Fs;
     use opendal::services::Memory;
     use std::sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     };
+    #[cfg(unix)]
+    use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 
     async fn create_test_operator() -> Operator {
         let builder = Memory::default();
         Operator::new(builder).unwrap().finish()
+    }
+
+    #[cfg(unix)]
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "infimount-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
     }
 
     #[tokio::test]
@@ -2078,6 +2096,42 @@ mod tests {
             to_op.read("target/source.txt").await.unwrap().to_vec(),
             b"hello"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_transfer_entries_move_preserves_source_when_destination_write_fails() {
+        let from_op = create_test_operator().await;
+        from_op
+            .write("source.txt", "hello".as_bytes())
+            .await
+            .unwrap();
+
+        let root = unique_temp_dir("move-write-fails");
+        let target = root.join("target");
+        fs::create_dir_all(&target).unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o500)).unwrap();
+
+        let to_op = Operator::new(Fs::default().root(root.to_str().unwrap()))
+            .unwrap()
+            .finish();
+
+        let result = transfer_entries(
+            &from_op,
+            &to_op,
+            vec!["source.txt".to_string()],
+            "target",
+            TransferOperation::Move,
+            false,
+            TransferConflictPolicy::Fail,
+        )
+        .await;
+
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+
+        assert!(result.is_err());
+        assert_eq!(from_op.read("source.txt").await.unwrap().to_vec(), b"hello");
     }
 
     #[tokio::test]
