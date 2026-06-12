@@ -1889,6 +1889,10 @@ pub async fn delete_file_version(op: &Operator, path: &str, version: &str) -> Re
 mod tests {
     use super::*;
     use opendal::services::Memory;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
 
     async fn create_test_operator() -> Operator {
         let builder = Memory::default();
@@ -2323,6 +2327,66 @@ mod tests {
             op.read("target/docs copy/a.txt").await.unwrap().to_vec(),
             b"new"
         );
+    }
+
+    #[tokio::test]
+    async fn test_transfer_entries_skip_existing_directory_leaves_destination_untouched() {
+        let op = create_test_operator().await;
+        op.write("docs/a.txt", "new".as_bytes()).await.unwrap();
+        op.write("target/docs/old.txt", "old".as_bytes())
+            .await
+            .unwrap();
+
+        transfer_entries(
+            &op,
+            &op,
+            vec!["docs".to_string()],
+            "target",
+            TransferOperation::Copy,
+            true,
+            TransferConflictPolicy::Skip,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            op.read("target/docs/old.txt").await.unwrap().to_vec(),
+            b"old"
+        );
+        assert!(!op.exists("target/docs/a.txt").await.unwrap());
+        assert_eq!(op.read("docs/a.txt").await.unwrap().to_vec(), b"new");
+    }
+
+    #[tokio::test]
+    async fn test_transfer_entries_with_progress_cancels_recursive_move_before_source_delete() {
+        let op = create_test_operator().await;
+        op.write("docs/a.txt", "a".as_bytes()).await.unwrap();
+        op.write("docs/nested/b.txt", "b".as_bytes()).await.unwrap();
+        create_directory(&op, "target").await.unwrap();
+
+        let should_cancel = Arc::new(AtomicBool::new(false));
+        let cancel_after_first_progress = Arc::clone(&should_cancel);
+        let result = transfer_entries_with_progress(
+            &op,
+            &op,
+            vec!["docs".to_string()],
+            "target",
+            TransferOperation::Move,
+            true,
+            TransferConflictPolicy::Fail,
+            move |progress| {
+                if progress.completed_items > 0 {
+                    cancel_after_first_progress.store(true, Ordering::SeqCst);
+                }
+            },
+            || should_cancel.load(Ordering::SeqCst),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(op.exists("docs/a.txt").await.unwrap());
+        assert!(op.exists("docs/nested/b.txt").await.unwrap());
+        assert!(op.exists("target/docs/").await.unwrap());
     }
 
     #[tokio::test]
