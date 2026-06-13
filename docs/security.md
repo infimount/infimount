@@ -9,7 +9,7 @@ Default local files:
 - `~/.infimount/storages.json`: storage registry and backend configuration.
 - `~/.infimount/mcp_settings.json`: MCP runtime settings, transport, bind address, port, auth token, and enabled tool list.
 
-Treat these files as sensitive because storage credentials can be present in backend configuration.
+Treat these files as sensitive because storage credentials and OAuth tokens can be present in backend configuration.
 
 ## Secret Handling
 
@@ -19,6 +19,7 @@ Infimount masks secrets in storage-management outputs by default.
 - `export_config` masks secrets unless explicitly called with `include_secrets=true`.
 - UI and MCP logs should not print raw storage config JSON or raw input payloads.
 - Browser/admin-style views should replace secrets instead of revealing them by default.
+- OAuth-backed storage fields such as `accessToken`, `refreshToken`, `clientSecret`, authorization codes, device codes, and PKCE verifiers are secrets and must not appear in logs, validation summaries, audit exports, or copyable diagnostic text.
 
 ## MCP Exposure Controls
 
@@ -120,6 +121,6 @@ Some capabilities are backend-dependent:
 
 - Object versions require backend and bucket/container support.
 - Presigned download links require backend support.
-- WebDAV, SFTP, and FTP do not expose object-version tools.
+- Google Drive, WebDAV, SFTP, and FTP do not expose object-version tools. OneDrive version tools require `versioning` to be enabled and supported by the account.
 
 See [Backend Capability Matrix](backend-capabilities.md) for the public support matrix.

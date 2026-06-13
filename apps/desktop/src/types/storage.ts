@@ -7,6 +7,10 @@ export type StorageType =
   | "azure-blob"
   | "webdav"
   | "gcs"
+  | "google-drive"
+  | "onedrive"
+  | "sftp"
+  | "ftp"
   | "local-fs";
 export type StorageBackend =
   | "s3"
@@ -22,6 +26,12 @@ export type StorageBackend =
   | "azblob"
   | "webdav"
   | "gcs"
+  | "gdrive"
+  | "google_drive"
+  | "onedrive"
+  | "one_drive"
+  | "sftp"
+  | "ftp"
   | "local"
   | "fs";
 export type McpTransport = "stdio" | "http";

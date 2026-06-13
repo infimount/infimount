@@ -41,6 +41,10 @@ const STORAGE_TYPE_ICONS: Record<string, string> = {
   "huawei-obs": folderNetworkIcon,
   "azure-blob": azureIcon,
   gcs: gcsIcon,
+  "google-drive": gcsIcon,
+  onedrive: folderNetworkIcon,
+  sftp: folderNetworkIcon,
+  ftp: folderNetworkIcon,
   webdav: webdavIcon,
   "local-fs": folderNetworkIcon,
 };
@@ -872,6 +876,14 @@ function mapStorageTypeToBackend(type: StorageType): StorageDraft["backend"] {
       return "webdav";
     case "gcs":
       return "gcs";
+    case "google-drive":
+      return "gdrive";
+    case "onedrive":
+      return "onedrive";
+    case "sftp":
+      return "sftp";
+    case "ftp":
+      return "ftp";
     case "local-fs":
     default:
       return "local";

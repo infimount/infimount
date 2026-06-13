@@ -350,6 +350,97 @@
     ]
   },
   {
+    "id": "google-drive",
+    "label": "Google Drive",
+    "kind": "gdrive",
+    "fields": [
+      {
+        "name": "rootPath",
+        "label": "Root Folder Path",
+        "input_type": "text",
+        "required": false,
+        "secret": false
+      },
+      {
+        "name": "accessToken",
+        "label": "Access Token (short-lived)",
+        "input_type": "password",
+        "required": false,
+        "secret": true
+      },
+      {
+        "name": "refreshToken",
+        "label": "Refresh Token",
+        "input_type": "password",
+        "required": false,
+        "secret": true
+      },
+      {
+        "name": "clientId",
+        "label": "OAuth Client ID",
+        "input_type": "text",
+        "required": false,
+        "secret": true
+      },
+      {
+        "name": "clientSecret",
+        "label": "OAuth Client Secret",
+        "input_type": "password",
+        "required": false,
+        "secret": true
+      }
+    ]
+  },
+  {
+    "id": "onedrive",
+    "label": "Microsoft OneDrive",
+    "kind": "onedrive",
+    "fields": [
+      {
+        "name": "rootPath",
+        "label": "Root Folder Path",
+        "input_type": "text",
+        "required": false,
+        "secret": false
+      },
+      {
+        "name": "accessToken",
+        "label": "Access Token (short-lived)",
+        "input_type": "password",
+        "required": false,
+        "secret": true
+      },
+      {
+        "name": "refreshToken",
+        "label": "Refresh Token",
+        "input_type": "password",
+        "required": false,
+        "secret": true
+      },
+      {
+        "name": "clientId",
+        "label": "OAuth Client ID",
+        "input_type": "text",
+        "required": false,
+        "secret": true
+      },
+      {
+        "name": "clientSecret",
+        "label": "OAuth Client Secret (optional for native apps)",
+        "input_type": "password",
+        "required": false,
+        "secret": true
+      },
+      {
+        "name": "versioning",
+        "label": "Enable OneDrive version listing",
+        "input_type": "checkbox",
+        "required": false,
+        "secret": false
+      }
+    ]
+  },
+  {
     "id": "sftp",
     "label": "SFTP",
     "kind": "sftp",

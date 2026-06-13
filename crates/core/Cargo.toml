@@ -14,7 +14,7 @@ base64 = "0.22"
 indexmap = "2.13.0"
 
 [target.'cfg(windows)'.dependencies]
-opendal = { version = "0.56.0", features = ["services-fs", "services-s3", "services-webdav", "services-azblob", "services-gcs", "services-b2", "services-oss", "services-cos", "services-obs", "services-ftp", "services-memory"] }
+opendal = { version = "0.56.0", features = ["services-fs", "services-s3", "services-webdav", "services-azblob", "services-gcs", "services-b2", "services-oss", "services-cos", "services-obs", "services-ftp", "services-gdrive", "services-onedrive", "services-memory"] }
 
 [target.'cfg(not(windows))'.dependencies]
-opendal = { version = "0.56.0", features = ["services-fs", "services-s3", "services-webdav", "services-azblob", "services-gcs", "services-b2", "services-oss", "services-cos", "services-obs", "services-sftp", "services-ftp", "services-memory"] }
+opendal = { version = "0.56.0", features = ["services-fs", "services-s3", "services-webdav", "services-azblob", "services-gcs", "services-b2", "services-oss", "services-cos", "services-obs", "services-sftp", "services-ftp", "services-gdrive", "services-onedrive", "services-memory"] }

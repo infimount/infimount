@@ -91,7 +91,12 @@ const getStorageIcon = (type: string) => {
     case "azure-blob":
       return azureIcon;
     case "gcs":
+    case "google-drive":
       return gcsIcon;
+    case "onedrive":
+    case "sftp":
+    case "ftp":
+      return folderNetworkIcon;
     case "webdav":
       return webdavIcon;
     case "local-fs":

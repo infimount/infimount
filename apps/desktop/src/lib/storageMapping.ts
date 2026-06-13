@@ -16,6 +16,12 @@ const BACKEND_TO_TYPE: Record<StorageBackend, StorageType> = {
   azblob: "azure-blob",
   webdav: "webdav",
   gcs: "gcs",
+  gdrive: "google-drive",
+  google_drive: "google-drive",
+  onedrive: "onedrive",
+  one_drive: "onedrive",
+  sftp: "sftp",
+  ftp: "ftp",
 };
 
 export function backendToStorageType(backend: StorageBackend): StorageType {

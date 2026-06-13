@@ -78,7 +78,7 @@ Install scripts verify selected downloads against `SHA256SUMS.txt`. To pin a ver
 
 ## What Infimount does
 
-- **Browse storage in one place:** local files, S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, Google Cloud Storage, WebDAV, SFTP, and FTP.
+- **Browse storage in one place:** local files, S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, Google Cloud Storage, Google Drive, Microsoft OneDrive, WebDAV, SFTP, and FTP.
 - **Work like a desktop file manager:** grid and list views, rich previews, drag-and-drop upload, bookmarks, recents, keyboard navigation, global search stop, dual-pane transfer workflows, conflict handling, and transfer queue.
 - **Validate before you trust a backend:** reachability checks report grouped capabilities, sanitized fix hints, and MCP readiness notes.
 - **Control MCP access explicitly:** new storages are not exposed to MCP by default. Enable selected storages, tool lists, path policies, read-only mode, confirmations, and local audit logs.
@@ -231,13 +231,13 @@ Outputs:
 
 ### Current Focus
 
-- [x] Local, S3/S3-compatible, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, GCS, WebDAV, SFTP, and FTP browsing
+- [x] Local, S3/S3-compatible, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, GCS, Google Drive, Microsoft OneDrive, WebDAV, SFTP, and FTP browsing
 - [x] Grid and list views with file preview, drag-and-drop upload, bookmarks, recents, and transfer queue
 - [x] Dual-pane copy/move and compare/update workflows
 - [x] MCP support for local AI assistants with explicit storage exposure, tool controls, path policy, confirmations, sessions, and audit
 - [x] Version-aware MCP tools where supported by the backend
 - [x] Keyboard navigation in virtualized file grid and table views
-- [x] SFTP and FTP remote-file backends through OpenDAL
+- [x] OAuth-backed Google Drive and OneDrive plus SFTP and FTP remote-file backends through OpenDAL
 - [x] Capability-aware storage validation summaries with fix hints and MCP readiness notes
 - [ ] Additional large-directory polish
 

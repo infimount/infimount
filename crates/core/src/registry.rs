@@ -7,7 +7,7 @@ use futures::TryStreamExt;
 use indexmap::IndexMap;
 #[cfg(not(windows))]
 use opendal::services::Sftp;
-use opendal::services::{Azblob, Cos, Fs, Ftp, Gcs, Obs, Oss, Webdav, B2, S3};
+use opendal::services::{Azblob, Cos, Fs, Ftp, Gcs, Gdrive, Obs, Onedrive, Oss, Webdav, B2, S3};
 use opendal::ErrorKind;
 use opendal::Operator;
 use serde_json::Value;
@@ -216,6 +216,8 @@ pub fn build_operator(source: &Source) -> Result<Operator> {
         SourceKind::Obs => build_obs_operator(source),
         SourceKind::Sftp => build_sftp_operator(source),
         SourceKind::Ftp => build_ftp_operator(source),
+        SourceKind::Gdrive => build_gdrive_operator(source),
+        SourceKind::Onedrive => build_onedrive_operator(source),
     }
 }
 
@@ -525,6 +527,111 @@ fn build_azure_blob_operator(source: &Source) -> Result<Operator> {
     }
     if let Some(endpoint) = source.config.get("endpoint").and_then(|v| v.as_str()) {
         builder = builder.endpoint(endpoint);
+    }
+
+    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    Ok(op)
+}
+
+fn build_gdrive_operator(source: &Source) -> Result<Operator> {
+    let mut builder = Gdrive::default();
+
+    if !source.root.is_empty() {
+        builder = builder.root(&source.root);
+    }
+    if let Some(root) = source
+        .config
+        .get("rootPath")
+        .or_else(|| source.config.get("root"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.root(root);
+    }
+    if let Some(access_token) = source
+        .config
+        .get("accessToken")
+        .or_else(|| source.config.get("access_token"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.access_token(access_token);
+    }
+    if let Some(refresh_token) = source
+        .config
+        .get("refreshToken")
+        .or_else(|| source.config.get("refresh_token"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.refresh_token(refresh_token);
+    }
+    if let Some(client_id) = source
+        .config
+        .get("clientId")
+        .or_else(|| source.config.get("client_id"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.client_id(client_id);
+    }
+    if let Some(client_secret) = source
+        .config
+        .get("clientSecret")
+        .or_else(|| source.config.get("client_secret"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.client_secret(client_secret);
+    }
+
+    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    Ok(op)
+}
+
+fn build_onedrive_operator(source: &Source) -> Result<Operator> {
+    let mut builder = Onedrive::default();
+
+    if !source.root.is_empty() {
+        builder = builder.root(&source.root);
+    }
+    if let Some(root) = source
+        .config
+        .get("rootPath")
+        .or_else(|| source.config.get("root"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.root(root);
+    }
+    if let Some(access_token) = source
+        .config
+        .get("accessToken")
+        .or_else(|| source.config.get("access_token"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.access_token(access_token);
+    }
+    if let Some(refresh_token) = source
+        .config
+        .get("refreshToken")
+        .or_else(|| source.config.get("refresh_token"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.refresh_token(refresh_token);
+    }
+    if let Some(client_id) = source
+        .config
+        .get("clientId")
+        .or_else(|| source.config.get("client_id"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.client_id(client_id);
+    }
+    if let Some(client_secret) = source
+        .config
+        .get("clientSecret")
+        .or_else(|| source.config.get("client_secret"))
+        .and_then(|v| v.as_str())
+    {
+        builder = builder.client_secret(client_secret);
+    }
+    if let Some(enabled) = config_bool(&source.config, "versioning") {
+        builder = builder.enable_versioning(enabled);
     }
 
     let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
@@ -1043,6 +1150,49 @@ mod tests {
             assert!(caps.copy);
             assert!(caps.presign_read);
             assert!(!caps.rename);
+        }
+    }
+
+    #[test]
+    fn builds_oauth_drive_operators() {
+        for (kind, config, versions) in [
+            (
+                crate::models::SourceKind::Gdrive,
+                serde_json::json!({
+                    "refreshToken": "refresh-token",
+                    "clientId": "client-id",
+                    "clientSecret": "client-secret",
+                    "rootPath": "/workspace"
+                }),
+                false,
+            ),
+            (
+                crate::models::SourceKind::Onedrive,
+                serde_json::json!({
+                    "refreshToken": "refresh-token",
+                    "clientId": "client-id",
+                    "rootPath": "/workspace",
+                    "versioning": true
+                }),
+                true,
+            ),
+        ] {
+            let source = Source {
+                id: kind.to_string(),
+                name: kind.to_string(),
+                kind,
+                root: String::new(),
+                config,
+            };
+            let op = build_operator(&source).expect("operator should build");
+            let caps = op.info().full_capability();
+            assert!(caps.list);
+            assert!(caps.read);
+            assert!(caps.write);
+            assert!(caps.copy);
+            assert!(caps.rename);
+            assert!(!caps.presign_read);
+            assert_eq!(caps.list_with_versions, versions);
         }
     }
 

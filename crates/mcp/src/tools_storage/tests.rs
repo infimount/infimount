@@ -207,6 +207,23 @@ async fn storage_management_accepts_v0_7_and_remote_file_backends() {
                 "password": "password"
             }),
         ),
+        (
+            "Google Drive",
+            "gdrive",
+            serde_json::json!({
+                "refreshToken": "refresh-token",
+                "clientId": "client-id",
+                "clientSecret": "client-secret"
+            }),
+        ),
+        (
+            "OneDrive",
+            "onedrive",
+            serde_json::json!({
+                "refreshToken": "refresh-token",
+                "clientId": "client-id"
+            }),
+        ),
     ] {
         let out = add_storage(
             &ctx,
@@ -244,6 +261,8 @@ async fn storage_management_canonicalizes_backend_aliases() {
         ("aliyun_oss", "oss"),
         ("tencent_cos", "cos"),
         ("huawei_obs", "obs"),
+        ("google_drive", "gdrive"),
+        ("one_drive", "onedrive"),
     ] {
         let out = add_storage(
             &ctx,

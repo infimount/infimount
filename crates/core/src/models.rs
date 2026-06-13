@@ -131,6 +131,10 @@ pub enum SourceKind {
     Sftp,
     #[serde(rename = "ftp")]
     Ftp,
+    #[serde(rename = "gdrive")]
+    Gdrive,
+    #[serde(rename = "onedrive")]
+    Onedrive,
 }
 
 impl fmt::Display for SourceKind {
@@ -147,6 +151,8 @@ impl fmt::Display for SourceKind {
             SourceKind::Obs => write!(f, "obs"),
             SourceKind::Sftp => write!(f, "sftp"),
             SourceKind::Ftp => write!(f, "ftp"),
+            SourceKind::Gdrive => write!(f, "gdrive"),
+            SourceKind::Onedrive => write!(f, "onedrive"),
         }
     }
 }
@@ -167,6 +173,8 @@ impl std::str::FromStr for SourceKind {
             "obs" | "huawei_obs" => Ok(SourceKind::Obs),
             "sftp" => Ok(SourceKind::Sftp),
             "ftp" => Ok(SourceKind::Ftp),
+            "gdrive" | "google_drive" | "google-drive" => Ok(SourceKind::Gdrive),
+            "onedrive" | "one_drive" | "one-drive" => Ok(SourceKind::Onedrive),
             _ => Err(()),
         }
     }

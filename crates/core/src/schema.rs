@@ -68,6 +68,8 @@ mod tests {
             ("huawei-obs", SourceKind::Obs),
             ("sftp", SourceKind::Sftp),
             ("ftp", SourceKind::Ftp),
+            ("google-drive", SourceKind::Gdrive),
+            ("onedrive", SourceKind::Onedrive),
         ] {
             let schema = schemas
                 .iter()
@@ -80,11 +82,22 @@ mod tests {
                     | (SourceKind::Obs, SourceKind::Obs)
                     | (SourceKind::Sftp, SourceKind::Sftp)
                     | (SourceKind::Ftp, SourceKind::Ftp)
+                    | (SourceKind::Gdrive, SourceKind::Gdrive)
+                    | (SourceKind::Onedrive, SourceKind::Onedrive)
             ));
-            assert!(schema
-                .fields
-                .iter()
-                .any(|field| field.name == "endpoint" && field.required));
+            if matches!(
+                kind,
+                SourceKind::Oss
+                    | SourceKind::Cos
+                    | SourceKind::Obs
+                    | SourceKind::Sftp
+                    | SourceKind::Ftp
+            ) {
+                assert!(schema
+                    .fields
+                    .iter()
+                    .any(|field| field.name == "endpoint" && field.required));
+            }
             assert!(schema.fields.iter().any(|field| field.secret));
         }
 

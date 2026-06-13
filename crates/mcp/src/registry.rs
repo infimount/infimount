@@ -307,6 +307,12 @@ pub fn is_secret_key(key: &str) -> bool {
         "key",
         "serviceaccountjson",
         "service_account_json",
+        "codeverifier",
+        "code_verifier",
+        "devicecode",
+        "device_code",
+        "authcode",
+        "auth_code",
     ]
     .iter()
     .any(|needle| lowered.contains(needle))
@@ -365,6 +371,11 @@ mod tests {
             "privateKeyPath": "/home/alice/.ssh/id_ed25519",
             "keyPath": "/home/alice/.ssh/id_rsa",
             "key": "/home/alice/.ssh/id_ecdsa",
+            "accessToken": "oauth-access-token",
+            "refreshToken": "oauth-refresh-token",
+            "clientSecret": "oauth-client-secret",
+            "codeVerifier": "pkce-verifier",
+            "deviceCode": "oauth-device-code",
             "nested": {
                 "client_secret": "x",
                 "secretId": "secret-id",
@@ -383,6 +394,11 @@ mod tests {
         assert_eq!(masked["privateKeyPath"], "********");
         assert_eq!(masked["keyPath"], "********");
         assert_eq!(masked["key"], "********");
+        assert_eq!(masked["accessToken"], "********");
+        assert_eq!(masked["refreshToken"], "********");
+        assert_eq!(masked["clientSecret"], "********");
+        assert_eq!(masked["codeVerifier"], "********");
+        assert_eq!(masked["deviceCode"], "********");
         assert_eq!(masked["nested"]["client_secret"], "********");
         assert_eq!(masked["nested"]["secretId"], "********");
         assert_eq!(masked["nested"]["safe"], "ok");

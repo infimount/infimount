@@ -319,6 +319,8 @@ fn legacy_source_to_storage(source: Source) -> StorageRecord {
         SourceKind::Obs => "obs",
         SourceKind::Sftp => "sftp",
         SourceKind::Ftp => "ftp",
+        SourceKind::Gdrive => "gdrive",
+        SourceKind::Onedrive => "onedrive",
     }
     .to_string();
 

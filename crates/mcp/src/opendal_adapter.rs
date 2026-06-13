@@ -125,6 +125,39 @@ mod tests {
     }
 
     #[test]
+    fn builds_oauth_drive_operators() {
+        for (backend, config, versions) in [
+            (
+                "gdrive",
+                json!({
+                    "refreshToken": "refresh-token",
+                    "clientId": "client-id",
+                    "clientSecret": "client-secret",
+                    "rootPath": "/workspace"
+                }),
+                false,
+            ),
+            (
+                "onedrive",
+                json!({
+                    "refreshToken": "refresh-token",
+                    "clientId": "client-id",
+                    "rootPath": "/workspace",
+                    "versioning": true
+                }),
+                true,
+            ),
+        ] {
+            let op = build_operator(&storage(backend, config)).expect("operator should build");
+            let caps = get_capabilities(&op);
+            assert!(op.info().full_capability().copy);
+            assert!(op.info().full_capability().rename);
+            assert!(!caps.presign_read);
+            assert_eq!(op.info().full_capability().list_with_versions, versions);
+        }
+    }
+
+    #[test]
     fn builds_v0_7_object_store_operators() {
         for (backend, config) in [
             (
