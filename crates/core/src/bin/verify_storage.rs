@@ -54,21 +54,160 @@ async fn verify_transfer(
         ))
     })?;
 
-    let actual = to_op.read(destination_path).await.map_err(|e| {
+    assert_transferred_content(
+        to_op,
+        destination_backend,
+        destination_path,
+        &content,
+        &format!("transfer {source_backend} -> {destination_backend}"),
+    )
+    .await?;
+
+    from_op.delete(source_path).await.ok();
+    to_op.delete(destination_path).await.ok();
+    Ok(())
+}
+
+async fn verify_recursive_transfer(
+    from_op: &Operator,
+    to_op: &Operator,
+    source_backend: &str,
+    destination_backend: &str,
+    operation: TransferOperation,
+) -> Result<(), Box<dyn Error>> {
+    let source_root = match operation {
+        TransferOperation::Copy => "recursive-copy-source/",
+        TransferOperation::Move => "recursive-move-source/",
+    };
+    let nested_dir = format!("{source_root}nested/");
+    let first_source_path = format!("{source_root}root.txt");
+    let second_source_path = format!("{nested_dir}child.txt");
+    let first_destination_path = format!("sim-transfer/{source_root}root.txt");
+    let second_destination_path = format!("sim-transfer/{source_root}nested/child.txt");
+    let first_content = format!(
+        "Recursive {:?} root {source_backend} to {destination_backend}",
+        operation
+    );
+    let second_content = format!(
+        "Recursive {:?} child {source_backend} to {destination_backend}",
+        operation
+    );
+
+    from_op.create_dir(source_root).await.map_err(|e| {
         io::Error::other(format!(
-            "{destination_backend}: transferred file read failed for {destination_path}: {e}"
+            "{source_backend}: recursive fixture root create failed: {e}"
         ))
     })?;
-    if String::from_utf8(actual.to_vec())? != content {
+    from_op.create_dir(&nested_dir).await.map_err(|e| {
+        io::Error::other(format!(
+            "{source_backend}: recursive fixture nested dir create failed: {e}"
+        ))
+    })?;
+    from_op
+        .write(&first_source_path, first_content.clone())
+        .await
+        .map_err(|e| {
+            io::Error::other(format!(
+                "{source_backend}: recursive fixture write failed for {first_source_path}: {e}"
+            ))
+        })?;
+    from_op
+        .write(&second_source_path, second_content.clone())
+        .await
+        .map_err(|e| {
+            io::Error::other(format!(
+                "{source_backend}: recursive fixture write failed for {second_source_path}: {e}"
+            ))
+        })?;
+    to_op.create_dir("sim-transfer/").await.map_err(|e| {
+        io::Error::other(format!(
+            "{destination_backend}: recursive transfer target dir create failed: {e}"
+        ))
+    })?;
+
+    transfer_entries(
+        from_op,
+        to_op,
+        vec![source_root.to_string()],
+        "sim-transfer",
+        operation,
+        false,
+        TransferConflictPolicy::Overwrite,
+    )
+    .await
+    .map_err(|e| {
+        io::Error::other(format!(
+            "recursive {operation:?} {source_backend} -> {destination_backend} failed: {e}"
+        ))
+    })?;
+
+    assert_transferred_content(
+        to_op,
+        destination_backend,
+        &first_destination_path,
+        &first_content,
+        &format!("recursive {operation:?} {source_backend} -> {destination_backend}"),
+    )
+    .await?;
+    assert_transferred_content(
+        to_op,
+        destination_backend,
+        &second_destination_path,
+        &second_content,
+        &format!("recursive {operation:?} {source_backend} -> {destination_backend}"),
+    )
+    .await?;
+
+    if operation == TransferOperation::Move
+        && from_op.exists(&first_source_path).await.map_err(|e| {
+            io::Error::other(format!(
+                "{source_backend}: moved source existence check failed for {first_source_path}: {e}"
+            ))
+        })?
+    {
+        return Err(io::Error::other(format!(
+            "recursive move {source_backend} -> {destination_backend} left source file behind"
+        ))
+        .into());
+    }
+
+    from_op.delete(&first_source_path).await.ok();
+    from_op.delete(&second_source_path).await.ok();
+    from_op.delete(&nested_dir).await.ok();
+    from_op.delete(source_root).await.ok();
+    to_op.delete(&first_destination_path).await.ok();
+    to_op.delete(&second_destination_path).await.ok();
+    to_op
+        .delete(&format!("sim-transfer/{source_root}nested/"))
+        .await
+        .ok();
+    to_op
+        .delete(&format!("sim-transfer/{source_root}"))
+        .await
+        .ok();
+    Ok(())
+}
+
+async fn assert_transferred_content(
+    op: &Operator,
+    backend: &str,
+    path: &str,
+    expected: &str,
+    label: &str,
+) -> Result<(), Box<dyn Error>> {
+    let actual = op.read(path).await.map_err(|e| {
+        io::Error::other(format!(
+            "{backend}: transferred file read failed for {path}: {e}"
+        ))
+    })?;
+    if String::from_utf8(actual.to_vec())? != expected {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("transfer {source_backend} -> {destination_backend} content mismatch"),
+            format!("{label} content mismatch"),
         )
         .into());
     }
 
-    from_op.delete(source_path).await.ok();
-    to_op.delete(destination_path).await.ok();
     Ok(())
 }
 
@@ -204,7 +343,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     verify_transfer(&op_s3, &op_gcs, "S3", "GCS").await?;
     verify_transfer(&op_gcs, &op_az, "GCS", "Azure").await?;
     verify_transfer(&op_az, &op_s3, "Azure", "S3").await?;
-    println!("✅ S3/GCS/Azure: core cross-backend transfers successful");
+    verify_recursive_transfer(&op_s3, &op_gcs, "S3", "GCS", TransferOperation::Copy).await?;
+    verify_recursive_transfer(&op_gcs, &op_az, "GCS", "Azure", TransferOperation::Copy).await?;
+    println!("✅ S3/GCS/Azure: core cross-backend file and recursive copy transfers successful");
 
     println!("\nStorage verification passed.");
 
