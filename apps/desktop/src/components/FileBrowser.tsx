@@ -2095,7 +2095,9 @@ export function FileBrowser({
             </div>
           </section>
         ) : null}
-        {showTransferQueue && !deleteProgress && !uploadProgress ? <TransferQueuePanel /> : null}
+        {showTransferQueue ? (
+          <TransferQueuePanel className={deleteProgress || uploadProgress ? "bottom-44" : undefined} />
+        ) : null}
       </div>
 
       <AlertDialog

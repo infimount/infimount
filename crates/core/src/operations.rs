@@ -1637,6 +1637,7 @@ where
                         .into())
                     }
                     TransferConflictPolicy::Overwrite => {
+                        ensure_not_cancelled(&is_cancelled)?;
                         delete_recursive(to_op, &dest_dir).await?;
                     }
                     TransferConflictPolicy::Skip => {
@@ -1694,6 +1695,7 @@ where
                         .into())
                     }
                     TransferConflictPolicy::Overwrite => {
+                        ensure_not_cancelled(&is_cancelled)?;
                         delete_recursive(to_op, &dest_file).await?;
                     }
                     TransferConflictPolicy::Skip => {

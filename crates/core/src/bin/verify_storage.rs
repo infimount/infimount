@@ -189,12 +189,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     verify_round_trip(&op_az, "Azure", "verify-azure.txt").await?;
     println!("✅ Azure: read/write/list/stat/delete round-trip successful");
 
-    // 4. Verify simulator-backed transfer through Infimount core operations.
-    println!("\n--- Verifying S3 → GCS transfer ---");
-    verify_transfer(&op_s3, &op_gcs, "S3", "GCS").await?;
-    println!("✅ S3 → GCS: core transfer successful");
-
-    // 5. Verify WebDAV
+    // 4. Verify WebDAV
     println!("\n--- Verifying WebDAV ---");
     let webdav = Webdav::default()
         .endpoint("http://localhost:7333")
@@ -203,6 +198,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let op_webdav = Operator::new(webdav)?.finish();
     verify_list(&op_webdav, "WebDAV", "/").await?;
     println!("✅ WebDAV: list successful");
+
+    // 5. Verify simulator-backed transfers through Infimount core operations.
+    println!("\n--- Verifying simulator-backed transfers ---");
+    verify_transfer(&op_s3, &op_gcs, "S3", "GCS").await?;
+    verify_transfer(&op_gcs, &op_az, "GCS", "Azure").await?;
+    verify_transfer(&op_az, &op_s3, "Azure", "S3").await?;
+    println!("✅ S3/GCS/Azure: core cross-backend transfers successful");
 
     println!("\nStorage verification passed.");
 

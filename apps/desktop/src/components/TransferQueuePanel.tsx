@@ -63,7 +63,11 @@ function statusIcon(job: TransferJob) {
   }
 }
 
-export function TransferQueuePanel() {
+interface TransferQueuePanelProps {
+  className?: string;
+}
+
+export function TransferQueuePanel({ className }: TransferQueuePanelProps) {
   const {
     jobs,
     activeJob,
@@ -81,7 +85,10 @@ export function TransferQueuePanel() {
 
   return (
     <section
-      className="absolute bottom-12 right-4 z-20 w-[360px] max-w-[calc(100%-2rem)] rounded-xl border border-border bg-card text-card-foreground shadow-lg"
+      className={cn(
+        "absolute bottom-12 right-4 z-20 w-[360px] max-w-[calc(100%-2rem)] rounded-xl border border-border bg-card text-card-foreground shadow-lg",
+        className,
+      )}
       aria-label="Transfer queue"
     >
       <div className="flex items-center justify-between gap-3 border-b border-border/70 px-3 py-2">

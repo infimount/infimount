@@ -79,6 +79,7 @@ const TransferQueueContext = createContext<TransferQueueContextValue | null>(nul
 
 const TRANSFER_HISTORY_STORAGE_KEY = "infimount:transfer-history:v1";
 const MAX_PERSISTED_TRANSFERS = 50;
+const TRANSFER_PROGRESS_PERSIST_DEBOUNCE_MS = 500;
 
 const now = () => Date.now();
 
@@ -166,6 +167,8 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
   const callbacksRef = useRef(new Map<string, TransferJobCallbacks>());
   const processingRef = useRef(false);
   const cancelledJobIdsRef = useRef(new Set<string>());
+  const latestJobsRef = useRef(jobs);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const patchJob = useCallback((jobId: string, patch: Partial<TransferJob>) => {
     setJobs((current) =>
@@ -247,8 +250,33 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    persistJobs(jobs);
+    latestJobsRef.current = jobs;
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
+
+    const hasActiveTransfer = jobs.some((job) => job.status === "queued" || job.status === "running");
+    if (!hasActiveTransfer) {
+      persistJobs(jobs);
+      return;
+    }
+
+    persistTimerRef.current = setTimeout(() => {
+      persistJobs(latestJobsRef.current);
+      persistTimerRef.current = null;
+    }, TRANSFER_PROGRESS_PERSIST_DEBOUNCE_MS);
   }, [jobs]);
+
+  useEffect(
+    () => () => {
+      if (persistTimerRef.current) {
+        clearTimeout(persistTimerRef.current);
+      }
+      persistJobs(latestJobsRef.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
