@@ -65,6 +65,7 @@ The `Release` workflow is triggered by `v*` tags and will:
   - Rust format, clippy, workspace tests, and coverage gate
   - desktop launch/migration smoke test under Xvfb
   - OpenDAL storage simulator verification, including read/write/list/stat/delete round trips where supported and WebDAV list reachability
+  - optional credential-gated OAuth storage smoke via `scripts/oauth-storage-smoke.sh` when Google Drive or OneDrive test credentials are intentionally supplied; this is not a zero-manual release gate because provider OAuth APIs have no local emulator
   - release consistency checks for app versions, README, GitHub Pages, `CHANGELOG.md`, `docs/llms.txt`, and `docs/release-notes-X.Y.Z.md`
   - feature-doc consistency checks for supported backend names, S3-compatible wording, representative MCP tool names, Workbench copy, and Agent Workspaces copy
   - install-script checksum smoke tests for Linux/macOS shell and Windows PowerShell installers
