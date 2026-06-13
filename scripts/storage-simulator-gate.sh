@@ -16,6 +16,16 @@ require_command docker
 require_command curl
 require_command aws
 require_command az
+require_command ssh-keygen
+
+SFTP_RUNTIME_DIR="$ROOT_DIR/storage-simulator/runtime/sftp"
+mkdir -p "$SFTP_RUNTIME_DIR"
+if [ ! -f "$SFTP_RUNTIME_DIR/id_ed25519" ]; then
+  ssh-keygen -q -t ed25519 -N "" -C "infimount-storage-simulator" -f "$SFTP_RUNTIME_DIR/id_ed25519"
+fi
+chmod 700 "$ROOT_DIR/storage-simulator/runtime" "$SFTP_RUNTIME_DIR"
+chmod 600 "$SFTP_RUNTIME_DIR/id_ed25519"
+chmod 644 "$SFTP_RUNTIME_DIR/id_ed25519.pub"
 
 cleanup() {
   docker compose -f "$COMPOSE_FILE" down -v

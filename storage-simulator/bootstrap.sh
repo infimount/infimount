@@ -28,6 +28,8 @@ wait_for_tcp() {
 
 # Wait for services
 wait_for_http "http://localhost:8333"
+wait_for_tcp "localhost" "2222"
+wait_for_tcp "localhost" "2121"
 wait_for_tcp "localhost" "10000"
 wait_for_http "http://localhost:4443/storage/v1/b"
 

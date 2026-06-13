@@ -68,7 +68,35 @@ services:
       - seaweed-filer
 
   # ------------------------------------------------------
-  # 2. Azurite – Azure Blob Emulator
+  # 2. SFTP + FTP – protocol backends
+  # ------------------------------------------------------
+  sftp:
+    image: atmoz/sftp:latest
+    container_name: infimount-sftp
+    command: "simuser::1001:1001:upload"
+    ports:
+      - "2222:22"
+    volumes:
+      - ./runtime/sftp/id_ed25519.pub:/home/simuser/.ssh/keys/id_ed25519.pub:ro
+
+  ftp:
+    image: fauria/vsftpd:latest
+    container_name: infimount-ftp
+    environment:
+      FTP_USER: simuser
+      FTP_PASS: password123
+      PASV_ADDRESS: 127.0.0.1
+      PASV_MIN_PORT: 21100
+      PASV_MAX_PORT: 21110
+      LOCAL_UMASK: 022
+    ports:
+      - "2121:21"
+      - "21100-21110:21100-21110"
+    volumes:
+      - ftp_data:/home/vsftpd
+
+  # ------------------------------------------------------
+  # 3. Azurite – Azure Blob Emulator
   # ------------------------------------------------------
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite
@@ -82,7 +110,7 @@ services:
       - azurite_data:/data
 
   # ------------------------------------------------------
-  # 3. Fake GCS – Google Cloud Storage Emulator
+  # 4. Fake GCS – Google Cloud Storage Emulator
   # ------------------------------------------------------
   fake-gcs:
     image: fsouza/fake-gcs-server:latest
@@ -99,3 +127,4 @@ volumes:
   seaweed_filer:
   azurite_data:
   gcs_data:
+  ftp_data:

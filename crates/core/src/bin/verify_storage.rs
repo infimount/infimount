@@ -1,6 +1,8 @@
 use infimount_core::operations::{transfer_entries, TransferConflictPolicy, TransferOperation};
+#[cfg(not(windows))]
+use opendal::services::Sftp;
 use opendal::{
-    services::{Azblob, Gcs, Webdav, S3},
+    services::{Azblob, Ftp, Gcs, Webdav, S3},
     Operator,
 };
 use std::{error::Error, io};
@@ -316,7 +318,36 @@ async fn main() -> Result<(), Box<dyn Error>> {
     verify_round_trip(&op_s3, "S3", "verify-s3.txt").await?;
     println!("✅ S3: read/write/list/stat/delete round-trip successful");
 
-    // 3. Verify Azure
+    // 3. Verify FTP
+    println!("\n--- Verifying FTP ---");
+    let ftp = Ftp::default()
+        .endpoint("ftp://127.0.0.1:2121")
+        .user("simuser")
+        .password("password123")
+        .root("/");
+
+    let op_ftp = Operator::new(ftp)?.finish();
+    verify_round_trip(&op_ftp, "FTP", "verify-ftp.txt").await?;
+    println!("✅ FTP: read/write/list/stat/delete round-trip successful");
+
+    // 4. Verify SFTP
+    #[cfg(not(windows))]
+    {
+        println!("\n--- Verifying SFTP ---");
+        let sftp_key = "storage-simulator/runtime/sftp/id_ed25519";
+        let sftp = Sftp::default()
+            .endpoint("ssh://127.0.0.1:2222")
+            .user("simuser")
+            .key(sftp_key)
+            .root("/upload")
+            .known_hosts_strategy("Accept");
+
+        let op_sftp = Operator::new(sftp)?.finish();
+        verify_round_trip(&op_sftp, "SFTP", "verify-sftp.txt").await?;
+        println!("✅ SFTP: read/write/list/stat/delete round-trip successful");
+    }
+
+    // 5. Verify Azure
     println!("\n--- Verifying Azure ---");
     let az = Azblob::default()
         .account_name("devstoreaccount1")
@@ -328,7 +359,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     verify_round_trip(&op_az, "Azure", "verify-azure.txt").await?;
     println!("✅ Azure: read/write/list/stat/delete round-trip successful");
 
-    // 4. Verify WebDAV
+    // 6. Verify WebDAV
     println!("\n--- Verifying WebDAV ---");
     let webdav = Webdav::default()
         .endpoint("http://localhost:7333")
@@ -338,7 +369,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     verify_list(&op_webdav, "WebDAV", "/").await?;
     println!("✅ WebDAV: list successful");
 
-    // 5. Verify simulator-backed transfers through Infimount core operations.
+    // 7. Verify simulator-backed transfers through Infimount core operations.
     println!("\n--- Verifying simulator-backed transfers ---");
     verify_transfer(&op_s3, &op_gcs, "S3", "GCS").await?;
     verify_transfer(&op_gcs, &op_az, "GCS", "Azure").await?;
