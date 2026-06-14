@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { AddStorageDialog } from "./AddStorageDialog";
+import * as api from "@/lib/api";
 import type { StorageConfig, StorageValidationResult } from "@/types/storage";
 import type { StorageKindSchema } from "@/lib/api";
 
@@ -21,6 +22,18 @@ const schemas: StorageKindSchema[] = [
       { name: "region", label: "Region", input_type: "text" },
       { name: "secret", label: "Secret key", input_type: "text", secret: true },
       { name: "notes", label: "Notes", input_type: "textarea" },
+    ],
+  },
+  {
+    id: "google-drive",
+    label: "Google Drive",
+    kind: "gdrive",
+    fields: [
+      { name: "rootPath", label: "Root Folder Path", input_type: "text" },
+      { name: "accessToken", label: "Access Token", input_type: "password", secret: true },
+      { name: "refreshToken", label: "Refresh Token", input_type: "password", secret: true },
+      { name: "clientId", label: "OAuth Client ID", input_type: "text", secret: true },
+      { name: "clientSecret", label: "OAuth Client Secret", input_type: "password", secret: true },
     ],
   },
 ];
@@ -80,6 +93,66 @@ beforeAll(() => {
 });
 
 describe("AddStorageDialog", () => {
+  it("connects Google Drive through OAuth without rendering raw token text", async () => {
+    const connectSpy = vi.spyOn(api, "connectOAuthStorage").mockResolvedValue({
+      provider: "gdrive",
+      config: {
+        accessToken: "raw-access-token",
+        refreshToken: "raw-refresh-token",
+        clientId: "client-id",
+        clientSecret: "client-secret",
+      },
+      expiresAt: null,
+    });
+    const onUpdate = vi.fn().mockResolvedValue(undefined);
+    const initialStorage: StorageConfig = {
+      id: "drive-1",
+      name: "Drive",
+      type: "google-drive",
+      backend: "gdrive",
+      config: { clientId: "client-id", clientSecret: "client-secret" },
+      enabled: true,
+      mcpExposed: false,
+      readOnly: false,
+      connected: true,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      mcpPolicy: {
+        default_access: "read_only",
+        allowed_paths: [],
+        denied_paths: [],
+        confirmation_rules: {
+          require_for_write: true,
+          require_for_overwrite: true,
+          require_for_delete: true,
+          require_for_version_delete: true,
+          require_for_presign: true,
+          require_for_cross_storage_copy: true,
+        },
+      },
+    };
+
+    renderDialog({ initialStorage, onUpdate });
+
+    expect(await screen.findByText("Connect Google Drive")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+
+    expect(await screen.findByText(/OAuth connected/)).toBeInTheDocument();
+    expect(connectSpy).toHaveBeenCalledWith({
+      provider: "gdrive",
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      rootPath: undefined,
+      versioning: false,
+    });
+    expect(screen.getByLabelText("Access Token")).toHaveAttribute("type", "password");
+    expect(screen.getByLabelText("Refresh Token")).toHaveAttribute("type", "password");
+    expect(screen.queryByText("raw-access-token")).not.toBeInTheDocument();
+    expect(screen.queryByText("raw-refresh-token")).not.toBeInTheDocument();
+
+    connectSpy.mockRestore();
+  });
+
   it("validates and submits a local storage draft", async () => {
     const onAdd = vi.fn().mockResolvedValue(undefined);
     const onVerify = vi.fn().mockResolvedValue(validResult);

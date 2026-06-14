@@ -118,6 +118,20 @@ export interface DeleteVersionResult {
   deleted: boolean;
 }
 
+export interface OAuthConnectInput {
+  provider: "gdrive" | "onedrive";
+  clientId: string;
+  clientSecret?: string;
+  rootPath?: string;
+  versioning?: boolean;
+}
+
+export interface OAuthConnectResult {
+  provider: "gdrive" | "onedrive";
+  config: Record<string, unknown>;
+  expiresAt?: string | null;
+}
+
 async function handleError(error: unknown): Promise<never> {
   console.error("API Error:", error);
   if (typeof error === "object" && error !== null && "code" in error && "message" in error) {
@@ -283,6 +297,10 @@ export function listStorageSchemas(): Promise<StorageKindSchema[]> {
 
 export function getStorageCapabilities(storageId: string): Promise<StorageCapabilities> {
   return invokeOrThrow<StorageCapabilities>("get_storage_capabilities", { storageId });
+}
+
+export function connectOAuthStorage(input: OAuthConnectInput): Promise<OAuthConnectResult> {
+  return invokeOrThrow<OAuthConnectResult>("connect_oauth_storage", { input });
 }
 
 export function generateDownloadLink(

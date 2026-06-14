@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Clipboard, Eye, EyeOff, Sparkles } from "lucide-react";
+import { Clipboard, ExternalLink, Eye, EyeOff, Sparkles } from "lucide-react";
 
 import {
   Dialog,
@@ -20,7 +20,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { listStorageSchemas, type StorageFieldSchema, type StorageKindSchema } from "@/lib/api";
+import {
+  connectOAuthStorage,
+  listStorageSchemas,
+  type StorageFieldSchema,
+  type StorageKindSchema,
+} from "@/lib/api";
 import type {
   StorageConfig,
   StorageDraft,
@@ -164,6 +169,8 @@ export function AddStorageDialog({
   const [verifyResult, setVerifyResult] = useState<StorageValidationResult | null>(null);
   const [verifyMessage, setVerifyMessage] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  const [oauthStatus, setOauthStatus] = useState<string | null>(null);
+  const [isOAuthConnecting, setIsOAuthConnecting] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -199,6 +206,8 @@ export function AddStorageDialog({
       setIsSubmitting(false);
       setIsVerifying(false);
       setCopyStatus(null);
+      setOauthStatus(null);
+      setIsOAuthConnecting(false);
       return;
     }
 
@@ -248,6 +257,7 @@ export function AddStorageDialog({
     setFormError(null);
     setVerifyResult(null);
     setVerifyMessage(null);
+    setOauthStatus(null);
   };
 
   const handleFieldChange = (fieldName: string, value: string) => {
@@ -279,6 +289,41 @@ export function AddStorageDialog({
   };
 
   const providerPresets = PROVIDER_PRESETS[type] ?? [];
+  const isOAuthStorage = type === "google-drive" || type === "onedrive";
+  const oauthProvider = type === "google-drive" ? "gdrive" : type === "onedrive" ? "onedrive" : null;
+  const oauthConnected = Boolean(fieldValues.accessToken || fieldValues.refreshToken);
+
+  const handleOAuthConnect = async () => {
+    if (!oauthProvider) return;
+    const clientId = (fieldValues.clientId ?? "").trim();
+    if (!clientId) {
+      setFormError("OAuth Client ID is required before connecting.");
+      return;
+    }
+
+    setIsOAuthConnecting(true);
+    setFormError(null);
+    setOauthStatus("Opening your browser for local OAuth authorization...");
+    try {
+      const result = await connectOAuthStorage({
+        provider: oauthProvider,
+        clientId,
+        clientSecret: (fieldValues.clientSecret ?? "").trim() || undefined,
+        rootPath: (fieldValues.rootPath ?? "").trim() || undefined,
+        versioning: fieldValues.versioning === "true",
+      });
+      const nextValues = buildFieldValues(currentSchema, { ...fieldValues, ...result.config });
+      setFieldValues(nextValues);
+      setRevealSecrets(false);
+      setOauthStatus("OAuth connected. Tokens are stored locally when you save this storage.");
+      setName((current) => current.trim() || (oauthProvider === "gdrive" ? "Google Drive" : "Microsoft OneDrive"));
+    } catch (error) {
+      setOauthStatus(null);
+      setFormError(error instanceof Error ? error.message : "OAuth authorization failed.");
+    } finally {
+      setIsOAuthConnecting(false);
+    }
+  };
 
   const buildDraft = (): StorageDraft | null => {
     if (!currentSchema) {
@@ -541,6 +586,37 @@ export function AddStorageDialog({
                     </button>
                   ))}
                 </div>
+              </div>
+            ) : null}
+
+            {isOAuthStorage ? (
+              <div className="rounded-xl border border-border/70 bg-card/40 p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div className="space-y-1">
+                    <p className="text-sm text-foreground">
+                      {type === "google-drive" ? "Connect Google Drive" : "Connect Microsoft OneDrive"}
+                    </p>
+                    <p className="text-[11px] leading-relaxed text-muted-foreground">
+                      Opens your browser and uses a local loopback callback. OAuth tokens stay in
+                      your local Infimount registry, and MCP exposure remains off unless you enable it.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="shrink-0 border border-border hover:bg-sidebar-accent/30 hover:text-foreground"
+                    onClick={handleOAuthConnect}
+                    disabled={isOAuthConnecting}
+                  >
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    {isOAuthConnecting ? "Waiting for browser..." : oauthConnected ? "Reconnect" : "Connect"}
+                  </Button>
+                </div>
+                {oauthStatus ? (
+                  <div className="mt-3 rounded-md border border-emerald-300/70 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+                    {oauthStatus}
+                  </div>
+                ) : null}
               </div>
             ) : null}
 

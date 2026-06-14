@@ -78,6 +78,7 @@ fn main() {
             commands::cancel_transfer_job,
             commands::list_storage_schemas,
             commands::get_storage_capabilities,
+            commands::connect_oauth_storage,
             commands::generate_download_link,
             commands::get_app_settings,
             commands::complete_onboarding,

@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use chrono::Utc;
 use infimount_core::{operations, schema::StorageKindSchema, CoreError, Entry};
 use infimount_mcp::audit::{mask_presigned_url, AuditDecision, AuditEvent, AuditStore};
@@ -17,12 +19,16 @@ use infimount_mcp::tools_storage::{
     export_config, import_config, validate_storage_record, ExportConfigInput, ExportConfigOutput,
     ImportConfigInput, ImportConfigOutput, ValidateStorageOutput,
 };
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 
 use crate::app_settings::AppSettings;
 use crate::state::{AppState, McpClientSnippets, McpRuntimeStatus};
@@ -40,10 +46,244 @@ pub struct StorageDraft {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OAuthConnectInput {
+    pub provider: String,
+    pub client_id: String,
+    #[serde(default)]
+    pub client_secret: Option<String>,
+    #[serde(default)]
+    pub root_path: Option<String>,
+    #[serde(default)]
+    pub versioning: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OAuthConnectOutput {
+    pub provider: String,
+    pub config: Value,
+    pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OAuthTokenResponse {
+    access_token: String,
+    #[serde(default)]
+    refresh_token: Option<String>,
+    #[serde(default)]
+    expires_in: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ImportStoragesRequest {
     pub json: String,
     pub mode: String,
     pub on_conflict: String,
+}
+
+fn oauth_random_urlsafe(bytes: usize) -> String {
+    let mut buf = vec![0_u8; bytes];
+    rand::rng().fill_bytes(&mut buf);
+    URL_SAFE_NO_PAD.encode(buf)
+}
+
+fn oauth_pkce_challenge(verifier: &str) -> String {
+    URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
+}
+
+fn oauth_provider_settings(
+    provider: &str,
+) -> Result<(&'static str, &'static str, &'static str, &'static str), CoreError> {
+    match provider {
+        "gdrive" | "google_drive" | "google-drive" => Ok((
+            "gdrive",
+            "https://accounts.google.com/o/oauth2/v2/auth",
+            "https://oauth2.googleapis.com/token",
+            "https://www.googleapis.com/auth/drive",
+        )),
+        "onedrive" | "one_drive" | "one-drive" => Ok((
+            "onedrive",
+            "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+            "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+            "Files.ReadWrite offline_access",
+        )),
+        other => Err(CoreError::Config(format!(
+            "unsupported OAuth provider '{other}'"
+        ))),
+    }
+}
+
+async fn wait_for_oauth_callback(
+    listener: TcpListener,
+    expected_state: String,
+) -> Result<String, CoreError> {
+    let (mut stream, peer) = tokio::time::timeout(Duration::from_secs(180), listener.accept())
+        .await
+        .map_err(|_| CoreError::Config("OAuth authorization timed out".to_string()))?
+        .map_err(CoreError::Io)?;
+
+    if !peer.ip().is_loopback() {
+        let _ = stream
+            .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nForbidden")
+            .await;
+        return Err(CoreError::Config(
+            "OAuth callback must come from loopback".to_string(),
+        ));
+    }
+
+    let mut buf = vec![0_u8; 8192];
+    let n = stream.read(&mut buf).await.map_err(CoreError::Io)?;
+    let request = String::from_utf8_lossy(&buf[..n]);
+    let request_line = request.lines().next().unwrap_or_default();
+    let target = request_line.split_whitespace().nth(1).unwrap_or_default();
+    let query = target.split_once('?').map(|(_, q)| q).unwrap_or_default();
+    let params = query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .map(|(key, value)| {
+            let decoded = urlencoding::decode(value)
+                .map(|v| v.to_string())
+                .unwrap_or_else(|_| value.to_string());
+            (key.to_string(), decoded)
+        })
+        .collect::<HashMap<_, _>>();
+
+    let state = params.get("state").map(String::as_str).unwrap_or_default();
+    if state != expected_state {
+        let _ = stream
+            .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOAuth state mismatch. Return to Infimount and try again.")
+            .await;
+        return Err(CoreError::Config("OAuth state mismatch".to_string()));
+    }
+
+    if let Some(error) = params.get("error") {
+        let _ = stream
+            .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOAuth authorization was denied or failed. Return to Infimount.")
+            .await;
+        return Err(CoreError::Config(format!(
+            "OAuth authorization failed: {error}"
+        )));
+    }
+
+    let code = params.get("code").cloned().ok_or_else(|| {
+        CoreError::Config("OAuth callback did not include an authorization code".to_string())
+    })?;
+
+    let _ = stream
+        .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<!doctype html><title>Infimount OAuth Complete</title><body><h1>Infimount connected</h1><p>You can close this window and return to Infimount.</p></body>")
+        .await;
+    Ok(code)
+}
+
+#[tauri::command]
+pub async fn connect_oauth_storage(
+    input: OAuthConnectInput,
+) -> Result<OAuthConnectOutput, CoreError> {
+    let client_id = input.client_id.trim().to_string();
+    if client_id.is_empty() {
+        return Err(CoreError::Config("OAuth Client ID is required".to_string()));
+    }
+
+    let (provider, auth_endpoint, token_endpoint, scope) =
+        oauth_provider_settings(&input.provider)?;
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(CoreError::Io)?;
+    let port = listener.local_addr().map_err(CoreError::Io)?.port();
+    let redirect_uri = format!("http://127.0.0.1:{port}/oauth/callback");
+    let state = oauth_random_urlsafe(32);
+    let verifier = oauth_random_urlsafe(64);
+    let challenge = oauth_pkce_challenge(&verifier);
+
+    let mut auth_url = format!(
+        "{auth_endpoint}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}&code_challenge={}&code_challenge_method=S256",
+        urlencoding::encode(&client_id),
+        urlencoding::encode(&redirect_uri),
+        urlencoding::encode(scope),
+        urlencoding::encode(&state),
+        urlencoding::encode(&challenge),
+    );
+    if provider == "gdrive" {
+        auth_url.push_str("&access_type=offline&prompt=consent");
+    }
+
+    open::that_detached(&auth_url).map_err(|_| {
+        CoreError::Config("Failed to open OAuth authorization URL in the browser".to_string())
+    })?;
+
+    let code = wait_for_oauth_callback(listener, state).await?;
+    let mut form: Vec<(&str, String)> = vec![
+        ("grant_type", "authorization_code".to_string()),
+        ("code", code),
+        ("redirect_uri", redirect_uri),
+        ("client_id", client_id.clone()),
+        ("code_verifier", verifier),
+    ];
+    if let Some(secret) = input
+        .client_secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        form.push(("client_secret", secret.to_string()));
+    }
+
+    let response = reqwest::Client::new()
+        .post(token_endpoint)
+        .form(&form)
+        .send()
+        .await
+        .map_err(|_| CoreError::Config("OAuth token exchange failed".to_string()))?;
+
+    if !response.status().is_success() {
+        return Err(CoreError::Config(format!(
+            "OAuth token exchange failed with provider status {}",
+            response.status().as_u16()
+        )));
+    }
+
+    let token: OAuthTokenResponse = response
+        .json()
+        .await
+        .map_err(|_| CoreError::Config("OAuth token response could not be parsed".to_string()))?;
+
+    let mut config = serde_json::Map::new();
+    config.insert("accessToken".to_string(), Value::String(token.access_token));
+    if let Some(refresh_token) = token.refresh_token {
+        config.insert("refreshToken".to_string(), Value::String(refresh_token));
+    }
+    config.insert("clientId".to_string(), Value::String(client_id));
+    if let Some(secret) = input
+        .client_secret
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+    {
+        config.insert("clientSecret".to_string(), Value::String(secret));
+    }
+    if let Some(root) = input
+        .root_path
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+    {
+        config.insert("rootPath".to_string(), Value::String(root));
+    }
+    if provider == "onedrive" {
+        config.insert(
+            "versioning".to_string(),
+            Value::Bool(input.versioning.unwrap_or(false)),
+        );
+    }
+
+    let expires_at = token
+        .expires_in
+        .map(|seconds| (Utc::now() + chrono::Duration::seconds(seconds)).to_rfc3339());
+
+    Ok(OAuthConnectOutput {
+        provider: provider.to_string(),
+        config: Value::Object(config),
+        expires_at,
+    })
 }
 
 #[tauri::command]
@@ -730,6 +970,8 @@ fn validate_storage_draft(storage: &StorageDraft) -> McpResult<()> {
             | "azure_blob"
             | "webdav"
             | "gcs"
+            | "gdrive"
+            | "onedrive"
             | "sftp"
             | "ftp"
     ) {
@@ -759,6 +1001,8 @@ mod tests {
             "azure_blob",
             "webdav",
             "gcs",
+            "gdrive",
+            "onedrive",
             "sftp",
             "ftp",
         ] {
@@ -772,6 +1016,22 @@ mod tests {
             };
             validate_storage_draft(&storage).expect("backend should be accepted");
         }
+    }
+
+    #[test]
+    fn oauth_provider_settings_accepts_drive_aliases() {
+        assert_eq!(oauth_provider_settings("google_drive").unwrap().0, "gdrive");
+        assert_eq!(oauth_provider_settings("one-drive").unwrap().0, "onedrive");
+        assert!(oauth_provider_settings("mystery").is_err());
+    }
+
+    #[test]
+    fn oauth_pkce_challenge_is_s256_urlsafe() {
+        let challenge = oauth_pkce_challenge("verifier");
+        assert_eq!(challenge, "iMnq5o6zALKXGivsnlom_0F5_WYda32GHkxlV7mq7hQ");
+        assert!(!challenge.contains('='));
+        assert!(!challenge.contains('+'));
+        assert!(!challenge.contains('/'));
     }
 
     #[test]
