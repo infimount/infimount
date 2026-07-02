@@ -1034,6 +1034,77 @@ mod tests {
         assert!(!challenge.contains('/'));
     }
 
+    #[tokio::test]
+    async fn oauth_callback_accepts_loopback_code_and_valid_state() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let task = tokio::spawn(wait_for_oauth_callback(
+            listener,
+            "expected-state".to_string(),
+        ));
+
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(
+                b"GET /oauth/callback?code=abc123&state=expected-state HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            )
+            .await
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+
+        assert!(response.contains("200 OK"));
+        assert_eq!(task.await.unwrap().unwrap(), "abc123");
+    }
+
+    #[tokio::test]
+    async fn oauth_callback_rejects_state_mismatch_without_returning_code() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let task = tokio::spawn(wait_for_oauth_callback(
+            listener,
+            "expected-state".to_string(),
+        ));
+
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(
+                b"GET /oauth/callback?code=secret-code&state=wrong-state HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            )
+            .await
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+
+        assert!(response.contains("400 Bad Request"));
+        assert!(response.contains("OAuth state mismatch"));
+        assert!(task.await.unwrap().is_err());
+    }
+
+    #[tokio::test]
+    async fn oauth_callback_maps_provider_error_without_secrets() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let task = tokio::spawn(wait_for_oauth_callback(
+            listener,
+            "expected-state".to_string(),
+        ));
+
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(
+                b"GET /oauth/callback?error=access_denied&state=expected-state&code=should-not-use HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            )
+            .await
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+
+        assert!(response.contains("400 Bad Request"));
+        assert!(!response.contains("should-not-use"));
+        assert!(task.await.unwrap().is_err());
+    }
+
     #[test]
     fn normalize_policy_prefixes_deduplicates_and_collapses_segments() {
         let prefixes = normalize_policy_prefixes(vec![

@@ -16,6 +16,7 @@ vi.mock("@tauri-apps/plugin-updater", () => ({
 }));
 
 vi.mock("@/lib/api", () => ({
+  connectOAuthStorage: vi.fn(),
   transferEntries: vi.fn(),
   TauriApiError: class extends Error {
     code: string;

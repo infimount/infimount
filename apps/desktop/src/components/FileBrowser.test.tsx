@@ -46,6 +46,7 @@ function renderFileBrowser(sourceId = "test", storageName = "Test Storage") {
 
 // Mock the api module
 vi.mock("@/lib/api", () => ({
+  connectOAuthStorage: vi.fn(),
     listEntries: vi.fn(),
     listEntriesRecursive: vi.fn(),
     readFile: vi.fn(),

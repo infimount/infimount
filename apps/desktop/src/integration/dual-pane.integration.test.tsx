@@ -66,6 +66,7 @@ vi.mock("@/components/StorageSidebar", () => ({
 }));
 
 vi.mock("@/lib/api", () => ({
+  connectOAuthStorage: vi.fn(),
   addStorage: vi.fn(),
   approveMcpConfirmation: vi.fn(),
   clearMcpAuditEvents: vi.fn(),

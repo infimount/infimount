@@ -23,6 +23,8 @@ import {
 import {
   connectOAuthStorage,
   listStorageSchemas,
+  type OAuthConnectInput,
+  type OAuthConnectResult,
   type StorageFieldSchema,
   type StorageKindSchema,
 } from "@/lib/api";
@@ -140,6 +142,7 @@ interface AddStorageDialogProps {
   onVerify?: (config: StorageDraft) => Promise<StorageValidationResult>;
   initialStorage?: StorageConfig;
   loadSchemas?: () => Promise<StorageKindSchema[]>;
+  connectOAuth?: (input: OAuthConnectInput) => Promise<OAuthConnectResult>;
 }
 
 const DEFAULT_TYPE: StorageType = "local-fs";
@@ -152,6 +155,7 @@ export function AddStorageDialog({
   onVerify,
   initialStorage,
   loadSchemas = listStorageSchemas,
+  connectOAuth = connectOAuthStorage,
 }: AddStorageDialogProps) {
   const isEditing = Boolean(initialStorage);
   const [schemas, setSchemas] = useState<StorageKindSchema[]>([]);
@@ -305,7 +309,7 @@ export function AddStorageDialog({
     setFormError(null);
     setOauthStatus("Opening your browser for local OAuth authorization...");
     try {
-      const result = await connectOAuthStorage({
+      const result = await connectOAuth({
         provider: oauthProvider,
         clientId,
         clientSecret: (fieldValues.clientSecret ?? "").trim() || undefined,

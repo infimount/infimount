@@ -6,6 +6,7 @@ import { TransferQueueProvider } from "@/hooks/use-transfer-queue";
 import { createDirectory, listEntries } from "@/lib/api";
 
 vi.mock("@/lib/api", () => ({
+  connectOAuthStorage: vi.fn(),
   listEntries: vi.fn(),
   readFile: vi.fn(),
   createDirectory: vi.fn(),

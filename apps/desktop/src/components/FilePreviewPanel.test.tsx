@@ -12,6 +12,7 @@ import {
 import type { FileItem } from "@/types/storage";
 
 vi.mock("@/lib/api", () => ({
+  connectOAuthStorage: vi.fn(),
   generateDownloadLink: vi.fn(),
   getStorageCapabilities: vi.fn(),
   readFile: vi.fn(),

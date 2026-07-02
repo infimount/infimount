@@ -6,6 +6,7 @@ import { deleteFileVersion, listVersions } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
 
 vi.mock("@/lib/api", () => ({
+  connectOAuthStorage: vi.fn(),
   deleteFileVersion: vi.fn(),
   listVersions: vi.fn(),
 }));
