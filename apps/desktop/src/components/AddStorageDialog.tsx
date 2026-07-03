@@ -601,8 +601,9 @@ export function AddStorageDialog({
                       {type === "google-drive" ? "Connect Google Drive" : "Connect Microsoft OneDrive"}
                     </p>
                     <p className="text-[11px] leading-relaxed text-muted-foreground">
-                      Opens your browser and uses a local loopback callback. OAuth tokens stay in
-                      your local Infimount registry, and MCP exposure remains off unless you enable it.
+                      Opens your browser and uses a local loopback callback with PKCE. Enter an OAuth
+                      Client ID first; manual token fields below remain available as an advanced fallback.
+                      Tokens stay local, and MCP exposure remains off unless you enable it.
                     </p>
                   </div>
                   <Button

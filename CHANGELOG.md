@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added guided desktop OAuth connection for Google Drive and Microsoft OneDrive using browser authorization, local loopback callback, PKCE S256, state validation, and local-only token storage.
+- Added mocked OAuth callback, token-exchange, frontend unit, and Playwright screenshot coverage for Google Drive and Microsoft OneDrive connect states.
+- Added optional credential-gated OAuth storage smoke coverage and setup documentation for maintainers.
+
+### Security
+
+- Reinforced OAuth secret handling so access tokens, refresh tokens, client secrets, authorization codes, device codes, and PKCE verifiers remain masked from UI text, validation output, logs, audit exports, and token-exchange errors.
+- Preserved explicit MCP opt-in: connecting Google Drive or OneDrive does not expose the storage to MCP clients by default.
+
 ## [0.7.1] - 2026-06-05
 
 ### Added

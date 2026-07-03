@@ -223,6 +223,7 @@ Outputs:
 - **Windows**: `target/release/bundle/msi/`, `bundle/nsis/`
 
 > 📖 For release operations and checklist, see [docs/releasing.md](docs/releasing.md).
+> For Google Drive and Microsoft OneDrive setup, see [docs/oauth-drive-setup.md](docs/oauth-drive-setup.md).
 > To verify public download links before announcing a release, run `scripts/check-release-links.sh`.
 
 ---
@@ -237,7 +238,7 @@ Outputs:
 - [x] MCP support for local AI assistants with explicit storage exposure, tool controls, path policy, confirmations, sessions, and audit
 - [x] Version-aware MCP tools where supported by the backend
 - [x] Keyboard navigation in virtualized file grid and table views
-- [x] OAuth-backed Google Drive and OneDrive plus SFTP and FTP remote-file backends through OpenDAL
+- [x] OAuth-backed Google Drive and OneDrive with guided local loopback connect, plus SFTP and FTP remote-file backends through OpenDAL
 - [x] Capability-aware storage validation summaries with fix hints and MCP readiness notes
 - [ ] Additional large-directory polish
 

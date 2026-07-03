@@ -19,7 +19,7 @@ Infimount masks secrets in storage-management outputs by default.
 - `export_config` masks secrets unless explicitly called with `include_secrets=true`.
 - UI and MCP logs should not print raw storage config JSON or raw input payloads.
 - Browser/admin-style views should replace secrets instead of revealing them by default.
-- OAuth-backed storage fields such as `accessToken`, `refreshToken`, `clientSecret`, authorization codes, device codes, and PKCE verifiers are secrets and must not appear in logs, validation summaries, audit exports, or copyable diagnostic text. Guided desktop OAuth uses a local loopback callback with PKCE/state validation and stores final tokens only in the local Infimount registry when the user saves the storage.
+- OAuth-backed storage fields such as `accessToken`, `refreshToken`, `clientSecret`, authorization codes, device codes, and PKCE verifiers are secrets and must not appear in logs, validation summaries, audit exports, or copyable diagnostic text. Guided desktop OAuth uses a local loopback callback with PKCE/state validation and stores final tokens only in the local Infimount registry when the user saves the storage. See [Guided OAuth for Google Drive and Microsoft OneDrive](oauth-drive-setup.md).
 
 ## MCP Exposure Controls
 
