@@ -176,6 +176,30 @@ async fn wait_for_oauth_callback(
     Ok(code)
 }
 
+async fn exchange_oauth_token(
+    token_endpoint: &str,
+    form: &[(&str, String)],
+) -> Result<OAuthTokenResponse, CoreError> {
+    let response = reqwest::Client::new()
+        .post(token_endpoint)
+        .form(form)
+        .send()
+        .await
+        .map_err(|_| CoreError::Config("OAuth token exchange failed".to_string()))?;
+
+    if !response.status().is_success() {
+        return Err(CoreError::Config(format!(
+            "OAuth token exchange failed with provider status {}",
+            response.status().as_u16()
+        )));
+    }
+
+    response
+        .json()
+        .await
+        .map_err(|_| CoreError::Config("OAuth token response could not be parsed".to_string()))
+}
+
 #[tauri::command]
 pub async fn connect_oauth_storage(
     input: OAuthConnectInput,
@@ -229,24 +253,7 @@ pub async fn connect_oauth_storage(
         form.push(("client_secret", secret.to_string()));
     }
 
-    let response = reqwest::Client::new()
-        .post(token_endpoint)
-        .form(&form)
-        .send()
-        .await
-        .map_err(|_| CoreError::Config("OAuth token exchange failed".to_string()))?;
-
-    if !response.status().is_success() {
-        return Err(CoreError::Config(format!(
-            "OAuth token exchange failed with provider status {}",
-            response.status().as_u16()
-        )));
-    }
-
-    let token: OAuthTokenResponse = response
-        .json()
-        .await
-        .map_err(|_| CoreError::Config("OAuth token response could not be parsed".to_string()))?;
+    let token = exchange_oauth_token(token_endpoint, &form).await?;
 
     let mut config = serde_json::Map::new();
     config.insert("accessToken".to_string(), Value::String(token.access_token));
@@ -1103,6 +1110,82 @@ mod tests {
         assert!(response.contains("400 Bad Request"));
         assert!(!response.contains("should-not-use"));
         assert!(task.await.unwrap().is_err());
+    }
+
+    #[tokio::test]
+    async fn oauth_token_exchange_accepts_mock_google_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/token", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = vec![0_u8; 4096];
+            let n = stream.read(&mut request).await.unwrap();
+            let request = String::from_utf8_lossy(&request[..n]);
+            assert!(request.contains("POST /token HTTP/1.1"));
+            assert!(request.contains("grant_type=authorization_code"));
+            assert!(request.contains("code=mock-google-code"));
+            assert!(request.contains("code_verifier=mock-verifier"));
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 91\r\nConnection: close\r\n\r\n{\"access_token\":\"mock-access-token\",\"refresh_token\":\"mock-refresh-token\",\"expires_in\":3600}",
+                )
+                .await
+                .unwrap();
+        });
+
+        let token = exchange_oauth_token(
+            &endpoint,
+            &[
+                ("grant_type", "authorization_code".to_string()),
+                ("code", "mock-google-code".to_string()),
+                (
+                    "redirect_uri",
+                    "http://127.0.0.1:12345/oauth/callback".to_string(),
+                ),
+                ("client_id", "mock-client-id".to_string()),
+                ("code_verifier", "mock-verifier".to_string()),
+            ],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(token.access_token, "mock-access-token");
+        assert_eq!(token.refresh_token.as_deref(), Some("mock-refresh-token"));
+        assert_eq!(token.expires_in, Some(3600));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn oauth_token_exchange_error_does_not_echo_response_body() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/token", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = vec![0_u8; 1024];
+            let _ = stream.read(&mut request).await.unwrap();
+            stream
+                .write_all(
+                    b"HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: 62\r\nConnection: close\r\n\r\n{\"error\":\"invalid_grant\",\"secret_code\":\"must-not-leak\"}",
+                )
+                .await
+                .unwrap();
+        });
+
+        let error = exchange_oauth_token(
+            &endpoint,
+            &[
+                ("grant_type", "authorization_code".to_string()),
+                ("code", "sensitive-auth-code".to_string()),
+            ],
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("provider status 400"));
+        assert!(!error.contains("must-not-leak"));
+        assert!(!error.contains("sensitive-auth-code"));
+        server.await.unwrap();
     }
 
     #[test]
