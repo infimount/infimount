@@ -1156,6 +1156,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn oauth_token_exchange_accepts_mock_microsoft_response_without_client_secret() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!(
+            "http://{}/common/oauth2/v2.0/token",
+            listener.local_addr().unwrap()
+        );
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = vec![0_u8; 4096];
+            let n = stream.read(&mut request).await.unwrap();
+            let request = String::from_utf8_lossy(&request[..n]);
+            assert!(request.contains("POST /common/oauth2/v2.0/token HTTP/1.1"));
+            assert!(request.contains("grant_type=authorization_code"));
+            assert!(request.contains("code=mock-microsoft-code"));
+            assert!(request.contains("client_id=mock-public-client-id"));
+            assert!(request.contains("code_verifier=mock-verifier"));
+            assert!(!request.contains("client_secret"));
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 105\r\nConnection: close\r\n\r\n{\"token_type\":\"Bearer\",\"scope\":\"Files.ReadWrite\",\"expires_in\":3600,\"access_token\":\"mock-ms-access-token\"}",
+                )
+                .await
+                .unwrap();
+        });
+
+        let token = exchange_oauth_token(
+            &endpoint,
+            &[
+                ("grant_type", "authorization_code".to_string()),
+                ("code", "mock-microsoft-code".to_string()),
+                (
+                    "redirect_uri",
+                    "http://127.0.0.1:12345/oauth/callback".to_string(),
+                ),
+                ("client_id", "mock-public-client-id".to_string()),
+                ("code_verifier", "mock-verifier".to_string()),
+            ],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(token.access_token, "mock-ms-access-token");
+        assert_eq!(token.refresh_token, None);
+        assert_eq!(token.expires_in, Some(3600));
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn oauth_provider_settings_uses_microsoft_offline_access_scope() {
+        let (_, auth_endpoint, token_endpoint, scope) =
+            oauth_provider_settings("onedrive").unwrap();
+        assert_eq!(
+            auth_endpoint,
+            "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+        );
+        assert_eq!(
+            token_endpoint,
+            "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+        );
+        assert!(scope.contains("Files.ReadWrite"));
+        assert!(scope.contains("offline_access"));
+    }
+
+    #[tokio::test]
     async fn oauth_token_exchange_error_does_not_echo_response_body() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}/token", listener.local_addr().unwrap());
