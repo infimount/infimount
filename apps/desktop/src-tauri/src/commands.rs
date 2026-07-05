@@ -114,11 +114,30 @@ fn oauth_provider_settings(
     }
 }
 
+const OAUTH_CALLBACK_PATH: &str = "/oauth/callback";
+const OAUTH_CALLBACK_TIMEOUT: Duration = Duration::from_secs(180);
+const OAUTH_CALLBACK_READ_TIMEOUT: Duration = Duration::from_secs(10);
+
 async fn wait_for_oauth_callback(
     listener: TcpListener,
     expected_state: String,
 ) -> Result<String, CoreError> {
-    let (mut stream, peer) = tokio::time::timeout(Duration::from_secs(180), listener.accept())
+    wait_for_oauth_callback_with_timeouts(
+        listener,
+        expected_state,
+        OAUTH_CALLBACK_TIMEOUT,
+        OAUTH_CALLBACK_READ_TIMEOUT,
+    )
+    .await
+}
+
+async fn wait_for_oauth_callback_with_timeouts(
+    listener: TcpListener,
+    expected_state: String,
+    accept_timeout: Duration,
+    read_timeout: Duration,
+) -> Result<String, CoreError> {
+    let (mut stream, peer) = tokio::time::timeout(accept_timeout, listener.accept())
         .await
         .map_err(|_| CoreError::Config("OAuth authorization timed out".to_string()))?
         .map_err(CoreError::Io)?;
@@ -133,11 +152,22 @@ async fn wait_for_oauth_callback(
     }
 
     let mut buf = vec![0_u8; 8192];
-    let n = stream.read(&mut buf).await.map_err(CoreError::Io)?;
+    let n = tokio::time::timeout(read_timeout, stream.read(&mut buf))
+        .await
+        .map_err(|_| CoreError::Config("OAuth callback timed out".to_string()))?
+        .map_err(CoreError::Io)?;
     let request = String::from_utf8_lossy(&buf[..n]);
     let request_line = request.lines().next().unwrap_or_default();
     let target = request_line.split_whitespace().nth(1).unwrap_or_default();
-    let query = target.split_once('?').map(|(_, q)| q).unwrap_or_default();
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    if path != OAUTH_CALLBACK_PATH {
+        let _ = stream
+            .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOAuth callback path not found. Return to Infimount and try again.")
+            .await;
+        return Err(CoreError::Config(
+            "OAuth callback path mismatch".to_string(),
+        ));
+    }
     let params = query
         .split('&')
         .filter_map(|pair| pair.split_once('='))
@@ -1041,6 +1071,24 @@ mod tests {
         assert!(!challenge.contains('/'));
     }
 
+    #[test]
+    fn oauth_pkce_verifier_and_state_are_urlsafe_and_high_entropy_length() {
+        let verifier = oauth_random_urlsafe(64);
+        let state = oauth_random_urlsafe(32);
+        let is_unreserved = |value: &str| {
+            value
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '.' | '_' | '~'))
+        };
+
+        assert!((43..=128).contains(&verifier.len()));
+        assert!(is_unreserved(&verifier));
+        assert!(verifier.len() >= 86);
+        assert!(state.len() >= 43);
+        assert!(is_unreserved(&state));
+        assert_ne!(oauth_random_urlsafe(32), oauth_random_urlsafe(32));
+    }
+
     #[tokio::test]
     async fn oauth_callback_accepts_loopback_code_and_valid_state() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1086,6 +1134,75 @@ mod tests {
         assert!(response.contains("400 Bad Request"));
         assert!(response.contains("OAuth state mismatch"));
         assert!(task.await.unwrap().is_err());
+    }
+
+    #[tokio::test]
+    async fn oauth_callback_rejects_wrong_path() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let task = tokio::spawn(wait_for_oauth_callback(
+            listener,
+            "expected-state".to_string(),
+        ));
+
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(
+                b"GET /wrong?code=abc123&state=expected-state HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            )
+            .await
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+
+        assert!(response.contains("404 Not Found"));
+        assert!(task.await.unwrap().is_err());
+    }
+
+    #[tokio::test]
+    async fn oauth_callback_times_out_after_silent_loopback_connect() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let task = tokio::spawn(wait_for_oauth_callback_with_timeouts(
+            listener,
+            "expected-state".to_string(),
+            Duration::from_secs(1),
+            Duration::from_millis(25),
+        ));
+
+        let _stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let error = task.await.unwrap().unwrap_err().to_string();
+
+        assert!(error.contains("OAuth callback timed out"));
+    }
+
+    #[tokio::test]
+    async fn oauth_callback_server_closes_after_first_success() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let task = tokio::spawn(wait_for_oauth_callback(
+            listener,
+            "expected-state".to_string(),
+        ));
+
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(
+                b"GET /oauth/callback?code=abc123&state=expected-state HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            )
+            .await
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+        assert!(response.contains("200 OK"));
+        assert_eq!(task.await.unwrap().unwrap(), "abc123");
+
+        let second = tokio::time::timeout(
+            Duration::from_millis(100),
+            tokio::net::TcpStream::connect(addr),
+        )
+        .await;
+        assert!(second.is_err() || second.unwrap().is_err());
     }
 
     #[tokio::test]

@@ -110,7 +110,12 @@ describe("AddStorageDialog", () => {
       name: "Drive",
       type: "google-drive",
       backend: "gdrive",
-      config: { clientId: "client-id", clientSecret: "client-secret" },
+      config: {
+        accessToken: "old-access-token",
+        refreshToken: "old-refresh-token",
+        clientId: "client-id",
+        clientSecret: "client-secret",
+      },
       enabled: true,
       mcpExposed: false,
       readOnly: false,
@@ -135,7 +140,7 @@ describe("AddStorageDialog", () => {
     renderDialog({ initialStorage, onUpdate });
 
     expect(await screen.findByText("Connect Google Drive")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Connect|Reconnect/ }));
 
     expect(await screen.findByText(/OAuth connected/)).toBeInTheDocument();
     expect(connectSpy).toHaveBeenCalledWith({
@@ -149,6 +154,75 @@ describe("AddStorageDialog", () => {
     expect(screen.getByLabelText("Refresh Token")).toHaveAttribute("type", "password");
     expect(screen.queryByText("raw-access-token")).not.toBeInTheDocument();
     expect(screen.queryByText("raw-refresh-token")).not.toBeInTheDocument();
+    expect(onUpdate).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    await waitFor(() => {
+      expect(onUpdate).toHaveBeenCalledWith("drive-1", {
+        name: "Drive",
+        backend: "gdrive",
+        config: {
+          accessToken: "raw-access-token",
+          refreshToken: "raw-refresh-token",
+          clientId: "client-id",
+          clientSecret: "client-secret",
+        },
+        enabled: true,
+        mcpExposed: false,
+        readOnly: false,
+      });
+    });
+
+    connectSpy.mockRestore();
+  });
+
+  it("keeps existing OAuth tokens unchanged when authorization is cancelled", async () => {
+    const connectSpy = vi
+      .spyOn(api, "connectOAuthStorage")
+      .mockRejectedValue(new Error("OAuth authorization failed."));
+    const onUpdate = vi.fn().mockResolvedValue(undefined);
+    const initialStorage: StorageConfig = {
+      id: "drive-2",
+      name: "Drive",
+      type: "google-drive",
+      backend: "gdrive",
+      config: {
+        accessToken: "old-access-token",
+        refreshToken: "old-refresh-token",
+        clientId: "client-id",
+      },
+      enabled: true,
+      mcpExposed: false,
+      readOnly: false,
+      connected: true,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      mcpPolicy: {
+        default_access: "read_only",
+        allowed_paths: [],
+        denied_paths: [],
+        confirmation_rules: {
+          require_for_write: true,
+          require_for_overwrite: true,
+          require_for_delete: true,
+          require_for_version_delete: true,
+          require_for_presign: true,
+          require_for_cross_storage_copy: true,
+        },
+      },
+    };
+
+    renderDialog({ initialStorage, onUpdate });
+
+    expect(await screen.findByText("Connect Google Drive")).toBeInTheDocument();
+    expect(screen.getByLabelText("Refresh Token")).toHaveValue("old-refresh-token");
+    fireEvent.click(screen.getByRole("button", { name: /Reconnect/ }));
+
+    expect(await screen.findByText("OAuth authorization failed.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Access Token")).toHaveValue("old-access-token");
+    expect(screen.getByLabelText("Refresh Token")).toHaveValue("old-refresh-token");
+    expect(onUpdate).not.toHaveBeenCalled();
 
     connectSpy.mockRestore();
   });
