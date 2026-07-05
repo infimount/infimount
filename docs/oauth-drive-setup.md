@@ -19,7 +19,7 @@ Infimount can connect Google Drive and Microsoft OneDrive from the desktop Add S
 3. Create an OAuth Client ID for desktop/native app usage.
 4. Make sure the client can use a loopback redirect on `http://127.0.0.1:<random-port>/oauth/callback`; Infimount chooses the local port at connect time.
 5. In Infimount, choose **Google Drive** in Add Storage.
-6. Paste the OAuth Client ID. If your app type/provider setup has a client secret, paste it too.
+6. Paste the OAuth Client ID. Paste the client secret when you want Infimount/OpenDAL to use a durable Google refresh-token configuration; without a client secret, Infimount falls back to the short-lived access token returned by Google.
 7. Optionally set a root folder path.
 8. Click **Connect Google Drive** and complete browser authorization.
 9. Save the storage, then run **Validate** before exposing it to MCP.

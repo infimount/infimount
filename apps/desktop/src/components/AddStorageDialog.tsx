@@ -316,7 +316,15 @@ export function AddStorageDialog({
         rootPath: (fieldValues.rootPath ?? "").trim() || undefined,
         versioning: fieldValues.versioning === "true",
       });
-      const nextValues = buildFieldValues(currentSchema, { ...fieldValues, ...result.config });
+      const oauthConfig = { ...result.config };
+      const mergedValues = { ...fieldValues, ...oauthConfig };
+      if ("refreshToken" in oauthConfig && !("accessToken" in oauthConfig)) {
+        mergedValues.accessToken = "";
+      }
+      if ("accessToken" in oauthConfig && !("refreshToken" in oauthConfig)) {
+        mergedValues.refreshToken = "";
+      }
+      const nextValues = buildFieldValues(currentSchema, mergedValues);
       setFieldValues(nextValues);
       setRevealSecrets(false);
       setOauthStatus("OAuth connected. Tokens are stored locally when you save this storage.");

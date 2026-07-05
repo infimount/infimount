@@ -74,6 +74,48 @@ struct OAuthTokenResponse {
     expires_in: Option<i64>,
 }
 
+fn oauth_storage_config_from_token(
+    provider: &str,
+    client_id: String,
+    client_secret: Option<String>,
+    token: OAuthTokenResponse,
+    root_path: Option<String>,
+    versioning: Option<bool>,
+) -> Value {
+    let mut config = serde_json::Map::new();
+    config.insert("clientId".to_string(), Value::String(client_id));
+    if let Some(secret) = client_secret.as_ref() {
+        config.insert("clientSecret".to_string(), Value::String(secret.clone()));
+    }
+
+    // OpenDAL requires access-token and refresh-token modes to be mutually exclusive.
+    // Prefer durable refresh-token configs only when we have the provider-required
+    // client credentials to refresh successfully after restart.
+    match token.refresh_token {
+        Some(refresh_token) if provider == "onedrive" || client_secret.is_some() => {
+            config.insert("refreshToken".to_string(), Value::String(refresh_token));
+        }
+        _ => {
+            config.insert("accessToken".to_string(), Value::String(token.access_token));
+        }
+    }
+
+    if let Some(root) = root_path
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+    {
+        config.insert("rootPath".to_string(), Value::String(root));
+    }
+    if provider == "onedrive" {
+        config.insert(
+            "versioning".to_string(),
+            Value::Bool(versioning.unwrap_or(false)),
+        );
+    }
+
+    Value::Object(config)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportStoragesRequest {
@@ -285,40 +327,25 @@ pub async fn connect_oauth_storage(
 
     let token = exchange_oauth_token(token_endpoint, &form).await?;
 
-    let mut config = serde_json::Map::new();
-    config.insert("accessToken".to_string(), Value::String(token.access_token));
-    if let Some(refresh_token) = token.refresh_token {
-        config.insert("refreshToken".to_string(), Value::String(refresh_token));
-    }
-    config.insert("clientId".to_string(), Value::String(client_id));
-    if let Some(secret) = input
-        .client_secret
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-    {
-        config.insert("clientSecret".to_string(), Value::String(secret));
-    }
-    if let Some(root) = input
-        .root_path
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-    {
-        config.insert("rootPath".to_string(), Value::String(root));
-    }
-    if provider == "onedrive" {
-        config.insert(
-            "versioning".to_string(),
-            Value::Bool(input.versioning.unwrap_or(false)),
-        );
-    }
+    let expires_in = token.expires_in;
+    let config = oauth_storage_config_from_token(
+        provider,
+        client_id,
+        input
+            .client_secret
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty()),
+        token,
+        input.root_path,
+        input.versioning,
+    );
 
-    let expires_at = token
-        .expires_in
-        .map(|seconds| (Utc::now() + chrono::Duration::seconds(seconds)).to_rfc3339());
+    let expires_at =
+        expires_in.map(|seconds| (Utc::now() + chrono::Duration::seconds(seconds)).to_rfc3339());
 
     Ok(OAuthConnectOutput {
         provider: provider.to_string(),
-        config: Value::Object(config),
+        config,
         expires_at,
     })
 }
@@ -1227,6 +1254,55 @@ mod tests {
         assert!(response.contains("400 Bad Request"));
         assert!(!response.contains("should-not-use"));
         assert!(task.await.unwrap().is_err());
+    }
+
+    #[test]
+    fn oauth_storage_config_uses_mutually_exclusive_token_modes() {
+        let google_with_secret = oauth_storage_config_from_token(
+            "gdrive",
+            "google-client".to_string(),
+            Some("google-secret".to_string()),
+            OAuthTokenResponse {
+                access_token: "access".to_string(),
+                refresh_token: Some("refresh".to_string()),
+                expires_in: Some(3600),
+            },
+            Some("/root".to_string()),
+            None,
+        );
+        assert_eq!(google_with_secret["refreshToken"], "refresh");
+        assert!(google_with_secret.get("accessToken").is_none());
+
+        let google_without_secret = oauth_storage_config_from_token(
+            "gdrive",
+            "google-client".to_string(),
+            None,
+            OAuthTokenResponse {
+                access_token: "access".to_string(),
+                refresh_token: Some("refresh".to_string()),
+                expires_in: Some(3600),
+            },
+            None,
+            None,
+        );
+        assert_eq!(google_without_secret["accessToken"], "access");
+        assert!(google_without_secret.get("refreshToken").is_none());
+
+        let onedrive_public_client = oauth_storage_config_from_token(
+            "onedrive",
+            "ms-client".to_string(),
+            None,
+            OAuthTokenResponse {
+                access_token: "access".to_string(),
+                refresh_token: Some("refresh".to_string()),
+                expires_in: Some(3600),
+            },
+            None,
+            Some(true),
+        );
+        assert_eq!(onedrive_public_client["refreshToken"], "refresh");
+        assert_eq!(onedrive_public_client["versioning"], true);
+        assert!(onedrive_public_client.get("accessToken").is_none());
     }
 
     #[tokio::test]

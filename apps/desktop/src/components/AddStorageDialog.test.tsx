@@ -97,7 +97,6 @@ describe("AddStorageDialog", () => {
     const connectSpy = vi.spyOn(api, "connectOAuthStorage").mockResolvedValue({
       provider: "gdrive",
       config: {
-        accessToken: "raw-access-token",
         refreshToken: "raw-refresh-token",
         clientId: "client-id",
         clientSecret: "client-secret",
@@ -152,7 +151,7 @@ describe("AddStorageDialog", () => {
     });
     expect(screen.getByLabelText("Access Token")).toHaveAttribute("type", "password");
     expect(screen.getByLabelText("Refresh Token")).toHaveAttribute("type", "password");
-    expect(screen.queryByText("raw-access-token")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Access Token")).toHaveValue("");
     expect(screen.queryByText("raw-refresh-token")).not.toBeInTheDocument();
     expect(onUpdate).not.toHaveBeenCalled();
 
@@ -163,7 +162,6 @@ describe("AddStorageDialog", () => {
         name: "Drive",
         backend: "gdrive",
         config: {
-          accessToken: "raw-access-token",
           refreshToken: "raw-refresh-token",
           clientId: "client-id",
           clientSecret: "client-secret",
