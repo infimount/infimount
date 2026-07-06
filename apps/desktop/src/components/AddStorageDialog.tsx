@@ -301,7 +301,7 @@ export function AddStorageDialog({
     if (!oauthProvider) return;
     const clientId = (fieldValues.clientId ?? "").trim();
     if (!clientId) {
-      setFormError("OAuth Client ID is required before connecting.");
+      setFormError("Enter an OAuth Client ID in the field above before connecting.");
       return;
     }
 
@@ -601,6 +601,18 @@ export function AddStorageDialog({
               </div>
             ) : null}
 
+            <div className="grid gap-4 rounded-xl border border-border/70 bg-card/40 p-4">
+              {currentSchema?.fields.map((field) => (
+                <StorageFieldInput
+                  key={field.name}
+                  field={field}
+                  value={fieldValues[field.name] ?? ""}
+                  revealSecrets={revealSecrets}
+                  onChange={(value) => handleFieldChange(field.name, value)}
+                />
+              ))}
+            </div>
+
             {isOAuthStorage ? (
               <div className="rounded-xl border border-border/70 bg-card/40 p-4">
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -609,9 +621,9 @@ export function AddStorageDialog({
                       {type === "google-drive" ? "Connect Google Drive" : "Connect Microsoft OneDrive"}
                     </p>
                     <p className="text-[11px] leading-relaxed text-muted-foreground">
-                      Opens your browser and uses a local loopback callback with PKCE. Enter an OAuth
-                      Client ID first; manual token fields below remain available as an advanced fallback.
-                      Tokens stay local, and MCP exposure remains off unless you enable it.
+                      Enter the OAuth Client ID above, then connect in your browser using a local
+                      loopback callback with PKCE. Manual token fields remain available as an advanced
+                      fallback. Tokens stay local, and MCP exposure remains off unless you enable it.
                     </p>
                   </div>
                   <Button
@@ -632,18 +644,6 @@ export function AddStorageDialog({
                 ) : null}
               </div>
             ) : null}
-
-            <div className="grid gap-4 rounded-xl border border-border/70 bg-card/40 p-4">
-              {currentSchema?.fields.map((field) => (
-                <StorageFieldInput
-                  key={field.name}
-                  field={field}
-                  value={fieldValues[field.name] ?? ""}
-                  revealSecrets={revealSecrets}
-                  onChange={(value) => handleFieldChange(field.name, value)}
-                />
-              ))}
-            </div>
 
             {Object.keys(extraConfig).length > 0 ? (
               <p className="text-[11px] text-muted-foreground">
