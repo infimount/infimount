@@ -82,6 +82,50 @@ describe("McpSettingsDialog integration", () => {
     });
   });
 
+  it("shows saving progress for stdio settings", async () => {
+    let resolveSave: (() => void) | undefined;
+    const onSave = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+
+    render(
+      <McpSettingsDialog
+        open
+        onOpenChange={() => undefined}
+        status={{ ...status, settings: { ...status.settings, transport: "stdio" } }}
+        snippets={snippets}
+        tools={tools}
+        storages={storages}
+        auditEvents={[]}
+        pendingConfirmations={[]}
+        activeSessions={[]}
+        notificationPermission="default"
+        onSave={onSave}
+        onStartHttp={vi.fn()}
+        onStopHttp={vi.fn()}
+        onTestServer={vi.fn()}
+        onRefreshAudit={vi.fn()}
+        onClearAudit={vi.fn()}
+        onExportAuditBundle={vi.fn()}
+        onApproveConfirmation={vi.fn()}
+        onDenyConfirmation={vi.fn()}
+        onEnableNotifications={vi.fn()}
+        onUpdateStoragePolicy={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Save MCP Settings" }));
+    expect(await screen.findByRole("button", { name: "Saving..." })).toBeDisabled();
+
+    resolveSave?.();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Save MCP Settings" })).toBeEnabled(),
+    );
+  });
+
   it("saves settings before starting the HTTP server", async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     const onStartHttp = vi.fn().mockResolvedValue(undefined);
