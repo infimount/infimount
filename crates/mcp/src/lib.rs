@@ -18,7 +18,12 @@ pub mod tools_storage;
 
 pub use errors::{McpError, McpErrorCode, McpResult};
 pub use path::{parse_mcp_path, FsOp, ParsedPath};
-pub use registry::{StorageRecord, StorageRegistry};
+pub use policy::{
+    evaluate_storage_policy, migrate_legacy_policy, normalize_policy_path, McpAccessMode,
+    McpConfirmationRules, McpOperation, McpPathRule, McpRiskType, McpRuleSource, McpStoragePolicy,
+    PolicyDecision, PolicyEvaluation, MCP_POLICY_VERSION,
+};
+pub use registry::{StorageRecord, StorageRegistry, STORAGE_RECORD_SCHEMA_VERSION};
 pub use server::{
     admin_tool_names, all_tool_names, default_enabled_tool_names, tool_definitions,
     McpToolCategory, McpToolRisk, ToolDefinition,

@@ -441,7 +441,7 @@ export function AgentWorkspacesDialog({
                     </div>
                     <div className="mb-3 flex flex-wrap gap-2">
                       <Badge variant="outline" className="gap-1">
-                        <CheckCircle2 className="h-3 w-3" /> {selectedWorkspace.policy.allowed_paths[0]}
+                        <CheckCircle2 className="h-3 w-3" /> {selectedWorkspace.policy.rules[0]?.prefix ?? selectedWorkspace.policy.allowed_paths?.[0]}
                       </Badge>
                       <Badge variant="outline">default access: none</Badge>
                     </div>

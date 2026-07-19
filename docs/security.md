@@ -49,6 +49,15 @@ annotated with category (Read, Write, Destructive, ExternalLink, Session) and ri
 Legacy settings are automatically migrated: a timestamped backup is created, the enabled tool
 list is intersected with the safe default set, and the security baseline version is updated.
 
+### Access Presets
+
+MCP Settings provides several access presets for common configurations:
+
+- **Read-only research**: Enables the safe read-only tool set with read-only storage access.
+- **Workspace Agent**: Adds non-destructive `mkdir`, `write_file`, and `copy_path` tools while preserving existing defaults and workspace grants.
+- **Manual Approval**: Enables all tools but requires explicit confirmation for every write, delete, and link operation. Safe for controlled environments where every agent mutation should be reviewed.
+- **Lock down MCP**: Disables all tools and sets storage access to no access, preserving existing path rules for later restoration.
+
 ## MCP Exposure Controls
 
 A storage is visible to MCP only when both flags are true:
@@ -66,12 +75,14 @@ Tool exposure changes apply after restarting the MCP HTTP server.
 
 Each storage can define a local MCP policy:
 
-- access mode: no access, read-only, or read/write
-- allowed path prefixes
+- default access mode: no access, read-only, or read/write
+- path rules (prefix-based, replacing the legacy allowed-paths list)
 - denied path prefixes
 - confirmation rules for risky operations
 
-Denied prefixes always win over allowed prefixes. Prefix matching is segment-aware and paths are normalized before policy checks so repeated slashes, trailing slashes, `.` / `..`, and URL-encoded-looking control segments such as `%2e` and `%2f` cannot bypass a deny rule. Matching remains case-sensitive because backend case behavior is not globally consistent.
+Path rules support both manual and workspace-managed sources. When multiple rules match, the longest normalized prefix wins. Rules with a prefix grant explicit access at a given permission level. Denied prefixes always win over allowed prefixes or rule-based access. A storage with no rules falls back to the default access mode.
+
+Prefix matching is segment-aware and paths are normalized before policy checks so repeated slashes, trailing slashes, `.` / `..`, and URL-encoded-looking control segments such as `%2e` and `%2f` cannot bypass a deny rule. Matching remains case-sensitive because backend case behavior is not globally consistent.
 
 Risky operations can return `requires_confirmation` instead of executing. The pending operation includes an immutable request fingerprint. Approval is valid once, expires after a bounded TTL, and cannot be replayed for a modified request. Pending approvals are in-memory runtime state and are cleared by an app/server restart.
 
@@ -90,7 +101,7 @@ Desktop notifications, when enabled by the user, are attention signals only. The
 
 Infimount stores a bounded local MCP audit log at `~/.infimount/mcp_audit.json`.
 
-Audit events include tool name, storage metadata when available, operation, path, decision, confirmation ID, duration, and error code. The audit log records allowed, denied, confirmation-required, confirmed, and failed operations.
+Audit events include tool name, storage metadata when available, operation, path, decision, matched rule ID, workspace ID, confirmation ID, duration, and error code. The audit log records allowed, denied, confirmation-required, confirmed, and failed operations.
 
 Safety rules:
 
@@ -135,7 +146,7 @@ MCP clients can create scoped sessions with:
 - optional read-only override
 - TTL
 
-Filesystem tools that receive a `session_id` enforce those restrictions before backend operations. Session path prefixes are normalized and segment-aware to avoid broad matches such as allowing `docs2` when only `docs` was scoped. Desktop MCP Settings shows active in-memory scoped sessions with their storage scope, path prefixes, read-only status, and expiry so users can inspect current agent scopes. Desktop HTTP sessions are cleared when that server stops.
+When a session is created without the read-only override, each requested prefix is validated for writable access through the storage policy. If a prefix only has read access at the policy level, the session creation is rejected with a clear error. Filesystem tools that receive a `session_id` enforce those restrictions before backend operations. Session path prefixes are normalized and segment-aware to avoid broad matches such as allowing `docs2` when only `docs` was scoped. Desktop MCP Settings shows active in-memory scoped sessions with their storage scope, path prefixes, read-only status, and expiry so users can inspect current agent scopes. Desktop HTTP sessions are cleared when that server stops.
 
 ## Storage Validation Safety
 

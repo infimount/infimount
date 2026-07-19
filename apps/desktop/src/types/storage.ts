@@ -65,11 +65,25 @@ export interface McpConfirmationRules {
   require_for_cross_storage_copy: boolean;
 }
 
+export type McpRuleSource =
+  | { kind: "manual" }
+  | { kind: "workspace"; workspace_id: string };
+
+export interface McpPathRule {
+  id: string;
+  prefix: string;
+  access: McpAccessMode;
+  source: McpRuleSource;
+  confirmation_rules?: McpConfirmationRules;
+}
+
 export interface McpStoragePolicy {
+  version: number;
   default_access: McpAccessMode;
-  allowed_paths: string[];
+  rules: McpPathRule[];
   denied_paths: string[];
   confirmation_rules: McpConfirmationRules;
+  allowed_paths?: string[];
 }
 
 export interface StorageValidationCapabilities {
@@ -183,6 +197,8 @@ export interface McpAuditEvent {
   path: string | null;
   version_id: string | null;
   decision: string;
+  matched_rule_id?: string | null;
+  workspace_id?: string | null;
   confirmation_id: string | null;
   duration_ms: number | null;
   bytes_read: number | null;

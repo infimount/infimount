@@ -1,5 +1,6 @@
 use super::*;
 use crate::errors::McpErrorCode;
+use crate::policy::McpAccessMode;
 use crate::tools_fs::FsToolsContext;
 use tempfile::TempDir;
 
@@ -420,11 +421,13 @@ async fn validate_storage_local_root_succeeds() {
     std::fs::create_dir_all(&local_root).unwrap();
 
     let registry = registry_in(&dir);
-    let storage = crate::registry::StorageRecord::new(
+    let mut storage = crate::registry::StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         serde_json::json!({"root": local_root}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -459,11 +462,13 @@ async fn validate_storage_invalid_root_returns_valid_false() {
     std::fs::write(&invalid_root, b"not a directory").unwrap();
 
     let registry = registry_in(&dir);
-    let storage = crate::registry::StorageRecord::new(
+    let mut storage = crate::registry::StorageRecord::new(
         "Broken".to_string(),
         "local".to_string(),
         serde_json::json!({"root": invalid_root}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {

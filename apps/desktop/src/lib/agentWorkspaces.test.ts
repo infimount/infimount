@@ -9,6 +9,7 @@ import {
   listAgentWorkspaceCheckpoints,
   listAgentWorkspaces,
   normalizeWorkspacePath,
+  removeWorkspacePolicy,
   restoreWorkspaceMemoryCheckpoint,
 } from "./agentWorkspaces";
 import { createDirectory, readFile, writeFile } from "./api";
@@ -26,7 +27,9 @@ vi.mock("./api", async (importOriginal) => {
 });
 
 const policy: McpStoragePolicy = {
+  version: 2,
   default_access: "read_write",
+  rules: [],
   allowed_paths: [],
   denied_paths: [],
   confirmation_rules: {
@@ -67,7 +70,7 @@ describe("agentWorkspaces", () => {
       expect.anything(),
     );
     expect(updatePolicy).toHaveBeenCalledWith(
-      expect.objectContaining({ default_access: "none", allowed_paths: ["/agent space/"] }),
+      expect.objectContaining({ default_access: "read_write", rules: expect.any(Array) }),
     );
     expect(listAgentWorkspaces()).toMatchObject([{ id: workspace.id, name: "Coding Workspace" }]);
   });
@@ -134,9 +137,151 @@ describe("agentWorkspaces", () => {
   it("normalizes paths and builds default workspace paths", () => {
     expect(defaultWorkspacePath("My Workspace!")).toBe("/agent-workspaces/my-workspace");
     expect(normalizeWorkspacePath("//team//agent//")).toBe("/team/agent");
-    expect(buildWorkspacePolicy("/team/agent")).toMatchObject({
-      default_access: "none",
-      allowed_paths: ["/team/agent/"],
+  });
+
+  it("buildWorkspacePolicy rejects root path", () => {
+    expect(() => buildWorkspacePolicy("/", policy, "w-1")).toThrow("must not be or resolve to '/'");
+    expect(() => buildWorkspacePolicy("", policy, "w-1")).toThrow("must not be empty");
+  });
+
+  it("buildWorkspacePolicy requires workspaceId", () => {
+    expect(() => buildWorkspacePolicy("/team/agent", policy, undefined as unknown as string)).toThrow(
+      "workspaceId is required",
+    );
+  });
+
+  it("buildWorkspacePolicy creates scoped rule with workspace ID", () => {
+    const result = buildWorkspacePolicy("/team/agent", policy, "w-1");
+    expect(result.version).toBe(2);
+    expect(result.rules).toHaveLength(1);
+    expect(result.rules[0]).toMatchObject({
+      id: "ws:w-1",
+      prefix: "/team/agent/",
+      access: "read_only",
+      source: { kind: "workspace", workspace_id: "w-1" },
     });
+  });
+
+  it("buildWorkspacePolicy preserves other workspaces and non-workspace rules", () => {
+    const existingPolicy: McpStoragePolicy = {
+      ...policy,
+      rules: [
+        { id: "manual-rule", prefix: "public", access: "read_write", source: { kind: "manual" } },
+        {
+          id: "ws:other",
+          prefix: "/other-ws/",
+          access: "read_only",
+          source: { kind: "workspace", workspace_id: "other" },
+        },
+      ],
+    };
+    const result = buildWorkspacePolicy("/team/agent", existingPolicy, "w-1");
+    expect(result.rules).toHaveLength(3);
+    expect(result.rules.find((r) => r.id === "manual-rule")).toBeTruthy();
+    expect(result.rules.find((r) => r.id === "ws:other")).toBeTruthy();
+    expect(result.rules.find((r) => r.id === "ws:w-1")).toBeTruthy();
+  });
+
+  it("buildWorkspacePolicy replaces existing rule for same workspace ID", () => {
+    const existingPolicy: McpStoragePolicy = {
+      ...policy,
+      rules: [
+        {
+          id: "ws:w-1",
+          prefix: "/old-path/",
+          access: "read_only",
+          source: { kind: "workspace", workspace_id: "w-1" },
+        },
+      ],
+    };
+    const result = buildWorkspacePolicy("/new-path", existingPolicy, "w-1");
+    expect(result.rules).toHaveLength(1);
+    expect(result.rules[0].prefix).toBe("/new-path/");
+  });
+
+  it("removeWorkspacePolicy only removes target workspace rules", () => {
+    const existingPolicy: McpStoragePolicy = {
+      ...policy,
+      rules: [
+        { id: "manual-1", prefix: "public", access: "read_write", source: { kind: "manual" } },
+        {
+          id: "ws:w-1",
+          prefix: "/team-a/",
+          access: "read_only",
+          source: { kind: "workspace", workspace_id: "w-1" },
+        },
+        {
+          id: "ws:w-2",
+          prefix: "/team-b/",
+          access: "read_only",
+          source: { kind: "workspace", workspace_id: "w-2" },
+        },
+      ],
+    };
+    const result = removeWorkspacePolicy(existingPolicy, "w-1");
+    expect(result.rules).toHaveLength(2);
+    expect(result.rules.find((r) => r.id === "manual-1")).toBeTruthy();
+    expect(result.rules.find((r) => r.id === "ws:w-2")).toBeTruthy();
+    expect(result.rules.find((r) => r.id === "ws:w-1")).toBeUndefined();
+  });
+
+  it("normalizeWorkspacePath rejects root and dot variants", () => {
+    expect(() => normalizeWorkspacePath("/")).toThrow("must not be or resolve to '/'");
+    // "." normalizes to "/" because all segments are consumed
+    expect(() => normalizeWorkspacePath(".")).toThrow("must not be or resolve to '/'");
+    // ".." normalizes to "/" because the ".." pops nothing then we have no segments
+    expect(() => normalizeWorkspacePath("..")).toThrow("must not be or resolve to '/'");
+  });
+
+  it("normalizeWorkspacePath decodes encoded path separators", () => {
+    expect(normalizeWorkspacePath("team%2fagent")).toBe("/team/agent");
+    expect(normalizeWorkspacePath("team%5cagent")).toBe("/team/agent");
+    // %2e%2e decodes to ".." which pops the preceding segment, then "escape" is pushed
+    expect(normalizeWorkspacePath("x/%2e%2e/escape")).toBe("/escape");
+    // %2e%2e at start -> no segment to pop, just "escape" remains
+    expect(normalizeWorkspacePath("%2e%2e/escape")).toBe("/escape");
+  });
+
+  it("normalizeWorkspacePath normalizes backslashes", () => {
+    expect(normalizeWorkspacePath("team\\agent")).toBe("/team/agent");
+  });
+
+  it("preserves other workspaces when creating a new one", async () => {
+    const ws1 = await createAgentWorkspace({
+      storageId: "local",
+      name: "First",
+      rootPath: "/first",
+      templateId: "coding",
+    });
+    const ws2 = await createAgentWorkspace({
+      storageId: "local",
+      name: "Second",
+      rootPath: "/second",
+      templateId: "research",
+    });
+    const all = listAgentWorkspaces();
+    expect(all).toHaveLength(2);
+    expect(all.find((w) => w.id === ws1.id)).toBeTruthy();
+    expect(all.find((w) => w.id === ws2.id)).toBeTruthy();
+  });
+
+  it("generates ID before policy call", async () => {
+    const updatePolicy = vi.fn().mockResolvedValue(undefined);
+    const workspace = await createAgentWorkspace({
+      storageId: "local",
+      name: "ID-First",
+      rootPath: "/id-first",
+      templateId: "coding",
+      currentPolicy: policy,
+      updatePolicy,
+    });
+
+    expect(workspace.id).toBeTruthy();
+    const policyArg = updatePolicy.mock.calls[0][0] as McpStoragePolicy;
+    const rule = policyArg.rules.find((candidate) => candidate.source.kind === "workspace");
+    expect(rule).toBeDefined();
+    expect(rule?.source.kind === "workspace" ? rule.source.workspace_id : undefined).toBe(
+      workspace.id,
+    );
   });
 });

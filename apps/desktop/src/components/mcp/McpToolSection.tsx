@@ -105,9 +105,34 @@ const MCP_ACCESS_PRESETS: McpAccessPreset[] = [
     confirmationRules: DEFAULT_CONFIRMATION_RULES,
   },
   {
+    id: "workspace-agent",
+    title: "Workspace Agent",
+    description: "Enable non-destructive write tools while preserving each workspace grant.",
+    recommendedFor: "Coding and data-analysis agents working inside explicit workspace roots.",
+    enabledTools: [...SAFE_READ_ONLY_TOOLS, "mkdir", "write_file", "copy_path"],
+    accessMode: "read_write",
+    confirmationRules: DEFAULT_CONFIRMATION_RULES,
+  },
+  {
+    id: "manual-approval",
+    title: "Manual Approval",
+    description: "Keep all read tools enabled and require explicit confirmation for every write, delete, and link operation.",
+    recommendedFor: "Controlled environments where every agent mutation should be reviewed.",
+    enabledTools: [...SAFE_READ_ONLY_TOOLS, "write_file", "mkdir", "delete_path", "copy_path", "move_path", "generate_download_link", "delete_version", "session_create", "session_end"],
+    accessMode: "read_write",
+    confirmationRules: {
+      require_for_write: true,
+      require_for_overwrite: true,
+      require_for_delete: true,
+      require_for_version_delete: true,
+      require_for_presign: true,
+      require_for_cross_storage_copy: true,
+    },
+  },
+  {
     id: "locked-down",
     title: "Lock down MCP",
-    description: "Disable all tools and set exposed storage policies to no access.",
+    description: "Disable all tools and set exposed storage policies to no access. Existing path rules are preserved but overridden by default none.",
     recommendedFor: "Pausing MCP exposure before changing clients, networks, or policies.",
     enabledTools: [],
     accessMode: "none",
@@ -249,6 +274,7 @@ export function McpToolSection({
 }: McpToolSectionProps) {
   const enabledToolCount = settings.enabledTools.length;
   const [pendingRiskyTool, setPendingRiskyTool] = useState<McpToolDefinition | null>(null);
+  const [pendingPreset, setPendingPreset] = useState<McpAccessPreset | null>(null);
   const [showAdvancedTools, setShowAdvancedTools] = useState(false);
 
   const safeTools = tools.filter((t) => t.defaultEnabled);
@@ -429,7 +455,17 @@ export function McpToolSection({
               key={preset.id}
               type="button"
               className="rounded-lg border border-border/80 bg-background px-3 py-3 text-left transition-colors hover:bg-secondary/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
-              onClick={() => void onApplyPreset(preset)}
+              onClick={() => {
+                const enablesRiskyTools = preset.enabledTools.some((name) => {
+                  const tool = tools.find((candidate) => candidate.name === name);
+                  return tool ? needsConfirmation(tool) : false;
+                });
+                if (enablesRiskyTools) {
+                  setPendingPreset(preset);
+                } else {
+                  void onApplyPreset(preset);
+                }
+              }}
               disabled={isBusy}
             >
               <span className="flex items-start justify-between gap-3">
@@ -572,6 +608,35 @@ export function McpToolSection({
           </div>
         </div>
       </div>
+
+      <AlertDialog
+        open={pendingPreset !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingPreset(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-md rounded-2xl border border-border bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] shadow-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Apply {pendingPreset?.title}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This preset enables advanced tools that can modify data, create external links, or
+              change scoped sessions. Existing path grants remain authoritative and confirmation
+              rules stay enabled.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingPreset) void onApplyPreset(pendingPreset);
+                setPendingPreset(null);
+              }}
+            >
+              Apply preset
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog
         open={pendingRiskyTool !== null}

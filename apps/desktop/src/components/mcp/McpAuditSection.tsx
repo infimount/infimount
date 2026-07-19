@@ -338,6 +338,16 @@ export function McpAuditSection({
                     <span className="rounded-full border border-border bg-secondary/50 px-2 py-0.5 text-[11px] text-muted-foreground">
                       {event.decision}
                     </span>
+                    {event.matched_rule_id ? (
+                      <span className="rounded-full border border-blue-300/60 bg-blue-50 px-2 py-0.5 text-[11px] text-blue-700 dark:border-blue-700/40 dark:bg-blue-950/30 dark:text-blue-300">
+                        {event.matched_rule_id}
+                      </span>
+                    ) : null}
+                    {event.workspace_id ? (
+                      <span className="rounded-full border border-purple-300/60 bg-purple-50 px-2 py-0.5 text-[11px] text-purple-700 dark:border-purple-700/40 dark:bg-purple-950/30 dark:text-purple-300">
+                        ws:{event.workspace_id}
+                      </span>
+                    ) : null}
                     {event.error_code ? (
                       <span className="text-[11px] text-destructive">
                         {event.error_code}

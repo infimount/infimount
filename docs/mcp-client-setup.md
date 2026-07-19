@@ -48,7 +48,7 @@ Open **MCP Settings** in the desktop app to configure:
 - per-storage path policies and confirmation rules
 - pending approval queue and MCP audit viewer
 
-Use **Apply safe read-only** to reset to the safe default tool set. Use **Configure advanced tools** to inspect non-default tools. Enabling any write, destructive, external-link, or session tool requires a confirmation dialog, regardless of its risk label.
+Apply an access preset to configure tools and policies together: **Read-only research** for safe reads, **Workspace Agent** for non-destructive writes inside existing workspace grants, **Manual Approval** for broad tools with explicit confirmations, or **Lock down MCP** to pause agent access. Use **Configure advanced tools** to inspect non-default tools. Enabling any write, destructive, external-link, or session tool requires a confirmation dialog, regardless of its risk label.
 
 Tool exposure changes are applied after restarting the HTTP server. The settings panel shows when a restart is required.
 
@@ -61,9 +61,10 @@ MCP access is the intersection of several local controls:
 3. The requested tool must be enabled.
 4. The storage policy must allow the requested path.
 5. Read-only storage or read-only policy must allow the operation type.
-6. Risky operations may require approval before execution.
+6. Path rules grant explicit access for specific prefixes; if no rule matches, the default access mode applies.
+7. Risky operations may require approval before execution.
 
-Use the **What the agent can access** summary in MCP Settings before connecting a client. Denied path prefixes override allowed prefixes. Empty allowed prefixes mean all paths are allowed unless a denied prefix blocks them.
+Use the **What the agent can access** summary in MCP Settings before connecting a client. Denied path prefixes override all other rules. When no path rules are defined, the default access mode applies to all paths.
 
 ## Risky Operation Approval
 
@@ -78,7 +79,7 @@ The approval queue shows:
 - exact action summary
 - expiry time
 
-MCP Settings also shows active scoped sessions created by MCP clients, including storage scope, path prefixes, read-only status, and expiry. These sessions are in-memory, expire locally, and are cleared when the desktop HTTP server stops.
+MCP Settings also shows active scoped sessions created by MCP clients, including storage scope, path prefixes, read-only status, and expiry. These sessions are in-memory, expire locally, and are cleared when the desktop HTTP server stops. Audit events include the matched policy rule ID and workspace ID when a policy rule determined the access decision.
 
 Approvals are single-use and tied to the original request fingerprint. A client cannot approve one operation and then reuse the ID for a different path, storage, or tool. Pending approvals are in-memory and are cleared by app/server restart.
 

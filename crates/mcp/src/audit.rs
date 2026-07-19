@@ -38,6 +38,8 @@ pub struct AuditEvent {
     pub path: Option<String>,
     pub version_id: Option<String>,
     pub decision: AuditDecision,
+    pub matched_rule_id: Option<String>,
+    pub workspace_id: Option<String>,
     pub confirmation_id: Option<String>,
     pub duration_ms: Option<u64>,
     pub bytes_read: Option<u64>,
@@ -61,6 +63,8 @@ impl AuditEvent {
             path: None,
             version_id: None,
             decision: AuditDecision::Allowed,
+            matched_rule_id: None,
+            workspace_id: None,
             confirmation_id: None,
             duration_ms: None,
             bytes_read: None,
@@ -240,5 +244,71 @@ mod tests {
             events[0].path.as_deref(),
             Some("https://example.com/file.txt?<redacted>")
         );
+    }
+
+    #[test]
+    fn audit_event_carries_matched_rule_id_and_workspace_id() {
+        let mut event = AuditEvent::new("write_file", McpOperation::Write);
+        event.matched_rule_id = Some("workspace:w-1".to_string());
+        event.workspace_id = Some("w-1".to_string());
+        event.decision = AuditDecision::Allowed;
+
+        assert_eq!(event.matched_rule_id.as_deref(), Some("workspace:w-1"));
+        assert_eq!(event.workspace_id.as_deref(), Some("w-1"));
+        assert_eq!(event.decision, AuditDecision::Allowed);
+    }
+
+    #[test]
+    fn audit_event_denied_carries_rule_info() {
+        let mut event = AuditEvent::new("delete_path", McpOperation::Delete);
+        event.matched_rule_id = Some("deny-all".to_string());
+        event.decision = AuditDecision::Denied;
+        event.error_code = Some("ERR_MCP_POLICY_DENIED".to_string());
+
+        assert_eq!(event.decision, AuditDecision::Denied);
+        assert_eq!(event.matched_rule_id.as_deref(), Some("deny-all"));
+        assert_eq!(event.workspace_id, None);
+    }
+
+    #[test]
+    fn audit_event_requires_confirmation_with_rule_and_workspace() {
+        let mut event = AuditEvent::new("delete_path", McpOperation::Delete);
+        event.matched_rule_id = Some("workspace:w-2".to_string());
+        event.workspace_id = Some("w-2".to_string());
+        event.decision = AuditDecision::RequiresConfirmation;
+        event.confirmation_id = Some("confirm-123".to_string());
+
+        assert_eq!(event.decision, AuditDecision::RequiresConfirmation);
+        assert_eq!(event.workspace_id.as_deref(), Some("w-2"));
+        assert_eq!(event.confirmation_id.as_deref(), Some("confirm-123"));
+    }
+
+    #[test]
+    fn audit_append_sets_rule_and_workspace_fields() {
+        let dir = TempDir::new().unwrap();
+        let store = AuditStore::with_limit(dir.path().join("audit.json"), 10);
+
+        let mut event = AuditEvent::new("read_file", McpOperation::Read);
+        event.matched_rule_id = Some("public".to_string());
+        event.workspace_id = Some("w-1".to_string());
+        event.path = Some("/Local/file.txt".to_string());
+
+        store.append(event).unwrap();
+        let events = store.list_recent(10).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].matched_rule_id.as_deref(), Some("public"));
+        assert_eq!(events[0].workspace_id.as_deref(), Some("w-1"));
+    }
+
+    #[test]
+    fn audit_clear_removes_all_events() {
+        let dir = TempDir::new().unwrap();
+        let store = AuditStore::with_limit(dir.path().join("audit.json"), 10);
+
+        let event = AuditEvent::new("read_file", McpOperation::Read);
+        store.append(event).unwrap();
+        store.clear().unwrap();
+        let events = store.list_recent(10).unwrap();
+        assert!(events.is_empty());
     }
 }

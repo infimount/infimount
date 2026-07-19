@@ -1,6 +1,6 @@
 use super::*;
 use crate::errors::McpErrorCode;
-use crate::policy::McpStoragePolicy;
+use crate::policy::{McpAccessMode, McpPathRule, McpRuleSource, McpStoragePolicy};
 use crate::registry::StorageRecord;
 use serde_json::json;
 use std::collections::HashMap;
@@ -27,7 +27,10 @@ async fn path_policy_denies_reads_and_writes_before_backend_operation() {
         "local".to_string(),
         json!({"root": local_root}),
     );
+    storage.mcp_exposed = true;
     storage.mcp_policy = McpStoragePolicy {
+        default_access: McpAccessMode::ReadWrite,
+        version: 2,
         denied_paths: vec!["private".to_string()],
         ..Default::default()
     };
@@ -94,16 +97,27 @@ async fn recursive_operations_enforce_denied_descendant_policy() {
         "local".to_string(),
         json!({"root": src_root.clone()}),
     );
+    src.mcp_exposed = true;
     src.mcp_policy = McpStoragePolicy {
-        allowed_paths: vec!["public".to_string()],
+        default_access: McpAccessMode::None,
+        version: 2,
+        rules: vec![McpPathRule {
+            id: "public".to_string(),
+            prefix: "public".to_string(),
+            access: McpAccessMode::ReadWrite,
+            source: McpRuleSource::Manual,
+            confirmation_rules: None,
+        }],
         denied_paths: vec!["public/private".to_string()],
         ..Default::default()
     };
-    let dst = StorageRecord::new(
+    let mut dst = StorageRecord::new(
         "Dst".to_string(),
         "local".to_string(),
         json!({"root": dst_root.clone()}),
     );
+    dst.mcp_exposed = true;
+    dst.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[src, dst]).unwrap();
     let ctx = FsToolsContext {
         registry,
@@ -220,18 +234,29 @@ async fn copy_path_recursive_enforces_destination_descendant_policy_before_mutat
     .unwrap();
 
     let registry = registry_in(&dir);
-    let src = StorageRecord::new(
+    let mut src = StorageRecord::new(
         "Src".to_string(),
         "local".to_string(),
         json!({"root": src_root.clone()}),
     );
+    src.mcp_exposed = true;
+    src.mcp_policy.default_access = McpAccessMode::ReadWrite;
     let mut dst = StorageRecord::new(
         "Dst".to_string(),
         "local".to_string(),
         json!({"root": dst_root.clone()}),
     );
+    dst.mcp_exposed = true;
     dst.mcp_policy = McpStoragePolicy {
-        allowed_paths: vec!["public".to_string()],
+        default_access: McpAccessMode::None,
+        version: 2,
+        rules: vec![McpPathRule {
+            id: "public".to_string(),
+            prefix: "public".to_string(),
+            access: McpAccessMode::ReadWrite,
+            source: McpRuleSource::Manual,
+            confirmation_rules: None,
+        }],
         denied_paths: vec!["public/private".to_string()],
         ..Default::default()
     };
@@ -273,6 +298,7 @@ async fn list_dir_root_is_sorted_and_filtered() {
     );
     a.enabled = true;
     a.mcp_exposed = true;
+    a.mcp_policy.default_access = McpAccessMode::ReadWrite;
 
     let mut b = StorageRecord::new(
         "alpha".to_string(),
@@ -281,6 +307,7 @@ async fn list_dir_root_is_sorted_and_filtered() {
     );
     b.enabled = true;
     b.mcp_exposed = true;
+    b.mcp_policy.default_access = McpAccessMode::ReadWrite;
 
     let mut hidden = StorageRecord::new(
         "hidden".to_string(),
@@ -329,11 +356,13 @@ async fn list_dir_storage_dirs_first_then_files() {
     std::fs::write(local_root.join("a.txt"), b"a").unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": local_root}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
 
     let sessions = sessions_in();
@@ -374,11 +403,13 @@ async fn list_dir_recursive_is_flat_and_sorted_by_full_path() {
     std::fs::write(local_root.join("docs").join("a.txt"), b"a").unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": local_root}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
 
     let sessions = sessions_in();
@@ -417,21 +448,27 @@ async fn list_dir_cursor_offset_applies_after_sorting() {
     let dir = TempDir::new().unwrap();
     let registry = registry_in(&dir);
 
-    let s1 = StorageRecord::new(
+    let mut s1 = StorageRecord::new(
         "zeta".to_string(),
         "local".to_string(),
         json!({"root": "/tmp"}),
     );
-    let s2 = StorageRecord::new(
+    s1.mcp_exposed = true;
+    s1.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    let mut s2 = StorageRecord::new(
         "alpha".to_string(),
         "local".to_string(),
         json!({"root": "/tmp"}),
     );
-    let s3 = StorageRecord::new(
+    s2.mcp_exposed = true;
+    s2.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    let mut s3 = StorageRecord::new(
         "beta".to_string(),
         "local".to_string(),
         json!({"root": "/tmp"}),
     );
+    s3.mcp_exposed = true;
+    s3.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[s1, s2, s3]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -562,11 +599,13 @@ async fn read_file_stat_checks_missing_and_directory() {
     std::fs::create_dir_all(local_root.join("docs")).unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": local_root}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -615,11 +654,13 @@ async fn read_file_caps_bytes_and_sets_truncated() {
     std::fs::write(local_root.join("hello.txt"), b"hello world").unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": local_root}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -656,11 +697,13 @@ async fn read_file_binary_base64_mode() {
     std::fs::write(local_root.join("bin.dat"), vec![0xff, 0x00, 0x01]).unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": local_root}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -697,11 +740,13 @@ async fn read_file_text_decode_failure_has_hint() {
     std::fs::write(local_root.join("bad.txt"), vec![0xff, 0xfe, 0x00]).unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": local_root}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -783,6 +828,8 @@ async fn mkdir_rejects_read_only_storage() {
         "local".to_string(),
         json!({"root": local_root}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     storage.read_only = true;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
@@ -816,11 +863,13 @@ async fn mkdir_requires_parent_when_parents_false() {
     std::fs::create_dir_all(&local_root).unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": local_root}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -853,11 +902,13 @@ async fn mkdir_creates_nested_directories_when_parents_true() {
     std::fs::create_dir_all(&local_root).unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": local_root.clone()}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -891,11 +942,13 @@ async fn mkdir_exist_ok_false_returns_already_exists() {
     std::fs::create_dir_all(local_root.join("docs")).unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": local_root}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -928,11 +981,13 @@ async fn mkdir_existing_dir_with_exist_ok_true_returns_not_created() {
     std::fs::create_dir_all(local_root.join("docs")).unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": local_root}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -970,6 +1025,8 @@ async fn write_file_rejects_read_only_storage() {
         "local".to_string(),
         json!({"root": local_root}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     storage.read_only = true;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
@@ -1006,11 +1063,13 @@ async fn write_file_requires_parent_when_create_parents_false() {
     std::fs::create_dir_all(&local_root).unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": local_root}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -1046,11 +1105,13 @@ async fn write_file_creates_parents_when_requested() {
     std::fs::create_dir_all(&local_root).unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": local_root.clone()}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -1091,11 +1152,13 @@ async fn write_file_respects_overwrite_flag() {
     std::fs::write(local_root.join("file.txt"), "old").unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": local_root.clone()}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -1151,11 +1214,13 @@ async fn write_file_rejects_directory_target_and_non_utf8_encoding() {
     std::fs::create_dir_all(local_root.join("docs")).unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": local_root}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -1221,11 +1286,13 @@ async fn write_file_accepts_user_metadata_when_backend_reports_support() {
     std::fs::create_dir_all(&local_root).unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": local_root}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -1297,6 +1364,8 @@ async fn delete_path_rejects_read_only_storage() {
         "local".to_string(),
         json!({"root": local_root}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     storage.read_only = true;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
@@ -1330,11 +1399,13 @@ async fn delete_path_file_success_and_missing_returns_not_found() {
     std::fs::write(local_root.join("file.txt"), "x").unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": local_root.clone()}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -1379,11 +1450,13 @@ async fn delete_path_directory_requires_recursive() {
     std::fs::create_dir_all(local_root.join("docs")).unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": local_root}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -1417,11 +1490,13 @@ async fn delete_path_recursive_deletes_nested_structure() {
     std::fs::write(local_root.join("docs").join("nested").join("b.txt"), "b").unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": local_root.clone()}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -1457,16 +1532,20 @@ async fn copy_path_rejects_read_only_destination() {
     std::fs::write(src_root.join("file.txt"), "hello").unwrap();
 
     let registry = registry_in(&dir);
-    let src = StorageRecord::new(
+    let mut src = StorageRecord::new(
         "Src".to_string(),
         "local".to_string(),
         json!({"root": src_root}),
     );
+    src.mcp_exposed = true;
+    src.mcp_policy.default_access = McpAccessMode::ReadWrite;
     let mut dst = StorageRecord::new(
         "Dst".to_string(),
         "local".to_string(),
         json!({"root": dst_root}),
     );
+    dst.mcp_exposed = true;
+    dst.mcp_policy.default_access = McpAccessMode::ReadWrite;
     dst.read_only = true;
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
@@ -1503,16 +1582,20 @@ async fn copy_path_rejects_directory_without_recursive() {
     std::fs::create_dir_all(&dst_root).unwrap();
 
     let registry = registry_in(&dir);
-    let src = StorageRecord::new(
+    let mut src = StorageRecord::new(
         "Src".to_string(),
         "local".to_string(),
         json!({"root": src_root}),
     );
-    let dst = StorageRecord::new(
+    src.mcp_exposed = true;
+    src.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    let mut dst = StorageRecord::new(
         "Dst".to_string(),
         "local".to_string(),
         json!({"root": dst_root}),
     );
+    dst.mcp_exposed = true;
+    dst.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -1550,16 +1633,20 @@ async fn copy_path_overwrite_false_rejects_existing_destination() {
     std::fs::write(dst_root.join("file.txt"), "existing").unwrap();
 
     let registry = registry_in(&dir);
-    let src = StorageRecord::new(
+    let mut src = StorageRecord::new(
         "Src".to_string(),
         "local".to_string(),
         json!({"root": src_root}),
     );
-    let dst = StorageRecord::new(
+    src.mcp_exposed = true;
+    src.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    let mut dst = StorageRecord::new(
         "Dst".to_string(),
         "local".to_string(),
         json!({"root": dst_root}),
     );
+    dst.mcp_exposed = true;
+    dst.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -1593,13 +1680,14 @@ async fn copy_path_requires_existing_parent_for_file_destination() {
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.txt"), "hello").unwrap();
     let registry = registry_in(&dir);
-    registry
-        .save_all_atomic(&[StorageRecord::new(
-            "Local".to_string(),
-            "local".to_string(),
-            json!({"root": root}),
-        )])
-        .unwrap();
+    let mut storage = StorageRecord::new(
+        "Local".to_string(),
+        "local".to_string(),
+        json!({"root": root}),
+    );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    registry.save_all_atomic(&[storage]).unwrap();
     let ctx = FsToolsContext {
         registry,
         sessions: sessions_in(),
@@ -1633,11 +1721,13 @@ async fn copy_path_same_storage_file_success() {
     std::fs::write(root.join("file.txt"), "hello").unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": root.clone()}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -1679,16 +1769,20 @@ async fn copy_path_cross_storage_streams_large_file() {
     std::fs::write(src_root.join("large.bin"), &payload).unwrap();
 
     let registry = registry_in(&dir);
-    let src = StorageRecord::new(
+    let mut src = StorageRecord::new(
         "Src".to_string(),
         "local".to_string(),
         json!({"root": src_root}),
     );
-    let dst = StorageRecord::new(
+    src.mcp_exposed = true;
+    src.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    let mut dst = StorageRecord::new(
         "Dst".to_string(),
         "local".to_string(),
         json!({"root": dst_root.clone()}),
     );
+    dst.mcp_exposed = true;
+    dst.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -1727,16 +1821,20 @@ async fn copy_path_recursive_preserves_structure() {
     std::fs::write(src_root.join("docs").join("nested").join("b.txt"), "b").unwrap();
 
     let registry = registry_in(&dir);
-    let src = StorageRecord::new(
+    let mut src = StorageRecord::new(
         "Src".to_string(),
         "local".to_string(),
         json!({"root": src_root}),
     );
-    let dst = StorageRecord::new(
+    src.mcp_exposed = true;
+    src.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    let mut dst = StorageRecord::new(
         "Dst".to_string(),
         "local".to_string(),
         json!({"root": dst_root.clone()}),
     );
+    dst.mcp_exposed = true;
+    dst.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -1778,13 +1876,14 @@ async fn move_path_requires_existing_parent_for_file_destination() {
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.txt"), "hello").unwrap();
     let registry = registry_in(&dir);
-    registry
-        .save_all_atomic(&[StorageRecord::new(
-            "Local".to_string(),
-            "local".to_string(),
-            json!({"root": root.clone()}),
-        )])
-        .unwrap();
+    let mut storage = StorageRecord::new(
+        "Local".to_string(),
+        "local".to_string(),
+        json!({"root": root.clone()}),
+    );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    registry.save_all_atomic(&[storage]).unwrap();
     let ctx = FsToolsContext {
         registry,
         sessions: sessions_in(),
@@ -1818,11 +1917,13 @@ async fn move_path_same_storage_file_success() {
     std::fs::write(root.join("file.txt"), "hello").unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": root.clone()}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -1863,16 +1964,20 @@ async fn move_path_cross_storage_success() {
     std::fs::write(src_root.join("file.txt"), "hello").unwrap();
 
     let registry = registry_in(&dir);
-    let src = StorageRecord::new(
+    let mut src = StorageRecord::new(
         "Src".to_string(),
         "local".to_string(),
         json!({"root": src_root.clone()}),
     );
-    let dst = StorageRecord::new(
+    src.mcp_exposed = true;
+    src.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    let mut dst = StorageRecord::new(
         "Dst".to_string(),
         "local".to_string(),
         json!({"root": dst_root.clone()}),
     );
+    dst.mcp_exposed = true;
+    dst.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -1914,16 +2019,20 @@ async fn move_path_overwrite_false_rejects_existing_destination() {
     std::fs::write(dst_root.join("file.txt"), "existing").unwrap();
 
     let registry = registry_in(&dir);
-    let src = StorageRecord::new(
+    let mut src = StorageRecord::new(
         "Src".to_string(),
         "local".to_string(),
         json!({"root": src_root}),
     );
-    let dst = StorageRecord::new(
+    src.mcp_exposed = true;
+    src.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    let mut dst = StorageRecord::new(
         "Dst".to_string(),
         "local".to_string(),
         json!({"root": dst_root}),
     );
+    dst.mcp_exposed = true;
+    dst.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -1960,16 +2069,20 @@ async fn move_path_overwrite_true_replaces_existing_destination() {
     std::fs::write(dst_root.join("file.txt"), "existing").unwrap();
 
     let registry = registry_in(&dir);
-    let src = StorageRecord::new(
+    let mut src = StorageRecord::new(
         "Src".to_string(),
         "local".to_string(),
         json!({"root": src_root.clone()}),
     );
-    let dst = StorageRecord::new(
+    src.mcp_exposed = true;
+    src.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    let mut dst = StorageRecord::new(
         "Dst".to_string(),
         "local".to_string(),
         json!({"root": dst_root.clone()}),
     );
+    dst.mcp_exposed = true;
+    dst.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -2009,16 +2122,20 @@ async fn move_path_missing_source_returns_not_found() {
     std::fs::create_dir_all(&dst_root).unwrap();
 
     let registry = registry_in(&dir);
-    let src = StorageRecord::new(
+    let mut src = StorageRecord::new(
         "Src".to_string(),
         "local".to_string(),
         json!({"root": src_root}),
     );
-    let dst = StorageRecord::new(
+    src.mcp_exposed = true;
+    src.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    let mut dst = StorageRecord::new(
         "Dst".to_string(),
         "local".to_string(),
         json!({"root": dst_root}),
     );
+    dst.mcp_exposed = true;
+    dst.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -2059,12 +2176,16 @@ async fn move_path_rejects_read_only_source_or_destination() {
         "local".to_string(),
         json!({"root": src_root.clone()}),
     );
+    src.mcp_exposed = true;
+    src.mcp_policy.default_access = McpAccessMode::ReadWrite;
     src.read_only = true;
-    let dst = StorageRecord::new(
+    let mut dst = StorageRecord::new(
         "Dst".to_string(),
         "local".to_string(),
         json!({"root": dst_root.clone()}),
     );
+    dst.mcp_exposed = true;
+    dst.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -2089,16 +2210,20 @@ async fn move_path_rejects_read_only_source_or_destination() {
     assert_eq!(src_err.code, McpErrorCode::ERR_STORAGE_READ_ONLY);
 
     let registry = registry_in(&dir);
-    let src = StorageRecord::new(
+    let mut src = StorageRecord::new(
         "Src".to_string(),
         "local".to_string(),
         json!({"root": src_root.clone()}),
     );
+    src.mcp_exposed = true;
+    src.mcp_policy.default_access = McpAccessMode::ReadWrite;
     let mut dst = StorageRecord::new(
         "Dst".to_string(),
         "local".to_string(),
         json!({"root": dst_root.clone()}),
     );
+    dst.mcp_exposed = true;
+    dst.mcp_policy.default_access = McpAccessMode::ReadWrite;
     dst.read_only = true;
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
@@ -2133,16 +2258,20 @@ async fn move_path_rejects_directory_source() {
     std::fs::create_dir_all(&dst_root).unwrap();
 
     let registry = registry_in(&dir);
-    let src = StorageRecord::new(
+    let mut src = StorageRecord::new(
         "Src".to_string(),
         "local".to_string(),
         json!({"root": src_root}),
     );
-    let dst = StorageRecord::new(
+    src.mcp_exposed = true;
+    src.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    let mut dst = StorageRecord::new(
         "Dst".to_string(),
         "local".to_string(),
         json!({"root": dst_root}),
     );
+    dst.mcp_exposed = true;
+    dst.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -2182,11 +2311,13 @@ async fn search_paths_returns_lexicographic_matches() {
     std::fs::write(local_root.join("docs").join("beta.txt"), "c").unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": local_root}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -2225,11 +2356,13 @@ async fn generate_download_link_local_backend_returns_presign_not_supported() {
     std::fs::write(local_root.join("file.txt"), "hello").unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": local_root}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
@@ -2327,11 +2460,13 @@ async fn list_versions_local_backend_returns_not_supported() {
     std::fs::write(local_root.join("file.txt"), "hello").unwrap();
 
     let registry = registry_in(&dir);
-    let storage = StorageRecord::new(
+    let mut storage = StorageRecord::new(
         "Local".to_string(),
         "local".to_string(),
         json!({"root": local_root}),
     );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {

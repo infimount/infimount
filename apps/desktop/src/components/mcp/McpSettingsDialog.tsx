@@ -173,6 +173,28 @@ export function McpSettingsDialog({
   const handleSavePolicy = async (storageId: string) => {
     const policy = policyDrafts[storageId];
     if (!policy) return;
+
+    // Reject blank rules (empty prefix) and root grants
+    for (const rule of policy.rules) {
+      const trimmed = rule.prefix.trim();
+      if (!trimmed) {
+        toast({
+          title: "Cannot save policy",
+          description: "A rule has an empty path prefix. Remove it or enter a prefix.",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (trimmed === "/" || trimmed === "." || trimmed === "..") {
+        toast({
+          title: "Cannot save policy",
+          description: `Rule "${rule.id}" has an invalid root prefix '${trimmed}'. Root grants are not allowed.`,
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
     setSavingPolicyId(storageId);
     try {
       await onUpdateStoragePolicy(storageId, policy);
@@ -190,19 +212,52 @@ export function McpSettingsDialog({
     const nextDrafts = buildPresetPolicyDrafts(exposedStorages, policyDrafts, preset);
 
     setApplyingPresetId(preset.id);
-    setSettings(nextSettings);
-    setPolicyDrafts((current) => ({ ...current, ...nextDrafts }));
+
+    // Apply policy updates BEFORE tool settings; rollback on failure
+    const savedDrafts: Record<string, McpStoragePolicy> = {};
     try {
-      await onSave(nextSettings);
       for (const storage of exposedStorages) {
+        savedDrafts[storage.id] = clonePolicy(effectivePolicy(storage, policyDrafts[storage.id]));
         await onUpdateStoragePolicy(storage.id, nextDrafts[storage.id]);
       }
+    } catch {
+      // Rollback policy changes
+      for (const storage of exposedStorages) {
+        if (savedDrafts[storage.id]) {
+          await onUpdateStoragePolicy(storage.id, savedDrafts[storage.id]).catch(() => {});
+        }
+      }
+      setApplyingPresetId(null);
+      toast({
+        title: "Preset failed",
+        description: "Policy updates could not be saved. Changes rolled back.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Apply tool settings only after policy updates succeed
+    try {
+      await onSave(nextSettings);
+      setPolicyDrafts((current) => ({ ...current, ...nextDrafts }));
       toast({
         title: "Preset applied",
         description:
           status?.runningHttp && settings.transport === "http"
             ? "Restart the HTTP server to apply tool changes to connected clients."
             : `${preset.title} is saved for exposed MCP storage.`,
+      });
+    } catch {
+      // Rollback tool settings to previous state
+      for (const storage of exposedStorages) {
+        if (savedDrafts[storage.id]) {
+          await onUpdateStoragePolicy(storage.id, savedDrafts[storage.id]).catch(() => {});
+        }
+      }
+      toast({
+        title: "Preset failed",
+        description: "Tool settings could not be saved. Policy changes rolled back.",
+        variant: "destructive",
       });
     } finally {
       setApplyingPresetId(null);
@@ -430,8 +485,10 @@ function sameToolSet(a: string[], b: string[]): boolean {
 
 function clonePolicy(policy: McpStoragePolicy): McpStoragePolicy {
   return {
+    version: 2,
     default_access: policy.default_access,
-    allowed_paths: [...policy.allowed_paths],
+    rules: [...policy.rules],
+    allowed_paths: [...(policy.allowed_paths ?? [])],
     denied_paths: [...policy.denied_paths],
     confirmation_rules: { ...policy.confirmation_rules },
   };
@@ -445,14 +502,39 @@ function filterAvailableTools(toolNames: string[], tools: McpToolDefinition[]): 
 function buildPresetPolicyDrafts(
   storages: StorageConfig[],
   drafts: Record<string, McpStoragePolicy>,
-  preset: { accessMode: McpStoragePolicy["default_access"]; confirmationRules: McpConfirmationRules },
+  preset: { id: string; accessMode: McpStoragePolicy["default_access"]; confirmationRules: McpConfirmationRules },
 ): Record<string, McpStoragePolicy> {
   const next: Record<string, McpStoragePolicy> = {};
   for (const storage of storages) {
     const current = clonePolicy(effectivePolicy(storage, drafts[storage.id]));
+
+    if (preset.id === "locked-down") {
+      next[storage.id] = {
+        ...current,
+        default_access: "none",
+        confirmation_rules: { ...preset.confirmationRules },
+      };
+      continue;
+    }
+
+    if (preset.id === "research-read-only") {
+      next[storage.id] = {
+        ...current,
+        default_access:
+          current.default_access === "none" ? "none" : "read_only",
+        rules: current.rules.map((rule) => ({
+          ...rule,
+          access: rule.access === "none" ? "none" : "read_only",
+        })),
+        confirmation_rules: { ...preset.confirmationRules },
+      };
+      continue;
+    }
+
+    // Workspace Agent and Manual Approval change tool availability only. Existing
+    // whole-storage defaults and path grants remain exactly as selected by users.
     next[storage.id] = {
       ...current,
-      default_access: storage.readOnly && preset.accessMode === "read_write" ? "read_only" : preset.accessMode,
       confirmation_rules: { ...preset.confirmationRules },
     };
   }
@@ -478,6 +560,8 @@ function filterAuditEvents(
       event.session_id,
       event.error_code,
       event.decision,
+      event.matched_rule_id,
+      event.workspace_id,
     ]
       .filter(Boolean)
       .some((value) => value?.toLowerCase().includes(query));

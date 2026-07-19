@@ -15,7 +15,10 @@ mod stat_path;
 mod tests;
 mod write_file;
 
-pub use common::{EntryType, FsToolsContext, ListDirEntry};
+pub(crate) use common::record_policy_eval;
+pub use common::{
+    take_last_policy_eval, with_last_policy_eval_scope, EntryType, FsToolsContext, ListDirEntry,
+};
 pub use copy_path::{copy_path, CopyPathInput, CopyPathOutput};
 pub use delete_path::{delete_path, DeletePathInput, DeletePathOutput};
 pub use delete_version::{delete_version, DeleteVersionInput, DeleteVersionOutput};

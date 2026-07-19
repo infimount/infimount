@@ -1,6 +1,7 @@
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -9,7 +10,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import type { McpStoragePolicy, StorageConfig } from "@/types/storage";
+import { X, Plus } from "lucide-react";
+import type { McpStoragePolicy, McpPathRule, StorageConfig } from "@/types/storage";
 
 const FIELD_FOCUS_CLASS =
   "focus-visible:border-ring focus-visible:ring-0 focus-visible:ring-offset-0";
@@ -26,22 +28,7 @@ const CONFIRMATION_RULES: Array<{
   { key: "require_for_cross_storage_copy", label: "Confirm cross-storage copy" },
 ];
 
-function splitPolicyPrefixes(value: string): string[] {
-  const seen = new Set<string>();
-  return value
-    .split(/\r?\n/)
-    .map(normalizePolicyPrefixInput)
-    .filter(Boolean)
-    .filter((item) => {
-      if (seen.has(item)) {
-        return false;
-      }
-      seen.add(item);
-      return true;
-    });
-}
-
-function normalizePolicyPrefixInput(value: string): string {
+function normalizePrefix(value: string): string {
   const segments: string[] = [];
   for (const segment of value.trim().replace(/\\/g, "/").split("/")) {
     if (!segment || segment === ".") {
@@ -54,6 +41,25 @@ function normalizePolicyPrefixInput(value: string): string {
     segments.push(segment);
   }
   return segments.join("/");
+}
+
+function splitPolicyPrefixes(value: string): string[] {
+  const seen = new Set<string>();
+  return value
+    .split(/\r?\n/)
+    .map(normalizePrefix)
+    .filter(Boolean)
+    .filter((item) => {
+      if (seen.has(item)) {
+        return false;
+      }
+      seen.add(item);
+      return true;
+    });
+}
+
+function generateRuleId(): string {
+  return `rule-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
 interface McpPolicySectionProps {
@@ -124,41 +130,138 @@ export function McpPolicySection({
                   </div>
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-2">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
                     <Label className="text-xs font-normal text-muted-foreground">
-                      Allowed prefixes
+                      Rules
                     </Label>
-                    <Textarea
-                      value={policy.allowed_paths.join("\n")}
-                      placeholder="Leave empty to allow all paths"
-                      rows={3}
-                      className={`border border-border/80 bg-card font-mono text-xs ${FIELD_FOCUS_CLASS}`}
-                      onChange={(event) =>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 gap-1 border-dashed text-xs"
+                      onClick={() =>
                         onUpdatePolicyDraft(storage.id, (current) => ({
                           ...current,
-                          allowed_paths: splitPolicyPrefixes(event.target.value),
+                          rules: [
+                            ...current.rules,
+                            {
+                              id: generateRuleId(),
+                              prefix: "",
+                              access: "read_write" as McpStoragePolicy["default_access"],
+                              source: { kind: "manual" },
+                            },
+                          ],
                         }))
                       }
-                    />
+                    >
+                      <Plus className="h-3 w-3" />
+                      Add rule
+                    </Button>
                   </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs font-normal text-muted-foreground">
-                      Denied prefixes
-                    </Label>
-                    <Textarea
-                      value={policy.denied_paths.join("\n")}
-                      placeholder="Example: private"
-                      rows={3}
-                      className={`border border-destructive/30 bg-destructive/5 font-mono text-xs ${FIELD_FOCUS_CLASS}`}
-                      onChange={(event) =>
-                        onUpdatePolicyDraft(storage.id, (current) => ({
-                          ...current,
-                          denied_paths: splitPolicyPrefixes(event.target.value),
-                        }))
-                      }
-                    />
-                  </div>
+                  {policy.rules.length > 0 ? (
+                    <div className="space-y-2">
+                      {policy.rules.map((rule, index) => (
+                        <div
+                          key={rule.id}
+                          className="flex items-start gap-2 rounded-md border border-border/70 bg-card p-2"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <Input
+                              value={rule.prefix}
+                              placeholder="Path prefix (e.g. projects)"
+                              className={`h-8 border-border/80 font-mono text-xs ${FIELD_FOCUS_CLASS}`}
+                              onChange={(event) =>
+                                onUpdatePolicyDraft(storage.id, (current) => {
+                                  const next = [...current.rules];
+                                  next[index] = {
+                                    ...next[index],
+                                    prefix: event.target.value,
+                                  };
+                                  return { ...current, rules: next };
+                                })
+                              }
+                              onBlur={(event) =>
+                                onUpdatePolicyDraft(storage.id, (current) => {
+                                  const next = [...current.rules];
+                                  next[index] = {
+                                    ...next[index],
+                                    prefix: normalizePrefix(event.target.value),
+                                  };
+                                  return { ...current, rules: next };
+                                })
+                              }
+                            />
+                          </div>
+                          <Select
+                            value={rule.access}
+                            onValueChange={(value) =>
+                              onUpdatePolicyDraft(storage.id, (current) => {
+                                const next = [...current.rules];
+                                next[index] = {
+                                  ...next[index],
+                                  access: value as McpPathRule["access"],
+                                };
+                                return { ...current, rules: next };
+                              })
+                            }
+                          >
+                            <SelectTrigger
+                              className={`h-8 w-28 border border-border bg-card text-xs ${FIELD_FOCUS_CLASS}`}
+                            >
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="border border-border bg-[hsl(var(--popover))] text-[hsl(var(--popover-foreground))] shadow-md">
+                              <SelectItem value="read_only">Read only</SelectItem>
+                              <SelectItem value="read_write">Read / write</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          {rule.source.kind === "manual" ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                              onClick={() =>
+                                onUpdatePolicyDraft(storage.id, (current) => ({
+                                  ...current,
+                                  rules: current.rules.filter((r) => r.id !== rule.id),
+                                }))
+                              }
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          ) : (
+                            <div className="flex h-8 w-8 items-center justify-center" title="Managed by workspace">
+                              <span className="text-[10px] text-muted-foreground/50">WS</span>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-md border border-dashed border-border/50 px-3 py-4 text-center text-[11px] text-muted-foreground">
+                      No path rules. Default access applies to all paths.
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-xs font-normal text-muted-foreground">
+                    Denied prefixes
+                  </Label>
+                  <Textarea
+                    value={policy.denied_paths.join("\n")}
+                    placeholder="Example: private"
+                    rows={2}
+                    className={`border border-destructive/30 bg-destructive/5 font-mono text-xs ${FIELD_FOCUS_CLASS}`}
+                    onChange={(event) =>
+                      onUpdatePolicyDraft(storage.id, (current) => ({
+                        ...current,
+                        denied_paths: splitPolicyPrefixes(event.target.value),
+                      }))
+                    }
+                  />
                 </div>
 
                 <div className="grid gap-2 md:grid-cols-2">

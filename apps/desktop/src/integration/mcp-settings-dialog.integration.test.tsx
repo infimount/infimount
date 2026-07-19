@@ -48,7 +48,9 @@ const tools: McpToolDefinition[] = [
 ];
 
 const mcpPolicy: McpStoragePolicy = {
+  version: 2,
   default_access: "read_write",
+  rules: [],
   allowed_paths: [],
   denied_paths: [],
   confirmation_rules: {
@@ -579,9 +581,11 @@ describe("McpSettingsDialog integration", () => {
       />,
     );
 
-    fireEvent.change(screen.getByPlaceholderText(/Leave empty to allow all paths/i), {
-      target: { value: "docs\n./shared/\nshared" },
-    });
+    fireEvent.click(screen.getByRole("button", { name: /Add rule/i }));
+    const ruleInputs = screen.getAllByPlaceholderText(/Path prefix/i);
+    fireEvent.change(ruleInputs[0], { target: { value: "docs" } });
+    fireEvent.blur(ruleInputs[0]);
+
     fireEvent.change(screen.getByPlaceholderText(/Example: private/i), {
       target: { value: "/private\nsecrets\nprivate" },
     });
@@ -590,7 +594,7 @@ describe("McpSettingsDialog integration", () => {
     await waitFor(() => {
       expect(onUpdateStoragePolicy).toHaveBeenCalledWith("local", {
         ...mcpPolicy,
-        allowed_paths: ["docs", "shared"],
+        rules: [expect.objectContaining({ prefix: "docs", access: "read_write" })],
         denied_paths: ["private", "secrets"],
       });
     });

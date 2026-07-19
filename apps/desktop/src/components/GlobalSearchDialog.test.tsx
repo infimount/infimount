@@ -29,7 +29,9 @@ function deferred<T>() {
 }
 
 const policy: StorageConfig["mcpPolicy"] = {
+  version: 2,
   default_access: "read_write",
+  rules: [],
   allowed_paths: [],
   denied_paths: [],
   confirmation_rules: {

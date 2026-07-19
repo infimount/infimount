@@ -122,7 +122,9 @@ describe("AddStorageDialog", () => {
       createdAt: "2026-01-01T00:00:00Z",
       updatedAt: "2026-01-01T00:00:00Z",
       mcpPolicy: {
+        version: 2,
         default_access: "read_only",
+        rules: [],
         allowed_paths: [],
         denied_paths: [],
         confirmation_rules: {
@@ -197,7 +199,9 @@ describe("AddStorageDialog", () => {
       createdAt: "2026-01-01T00:00:00Z",
       updatedAt: "2026-01-01T00:00:00Z",
       mcpPolicy: {
+        version: 2,
         default_access: "read_only",
+        rules: [],
         allowed_paths: [],
         denied_paths: [],
         confirmation_rules: {
@@ -645,7 +649,9 @@ describe("AddStorageDialog", () => {
       createdAt: "2026-01-01T00:00:00Z",
       updatedAt: "2026-01-02T00:00:00Z",
       mcpPolicy: {
+        version: 2,
         default_access: "read_only",
+        rules: [],
         allowed_paths: [],
         denied_paths: [],
         confirmation_rules: {

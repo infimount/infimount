@@ -64,7 +64,9 @@ const draft: StorageDraft = {
 };
 
 const policy: McpStoragePolicy = {
+  version: 2,
   default_access: "read_only",
+  rules: [],
   allowed_paths: ["docs"],
   denied_paths: ["private"],
   confirmation_rules: {

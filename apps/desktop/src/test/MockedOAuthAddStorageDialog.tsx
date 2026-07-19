@@ -52,7 +52,9 @@ const validationResult: StorageValidationResult = {
 };
 
 const policy: StorageConfig["mcpPolicy"] = {
+  version: 2,
   default_access: "read_only",
+  rules: [],
   allowed_paths: [],
   denied_paths: [],
   confirmation_rules: {

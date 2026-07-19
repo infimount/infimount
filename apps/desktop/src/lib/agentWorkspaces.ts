@@ -36,6 +36,7 @@ export interface AgentWorkspaceCheckpoint {
 
 export interface CreateAgentWorkspaceInput {
   storageId: string;
+  workspaceId?: string;
   name: string;
   rootPath: string;
   templateId: AgentWorkspaceTemplateId;
@@ -126,6 +127,7 @@ export function listAgentWorkspaceCheckpoints(workspaceId: string): AgentWorkspa
 
 export async function createAgentWorkspace({
   storageId,
+  workspaceId: externalWorkspaceId,
   name,
   rootPath,
   templateId,
@@ -133,11 +135,21 @@ export async function createAgentWorkspace({
   updatePolicy,
 }: CreateAgentWorkspaceInput): Promise<AgentWorkspace> {
   const template = getWorkspaceTemplate(templateId);
-  const normalizedRoot = normalizeWorkspacePath(rootPath || defaultWorkspacePath(name));
+  const workspaceId = externalWorkspaceId ?? `workspace-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
+  // Generate ID before policy — reject all normalized-root variants early
+  const rawRoot = rootPath || defaultWorkspacePath(name);
+  const normalizedRoot = normalizeWorkspacePath(rawRoot);
+  if (normalizedRoot === "/" || normalizedRoot === "." || normalizedRoot === "..") {
+    throw new Error("Workspace root path must be a non-root directory");
+  }
+
+  // Build policy with workspace ID (not the other way around)
+  const policy = buildWorkspacePolicy(normalizedRoot, currentPolicy, workspaceId);
+
   const now = new Date().toISOString();
-  const policy = buildWorkspacePolicy(normalizedRoot, currentPolicy);
   const workspace: AgentWorkspace = {
-    id: `workspace-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    id: workspaceId,
     storageId,
     name: name.trim(),
     rootPath: normalizedRoot,
@@ -167,10 +179,9 @@ export async function createAgentWorkspace({
     await updatePolicy(policy);
   }
 
-  saveAgentWorkspaces([
-    workspace,
-    ...listAgentWorkspaces().filter((item) => item.id !== workspace.id),
-  ]);
+  // Preserve all other workspaces, only add/update the target workspace
+  const others = listAgentWorkspaces().filter((item) => item.id !== workspace.id);
+  saveAgentWorkspaces([...others, workspace]);
   appendActivityLogEvent({
     type: "workspace_created",
     operation: "workspace",
@@ -316,8 +327,35 @@ export function normalizeWorkspacePath(path: string): string {
   const trimmed = path.trim();
   const withRoot = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
   const collapsed = withRoot.replace(/\\/g, "/").replace(/\/+/g, "/");
-  const withoutTrailing = collapsed.length > 1 ? collapsed.replace(/\/+$/g, "") : collapsed;
-  return withoutTrailing || "/";
+
+  // Decode percent-encoded sequences that map to path separators/dots
+  const decoded = collapsed
+    .replace(/%2e/gi, ".")
+    .replace(/%2f/gi, "/")
+    .replace(/%5c/gi, "/");
+
+  // Re-collapse after decoding (handles %2e%2e -> .., %2f -> /, etc.)
+  const segments: string[] = [];
+  for (const segment of decoded.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") { segments.pop(); continue; }
+    segments.push(segment);
+  }
+
+  const normalized = segments.length === 0 ? "/" : `/${segments.join("/")}`;
+
+  // Reject normalized root variants matching Rust semantics
+  if (normalized === "/") {
+    throw new Error("Workspace root path must not be or resolve to '/'");
+  }
+  if (normalized === "." || normalized === "..") {
+    throw new Error("Workspace root path must not be '.' or '..'");
+  }
+  if (/^\.+$/.test(normalized.replace(/\//g, ""))) {
+    throw new Error("Workspace root path must not consist solely of dots");
+  }
+
+  return normalized;
 }
 
 export function joinWorkspacePath(rootPath: string, relativePath: string): string {
@@ -335,13 +373,41 @@ export function workspaceCheckpointManifestPath(checkpointId: string): string {
 export function buildWorkspacePolicy(
   rootPath: string,
   currentPolicy?: McpStoragePolicy,
+  workspaceId?: string,
 ): McpStoragePolicy {
+  if (!workspaceId) {
+    throw new Error("workspaceId is required to build workspace policy");
+  }
+  const trimmed = rootPath.trim();
+  if (!trimmed) {
+    throw new Error("Workspace root path must not be empty");
+  }
   const normalizedRoot = normalizeWorkspacePath(rootPath);
-  const scopedRoot = normalizedRoot === "/" ? "/" : `${normalizedRoot}/`;
+  if (normalizedRoot === "/") {
+    throw new Error("Workspace root path must not be or resolve to '/'");
+  }
+  const scopedRoot = `${normalizedRoot}/`;
+  const ruleId = `ws:${workspaceId}`;
+
+  const existingRules = currentPolicy?.rules ?? [];
+  // Preserve all rules except those for this specific workspace
+  const otherRules = existingRules.filter(
+    (r) => r.source.kind !== "workspace" || r.source.workspace_id !== workspaceId,
+  );
+
   return {
-    default_access: "none",
-    allowed_paths: [scopedRoot],
-    denied_paths: [],
+    version: 2,
+    default_access: currentPolicy?.default_access ?? "none",
+    rules: [
+      ...otherRules,
+      {
+        id: ruleId,
+        prefix: scopedRoot,
+        access: "read_only",
+        source: { kind: "workspace", workspace_id: workspaceId },
+      },
+    ],
+    denied_paths: currentPolicy?.denied_paths ?? [],
     confirmation_rules: currentPolicy?.confirmation_rules ?? {
       require_for_write: true,
       require_for_overwrite: true,
@@ -350,6 +416,25 @@ export function buildWorkspacePolicy(
       require_for_presign: true,
       require_for_cross_storage_copy: true,
     },
+  };
+}
+
+export function removeWorkspacePolicy(
+  currentPolicy: McpStoragePolicy,
+  workspaceId: string,
+): McpStoragePolicy {
+  return {
+    ...currentPolicy,
+    rules: currentPolicy.rules.filter((r) => {
+      // Only remove rules belonging to this specific workspace
+      if (r.source.kind === "workspace" && r.source.workspace_id === workspaceId) {
+        return false;
+      }
+      if (r.id === `ws:${workspaceId}`) {
+        return false;
+      }
+      return true;
+    }),
   };
 }
 

@@ -400,11 +400,15 @@ impl InfimountMcpServer {
             })
             .await;
 
+        let (eval_rule_id, eval_workspace_id) =
+            crate::tools_fs::take_last_policy_eval().unwrap_or((None, None));
         self.audit_tool_call(AuditToolCall {
             tool_name,
             normalized_path: Some(&check.path),
             storage_name: Some(&pending.storage_name),
             decision: AuditDecision::RequiresConfirmation,
+            matched_rule_id: eval_rule_id.as_deref(),
+            workspace_id: eval_workspace_id.as_deref(),
             error_code: None,
             confirmation_id: Some(&pending.operation_id),
             duration_ms: 0,
@@ -477,22 +481,37 @@ impl ServerHandler for InfimountMcpServer {
 
         self.telemetry.record_tool_call(&tool_name);
 
-        let result = self
-            .dispatch_tool_json(request.name.as_ref(), request.arguments)
-            .await;
+        let (result, request_attribution) = crate::tools_fs::with_last_policy_eval_scope(async {
+            let result = self
+                .dispatch_tool_json(request.name.as_ref(), request.arguments)
+                .await;
+            let attribution = crate::tools_fs::take_last_policy_eval();
+            (result, attribution)
+        })
+        .await;
 
         let latency_ms = started.elapsed().as_millis() as f64;
         self.telemetry.record_latency(&tool_name, latency_ms);
 
+        let (eval_rule_id, eval_workspace_id) = request_attribution.unwrap_or((None, None));
+
         match result {
             Err(e) => {
                 let error_code = error_code_from_error_data(&e);
+                let (error_rule_id, error_workspace_id) = e
+                    .data
+                    .as_ref()
+                    .and_then(|data| data.get("details"))
+                    .and_then(policy_attribution)
+                    .unwrap_or_else(|| (eval_rule_id.clone(), eval_workspace_id.clone()));
                 self.telemetry.record_error(error_code);
                 self.audit_tool_call(AuditToolCall {
                     tool_name: &tool_name,
                     normalized_path: normalized_path.as_deref(),
                     storage_name: storage_ref.as_deref(),
                     decision: audit_decision_for_error(error_code),
+                    matched_rule_id: error_rule_id.as_deref(),
+                    workspace_id: error_workspace_id.as_deref(),
                     error_code: Some(error_code),
                     confirmation_id: confirmation_id.as_deref(),
                     duration_ms: latency_ms as u64,
@@ -523,6 +542,11 @@ impl ServerHandler for InfimountMcpServer {
                     .unwrap_or(true);
 
                 if is_error {
+                    let (result_rule_id, result_workspace_id) = result
+                        .get("error")
+                        .and_then(|error| error.get("details"))
+                        .and_then(policy_attribution)
+                        .unwrap_or_else(|| (eval_rule_id.clone(), eval_workspace_id.clone()));
                     let error_code = result
                         .get("error")
                         .and_then(|error| error.get("code"))
@@ -534,6 +558,8 @@ impl ServerHandler for InfimountMcpServer {
                         normalized_path: normalized_path.as_deref(),
                         storage_name: storage_ref.as_deref(),
                         decision: audit_decision_for_error(error_code),
+                        matched_rule_id: result_rule_id.as_deref(),
+                        workspace_id: result_workspace_id.as_deref(),
                         error_code: Some(error_code),
                         confirmation_id: confirmation_id.as_deref(),
                         duration_ms: latency_ms as u64,
@@ -561,6 +587,8 @@ impl ServerHandler for InfimountMcpServer {
                         normalized_path: normalized_path.as_deref(),
                         storage_name: storage_ref.as_deref(),
                         decision,
+                        matched_rule_id: eval_rule_id.as_deref(),
+                        workspace_id: eval_workspace_id.as_deref(),
                         error_code: None,
                         confirmation_id: confirmation_id.as_deref(),
                         duration_ms: latency_ms as u64,
@@ -661,6 +689,8 @@ impl InfimountMcpServer {
         }
         event.decision = call.decision;
         event.error_code = call.error_code.map(ToString::to_string);
+        event.matched_rule_id = call.matched_rule_id.map(ToString::to_string);
+        event.workspace_id = call.workspace_id.map(ToString::to_string);
         event.confirmation_id = call.confirmation_id.map(ToString::to_string);
         event.duration_ms = Some(call.duration_ms);
         if let Err(error) = self.audit.append(event) {
@@ -678,6 +708,8 @@ struct AuditToolCall<'a> {
     normalized_path: Option<&'a str>,
     storage_name: Option<&'a str>,
     decision: AuditDecision,
+    matched_rule_id: Option<&'a str>,
+    workspace_id: Option<&'a str>,
     error_code: Option<&'a str>,
     confirmation_id: Option<&'a str>,
     duration_ms: u64,
@@ -809,6 +841,68 @@ pub async fn invoke_session_create_json(
 ) -> serde_json::Value {
     wrap_json(
         invoke_typed(raw_input, |input: SessionCreateInput| async move {
+            let storages = ctx.registry.load_all()?;
+            let session_read_only = input.read_only.unwrap_or(false);
+            let prefixes = input.allowed_prefixes.clone().unwrap_or_default();
+
+            for storage_name in &input.allowed_storages {
+                let Some(storage) = storages.iter().find(|s| s.name == *storage_name) else {
+                    return Err(err_with_details(
+                        McpErrorCode::ERR_STORAGE_NOT_FOUND,
+                        format!("Storage '{storage_name}' not found"),
+                        json!({ "storage_name": storage_name }),
+                    ));
+                };
+
+                if !storage.enabled {
+                    return Err(err_with_details(
+                        McpErrorCode::ERR_STORAGE_DISABLED,
+                        format!("Storage '{storage_name}' is disabled"),
+                        json!({ "storage_name": storage_name }),
+                    ));
+                }
+
+                if !storage.mcp_exposed {
+                    return Err(err_with_details(
+                        McpErrorCode::ERR_STORAGE_NOT_EXPOSED,
+                        format!("Storage '{storage_name}' is not exposed to MCP"),
+                        json!({ "storage_name": storage_name }),
+                    ));
+                }
+
+                for prefix in &prefixes {
+                    evaluate_storage_policy(
+                        storage,
+                        prefix,
+                        McpOperation::Read,
+                        false,
+                        false,
+                    )?;
+
+                    if !session_read_only {
+                        let write_result = evaluate_storage_policy(
+                            storage,
+                            prefix,
+                            McpOperation::Write,
+                            false,
+                            false,
+                        );
+                        match write_result {
+                            Ok(eval) if matches!(eval.decision, PolicyDecision::Allow | PolicyDecision::RequireConfirmation { .. }) => {}
+                            _ => {
+                                return Err(err_with_details(
+                                    McpErrorCode::ERR_SESSION_FORBIDDEN,
+                                    format!(
+                                        "Cannot create writable session for '{prefix}': effective access is read-only"
+                                    ),
+                                    json!({ "storage_name": storage_name, "prefix": prefix }),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+
             let session = ctx
                 .sessions
                 .create_session(
@@ -1296,13 +1390,15 @@ async fn check_single_path_confirmation(
         ));
     }
 
-    match evaluate_storage_policy(
+    let evaluation = evaluate_storage_policy(
         &resolved.storage,
         &resolved.parsed.backend_path,
         operation,
         overwrite,
         cross_storage,
-    )? {
+    )?;
+    crate::tools_fs::record_policy_eval(&evaluation);
+    match evaluation.decision {
         PolicyDecision::Allow => Ok(None),
         PolicyDecision::RequireConfirmation { risk_type } => Ok(Some(ConfirmationCheck {
             operation,
@@ -1371,14 +1467,15 @@ async fn check_transfer_confirmation(
         ));
     }
 
-    let src_decision = evaluate_storage_policy(
+    let src_eval = evaluate_storage_policy(
         &src_resolved.storage,
         &src_resolved.parsed.backend_path,
         source_operation,
         false,
         false,
     )?;
-    if let PolicyDecision::RequireConfirmation { risk_type } = src_decision {
+    crate::tools_fs::record_policy_eval(&src_eval);
+    if let PolicyDecision::RequireConfirmation { risk_type } = src_eval.decision {
         return Ok(Some(ConfirmationCheck {
             operation,
             risk_type,
@@ -1392,13 +1489,15 @@ async fn check_transfer_confirmation(
         }));
     }
 
-    match evaluate_storage_policy(
+    let destination_evaluation = evaluate_storage_policy(
         &dst_resolved.storage,
         &dst_resolved.parsed.backend_path,
         operation,
         overwrite,
         cross_storage,
-    )? {
+    )?;
+    crate::tools_fs::record_policy_eval(&destination_evaluation);
+    match destination_evaluation.decision {
         PolicyDecision::Allow => Ok(None),
         PolicyDecision::RequireConfirmation { risk_type } => Ok(Some(ConfirmationCheck {
             operation,
@@ -1434,6 +1533,18 @@ fn confirmation_id_log_ref(arguments: Option<&JsonObject>) -> Option<String> {
         .and_then(|value| value.as_str())
         .filter(|value| !value.trim().is_empty())
         .map(ToString::to_string)
+}
+
+fn policy_attribution(value: &serde_json::Value) -> Option<(Option<String>, Option<String>)> {
+    let rule_id = value
+        .get("matched_rule_id")
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string);
+    let workspace_id = value
+        .get("workspace_id")
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string);
+    (rule_id.is_some() || workspace_id.is_some()).then_some((rule_id, workspace_id))
 }
 
 fn error_code_from_error_data(error: &ErrorData) -> &str {
@@ -1500,7 +1611,9 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    use crate::policy::{McpAccessMode, McpConfirmationRules, McpStoragePolicy};
+    use crate::policy::{
+        McpAccessMode, McpConfirmationRules, McpPathRule, McpRuleSource, McpStoragePolicy,
+    };
     use crate::registry::{StorageRecord, StorageRegistry};
     use crate::session::SessionManager;
 
@@ -1689,6 +1802,113 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn session_creation_cannot_elevate_or_escape_workspace_grant() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let ctx = test_context(&temp_dir);
+        let mut storage = StorageRecord::new(
+            "Local".to_string(),
+            "local".to_string(),
+            json!({ "root": temp_dir.path() }),
+        );
+        storage.enabled = true;
+        storage.mcp_exposed = true;
+        storage.mcp_policy = McpStoragePolicy {
+            default_access: McpAccessMode::None,
+            rules: vec![McpPathRule {
+                id: "workspace:w-1".to_string(),
+                prefix: "workspace".to_string(),
+                access: McpAccessMode::ReadOnly,
+                source: McpRuleSource::Workspace {
+                    workspace_id: "w-1".to_string(),
+                },
+                confirmation_rules: None,
+            }],
+            ..McpStoragePolicy::default()
+        };
+        ctx.registry
+            .save_all_atomic(&[storage])
+            .expect("save storage");
+
+        let writable = invoke_session_create_json(
+            &ctx,
+            json!({
+                "allowed_storages": ["Local"],
+                "allowed_prefixes": ["workspace"],
+                "read_only": false
+            }),
+        )
+        .await;
+        assert_eq!(
+            writable
+                .pointer("/error/code")
+                .and_then(|value| value.as_str()),
+            Some("ERR_SESSION_FORBIDDEN")
+        );
+
+        let outside = invoke_session_create_json(
+            &ctx,
+            json!({
+                "allowed_storages": ["Local"],
+                "allowed_prefixes": ["outside"],
+                "read_only": true
+            }),
+        )
+        .await;
+        assert_eq!(
+            outside
+                .pointer("/error/code")
+                .and_then(|value| value.as_str()),
+            Some("ERR_MCP_POLICY_DENIED")
+        );
+
+        let read_only = invoke_session_create_json(
+            &ctx,
+            json!({
+                "allowed_storages": ["Local"],
+                "allowed_prefixes": ["workspace"],
+                "read_only": true
+            }),
+        )
+        .await;
+        assert_eq!(
+            read_only.get("ok").and_then(|value| value.as_bool()),
+            Some(true)
+        );
+
+        let mut saved = ctx.registry.load_all().expect("load storage");
+        saved[0].mcp_exposed = false;
+        ctx.registry.save_all_atomic(&saved).expect("hide storage");
+        let hidden = invoke_session_create_json(
+            &ctx,
+            json!({ "allowed_storages": ["Local"], "read_only": true }),
+        )
+        .await;
+        assert_eq!(
+            hidden
+                .pointer("/error/code")
+                .and_then(|value| value.as_str()),
+            Some("ERR_STORAGE_NOT_EXPOSED")
+        );
+
+        saved[0].mcp_exposed = true;
+        saved[0].enabled = false;
+        ctx.registry
+            .save_all_atomic(&saved)
+            .expect("disable storage");
+        let disabled = invoke_session_create_json(
+            &ctx,
+            json!({ "allowed_storages": ["Local"], "read_only": true }),
+        )
+        .await;
+        assert_eq!(
+            disabled
+                .pointer("/error/code")
+                .and_then(|value| value.as_str()),
+            Some("ERR_STORAGE_DISABLED")
+        );
+    }
+
+    #[tokio::test]
     async fn mcp_scenario_allows_reads_denies_prefix_escape_and_blocks_read_only_session_write() {
         let temp_dir = TempDir::new().expect("create temp dir");
         let root = temp_dir.path().join("local");
@@ -1702,9 +1922,17 @@ mod tests {
             "local".to_string(),
             json!({ "root": root.clone() }),
         );
+        storage.mcp_exposed = true;
         storage.mcp_policy = McpStoragePolicy {
             default_access: McpAccessMode::ReadWrite,
-            allowed_paths: vec!["public".to_string()],
+            version: 2,
+            rules: vec![crate::policy::McpPathRule {
+                id: "public".to_string(),
+                prefix: "public".to_string(),
+                access: McpAccessMode::ReadWrite,
+                source: crate::policy::McpRuleSource::Manual,
+                confirmation_rules: None,
+            }],
             denied_paths: vec!["public/private".to_string()],
             confirmation_rules: McpConfirmationRules {
                 require_for_write: false,
@@ -1714,6 +1942,7 @@ mod tests {
                 require_for_presign: false,
                 require_for_cross_storage_copy: false,
             },
+            ..Default::default()
         };
         ctx.registry
             .save_all_atomic(&[storage])
@@ -1769,11 +1998,13 @@ mod tests {
         std::fs::create_dir_all(&root).expect("create local root");
 
         let ctx = test_context(&temp_dir);
-        let storage = StorageRecord::new(
+        let mut storage = StorageRecord::new(
             "Local".to_string(),
             "local".to_string(),
             json!({ "root": root.clone() }),
         );
+        storage.mcp_exposed = true;
+        storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
         ctx.registry
             .save_all_atomic(&[storage])
             .expect("save registry");
@@ -1814,6 +2045,8 @@ mod tests {
             "local".to_string(),
             json!({ "root": src_root.clone() }),
         );
+        source.mcp_exposed = true;
+        source.mcp_policy.default_access = McpAccessMode::ReadWrite;
         source.read_only = true;
         source.mcp_policy = McpStoragePolicy {
             default_access: McpAccessMode::ReadOnly,
@@ -1824,6 +2057,7 @@ mod tests {
             "local".to_string(),
             json!({ "root": dst_root.clone() }),
         );
+        destination.mcp_exposed = true;
         destination.mcp_policy = McpStoragePolicy {
             confirmation_rules: McpConfirmationRules {
                 require_for_write: false,
@@ -1833,6 +2067,7 @@ mod tests {
                 require_for_presign: false,
                 require_for_cross_storage_copy: false,
             },
+            default_access: McpAccessMode::ReadWrite,
             ..Default::default()
         };
         ctx.registry
@@ -1866,11 +2101,13 @@ mod tests {
         std::fs::write(root.join("file.txt"), "secret").expect("write test file");
 
         let ctx = test_context(&temp_dir);
-        let storage = StorageRecord::new(
+        let mut storage = StorageRecord::new(
             "Local".to_string(),
             "local".to_string(),
             json!({ "root": root.clone() }),
         );
+        storage.mcp_exposed = true;
+        storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
         ctx.registry
             .save_all_atomic(&[storage])
             .expect("save registry");
@@ -1923,11 +2160,13 @@ mod tests {
         std::fs::write(root.join("b.txt"), "b").expect("write file b");
 
         let ctx = test_context(&temp_dir);
-        let storage = StorageRecord::new(
+        let mut storage = StorageRecord::new(
             "Local".to_string(),
             "local".to_string(),
             json!({ "root": root.clone() }),
         );
+        storage.mcp_exposed = true;
+        storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
         ctx.registry
             .save_all_atomic(&[storage])
             .expect("save registry");

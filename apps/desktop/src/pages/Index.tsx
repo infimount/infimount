@@ -133,8 +133,9 @@ function mapDraftForBackend(draft: StorageDraft): StorageDraft {
 
 function defaultMcpPolicy(): McpStoragePolicy {
   return {
-    default_access: "read_write",
-    allowed_paths: [],
+    version: 2,
+    default_access: "none",
+    rules: [],
     denied_paths: [],
     confirmation_rules: {
       require_for_write: true,
@@ -153,19 +154,55 @@ function mapPolicyWire(value: unknown): McpStoragePolicy {
   const confirmationRules = isRecord(value.confirmation_rules)
     ? value.confirmation_rules
     : fallback.confirmation_rules;
+  const version: number =
+    typeof value.version === "number" ? value.version : 1;
+  const denied_paths = Array.isArray(value.denied_paths)
+    ? value.denied_paths.filter((path): path is string => typeof path === "string")
+    : [];
+  const allowed_paths = Array.isArray(value.allowed_paths)
+    ? value.allowed_paths.filter((path): path is string => typeof path === "string")
+    : [];
+  const default_access: McpStoragePolicy["default_access"] =
+    value.default_access === "none" ||
+    value.default_access === "read_only" ||
+    value.default_access === "read_write"
+      ? value.default_access
+      : fallback.default_access;
+  let rules: McpStoragePolicy["rules"] = Array.isArray(value.rules)
+    ? value.rules.filter(
+        (r): r is McpStoragePolicy["rules"][number] =>
+          isRecord(r) && typeof r.id === "string" && typeof r.prefix === "string",
+      )
+    : [];
+  if (version < 2) {
+    if (allowed_paths.length > 0) {
+      rules = allowed_paths.map((path, i) => ({
+        id: `migrated-${i}`,
+        prefix: path,
+        access: default_access === "none" ? "read_only" : default_access,
+        source: { kind: "manual" },
+      }));
+      return {
+        version: 2,
+        default_access: "none",
+        rules,
+        denied_paths,
+        confirmation_rules: { ...fallback.confirmation_rules, ...confirmationRules },
+      };
+    }
+    return {
+      version: 2,
+      default_access, // preserve original default when no allowed_paths to migrate
+      rules,
+      denied_paths,
+      confirmation_rules: { ...fallback.confirmation_rules, ...confirmationRules },
+    };
+  }
   return {
-    default_access:
-      value.default_access === "none" ||
-      value.default_access === "read_only" ||
-      value.default_access === "read_write"
-        ? value.default_access
-        : fallback.default_access,
-    allowed_paths: Array.isArray(value.allowed_paths)
-      ? value.allowed_paths.filter((path): path is string => typeof path === "string")
-      : [],
-    denied_paths: Array.isArray(value.denied_paths)
-      ? value.denied_paths.filter((path): path is string => typeof path === "string")
-      : [],
+    version: 2,
+    default_access,
+    rules,
+    denied_paths,
     confirmation_rules: {
       require_for_write:
         typeof confirmationRules.require_for_write === "boolean"

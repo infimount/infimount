@@ -89,6 +89,7 @@ impl ImportedStorage {
             mcp_policy: McpStoragePolicy::default(),
             created_at: self.created_at.unwrap_or_else(|| now.clone()),
             updated_at: self.updated_at.unwrap_or(now),
+            ..Default::default()
         })
     }
 }

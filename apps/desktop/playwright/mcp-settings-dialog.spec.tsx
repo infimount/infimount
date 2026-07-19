@@ -59,8 +59,9 @@ const tools: McpToolDefinition[] = [
 ];
 
 const mcpPolicy: McpStoragePolicy = {
+  version: 2,
   default_access: "read_write",
-  allowed_paths: [],
+  rules: [],
   denied_paths: [],
   confirmation_rules: {
     require_for_write: true,
@@ -141,4 +142,8 @@ test("renders the MCP settings dialog", async ({ mount, page }) => {
   await expect(page.getByText("Enable delete_path?")).toBeVisible();
   await page.getByRole("button", { name: "Cancel" }).click();
   await expect(page.getByRole("switch", { name: "Enable delete_path" })).not.toBeChecked();
+
+  await page.getByRole("button", { name: /Manual Approval/i }).click();
+  await expect(page.getByText("Apply Manual Approval?")).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).click();
 });

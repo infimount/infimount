@@ -1,11 +1,37 @@
+use std::sync::Mutex;
+
 use serde::Serialize;
 use serde_json::json;
+use tokio::task_local;
 
 use crate::errors::{err_with_details, map_opendal_error, McpErrorCode, McpResult};
-use crate::policy::{evaluate_storage_policy, McpOperation, PolicyDecision};
+use crate::policy::{evaluate_storage_policy, McpOperation, PolicyDecision, PolicyEvaluation};
 use crate::registry::StorageRecord;
 use crate::registry::StorageRegistry;
 use crate::session::SessionManager;
+
+task_local! {
+    pub static LAST_POLICY_EVAL: Mutex<Option<PolicyEvaluation>>;
+}
+
+pub async fn with_last_policy_eval_scope<F, T>(f: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    LAST_POLICY_EVAL.scope(Mutex::new(None), f).await
+}
+
+pub fn take_last_policy_eval() -> Option<(Option<String>, Option<String>)> {
+    LAST_POLICY_EVAL
+        .try_with(|m| {
+            m.lock().ok().and_then(|mut guard| {
+                guard
+                    .take()
+                    .map(|eval| (eval.matched_rule_id, eval.workspace_id))
+            })
+        })
+        .unwrap_or(None)
+}
 
 #[derive(Debug)]
 pub struct FsToolsContext {
@@ -41,6 +67,14 @@ impl FsToolsContext {
     }
 }
 
+pub(crate) fn record_policy_eval(eval: &PolicyEvaluation) {
+    let _ = LAST_POLICY_EVAL.try_with(|state| {
+        if let Ok(mut guard) = state.lock() {
+            *guard = Some(eval.clone());
+        }
+    });
+}
+
 pub(super) fn enforce_storage_policy(
     storage: &StorageRecord,
     backend_path: &str,
@@ -48,7 +82,9 @@ pub(super) fn enforce_storage_policy(
     overwrite: bool,
     cross_storage: bool,
 ) -> McpResult<()> {
-    match evaluate_storage_policy(storage, backend_path, operation, overwrite, cross_storage)? {
+    let eval = evaluate_storage_policy(storage, backend_path, operation, overwrite, cross_storage)?;
+    record_policy_eval(&eval);
+    match eval.decision {
         PolicyDecision::Allow | PolicyDecision::RequireConfirmation { .. } => Ok(()),
     }
 }

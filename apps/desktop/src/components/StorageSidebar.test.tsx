@@ -33,7 +33,9 @@ vi.mock("@/hooks/use-toast", () => ({
 }));
 
 const mcpPolicy: McpStoragePolicy = {
+  version: 2,
   default_access: "read_write",
+  rules: [],
   allowed_paths: [],
   denied_paths: [],
   confirmation_rules: {

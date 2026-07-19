@@ -34,7 +34,9 @@ const storage: StorageConfig = {
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
   mcpPolicy: {
+    version: 2,
     default_access: "read_write",
+    rules: [],
     allowed_paths: [],
     denied_paths: [],
     confirmation_rules: {
@@ -85,8 +87,8 @@ describe("AgentWorkspacesDialog", () => {
       expect(onUpdateStoragePolicy).toHaveBeenCalledWith(
         "local",
         expect.objectContaining({
-          default_access: "none",
-          allowed_paths: ["/agent-workspaces/agent-research/"],
+          default_access: "read_write",
+          rules: [expect.objectContaining({ prefix: "/agent-workspaces/agent-research/", access: "read_only" })],
         }),
       );
     });

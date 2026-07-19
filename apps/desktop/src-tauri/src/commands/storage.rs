@@ -4,7 +4,7 @@ use chrono::Utc;
 use infimount_core::{operations, schema::StorageKindSchema, CoreError, Entry};
 use infimount_mcp::errors::{err_with_details, McpError, McpErrorCode, McpResult};
 use infimount_mcp::opendal_adapter::{get_capabilities, StorageBackendCapabilities};
-use infimount_mcp::policy::McpStoragePolicy;
+use infimount_mcp::policy::{migrate_legacy_policy, normalize_storage_policy, McpStoragePolicy};
 use infimount_mcp::registry::{ensure_unique_name, validate_storage_name, StorageRecord};
 use infimount_mcp::tools_storage::{
     export_config, import_config, validate_storage_record, ExportConfigInput, ExportConfigOutput,
@@ -212,41 +212,16 @@ pub fn update_mcp_storage_policy(
                 )
             })?;
 
-        storage.mcp_policy = normalize_mcp_policy(policy);
+        storage.mcp_policy = normalize_mcp_policy(policy)?;
         storage.updated_at = Utc::now().to_rfc3339();
         Ok(storage.clone())
     })
 }
 
-fn normalize_mcp_policy(mut policy: McpStoragePolicy) -> McpStoragePolicy {
-    policy.allowed_paths = normalize_policy_prefixes(policy.allowed_paths);
-    policy.denied_paths = normalize_policy_prefixes(policy.denied_paths);
-    policy
-}
-
-fn normalize_policy_prefixes(prefixes: Vec<String>) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    prefixes
-        .into_iter()
-        .map(|prefix| normalize_policy_prefix(&prefix))
-        .filter(|prefix| !prefix.is_empty())
-        .filter(|prefix| seen.insert(prefix.clone()))
-        .collect()
-}
-
-fn normalize_policy_prefix(prefix: &str) -> String {
-    let mut segments = Vec::new();
-    let normalized = prefix.trim().replace('\\', "/");
-    for segment in normalized.split('/') {
-        match segment {
-            "" | "." => {}
-            ".." => {
-                segments.pop();
-            }
-            value => segments.push(value.to_string()),
-        }
-    }
-    segments.join("/")
+fn normalize_mcp_policy(mut policy: McpStoragePolicy) -> McpResult<McpStoragePolicy> {
+    migrate_legacy_policy(&mut policy)?;
+    normalize_storage_policy(&mut policy)?;
+    Ok(policy)
 }
 
 #[tauri::command]
@@ -444,15 +419,12 @@ mod tests {
     }
 
     #[test]
-    fn normalize_policy_prefixes_deduplicates_and_collapses_segments() {
-        let prefixes = normalize_policy_prefixes(vec![
-            " /docs/ ".to_string(),
-            "docs".to_string(),
-            "./shared/".to_string(),
-            "shared/tmp/../public".to_string(),
-            "".to_string(),
-        ]);
-
-        assert_eq!(prefixes, vec!["docs", "shared", "shared/public"]);
+    fn normalize_mcp_policy_uses_shared_v2_normalization() {
+        let policy = McpStoragePolicy {
+            denied_paths: vec!["shared/tmp/../public".to_string()],
+            ..McpStoragePolicy::default()
+        };
+        let normalized = normalize_mcp_policy(policy).expect("normalize policy");
+        assert_eq!(normalized.denied_paths, vec!["shared/public"]);
     }
 }

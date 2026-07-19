@@ -168,6 +168,7 @@ pub async fn read_resource(ctx: &FsToolsContext, uri: &str) -> McpResult<ReadRes
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::policy::McpAccessMode;
     use crate::registry::StorageRecord;
     use crate::session::SessionManager;
     use crate::tools_fs::FsToolsContext;
@@ -197,11 +198,13 @@ mod tests {
     async fn read_root_resource_returns_json_listing() {
         let dir = TempDir::new().unwrap();
         let registry = registry_in(&dir);
-        let storage = StorageRecord::new(
+        let mut storage = StorageRecord::new(
             "Local".to_string(),
             "local".to_string(),
             json!({"root": dir.path()}),
         );
+        storage.mcp_exposed = true;
+        storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
         registry.save_all_atomic(&[storage]).unwrap();
         let sessions = sessions_in();
         let ctx = FsToolsContext {
