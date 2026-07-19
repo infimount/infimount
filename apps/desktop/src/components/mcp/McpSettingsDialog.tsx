@@ -90,6 +90,7 @@ export function McpSettingsDialog({
     bindAddress: "127.0.0.1",
     port: 7331,
     enabledTools: [],
+    securityBaselineVersion: 2,
   });
   const [isSaving, setIsSaving] = useState(false);
   const [isTogglingHttp, setIsTogglingHttp] = useState(false);

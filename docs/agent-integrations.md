@@ -149,8 +149,7 @@ examples/agent-integrations/pi-infimount-extension/
 
 It is structured as a publishable Pi package (`@infimount/pi-infimount-extension`) and registers read-first Infimount tools for Pi:
 
-- `infimount_list_storages`
-- `infimount_list_dir`
+- `infimount_list_dir` (use `/` to discover exposed storages)
 - `infimount_read_file`
 - `infimount_search_paths`
 - `infimount_generate_download_link`
@@ -170,7 +169,7 @@ Or install the local package into Pi:
 pi install ./examples/agent-integrations/pi-infimount-extension
 ```
 
-The smoke test creates a temporary local storage and verifies list/read/search calls through Infimount MCP. `npm pack --dry-run` verifies the package contents for publishing.
+The smoke test creates a temporary local storage and verifies root-listing, list, read, and search calls through Infimount MCP. `npm pack --dry-run` verifies the package contents for publishing.
 
 The extension uses `infimount_mcp --transport stdio` by default. Override the command with:
 
@@ -192,6 +191,6 @@ Use these defaults unless a task needs more access:
 
 - expose one storage or one workspace root only
 - set storage or policy to read-only
-- disable storage-management tools for normal coding agents
+- keep storage administration in the Infimount desktop control plane; it is not exposed through public MCP
 - require confirmations for write, delete, move, version-delete, and download-link operations
 - prefer short-lived sessions for scoped tasks

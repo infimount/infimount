@@ -13,13 +13,41 @@ Treat these files as sensitive because storage credentials and OAuth tokens can 
 
 ## Secret Handling
 
-Infimount masks secrets in storage-management outputs by default.
+Infimount masks secrets in desktop control-plane storage-management outputs by default. These operations are not public MCP tools.
 
-- `list_storages` returns masked secret values.
-- `export_config` masks secrets unless explicitly called with `include_secrets=true`.
+- Internal `list_storages` responses return masked secret values.
+- Internal `export_config` responses mask secrets unless explicitly requested by the trusted desktop control plane.
 - UI and MCP logs should not print raw storage config JSON or raw input payloads.
 - Browser/admin-style views should replace secrets instead of revealing them by default.
 - OAuth-backed storage fields such as `accessToken`, `refreshToken`, `clientSecret`, authorization codes, device codes, and PKCE verifiers are secrets and must not appear in logs, validation summaries, audit exports, or copyable diagnostic text. Guided desktop OAuth uses a local loopback callback with PKCE/state validation and stores final tokens only in the local Infimount registry when the user saves the storage. See [Guided OAuth for Google Drive and Microsoft OneDrive](oauth-drive-setup.md).
+
+## Data-Plane-Only MCP Surface
+
+The public MCP server exposes **filesystem/data-plane tools only**. Storage administration
+tools (list_storages, add_storage, edit_storage, remove_storage, import_config, export_config,
+validate_storage) are not available through MCP discovery or dispatch. These functions are
+reserved exclusively for the desktop control plane.
+
+This prevents MCP clients — including AI agents — from managing storage registries or
+accessing credentials through MCP. This is a pre-1.0 breaking change.
+
+## Safe Default Tool Set
+
+A fresh installation enables only the safe read-only tool set by default:
+
+- list_dir
+- stat_path
+- read_file
+- search_paths
+- list_versions
+- read_file_version
+
+All write, destructive, external-link, and session tools are disabled by default. Tools are
+annotated with category (Read, Write, Destructive, ExternalLink, Session) and risk level
+(Low, Medium, High). Enabling any write, destructive, external-link, or session tool requires a confirmation dialog, regardless of its risk label.
+
+Legacy settings are automatically migrated: a timestamped backup is created, the enabled tool
+list is intersected with the safe default set, and the security baseline version is updated.
 
 ## MCP Exposure Controls
 
@@ -31,8 +59,6 @@ A storage is visible to MCP only when both flags are true:
 New storages are not exposed to MCP by default from the desktop Add/Edit Storage flow or MCP storage import defaults. Exposure should be an explicit user choice.
 
 Set `read_only=true` to prevent write, delete, move, and version-delete operations for that storage.
-
-MCP settings also include an enabled-tool list. Disable tools such as `export_config`, `import_config`, `add_storage`, or `delete_path` when a client only needs read access.
 
 Tool exposure changes apply after restarting the MCP HTTP server.
 
@@ -113,7 +139,7 @@ Filesystem tools that receive a `session_id` enforce those restrictions before b
 
 ## Storage Validation Safety
 
-The desktop Validate action and MCP `validate_storage` tool report reachability, effective capabilities, sanitized fix hints, and MCP readiness notes. Validation output must not include raw credentials, auth tokens, storage config JSON, or file contents. MCP readiness notes are advisory only; users must still explicitly enable storage exposure, tool access, path policy, read-only mode, and confirmations.
+The desktop **Validate** action reports reachability, effective capabilities, sanitized fix hints, and MCP readiness notes. Storage validation is desktop-only and is not exposed as a public MCP tool. Validation output must not include raw credentials, auth tokens, storage config JSON, or file contents. MCP readiness notes are advisory only; users must still explicitly enable storage exposure, tool access, path policy, read-only mode, and confirmations.
 
 ## Backend Capability Boundaries
 

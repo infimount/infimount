@@ -11,7 +11,7 @@ use rmcp::model::{
 };
 use rmcp::ServerHandler;
 use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::info;
 
@@ -32,19 +32,61 @@ use crate::tools_fs::{
     MovePathOutput, ReadFileInput, ReadFileOutput, ReadFileVersionInput, SearchPathsInput,
     SearchPathsOutput, StatPathInput, StatPathOutput, WriteFileInput, WriteFileOutput,
 };
+// tools_storage functions remain available for desktop-internal calls
 use crate::tools_storage::{
     self, AddStorageInput, AddStorageOutput, EditStorageInput, EditStorageOutput,
     ExportConfigInput, ExportConfigOutput, ImportConfigInput, ImportConfigOutput,
-    ListStoragesInput, ListStoragesOutput, RemoveStorageInput, RemoveStorageOutput,
-    ValidateStorageInput, ValidateStorageOutput,
+    ListStoragesOutput, RemoveStorageInput, RemoveStorageOutput, ValidateStorageInput,
+    ValidateStorageOutput,
 };
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpToolCategory {
+    Read,
+    Write,
+    Destructive,
+    ExternalLink,
+    Session,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpToolRisk {
+    Low,
+    Medium,
+    High,
+}
+
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolDefinition {
     pub name: &'static str,
     pub description: &'static str,
     pub input_schema: serde_json::Value,
+    pub category: McpToolCategory,
+    pub risk: McpToolRisk,
+    pub default_enabled: bool,
 }
+
+const SAFE_DEFAULT_TOOLS: &[&str] = &[
+    "list_dir",
+    "stat_path",
+    "read_file",
+    "search_paths",
+    "list_versions",
+    "read_file_version",
+];
+
+const ADMIN_TOOL_NAMES: &[&str] = &[
+    "list_storages",
+    "add_storage",
+    "edit_storage",
+    "remove_storage",
+    "import_config",
+    "export_config",
+    "validate_storage",
+];
 
 pub fn tool_definitions() -> Vec<ToolDefinition> {
     vec![
@@ -52,112 +94,122 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
             name: "list_dir",
             description: "List directories within the Infimount virtual filesystem.",
             input_schema: schemas::schema_list_dir(),
+            category: McpToolCategory::Read,
+            risk: McpToolRisk::Low,
+            default_enabled: true,
         },
         ToolDefinition {
             name: "stat_path",
             description: "Return metadata for a filesystem path.",
             input_schema: schemas::schema_stat_path(),
+            category: McpToolCategory::Read,
+            risk: McpToolRisk::Low,
+            default_enabled: true,
         },
         ToolDefinition {
             name: "read_file",
             description: "Read a file as UTF-8 text or base64 bytes with bounded size.",
             input_schema: schemas::schema_read_file(),
+            category: McpToolCategory::Read,
+            risk: McpToolRisk::Low,
+            default_enabled: true,
         },
         ToolDefinition {
             name: "mkdir",
             description: "Create a directory and optional parent directories.",
             input_schema: schemas::schema_mkdir(),
+            category: McpToolCategory::Write,
+            risk: McpToolRisk::Medium,
+            default_enabled: false,
         },
         ToolDefinition {
             name: "write_file",
             description: "Write UTF-8 text content to a file path.",
             input_schema: schemas::schema_write_file(),
+            category: McpToolCategory::Write,
+            risk: McpToolRisk::Medium,
+            default_enabled: false,
         },
         ToolDefinition {
             name: "delete_path",
             description: "Delete a file or recursively delete a directory.",
             input_schema: schemas::schema_delete_path(),
+            category: McpToolCategory::Destructive,
+            risk: McpToolRisk::High,
+            default_enabled: false,
         },
         ToolDefinition {
             name: "copy_path",
             description: "Copy a file or directory tree between filesystem paths.",
             input_schema: schemas::schema_copy_path(),
+            category: McpToolCategory::Write,
+            risk: McpToolRisk::Medium,
+            default_enabled: false,
         },
         ToolDefinition {
             name: "move_path",
             description: "Move a file between filesystem paths.",
             input_schema: schemas::schema_move_path(),
+            category: McpToolCategory::Destructive,
+            risk: McpToolRisk::High,
+            default_enabled: false,
         },
         ToolDefinition {
             name: "search_paths",
             description: "Recursively search for matching paths below a directory.",
             input_schema: schemas::schema_search_paths(),
+            category: McpToolCategory::Read,
+            risk: McpToolRisk::Low,
+            default_enabled: true,
         },
         ToolDefinition {
             name: "generate_download_link",
             description: "Generate a presigned download link for a file path when supported.",
             input_schema: schemas::schema_generate_download_link(),
-        },
-        ToolDefinition {
-            name: "list_storages",
-            description: "List all configured storages with secrets masked.",
-            input_schema: schemas::schema_list_storages(),
-        },
-        ToolDefinition {
-            name: "add_storage",
-            description: "Add a storage definition to the Infimount registry.",
-            input_schema: schemas::schema_add_storage(),
-        },
-        ToolDefinition {
-            name: "edit_storage",
-            description: "Edit an existing storage definition by name.",
-            input_schema: schemas::schema_edit_storage(),
-        },
-        ToolDefinition {
-            name: "remove_storage",
-            description: "Remove a storage definition by name.",
-            input_schema: schemas::schema_remove_storage(),
-        },
-        ToolDefinition {
-            name: "import_config",
-            description: "Import storage registry JSON into the Infimount registry.",
-            input_schema: schemas::schema_import_config(),
-        },
-        ToolDefinition {
-            name: "export_config",
-            description: "Export the storage registry as JSON with optional secret masking.",
-            input_schema: schemas::schema_export_config(),
-        },
-        ToolDefinition {
-            name: "validate_storage",
-            description: "Validate a storage configuration and return backend capabilities.",
-            input_schema: schemas::schema_validate_storage(),
+            category: McpToolCategory::ExternalLink,
+            risk: McpToolRisk::Medium,
+            default_enabled: false,
         },
         ToolDefinition {
             name: "session_create",
             description:
                 "Create a scoped session with restricted access to specific storages and paths.",
             input_schema: schemas::schema_session_create(),
+            category: McpToolCategory::Session,
+            risk: McpToolRisk::Low,
+            default_enabled: false,
         },
         ToolDefinition {
             name: "session_end",
             description: "Terminate an active session.",
             input_schema: schemas::schema_session_end(),
+            category: McpToolCategory::Session,
+            risk: McpToolRisk::Low,
+            default_enabled: false,
         },
         ToolDefinition {
             name: "list_versions",
             description: "List all available versions of a file.",
             input_schema: schemas::schema_list_versions(),
+            category: McpToolCategory::Read,
+            risk: McpToolRisk::Low,
+            default_enabled: true,
         },
         ToolDefinition {
             name: "read_file_version",
             description: "Read a specific version of a file.",
             input_schema: schemas::schema_read_file_version(),
+            category: McpToolCategory::Read,
+            risk: McpToolRisk::Low,
+            default_enabled: true,
         },
         ToolDefinition {
             name: "delete_version",
             description: "Delete a specific version of a file.",
             input_schema: schemas::schema_delete_version(),
+            category: McpToolCategory::Destructive,
+            risk: McpToolRisk::High,
+            default_enabled: false,
         },
     ]
 }
@@ -186,7 +238,17 @@ pub fn all_tool_names() -> Vec<String> {
 }
 
 pub fn default_enabled_tool_names() -> Vec<String> {
-    all_tool_names()
+    SAFE_DEFAULT_TOOLS
+        .iter()
+        .map(|name| name.to_string())
+        .collect()
+}
+
+pub fn admin_tool_names() -> Vec<String> {
+    ADMIN_TOOL_NAMES
+        .iter()
+        .map(|name| name.to_string())
+        .collect()
 }
 
 fn filtered_tool_definitions(enabled_tools: &HashSet<String>) -> Vec<ToolDefinition> {
@@ -286,13 +348,6 @@ impl InfimountMcpServer {
             "generate_download_link" => {
                 invoke_generate_download_link_json(&self.ctx, raw_input).await
             }
-            "list_storages" => invoke_list_storages_json(&self.ctx, raw_input).await,
-            "add_storage" => invoke_add_storage_json(&self.ctx, raw_input).await,
-            "edit_storage" => invoke_edit_storage_json(&self.ctx, raw_input).await,
-            "remove_storage" => invoke_remove_storage_json(&self.ctx, raw_input).await,
-            "import_config" => invoke_import_config_json(&self.ctx, raw_input).await,
-            "export_config" => invoke_export_config_json(&self.ctx, raw_input).await,
-            "validate_storage" => invoke_validate_storage_json(&self.ctx, raw_input).await,
             "session_create" => invoke_session_create_json(&self.ctx, raw_input).await,
             "session_end" => invoke_session_end_json(&self.ctx, raw_input).await,
             "list_versions" => invoke_list_versions_json(&self.ctx, raw_input).await,
@@ -748,90 +803,6 @@ pub async fn invoke_generate_download_link_json(
     )
 }
 
-pub async fn invoke_list_storages_json(
-    ctx: &FsToolsContext,
-    raw_input: serde_json::Value,
-) -> serde_json::Value {
-    wrap_json(
-        invoke_typed(raw_input, |_: ListStoragesInput| async move {
-            tools_storage::list_storages(ctx).await
-        })
-        .await,
-    )
-}
-
-pub async fn invoke_add_storage_json(
-    ctx: &FsToolsContext,
-    raw_input: serde_json::Value,
-) -> serde_json::Value {
-    wrap_json(
-        invoke_typed(raw_input, |input: AddStorageInput| async move {
-            tools_storage::add_storage(ctx, input).await
-        })
-        .await,
-    )
-}
-
-pub async fn invoke_edit_storage_json(
-    ctx: &FsToolsContext,
-    raw_input: serde_json::Value,
-) -> serde_json::Value {
-    wrap_json(
-        invoke_typed(raw_input, |input: EditStorageInput| async move {
-            tools_storage::edit_storage(ctx, input).await
-        })
-        .await,
-    )
-}
-
-pub async fn invoke_remove_storage_json(
-    ctx: &FsToolsContext,
-    raw_input: serde_json::Value,
-) -> serde_json::Value {
-    wrap_json(
-        invoke_typed(raw_input, |input: RemoveStorageInput| async move {
-            tools_storage::remove_storage(ctx, input).await
-        })
-        .await,
-    )
-}
-
-pub async fn invoke_import_config_json(
-    ctx: &FsToolsContext,
-    raw_input: serde_json::Value,
-) -> serde_json::Value {
-    wrap_json(
-        invoke_typed(raw_input, |input: ImportConfigInput| async move {
-            tools_storage::import_config(ctx, input).await
-        })
-        .await,
-    )
-}
-
-pub async fn invoke_export_config_json(
-    ctx: &FsToolsContext,
-    raw_input: serde_json::Value,
-) -> serde_json::Value {
-    wrap_json(
-        invoke_typed(raw_input, |input: ExportConfigInput| async move {
-            tools_storage::export_config(ctx, input).await
-        })
-        .await,
-    )
-}
-
-pub async fn invoke_validate_storage_json(
-    ctx: &FsToolsContext,
-    raw_input: serde_json::Value,
-) -> serde_json::Value {
-    wrap_json(
-        invoke_typed(raw_input, |input: ValidateStorageInput| async move {
-            tools_storage::validate_storage(ctx, input).await
-        })
-        .await,
-    )
-}
-
 pub async fn invoke_session_create_json(
     ctx: &FsToolsContext,
     raw_input: serde_json::Value,
@@ -1071,21 +1042,35 @@ fn schema_to_object(schema: serde_json::Value) -> JsonObject {
 
 fn tool_annotations(name: &str) -> ToolAnnotations {
     match name {
-        "list_dir"
-        | "stat_path"
-        | "read_file"
-        | "search_paths"
-        | "generate_download_link"
-        | "list_storages"
-        | "export_config"
-        | "validate_storage" => ToolAnnotations::new()
+        "list_dir" | "stat_path" | "read_file" | "search_paths" | "list_versions"
+        | "read_file_version" => ToolAnnotations::new()
             .read_only(true)
             .destructive(false)
             .idempotent(true)
             .open_world(false),
-        _ => ToolAnnotations::new()
+        "generate_download_link" => ToolAnnotations::new()
+            .read_only(true)
+            .destructive(false)
+            .idempotent(true)
+            .open_world(true),
+        "session_create" | "session_end" => ToolAnnotations::new()
+            .read_only(false)
+            .destructive(false)
+            .idempotent(false)
+            .open_world(false),
+        "mkdir" | "write_file" | "copy_path" => ToolAnnotations::new()
+            .read_only(false)
+            .destructive(false)
+            .idempotent(false)
+            .open_world(false),
+        "move_path" | "delete_path" | "delete_version" => ToolAnnotations::new()
             .read_only(false)
             .destructive(true)
+            .idempotent(false)
+            .open_world(false),
+        _ => ToolAnnotations::new()
+            .read_only(false)
+            .destructive(false)
             .idempotent(false)
             .open_world(false),
     }
@@ -1131,15 +1116,6 @@ fn storage_log_ref(name: &str, arguments: Option<&JsonObject>) -> Option<String>
                 (None, None) => None,
             }
         }
-        "list_storages" | "import_config" | "export_config" => None,
-        "add_storage" | "remove_storage" | "validate_storage" => args
-            .get("name")
-            .and_then(|value| value.as_str())
-            .map(|value| value.to_string()),
-        "edit_storage" => args
-            .get("name")
-            .and_then(|value| value.as_str())
-            .map(|value| value.to_string()),
         _ => None,
     }
 }
@@ -1514,6 +1490,7 @@ fn operation_for_tool(tool_name: &str) -> McpOperation {
         "list_versions" => McpOperation::ListVersions,
         "read_file_version" => McpOperation::ReadFileVersion,
         "delete_version" => McpOperation::DeleteVersion,
+        "session_create" | "session_end" => McpOperation::Metadata,
         _ => McpOperation::Metadata,
     }
 }
@@ -1537,11 +1514,114 @@ mod tests {
     }
 
     #[test]
-    fn default_enabled_tools_match_all_tool_names() {
+    fn default_enabled_tools_are_safe_read_only_set() {
+        assert_eq!(
+            default_enabled_tool_names(),
+            SAFE_DEFAULT_TOOLS
+                .iter()
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn default_enabled_tools_do_not_include_admin_tools() {
         let default_names = default_enabled_tool_names();
-        let all_names = all_tool_names();
-        assert_eq!(default_names, all_names);
-        assert!(!default_names.is_empty());
+        for admin in ADMIN_TOOL_NAMES {
+            assert!(
+                !default_names.contains(&admin.to_string()),
+                "admin tool {} should not be in default set",
+                admin
+            );
+        }
+    }
+
+    #[test]
+    fn admin_tools_not_in_tool_definitions() {
+        let names: Vec<&str> = tool_definitions().iter().map(|t| t.name).collect();
+        for admin in ADMIN_TOOL_NAMES {
+            assert!(
+                !names.contains(admin),
+                "admin tool {} should not be in tool_definitions",
+                admin
+            );
+        }
+    }
+
+    #[test]
+    fn tool_definitions_have_metadata() {
+        for def in tool_definitions() {
+            assert!(!def.name.is_empty());
+            assert!(!def.description.is_empty());
+            // Every tool must have a category, risk, and default_enabled
+            let _ = def.category;
+            let _ = def.risk;
+            let _ = def.default_enabled;
+        }
+    }
+
+    #[test]
+    fn all_safe_default_tools_have_default_enabled_true() {
+        let defs = tool_definitions();
+        for name in SAFE_DEFAULT_TOOLS {
+            let def = defs.iter().find(|d| d.name == *name).unwrap();
+            assert!(def.default_enabled, "{} should be default enabled", name);
+        }
+    }
+
+    #[test]
+    fn write_destructive_tools_have_default_enabled_false() {
+        let disabled = [
+            "mkdir",
+            "write_file",
+            "delete_path",
+            "copy_path",
+            "move_path",
+            "delete_version",
+            "generate_download_link",
+            "session_create",
+            "session_end",
+        ];
+        let defs = tool_definitions();
+        for name in disabled {
+            let def = defs.iter().find(|d| d.name == name).unwrap();
+            assert!(
+                !def.default_enabled,
+                "{} should NOT be default enabled",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn tool_annotations_match_operation_semantics() {
+        let read = tool_annotations("list_dir");
+        assert_eq!(read.read_only_hint, Some(true));
+        assert_eq!(read.destructive_hint, Some(false));
+        assert_eq!(read.idempotent_hint, Some(true));
+        assert_eq!(read.open_world_hint, Some(false));
+
+        let link = tool_annotations("generate_download_link");
+        assert_eq!(link.read_only_hint, Some(true));
+        assert_eq!(link.destructive_hint, Some(false));
+        assert_eq!(link.idempotent_hint, Some(true));
+        assert_eq!(link.open_world_hint, Some(true));
+
+        for name in ["mkdir", "write_file", "copy_path"] {
+            let write = tool_annotations(name);
+            assert_eq!(write.read_only_hint, Some(false));
+            assert_eq!(write.destructive_hint, Some(false));
+        }
+        for name in ["move_path", "delete_path", "delete_version"] {
+            let destructive = tool_annotations(name);
+            assert_eq!(destructive.read_only_hint, Some(false));
+            assert_eq!(destructive.destructive_hint, Some(true));
+        }
+        for name in ["session_create", "session_end"] {
+            let session = tool_annotations(name);
+            assert_eq!(session.read_only_hint, Some(false));
+            assert_eq!(session.destructive_hint, Some(false));
+        }
     }
 
     #[test]
@@ -1575,16 +1655,34 @@ mod tests {
         let server = InfimountMcpServer::new(test_context(&temp_dir), vec!["list_dir".into()]);
 
         assert!(server.get_tool("list_dir").is_some());
-        assert!(server.get_tool("export_config").is_none());
+        assert!(server.get_tool("write_file").is_none());
     }
 
     #[tokio::test]
-    async fn dispatch_rejects_disabled_tool_without_running_handler() {
+    async fn dispatch_rejects_admin_tool_as_method_not_found() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let server = InfimountMcpServer::new(test_context(&temp_dir), default_enabled_tool_names());
+
+        for admin in ADMIN_TOOL_NAMES {
+            let result = server
+                .dispatch_tool_json(admin, Some(JsonObject::new()))
+                .await;
+            let error = result.expect_err("admin tool should return method-not-found");
+            assert_eq!(
+                error.code,
+                ErrorData::method_not_found::<CallToolRequestMethod>().code,
+                "admin tool {admin} should return method-not-found"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_rejects_disabled_data_plane_tool() {
         let temp_dir = TempDir::new().expect("create temp dir");
         let server = InfimountMcpServer::new(test_context(&temp_dir), vec!["list_dir".into()]);
 
         let result = server
-            .dispatch_tool_json("export_config", Some(JsonObject::new()))
+            .dispatch_tool_json("write_file", Some(JsonObject::new()))
             .await;
 
         assert!(result.is_err());
@@ -1621,7 +1719,8 @@ mod tests {
             .save_all_atomic(&[storage])
             .expect("save registry");
         let sessions = ctx.sessions.clone();
-        let server = InfimountMcpServer::new(ctx, default_enabled_tool_names());
+        let all_enabled = all_tool_names();
+        let server = InfimountMcpServer::new(ctx, all_enabled);
 
         let mut read_args = JsonObject::new();
         read_args.insert("path".to_string(), json!("/Local/public/readme.txt"));
@@ -1679,7 +1778,8 @@ mod tests {
             .save_all_atomic(&[storage])
             .expect("save registry");
         let sessions = ctx.sessions.clone();
-        let server = InfimountMcpServer::new(ctx, default_enabled_tool_names());
+        let all_enabled = all_tool_names();
+        let server = InfimountMcpServer::new(ctx, all_enabled);
 
         let session = sessions
             .create_session(vec!["Local".to_string()], None, Some(true), Some(60))
@@ -1738,7 +1838,8 @@ mod tests {
         ctx.registry
             .save_all_atomic(&[source, destination])
             .expect("save registry");
-        let server = InfimountMcpServer::new(ctx, default_enabled_tool_names());
+        let all_enabled = all_tool_names();
+        let server = InfimountMcpServer::new(ctx, all_enabled);
 
         let mut args = JsonObject::new();
         args.insert("src".to_string(), json!("/Source/report.txt"));
@@ -1775,11 +1876,9 @@ mod tests {
             .expect("save registry");
 
         let confirmations = ConfirmationManager::new();
-        let server = InfimountMcpServer::with_confirmation_manager(
-            ctx,
-            default_enabled_tool_names(),
-            confirmations.clone(),
-        );
+        let all_enabled = all_tool_names();
+        let server =
+            InfimountMcpServer::with_confirmation_manager(ctx, all_enabled, confirmations.clone());
 
         let mut args = JsonObject::new();
         args.insert("path".to_string(), json!("/Local/file.txt"));
@@ -1834,11 +1933,9 @@ mod tests {
             .expect("save registry");
 
         let confirmations = ConfirmationManager::new();
-        let server = InfimountMcpServer::with_confirmation_manager(
-            ctx,
-            default_enabled_tool_names(),
-            confirmations.clone(),
-        );
+        let all_enabled = all_tool_names();
+        let server =
+            InfimountMcpServer::with_confirmation_manager(ctx, all_enabled, confirmations.clone());
 
         let mut args = JsonObject::new();
         args.insert("path".to_string(), json!("/Local/a.txt"));

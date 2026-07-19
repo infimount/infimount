@@ -144,6 +144,7 @@ const mcpStatus: McpRuntimeStatus = {
     bindAddress: "127.0.0.1",
     port: 7331,
     enabledTools: ["list_dir", "read_file"],
+    securityBaselineVersion: 2,
   },
   runningHttp: false,
   endpoint: null,
@@ -212,8 +213,8 @@ describe("release zero-manual smoke path", () => {
       http: '{"mcpServers":{"infimount":{"url":"http://127.0.0.1:7331/mcp"}}}',
     });
     vi.mocked(listMcpTools).mockResolvedValue([
-      { name: "list_dir", description: "List directories" },
-      { name: "read_file", description: "Read files" },
+      { name: "list_dir", description: "List directories", category: "read", risk: "low", defaultEnabled: true },
+      { name: "read_file", description: "Read files", category: "read", risk: "low", defaultEnabled: true },
     ]);
     vi.mocked(listActiveMcpSessions).mockResolvedValue([]);
     vi.mocked(listMcpAuditEvents).mockResolvedValue([]);
@@ -263,7 +264,7 @@ describe("release zero-manual smoke path", () => {
 
     expect(await screen.findByText("2 of 2 functions enabled")).toBeInTheDocument();
     expect(screen.getAllByText("Release Local").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("read/write").length).toBeGreaterThan(0);
+    expect(screen.getByText("Safe read-only tools")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Save & Start HTTP Server/i }));
 
@@ -274,6 +275,7 @@ describe("release zero-manual smoke path", () => {
         bindAddress: "127.0.0.1",
         port: 7331,
         enabledTools: ["list_dir", "read_file"],
+        securityBaselineVersion: 2,
       });
       expect(startMcpHttp).toHaveBeenCalled();
     });

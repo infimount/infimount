@@ -80,7 +80,7 @@ try {
   await client.connect(transport);
 
   const tools = await client.listTools();
-  for (const name of ["list_storages", "list_dir", "read_file", "search_paths"]) {
+  for (const name of ["list_dir", "read_file", "search_paths"]) {
     if (!tools.tools.some((tool) => tool.name === name)) {
       throw new Error(`missing Infimount MCP tool: ${name}`);
     }

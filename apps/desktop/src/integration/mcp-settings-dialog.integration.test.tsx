@@ -15,7 +15,8 @@ const status: McpRuntimeStatus = {
     transport: "http",
     bindAddress: "127.0.0.1",
     port: 7331,
-    enabledTools: ["list_dir", "export_config"],
+    enabledTools: ["list_dir"],
+    securityBaselineVersion: 2,
   },
   runningHttp: false,
   endpoint: null,
@@ -27,20 +28,23 @@ const snippets: McpClientSnippets = {
   http: '{ "mcpServers": { "infimount": { "url": "http://127.0.0.1:7331/mcp" } } }',
 };
 
+function makeTool(name: string, description: string, category: McpToolDefinition["category"] = "read", risk: McpToolDefinition["risk"] = "low", defaultEnabled = true): McpToolDefinition {
+  return { name, description, category, risk, defaultEnabled };
+}
+
 const tools: McpToolDefinition[] = [
-  { name: "list_dir", description: "List directories within the Infimount virtual filesystem." },
-  { name: "stat_path", description: "Return path metadata." },
-  { name: "read_file", description: "Read file contents." },
-  { name: "search_paths", description: "Search storage paths." },
-  { name: "write_file", description: "Write file contents." },
-  { name: "mkdir", description: "Create directories." },
-  { name: "copy_path", description: "Copy files." },
-  { name: "move_path", description: "Move files." },
-  { name: "delete_path", description: "Delete files." },
-  { name: "generate_download_link", description: "Create download links." },
-  { name: "list_storages", description: "List exposed storage." },
-  { name: "validate_storage", description: "Validate storage configuration." },
-  { name: "export_config", description: "Export the storage registry as JSON." },
+  makeTool("list_dir", "List directories within the Infimount virtual filesystem."),
+  makeTool("stat_path", "Return path metadata."),
+  makeTool("read_file", "Read file contents."),
+  makeTool("search_paths", "Search storage paths."),
+  makeTool("list_versions", "List file versions."),
+  makeTool("read_file_version", "Read a file version."),
+  makeTool("write_file", "Write file contents.", "write", "medium", false),
+  makeTool("mkdir", "Create directories.", "write", "medium", false),
+  makeTool("copy_path", "Copy files.", "write", "medium", false),
+  makeTool("move_path", "Move files.", "destructive", "high", false),
+  makeTool("delete_path", "Delete files.", "destructive", "high", false),
+  makeTool("generate_download_link", "Create download links.", "external_link", "medium", false),
 ];
 
 const mcpPolicy: McpStoragePolicy = {
@@ -126,7 +130,7 @@ describe("McpSettingsDialog integration", () => {
     );
   });
 
-  it("saves settings before starting the HTTP server", async () => {
+  it("preserves a loaded auth token while saving before HTTP start", async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     const onStartHttp = vi.fn().mockResolvedValue(undefined);
 
@@ -134,7 +138,10 @@ describe("McpSettingsDialog integration", () => {
       <McpSettingsDialog
         open
         onOpenChange={() => undefined}
-        status={status}
+        status={{
+          ...status,
+          settings: { ...status.settings, authToken: "persisted-token" },
+        }}
         snippets={snippets}
         tools={tools}
         storages={storages}
@@ -156,6 +163,7 @@ describe("McpSettingsDialog integration", () => {
       />,
     );
 
+    expect(screen.getByDisplayValue("persisted-token")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Save & Start HTTP Server/i }));
 
     await waitFor(() => {
@@ -164,7 +172,9 @@ describe("McpSettingsDialog integration", () => {
         transport: "http",
         bindAddress: "127.0.0.1",
         port: 7331,
-        enabledTools: ["list_dir", "export_config"],
+        enabledTools: ["list_dir"],
+        securityBaselineVersion: 2,
+        authToken: "persisted-token",
       });
       expect(onStartHttp).toHaveBeenCalled();
     });
@@ -230,7 +240,8 @@ describe("McpSettingsDialog integration", () => {
         transport: "http",
         bindAddress: "0.0.0.0",
         port: 7331,
-        enabledTools: ["list_dir", "export_config"],
+        enabledTools: ["list_dir"],
+        securityBaselineVersion: 2,
         authToken: "test-token",
       });
       expect(onStartHttp).toHaveBeenCalled();

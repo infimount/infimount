@@ -1,6 +1,16 @@
-import type { Dispatch, SetStateAction } from "react";
-import { Copy, ShieldCheck, TestTube2 } from "lucide-react";
+import { useState, type Dispatch, type SetStateAction } from "react";
+import { Copy, ShieldCheck, TestTube2, AlertTriangle } from "lucide-react";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -8,7 +18,9 @@ import type {
   McpClientSnippets,
   McpConfirmationRules,
   McpStoragePolicy,
+  McpToolCategory,
   McpToolDefinition,
+  McpToolRisk,
   StorageConfig,
   ActiveMcpSession,
   McpSettings,
@@ -17,33 +29,51 @@ import type {
 const FIELD_FOCUS_CLASS =
   "focus-visible:border-ring focus-visible:ring-0 focus-visible:ring-offset-0";
 
-const READ_ONLY_TOOLS = [
+const SAFE_READ_ONLY_TOOLS = [
   "list_dir",
   "stat_path",
   "read_file",
   "search_paths",
-  "list_storages",
-  "validate_storage",
   "list_versions",
   "read_file_version",
 ];
 
-const WORKSPACE_TOOLS = [
-  ...READ_ONLY_TOOLS,
-  "mkdir",
-  "write_file",
-  "copy_path",
-  "move_path",
-];
+function needsConfirmation(tool: McpToolDefinition): boolean {
+  return (
+    tool.category === "write" ||
+    tool.category === "destructive" ||
+    tool.category === "external_link" ||
+    tool.category === "session"
+  );
+}
 
-const FULL_MANUAL_TOOLS = [
-  ...WORKSPACE_TOOLS,
-  "delete_path",
-  "generate_download_link",
-  "delete_version",
-  "session_create",
-  "session_end",
-];
+function categoryLabel(category: McpToolCategory): string {
+  switch (category) {
+    case "read": return "Read";
+    case "write": return "Write";
+    case "destructive": return "Destructive";
+    case "external_link": return "External Link";
+    case "session": return "Session";
+  }
+}
+
+function riskStyle(risk: McpToolRisk): string {
+  switch (risk) {
+    case "low": return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+    case "medium": return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
+    case "high": return "bg-red-500/10 text-red-700 dark:text-red-300";
+  }
+}
+
+function riskLabel(risk: McpToolRisk): string {
+  switch (risk) {
+    case "low": return "Low risk";
+    case "medium": return "Medium risk";
+    case "high": return "High risk";
+  }
+}
+
+const CATEGORY_ORDER: McpToolCategory[] = ["read", "write", "destructive", "external_link", "session"];
 
 interface McpAccessPreset {
   id: string;
@@ -70,26 +100,8 @@ const MCP_ACCESS_PRESETS: McpAccessPreset[] = [
     title: "Read-only research",
     description: "Agents can browse, inspect, and search exposed storage without mutations.",
     recommendedFor: "Research, summarization, and read-only assistants.",
-    enabledTools: READ_ONLY_TOOLS,
+    enabledTools: SAFE_READ_ONLY_TOOLS,
     accessMode: "read_only",
-    confirmationRules: DEFAULT_CONFIRMATION_RULES,
-  },
-  {
-    id: "workspace-agent",
-    title: "Workspace agent",
-    description: "Agents can create, write, copy, and move files while risky work still requires approval.",
-    recommendedFor: "Coding agents working inside an allowed project or workspace root.",
-    enabledTools: WORKSPACE_TOOLS,
-    accessMode: "read_write",
-    confirmationRules: DEFAULT_CONFIRMATION_RULES,
-  },
-  {
-    id: "manual-approval",
-    title: "Manual approval mode",
-    description: "Broad file tools are available, but writes, deletes, links, and cross-storage work wait for approval.",
-    recommendedFor: "Data cleanup, backups, and operator workflows with a human in the loop.",
-    enabledTools: FULL_MANUAL_TOOLS,
-    accessMode: "read_write",
     confirmationRules: DEFAULT_CONFIRMATION_RULES,
   },
   {
@@ -105,7 +117,7 @@ const MCP_ACCESS_PRESETS: McpAccessPreset[] = [
 
 function filterAvailableTools(toolNames: string[], tools: McpToolDefinition[]): string[] {
   const available = new Set(tools.map((tool) => tool.name));
-  return toolNames.filter((name) => available.has(name)).sort();
+  return toolNames.filter((name) => available.has(name));
 }
 
 function formatStorageCount(count: number): string {
@@ -236,6 +248,45 @@ export function McpToolSection({
   onTestServer,
 }: McpToolSectionProps) {
   const enabledToolCount = settings.enabledTools.length;
+  const [pendingRiskyTool, setPendingRiskyTool] = useState<McpToolDefinition | null>(null);
+  const [showAdvancedTools, setShowAdvancedTools] = useState(false);
+
+  const safeTools = tools.filter((t) => t.defaultEnabled);
+  const advancedTools = tools.filter((t) => !t.defaultEnabled);
+
+  const groupedTools = CATEGORY_ORDER
+    .map((cat) => ({
+      category: cat,
+      label: categoryLabel(cat),
+      tools: advancedTools.filter((t) => t.category === cat),
+    }))
+    .filter((g) => g.tools.length > 0);
+
+  const handleToolToggle = (tool: McpToolDefinition, checked: boolean) => {
+    if (checked && needsConfirmation(tool)) {
+      setPendingRiskyTool(tool);
+      return;
+    }
+
+    applyToolToggle(tool, checked);
+  };
+
+  const applyToolToggle = (tool: McpToolDefinition, checked: boolean) => {
+    onSettingsChange((current) => ({
+      ...current,
+      enabledTools: checked
+        ? [...current.enabledTools, tool.name].sort()
+        : current.enabledTools.filter((name) => name !== tool.name),
+    }));
+    setPendingRiskyTool(null);
+  };
+
+  const handleApplySafeReadOnly = () => {
+    onSettingsChange((current) => ({
+      ...current,
+      enabledTools: filterAvailableTools(SAFE_READ_ONLY_TOOLS, tools),
+    }));
+  };
 
   return (
     <>
@@ -254,27 +305,21 @@ export function McpToolSection({
               size="sm"
               variant="outline"
               className="h-8 border-border/80"
-              onClick={() =>
-                onSettingsChange((current) => ({
-                  ...current,
-                  enabledTools: tools.map((tool) => tool.name),
-                }))
-              }
+              onClick={handleApplySafeReadOnly}
               disabled={isBusy || tools.length === 0}
             >
-              Enable all
+              Apply safe read-only
             </Button>
             <Button
               type="button"
               size="sm"
               variant="outline"
               className="h-8 border-border/80"
-              onClick={() =>
-                onSettingsChange((current) => ({ ...current, enabledTools: [] }))
-              }
-              disabled={isBusy || tools.length === 0}
+              aria-expanded={showAdvancedTools}
+              onClick={() => setShowAdvancedTools((current) => !current)}
+              disabled={isBusy || groupedTools.length === 0}
             >
-              Disable all
+              Configure advanced tools
             </Button>
           </div>
         </div>
@@ -283,8 +328,13 @@ export function McpToolSection({
           {enabledToolCount} of {tools.length} functions enabled
         </div>
 
-        <div className="max-h-60 space-y-2 overflow-y-auto rounded-lg border border-border/80 bg-background p-2">
-          {tools.map((tool) => {
+        <div className="max-h-60 space-y-1 overflow-y-auto rounded-lg border border-border/80 bg-background p-2">
+          <div className="px-2 py-1.5">
+            <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+              Safe read-only tools
+            </div>
+          </div>
+          {safeTools.map((tool) => {
             const checked = settings.enabledTools.includes(tool.name);
             return (
               <div
@@ -292,24 +342,71 @@ export function McpToolSection({
                 className="flex items-start justify-between gap-4 rounded-md border border-transparent px-2 py-2 hover:bg-secondary/50"
               >
                 <div className="space-y-1">
-                  <div className="font-mono text-xs text-foreground">{tool.name}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs text-foreground">{tool.name}</span>
+                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${riskStyle(tool.risk)}`}>
+                      {riskLabel(tool.risk)}
+                    </span>
+                  </div>
                   <p className="text-xs text-muted-foreground">{tool.description}</p>
                 </div>
                 <Switch
+                  aria-label={`Enable ${tool.name}`}
                   checked={checked}
                   disabled={isBusy}
-                  onCheckedChange={(value) =>
-                    onSettingsChange((current) => ({
-                      ...current,
-                      enabledTools: value
-                        ? [...current.enabledTools, tool.name].sort()
-                        : current.enabledTools.filter((name) => name !== tool.name),
-                    }))
-                  }
+                  onCheckedChange={(value) => handleToolToggle(tool, value)}
                 />
               </div>
             );
           })}
+
+          {showAdvancedTools && groupedTools.length > 0 && (
+            <>
+              <div className="mt-3 border-t border-border/60 pt-2">
+                <div className="px-2 py-1.5 flex items-center gap-2">
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                  <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+                    Advanced tools (disabled by default)
+                  </span>
+                </div>
+              </div>
+              {groupedTools.map((group) => (
+                <div key={group.category}>
+                  <div className="px-2 py-1">
+                    <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                      {group.label}
+                    </span>
+                  </div>
+                  {group.tools.map((tool) => {
+                    const checked = settings.enabledTools.includes(tool.name);
+                    return (
+                      <div
+                        key={tool.name}
+                        className="flex items-start justify-between gap-4 rounded-md border border-transparent px-2 py-2 hover:bg-secondary/50"
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs text-foreground">{tool.name}</span>
+                            <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${riskStyle(tool.risk)}`}>
+                              {riskLabel(tool.risk)}
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted-foreground">{tool.description}</p>
+                        </div>
+                        <Switch
+                          aria-label={`Enable ${tool.name}`}
+                          checked={checked}
+                          disabled={isBusy}
+                          onCheckedChange={(value) => handleToolToggle(tool, value)}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </>
+          )}
+
           {tools.length === 0 ? (
             <div className="px-2 py-3 text-xs text-muted-foreground">
               Tool metadata is unavailable.
@@ -475,6 +572,43 @@ export function McpToolSection({
           </div>
         </div>
       </div>
+
+      <AlertDialog
+        open={pendingRiskyTool !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingRiskyTool(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-md rounded-2xl border border-border bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] shadow-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Enable {pendingRiskyTool?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This is a{" "}
+              <span className="font-medium">
+                {pendingRiskyTool?.category === "destructive"
+                  ? "destructive"
+                  : `${pendingRiskyTool?.risk ?? "unknown"}-risk ${pendingRiskyTool?.category?.replace("_", "-") ?? "advanced"}`}
+              </span>{" "}
+              tool. Enabling it may allow agents to modify or delete data, create external links,
+              or change scoped session state. Make sure your storage policies and confirmation
+              rules match your safety requirements.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+              onClick={() => {
+                if (pendingRiskyTool) {
+                  applyToolToggle(pendingRiskyTool, true);
+                }
+              }}
+            >
+              Enable
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

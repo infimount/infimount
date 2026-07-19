@@ -102,7 +102,9 @@ export interface McpSettings {
   bindAddress: string;
   port: number;
   enabledTools: string[];
+  securityBaselineVersion: number;
   authToken?: string | null;
+  authTokenConfigured?: boolean;
 }
 
 export interface McpRuntimeStatus {
@@ -117,9 +119,15 @@ export interface McpClientSnippets {
   http: string;
 }
 
+export type McpToolCategory = "read" | "write" | "destructive" | "external_link" | "session";
+export type McpToolRisk = "low" | "medium" | "high";
+
 export interface McpToolDefinition {
   name: string;
   description: string;
+  category: McpToolCategory;
+  risk: McpToolRisk;
+  defaultEnabled: boolean;
 }
 
 export interface StorageCapabilities {

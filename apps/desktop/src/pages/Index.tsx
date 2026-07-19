@@ -102,6 +102,7 @@ function mapWireStorage(storage: StorageRecordWire): StorageConfig {
 }
 
 function mapStatusWire(status: McpRuntimeStatusWire): McpRuntimeStatus {
+  const authToken = status.settings.authToken;
   return {
     settings: {
       enabled: status.settings.enabled,
@@ -109,6 +110,9 @@ function mapStatusWire(status: McpRuntimeStatusWire): McpRuntimeStatus {
       bindAddress: status.settings.bindAddress,
       port: status.settings.port,
       enabledTools: status.settings.enabledTools ?? [],
+      securityBaselineVersion: status.settings.securityBaselineVersion ?? 2,
+      authToken: authToken ?? undefined,
+      authTokenConfigured: authToken !== undefined && authToken !== null && authToken.trim().length > 0,
     },
     runningHttp: status.runningHttp,
     endpoint: status.endpoint,
@@ -210,6 +214,8 @@ interface McpSettingsWire {
   bindAddress: string;
   port: number;
   enabledTools?: string[];
+  securityBaselineVersion?: number;
+  authToken?: string | null;
 }
 
 interface McpRuntimeStatusWire {
@@ -589,6 +595,8 @@ const Index = () => {
         bindAddress: settings.bindAddress,
         port: settings.port,
         enabledTools: settings.enabledTools,
+        securityBaselineVersion: settings.securityBaselineVersion,
+        authToken: settings.authToken,
       });
       setMcpStatus(mapStatusWire(status as unknown as McpRuntimeStatusWire));
       setMcpSnippets(await getMcpClientSnippets());

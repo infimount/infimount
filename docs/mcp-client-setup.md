@@ -10,16 +10,45 @@ All paths use the Infimount virtual filesystem:
 Only storages with `enabled=true` and `mcp_exposed=true` are visible to MCP tools.
 If a storage is marked `read_only=true`, write tools are rejected for that storage.
 
+## Data-Plane Only: No Storage Administration via MCP
+
+The public MCP server exposes **filesystem/data-plane tools only**. Storage administration
+tools (list_storages, add_storage, edit_storage, remove_storage, import_config, export_config,
+validate_storage) are **not available** through MCP discovery or dispatch.
+
+These functions remain available exclusively through the desktop control plane (the Infimount
+desktop application). This means MCP clients — including AI agents — cannot manage storage
+registries or access credentials through MCP.
+
+This is a pre-1.0 breaking change from v0.7. See [Security Model](security.md) for details.
+
+## Safe Default Tool Set
+
+A fresh installation enables only the safe read-only tool set by default:
+
+- list_dir
+- stat_path
+- read_file
+- search_paths
+- list_versions
+- read_file_version
+
+All write, destructive, external-link, and session tools are disabled by default and must be
+explicitly enabled. Each tool is annotated with a category (Read, Write, Destructive,
+ExternalLink, Session) and a risk level (Low, Medium, High).
+
 ## Desktop Settings
 
 Open **MCP Settings** in the desktop app to configure:
 
 - transport: `stdio` or `http`
 - bind address and port for HTTP
-- exposed tool list
+- exposed tool list (grouped by category with risk labels)
 - generated client snippets
 - per-storage path policies and confirmation rules
 - pending approval queue and MCP audit viewer
+
+Use **Apply safe read-only** to reset to the safe default tool set. Use **Configure advanced tools** to inspect non-default tools. Enabling any write, destructive, external-link, or session tool requires a confirmation dialog, regardless of its risk label.
 
 Tool exposure changes are applied after restarting the HTTP server. The settings panel shows when a restart is required.
 
@@ -158,8 +187,7 @@ Current tool groups include:
 - filesystem: `list_dir`, `stat_path`, `read_file`, `write_file`, `mkdir`, `copy_path`, `move_path`, `delete_path`
 - versions: `list_versions`, `read_file_version`, `delete_version`
 - utility: `search_paths`, `generate_download_link`
-- storage management: `list_storages`, `add_storage`, `edit_storage`, `remove_storage`, `import_config`, `export_config`, `validate_storage`
 - sessions: `session_create`, `session_end`
 
-Disable storage-management tools such as `export_config` if a client only needs filesystem access.
+Storage-management operations are desktop-only and are never exposed as public MCP tools.
 For threat model details, see [Security Model](security.md).

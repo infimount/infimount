@@ -15,7 +15,8 @@ const status: McpRuntimeStatus = {
     transport: "http",
     bindAddress: "127.0.0.1",
     port: 7331,
-    enabledTools: ["list_dir", "export_config"],
+    enabledTools: ["list_dir"],
+    securityBaselineVersion: 2,
   },
   runningHttp: false,
   endpoint: null,
@@ -41,8 +42,20 @@ const snippets: McpClientSnippets = {
 };
 
 const tools: McpToolDefinition[] = [
-  { name: "list_dir", description: "List directories within the Infimount virtual filesystem." },
-  { name: "export_config", description: "Export the storage registry as JSON." },
+  {
+    name: "list_dir",
+    description: "List directories within the Infimount virtual filesystem.",
+    category: "read",
+    risk: "low",
+    defaultEnabled: true,
+  },
+  {
+    name: "delete_path",
+    description: "Delete a file or recursively delete a directory.",
+    category: "destructive",
+    risk: "high",
+    defaultEnabled: false,
+  },
 ];
 
 const mcpPolicy: McpStoragePolicy = {
@@ -119,5 +132,13 @@ test("renders the MCP settings dialog", async ({ mount, page }) => {
   );
 
   await expect(page.getByText("MCP Settings")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Enable all" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Apply safe read-only" })).toBeVisible();
   await expect(page).toHaveScreenshot("mcp-settings-dialog.png");
+  await page.getByRole("button", { name: "Configure advanced tools" }).click();
+  await expect(page.getByText("delete_path")).toBeVisible();
+  await page.getByRole("switch", { name: "Enable delete_path" }).click();
+  await expect(page.getByText("Enable delete_path?")).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("switch", { name: "Enable delete_path" })).not.toBeChecked();
 });

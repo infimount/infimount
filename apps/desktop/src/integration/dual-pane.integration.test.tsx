@@ -108,6 +108,7 @@ const mcpStatus: McpRuntimeStatus = {
     bindAddress: "127.0.0.1",
     port: 7331,
     enabledTools: [],
+    securityBaselineVersion: 2,
   },
   runningHttp: false,
   endpoint: null,

@@ -1,7 +1,7 @@
 # Backend Capability Matrix
 
 Infimount uses OpenDAL capabilities at runtime. A backend being listed here does not mean every account, bucket, container, or server has every feature enabled.
-Use `validate_storage` in MCP or the desktop Validate action to check the effective capabilities for a configured storage. Validation reports grouped browse, mutation, sharing/versioning, and metadata capabilities, plus sanitized fix hints and MCP readiness notes.
+Use the desktop **Validate** action to check the effective capabilities for a configured storage. Validation is a desktop control-plane operation and is not exposed through public MCP. It reports grouped browse, mutation, sharing/versioning, and metadata capabilities, plus sanitized fix hints and MCP readiness notes.
 
 This matrix tracks the latest stable release and the current `main` branch.
 
@@ -40,7 +40,7 @@ Version-aware tools return deterministic MCP errors:
 
 ## Validation Output
 
-The desktop Validate action and MCP `validate_storage` response include:
+The desktop **Validate** action reports:
 
 - `valid`: whether the storage could be reached with the configured root, bucket, container, or prefix.
 - `details`: a sanitized result message such as success, timeout, permission denied, missing target, or invalid local root.

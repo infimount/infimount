@@ -121,24 +121,9 @@ export default function (pi: ExtensionAPI) {
     description: "Show Infimount MCP extension status and setup notes",
     handler: async (_args, ctx) => {
       ctx.ui.notify(
-        "Infimount extension loaded. Use infimount_list_storages, infimount_list_dir, infimount_read_file, infimount_search_paths, or infimount_generate_download_link.",
+        "Infimount extension loaded. Use infimount_list_dir, infimount_read_file, infimount_search_paths, or infimount_generate_download_link. List / to discover exposed storages.",
         "info",
       );
-    },
-  });
-
-  pi.registerTool({
-    name: "infimount_list_storages",
-    label: "Infimount: List Storages",
-    description: "List Infimount storages with secrets masked. Only enabled and MCP-exposed storages are usable for filesystem tools.",
-    promptSnippet: "List configured Infimount storages through the local MCP server.",
-    promptGuidelines: [
-      "Use infimount_list_storages before reading storage paths if the user has not named a storage.",
-      "Do not ask for cloud credentials; use only storages the user exposed through Infimount.",
-    ],
-    parameters: Type.Object({}),
-    async execute() {
-      return callInfimountTool("list_storages", {});
     },
   });
 
@@ -147,7 +132,10 @@ export default function (pi: ExtensionAPI) {
     label: "Infimount: List Directory",
     description: "List an Infimount MCP directory path such as /StorageName/folder.",
     promptSnippet: "List files and folders from an Infimount-exposed storage path.",
-    promptGuidelines: ["Use infimount_list_dir instead of shelling into cloud CLIs when the user asks to inspect exposed storage."],
+    promptGuidelines: [
+      "List / when the user has not named a storage; the root contains only storages explicitly exposed through Infimount.",
+      "Use infimount_list_dir instead of shelling into cloud CLIs when the user asks to inspect exposed storage.",
+    ],
     parameters: ListDirParams,
     async execute(_toolCallId, params: ListDirInput) {
       return callInfimountTool("list_dir", withOptionalSession(params));

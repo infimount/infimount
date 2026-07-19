@@ -4,13 +4,12 @@ This Pi extension exposes read-first Infimount MCP tools inside Pi while keeping
 
 ## Tools
 
-- `infimount_list_storages`
-- `infimount_list_dir`
+- `infimount_list_dir` (use `/` to discover exposed storages)
 - `infimount_read_file`
 - `infimount_search_paths`
 - `infimount_generate_download_link`
 
-The extension does not read cloud credentials directly and does not bypass Infimount MCP exposure, path policy, confirmations, sessions, or audit logging.
+The extension does not read cloud credentials directly and does not bypass Infimount MCP exposure, path policy, confirmations, sessions, or audit logging. Storage administration remains in the Infimount desktop control plane.
 
 ## Install for local testing
 
