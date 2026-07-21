@@ -7,6 +7,7 @@ pub mod registry;
 pub mod schema;
 pub mod secrets;
 pub mod util;
+pub mod workspaces;
 
 pub use crate::models::{CoreError, Entry, Result, Source, SourceKind};
 pub use crate::registry::OperatorRegistry;

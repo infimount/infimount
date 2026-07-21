@@ -107,6 +107,11 @@ fn main() {
             commands::read_file_version,
             commands::delete_version,
             commands::get_mcp_sidecar_info,
+            commands::list_workspaces,
+            commands::create_workspace,
+            commands::update_workspace,
+            commands::delete_workspace,
+            commands::import_legacy_workspaces,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

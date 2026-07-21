@@ -1,4 +1,12 @@
 import { createDirectory, listEntries, readFile, writeFile } from "@/lib/api";
+import {
+  listWorkspaces,
+  createWorkspace as apiCreateWorkspace,
+  updateWorkspace as apiUpdateWorkspace,
+  deleteWorkspace as apiDeleteWorkspace,
+  importLegacyWorkspaces as apiImportLegacy,
+  type WorkspaceRecord,
+} from "@/lib/api";
 import { appendActivityLogEvent } from "@/lib/activityLog";
 import type { McpStoragePolicy } from "@/types/storage";
 
@@ -12,18 +20,7 @@ export interface AgentWorkspaceTemplate {
   files: Array<{ path: string; content: string }>;
 }
 
-export interface AgentWorkspace {
-  id: string;
-  storageId: string;
-  name: string;
-  rootPath: string;
-  templateId: AgentWorkspaceTemplateId;
-  createdAt: string;
-  updatedAt: string;
-  policy: McpStoragePolicy;
-  memoryFiles: string[];
-  checkpointIds: string[];
-}
+export type AgentWorkspace = WorkspaceRecord;
 
 export interface AgentWorkspaceCheckpoint {
   id: string;
@@ -44,7 +41,7 @@ export interface CreateAgentWorkspaceInput {
   updatePolicy?: (policy: McpStoragePolicy) => Promise<void>;
 }
 
-const WORKSPACES_STORAGE_KEY = "infimount:agent-workspaces:v1";
+const LEGACY_STORAGE_KEY = "infimount:agent-workspaces:v1";
 const CHECKPOINTS_STORAGE_KEY = "infimount:agent-workspace-checkpoints:v1";
 const WORKSPACE_MANIFEST_PATH = ".infimount/workspace.json";
 const CHECKPOINTS_DIR = ".infimount/checkpoints";
@@ -97,26 +94,21 @@ export const AGENT_WORKSPACE_TEMPLATES: AgentWorkspaceTemplate[] = [
           "# Data analysis workspace\n\nKeep inputs, derived outputs, and run notes inside this storage scope.\n",
       },
       { path: "memory/datasets.md", content: "# Datasets\n\nDescribe inputs and freshness here.\n" },
-      { path: "memory/observations.md", content: "# Observations\n\nRecord findings and caveats here.\n" },
-      { path: "memory/runbook.md", content: "# Runbook\n\nDocument repeatable analysis steps here.\n" },
+      {
+        path: "memory/observations.md",
+        content: "# Observations\n\nRecord findings and caveats here.\n",
+      },
+      {
+        path: "memory/runbook.md",
+        content: "# Runbook\n\nDocument repeatable analysis steps here.\n",
+      },
     ],
   },
 ];
 
-export function listAgentWorkspaces(): AgentWorkspace[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(WORKSPACES_STORAGE_KEY) ?? "[]");
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isWorkspace).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  } catch {
-    return [];
-  }
-}
-
-export function saveAgentWorkspaces(workspaces: AgentWorkspace[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(workspaces));
+export async function listAgentWorkspaces(): Promise<AgentWorkspace[]> {
+  const workspaces = await listWorkspaces();
+  return workspaces.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 export function listAgentWorkspaceCheckpoints(workspaceId: string): AgentWorkspaceCheckpoint[] {
@@ -137,29 +129,13 @@ export async function createAgentWorkspace({
   const template = getWorkspaceTemplate(templateId);
   const workspaceId = externalWorkspaceId ?? `workspace-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
-  // Generate ID before policy — reject all normalized-root variants early
   const rawRoot = rootPath || defaultWorkspacePath(name);
   const normalizedRoot = normalizeWorkspacePath(rawRoot);
   if (normalizedRoot === "/" || normalizedRoot === "." || normalizedRoot === "..") {
     throw new Error("Workspace root path must be a non-root directory");
   }
 
-  // Build policy with workspace ID (not the other way around)
   const policy = buildWorkspacePolicy(normalizedRoot, currentPolicy, workspaceId);
-
-  const now = new Date().toISOString();
-  const workspace: AgentWorkspace = {
-    id: workspaceId,
-    storageId,
-    name: name.trim(),
-    rootPath: normalizedRoot,
-    templateId,
-    createdAt: now,
-    updatedAt: now,
-    policy,
-    memoryFiles: template.memoryFiles,
-    checkpointIds: [],
-  };
 
   await createWorkspaceDirectories(
     storageId,
@@ -173,15 +149,34 @@ export async function createAgentWorkspace({
   for (const file of template.files) {
     await writeTextFile(storageId, joinWorkspacePath(normalizedRoot, file.path), file.content);
   }
+
+  const now = new Date().toISOString();
+  const workspace: AgentWorkspace = {
+    id: workspaceId,
+    storageId,
+    name: name.trim(),
+    rootPath: normalizedRoot,
+    templateId,
+    createdAt: now,
+    updatedAt: now,
+    memoryFiles: template.memoryFiles,
+    checkpointIds: [],
+  };
+
   await writeWorkspaceManifest(workspace);
+  await apiCreateWorkspace({
+    id: workspaceId,
+    storageId,
+    name: name.trim(),
+    rootPath: normalizedRoot,
+    templateId,
+    memoryFiles: template.memoryFiles,
+  });
 
   if (updatePolicy) {
     await updatePolicy(policy);
   }
 
-  // Preserve all other workspaces, only add/update the target workspace
-  const others = listAgentWorkspaces().filter((item) => item.id !== workspace.id);
-  saveAgentWorkspaces([...others, workspace]);
   appendActivityLogEvent({
     type: "workspace_created",
     operation: "workspace",
@@ -258,21 +253,15 @@ export async function createWorkspaceCheckpoint(
 
   const checkpoints = [checkpoint, ...readCheckpoints()].slice(0, 200);
   saveCheckpoints(checkpoints);
-  const updatedAt = checkpoint.createdAt;
-  saveAgentWorkspaces(
-    listAgentWorkspaces().map((item) =>
-      item.id === workspace.id
-        ? {
-            ...item,
-            updatedAt,
-            checkpointIds: [
-              checkpoint.id,
-              ...item.checkpointIds.filter((id) => id !== checkpoint.id),
-            ],
-          }
-        : item,
-    ),
-  );
+
+  await apiUpdateWorkspace({
+    id: workspace.id,
+    checkpointIds: [
+      checkpoint.id,
+      ...workspace.checkpointIds.filter((id) => id !== checkpoint.id),
+    ],
+  });
+
   appendActivityLogEvent({
     type: "workspace_checkpoint_created",
     operation: "workspace",
@@ -328,13 +317,11 @@ export function normalizeWorkspacePath(path: string): string {
   const withRoot = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
   const collapsed = withRoot.replace(/\\/g, "/").replace(/\/+/g, "/");
 
-  // Decode percent-encoded sequences that map to path separators/dots
   const decoded = collapsed
     .replace(/%2e/gi, ".")
     .replace(/%2f/gi, "/")
     .replace(/%5c/gi, "/");
 
-  // Re-collapse after decoding (handles %2e%2e -> .., %2f -> /, etc.)
   const segments: string[] = [];
   for (const segment of decoded.split("/")) {
     if (segment === "" || segment === ".") continue;
@@ -344,7 +331,6 @@ export function normalizeWorkspacePath(path: string): string {
 
   const normalized = segments.length === 0 ? "/" : `/${segments.join("/")}`;
 
-  // Reject normalized root variants matching Rust semantics
   if (normalized === "/") {
     throw new Error("Workspace root path must not be or resolve to '/'");
   }
@@ -390,7 +376,6 @@ export function buildWorkspacePolicy(
   const ruleId = `ws:${workspaceId}`;
 
   const existingRules = currentPolicy?.rules ?? [];
-  // Preserve all rules except those for this specific workspace
   const otherRules = existingRules.filter(
     (r) => r.source.kind !== "workspace" || r.source.workspace_id !== workspaceId,
   );
@@ -426,7 +411,6 @@ export function removeWorkspacePolicy(
   return {
     ...currentPolicy,
     rules: currentPolicy.rules.filter((r) => {
-      // Only remove rules belonging to this specific workspace
       if (r.source.kind === "workspace" && r.source.workspace_id === workspaceId) {
         return false;
       }
@@ -436,6 +420,46 @@ export function removeWorkspacePolicy(
       return true;
     }),
   };
+}
+
+export async function deleteAgentWorkspace(id: string): Promise<void> {
+  await apiDeleteWorkspace(id);
+}
+
+export async function migrateLegacyWorkspaces(): Promise<number> {
+  if (typeof window === "undefined") return 0;
+  const raw = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+  if (!raw) return 0;
+
+  let legacy: unknown[];
+  try {
+    legacy = JSON.parse(raw);
+    if (!Array.isArray(legacy)) return 0;
+  } catch {
+    return 0;
+  }
+
+  const records: WorkspaceRecord[] = legacy
+    .filter(isLegacyWorkspace)
+    .map((item) => ({
+      id: item.id,
+      storageId: item.storageId,
+      name: item.name,
+      rootPath: item.rootPath,
+      templateId: item.templateId,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+      memoryFiles: item.memoryFiles || [],
+      checkpointIds: item.checkpointIds || [],
+    }));
+
+  if (records.length === 0) return 0;
+
+  const imported = await apiImportLegacy({ workspaces: records });
+  if (imported > 0) {
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+  }
+  return imported;
 }
 
 async function createWorkspaceDirectories(
@@ -471,7 +495,6 @@ async function writeWorkspaceManifest(workspace: AgentWorkspace): Promise<void> 
       rootPath: workspace.rootPath,
       templateId: workspace.templateId,
       memoryFiles: workspace.memoryFiles,
-      policy: workspace.policy,
       createdAt: workspace.createdAt,
       updatedAt: workspace.updatedAt,
     },
@@ -557,20 +580,6 @@ function saveCheckpoints(checkpoints: AgentWorkspaceCheckpoint[]) {
   window.localStorage.setItem(CHECKPOINTS_STORAGE_KEY, JSON.stringify(checkpoints));
 }
 
-function isWorkspace(value: unknown): value is AgentWorkspace {
-  if (!value || typeof value !== "object") return false;
-  const item = value as AgentWorkspace;
-  return (
-    typeof item.id === "string" &&
-    typeof item.storageId === "string" &&
-    typeof item.name === "string" &&
-    typeof item.rootPath === "string" &&
-    typeof item.templateId === "string" &&
-    Array.isArray(item.memoryFiles) &&
-    Array.isArray(item.checkpointIds)
-  );
-}
-
 function isCheckpoint(value: unknown): value is AgentWorkspaceCheckpoint {
   if (!value || typeof value !== "object") return false;
   const item = value as AgentWorkspaceCheckpoint;
@@ -581,6 +590,20 @@ function isCheckpoint(value: unknown): value is AgentWorkspaceCheckpoint {
     typeof item.label === "string" &&
     typeof item.manifestPath === "string" &&
     Array.isArray(item.memoryFiles)
+  );
+}
+
+function isLegacyWorkspace(value: unknown): value is WorkspaceRecord {
+  if (!value || typeof value !== "object") return false;
+  const item = value as WorkspaceRecord;
+  return (
+    typeof item.id === "string" &&
+    typeof item.storageId === "string" &&
+    typeof item.name === "string" &&
+    typeof item.rootPath === "string" &&
+    typeof item.templateId === "string" &&
+    Array.isArray(item.memoryFiles) &&
+    Array.isArray(item.checkpointIds)
   );
 }
 

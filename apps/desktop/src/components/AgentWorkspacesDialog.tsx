@@ -103,11 +103,15 @@ export function AgentWorkspacesDialog({
 
   useEffect(() => {
     if (!open) return;
-    const next = listAgentWorkspaces();
-    setWorkspaces(next);
-    setSelectedWorkspaceId((current) => current ?? next[0]?.id ?? null);
-    setStorageId((current) => current || storages[0]?.id || "");
-    refreshWorkspaceActivity();
+    let active = true;
+    void listAgentWorkspaces().then((next) => {
+      if (!active) return;
+      setWorkspaces(next);
+      setSelectedWorkspaceId((current) => current ?? next[0]?.id ?? null);
+      setStorageId((current) => current || storages[0]?.id || "");
+      refreshWorkspaceActivity();
+    });
+    return () => { active = false; };
   }, [open, storages]);
 
   useEffect(() => {
@@ -181,7 +185,7 @@ export function AgentWorkspacesDialog({
           ? (policy) => onUpdateStoragePolicy(selectedStorage.id, policy)
           : undefined,
       });
-      const next = listAgentWorkspaces();
+      const next = await listAgentWorkspaces();
       setWorkspaces(next);
       setSelectedWorkspaceId(workspace.id);
       refreshWorkspaceActivity();
@@ -234,7 +238,7 @@ export function AgentWorkspacesDialog({
       const nextCheckpoints = listAgentWorkspaceCheckpoints(selectedWorkspace.id);
       setCheckpoints(nextCheckpoints);
       setSelectedCheckpointId(checkpoint.id);
-      setWorkspaces(listAgentWorkspaces());
+      setWorkspaces(await listAgentWorkspaces());
       refreshWorkspaceActivity();
       toast({
         title: "Checkpoint saved",
@@ -441,7 +445,7 @@ export function AgentWorkspacesDialog({
                     </div>
                     <div className="mb-3 flex flex-wrap gap-2">
                       <Badge variant="outline" className="gap-1">
-                        <CheckCircle2 className="h-3 w-3" /> {selectedWorkspace.policy.rules[0]?.prefix ?? selectedWorkspace.policy.allowed_paths?.[0]}
+                        <CheckCircle2 className="h-3 w-3" /> {selectedWorkspace.rootPath}
                       </Badge>
                       <Badge variant="outline">default access: none</Badge>
                     </div>

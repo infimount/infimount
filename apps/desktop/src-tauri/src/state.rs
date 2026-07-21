@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use infimount_core::workspaces::WorkspaceRegistry;
 use infimount_core::{config, secrets, CoreError, SecretStore, Source, SourceKind};
 use infimount_mcp::confirmation::ConfirmationManager;
 use infimount_mcp::errors::{err, err_with_details, McpError, McpErrorCode, McpResult};
@@ -29,6 +30,7 @@ pub struct AppState {
     pub sessions: SessionManager,
     pub secret_store: Arc<dyn SecretStore>,
     pub pending_oauth: PendingOAuthStore,
+    pub workspaces: WorkspaceRegistry,
     http_runtime: Mutex<Option<McpHttpServerHandle>>,
     transfer_cancellations: StdMutex<HashSet<String>>,
 }
@@ -215,6 +217,9 @@ impl AppState {
         let settings_store = McpSettingsStore::with_secret_store(None, secret_store.clone());
         settings_store.load()?;
 
+        let config_dir = infimount_mcp::registry::default_config_dir();
+        let workspaces = WorkspaceRegistry::new(&config_dir);
+
         Ok(Self {
             registry,
             settings_store,
@@ -223,6 +228,7 @@ impl AppState {
             sessions: SessionManager::new(),
             secret_store,
             pending_oauth: PendingOAuthStore::new(),
+            workspaces,
             http_runtime: Mutex::new(None),
             transfer_cancellations: StdMutex::new(HashSet::new()),
         })

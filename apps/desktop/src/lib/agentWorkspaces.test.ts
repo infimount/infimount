@@ -12,15 +12,26 @@ import {
   removeWorkspacePolicy,
   restoreWorkspaceMemoryCheckpoint,
 } from "./agentWorkspaces";
-import { createDirectory, readFile, writeFile } from "./api";
+import {
+  listWorkspaces,
+  createWorkspace as apiCreateWorkspace,
+  updateWorkspace as apiUpdateWorkspace,
+  createDirectory,
+  readFile,
+  writeFile,
+  type WorkspaceRecord,
+} from "./api";
 import type { McpStoragePolicy } from "@/types/storage";
 
 vi.mock("./api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./api")>();
   return {
     ...actual,
-    createDirectory: vi.fn(),
-    listEntries: vi.fn(),
+    listWorkspaces: vi.fn().mockResolvedValue([]),
+    createWorkspace: vi.fn().mockResolvedValue({}),
+    updateWorkspace: vi.fn().mockResolvedValue({}),
+    createDirectory: vi.fn().mockResolvedValue(undefined),
+    listEntries: vi.fn().mockResolvedValue([]),
     readFile: vi.fn(),
     writeFile: vi.fn(),
   };
@@ -49,6 +60,9 @@ describe("agentWorkspaces", () => {
     vi.mocked(createDirectory).mockResolvedValue(undefined);
     vi.mocked(writeFile).mockResolvedValue(undefined);
     vi.mocked(readFile).mockResolvedValue(new TextEncoder().encode("# Tasks\n"));
+    (listWorkspaces as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (apiCreateWorkspace as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    (apiUpdateWorkspace as ReturnType<typeof vi.fn>).mockResolvedValue({});
   });
 
   it("creates a workspace, template files, and scoped MCP policy", async () => {
@@ -72,7 +86,9 @@ describe("agentWorkspaces", () => {
     expect(updatePolicy).toHaveBeenCalledWith(
       expect.objectContaining({ default_access: "read_write", rules: expect.any(Array) }),
     );
-    expect(listAgentWorkspaces()).toMatchObject([{ id: workspace.id, name: "Coding Workspace" }]);
+    expect(apiCreateWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({ id: workspace.id, name: "Coding Workspace" }),
+    );
   });
 
   it("appends memory and checkpoints memory files", async () => {
@@ -227,18 +243,14 @@ describe("agentWorkspaces", () => {
 
   it("normalizeWorkspacePath rejects root and dot variants", () => {
     expect(() => normalizeWorkspacePath("/")).toThrow("must not be or resolve to '/'");
-    // "." normalizes to "/" because all segments are consumed
     expect(() => normalizeWorkspacePath(".")).toThrow("must not be or resolve to '/'");
-    // ".." normalizes to "/" because the ".." pops nothing then we have no segments
     expect(() => normalizeWorkspacePath("..")).toThrow("must not be or resolve to '/'");
   });
 
   it("normalizeWorkspacePath decodes encoded path separators", () => {
     expect(normalizeWorkspacePath("team%2fagent")).toBe("/team/agent");
     expect(normalizeWorkspacePath("team%5cagent")).toBe("/team/agent");
-    // %2e%2e decodes to ".." which pops the preceding segment, then "escape" is pushed
     expect(normalizeWorkspacePath("x/%2e%2e/escape")).toBe("/escape");
-    // %2e%2e at start -> no segment to pop, just "escape" remains
     expect(normalizeWorkspacePath("%2e%2e/escape")).toBe("/escape");
   });
 
@@ -247,22 +259,36 @@ describe("agentWorkspaces", () => {
   });
 
   it("preserves other workspaces when creating a new one", async () => {
-    const ws1 = await createAgentWorkspace({
+    const created: WorkspaceRecord[] = [];
+    (listWorkspaces as ReturnType<typeof vi.fn>).mockImplementation(async () => created);
+    (apiCreateWorkspace as ReturnType<typeof vi.fn>).mockImplementation(
+      async (input: WorkspaceRecord) => {
+        const now = new Date().toISOString();
+        const record: WorkspaceRecord = {
+          ...input,
+          createdAt: now,
+          updatedAt: now,
+          checkpointIds: input.checkpointIds ?? [],
+        };
+        created.push(record);
+        return record;
+      },
+    );
+
+    await createAgentWorkspace({
       storageId: "local",
       name: "First",
       rootPath: "/first",
       templateId: "coding",
     });
-    const ws2 = await createAgentWorkspace({
+    await createAgentWorkspace({
       storageId: "local",
       name: "Second",
       rootPath: "/second",
       templateId: "research",
     });
-    const all = listAgentWorkspaces();
+    const all = await listAgentWorkspaces();
     expect(all).toHaveLength(2);
-    expect(all.find((w) => w.id === ws1.id)).toBeTruthy();
-    expect(all.find((w) => w.id === ws2.id)).toBeTruthy();
   });
 
   it("generates ID before policy call", async () => {

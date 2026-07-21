@@ -518,6 +518,59 @@ export function getMcpSidecarInfo(): Promise<McpSidecarInfo> {
   return invokeOrThrow<McpSidecarInfo>("get_mcp_sidecar_info");
 }
 
+export interface WorkspaceRecord {
+  id: string;
+  storageId: string;
+  name: string;
+  rootPath: string;
+  templateId: string;
+  createdAt: string;
+  updatedAt: string;
+  memoryFiles: string[];
+  checkpointIds: string[];
+}
+
+export interface CreateWorkspaceInput {
+  id: string;
+  storageId: string;
+  name: string;
+  rootPath: string;
+  templateId: string;
+  memoryFiles: string[];
+}
+
+export interface UpdateWorkspaceInput {
+  id: string;
+  name?: string;
+  rootPath?: string;
+  memoryFiles?: string[];
+  checkpointIds?: string[];
+}
+
+export interface ImportLegacyWorkspacesInput {
+  workspaces: WorkspaceRecord[];
+}
+
+export function listWorkspaces(): Promise<WorkspaceRecord[]> {
+  return invokeOrThrow<WorkspaceRecord[]>("list_workspaces");
+}
+
+export function createWorkspace(request: CreateWorkspaceInput): Promise<WorkspaceRecord> {
+  return invokeOrThrow<WorkspaceRecord>("create_workspace", { request });
+}
+
+export function updateWorkspace(request: UpdateWorkspaceInput): Promise<WorkspaceRecord> {
+  return invokeOrThrow<WorkspaceRecord>("update_workspace", { request });
+}
+
+export function deleteWorkspace(id: string): Promise<void> {
+  return invokeOrThrow<void>("delete_workspace", { id });
+}
+
+export function importLegacyWorkspaces(request: ImportLegacyWorkspacesInput): Promise<number> {
+  return invokeOrThrow<number>("import_legacy_workspaces", { request });
+}
+
 export function deleteFileVersion(
   sourceId: string,
   path: string,
