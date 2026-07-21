@@ -5,7 +5,7 @@
   "identifier": "com.infimount.desktop",
   "build": {
     "beforeDevCommand": "",
-    "beforeBuildCommand": "",
+    "beforeBuildCommand": "bash ../../scripts/build-mcp-sidecar.sh",
     "frontendDist": "../../dist",
     "devUrl": "http://localhost:5173"
   },
@@ -38,6 +38,9 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
+    "externalBin": [
+      "binaries/mcp"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

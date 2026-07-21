@@ -463,11 +463,30 @@ impl AppState {
             suggested_http_endpoint(&status.settings.bind_address, status.settings.port)
         });
 
+        let bundled_mcp = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|p| p.join("mcp")))
+            .filter(|p| p.exists())
+            .or_else(|| {
+                let path = infimount_mcp::registry::default_config_dir().join("mcp");
+                if path.exists() { Some(path) } else { None }
+            })
+            .or_else(|| {
+                std::env::var_os("INFIMOUNT_MCP_PATH")
+                    .map(std::path::PathBuf::from)
+                    .filter(|p| p.exists())
+            });
+
+        let stdio_command = match bundled_mcp {
+            Some(path) => path.to_string_lossy().to_string(),
+            None => "infimount_mcp".to_string(),
+        };
+
         Ok(McpClientSnippets {
             stdio: serde_json::to_string_pretty(&json!({
                 "mcpServers": {
                     "infimount": {
-                        "command": "infimount_mcp",
+                        "command": stdio_command,
                         "args": ["--transport", "stdio"]
                     }
                 }

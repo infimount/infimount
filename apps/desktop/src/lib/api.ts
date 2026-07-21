@@ -509,6 +509,15 @@ export function applyRecoveryRestore(request: ApplyRestoreInput): Promise<ApplyR
   return invokeOrThrow<ApplyRestoreResult>("apply_recovery_restore", { request });
 }
 
+export interface McpSidecarInfo {
+  bundledPath: string | null;
+  available: boolean;
+}
+
+export function getMcpSidecarInfo(): Promise<McpSidecarInfo> {
+  return invokeOrThrow<McpSidecarInfo>("get_mcp_sidecar_info");
+}
+
 export function deleteFileVersion(
   sourceId: string,
   path: string,

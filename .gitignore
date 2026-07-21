@@ -25,6 +25,9 @@ test-results/
 # Tauri generated files
 apps/desktop/src-tauri/gen/
 
+# Sidecar binaries
+apps/desktop/src-tauri/binaries/
+
 # Python
 .venv/
 __pycache__/

@@ -16,6 +16,7 @@ fn main() {
 
     tauri::Builder::default()
         .manage(app_state)
+        .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             #[cfg(desktop)]
             app.handle()
@@ -105,6 +106,7 @@ fn main() {
             commands::list_versions,
             commands::read_file_version,
             commands::delete_version,
+            commands::get_mcp_sidecar_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
