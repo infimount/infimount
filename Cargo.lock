@@ -2720,7 +2720,7 @@ dependencies = [
 
 [[package]]
 name = "infimount_core"
-version = "0.1.0"
+version = "0.7.1"
 dependencies = [
  "age",
  "age-core",
@@ -2740,7 +2740,7 @@ dependencies = [
 
 [[package]]
 name = "infimount_mcp"
-version = "0.1.0"
+version = "0.7.1"
 dependencies = [
  "axum",
  "base64 0.22.1",

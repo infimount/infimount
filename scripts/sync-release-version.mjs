@@ -37,18 +37,17 @@ const updateJsonVersion = (path) => {
 updateJsonVersion("apps/desktop/package.json");
 updateJsonVersion("apps/desktop/src-tauri/tauri.conf.json");
 
-const cargoTomlPath = "apps/desktop/src-tauri/Cargo.toml";
-const cargoToml = fs.readFileSync(cargoTomlPath, "utf8");
-const cargoVersionPattern = /^version\s*=\s*"[^"]*"/m;
-if (!cargoVersionPattern.test(cargoToml)) {
-  throw new Error("Could not locate top-level version field in apps/desktop/src-tauri/Cargo.toml");
+const workspaceCargoPath = "Cargo.toml";
+const workspaceCargo = fs.readFileSync(workspaceCargoPath, "utf8");
+const workspaceVersionPattern = /^version\s*=\s*"[^"]*"/m;
+if (!workspaceVersionPattern.test(workspaceCargo)) {
+  throw new Error("Could not locate workspace version field in Cargo.toml");
 }
-const updatedCargoToml = cargoToml.replace(
-  cargoVersionPattern,
+const updatedWorkspaceCargo = workspaceCargo.replace(
+  workspaceVersionPattern,
   `version = "${version}"`,
 );
-
-fs.writeFileSync(cargoTomlPath, updatedCargoToml, "utf8");
+fs.writeFileSync(workspaceCargoPath, updatedWorkspaceCargo, "utf8");
 
 console.log(
   `Release version synchronized from tag ${tag} -> ${version}${msiSafe ? " (MSI-safe mode)" : ""}`,
