@@ -32,6 +32,9 @@ pub enum CoreError {
 
     #[error("serialization error: {0}")]
     Serde(#[from] serde_json::Error),
+
+    #[error("backup error: {0}")]
+    Backup(#[from] crate::backup::BackupError),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -64,6 +67,7 @@ impl CoreError {
                 _ => ErrorCode::IoError,
             },
             CoreError::Serde(_) => ErrorCode::Unknown,
+            CoreError::Backup(_) => ErrorCode::Unknown,
         }
     }
 }

@@ -1,34 +1,79 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+use serde_json::Value;
 
 use crate::errors::{err_with_details, McpErrorCode, McpResult};
-use crate::registry::{mask_storage_record, StorageRecord};
 use crate::tools_fs::FsToolsContext;
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ExportConfigInput {
-    #[serde(default)]
-    pub include_secrets: bool,
-}
 
 #[derive(Debug, Serialize)]
 pub struct ExportConfigOutput {
     pub json: String,
 }
 
+#[derive(Debug, Serialize)]
+struct ShareableExport {
+    #[serde(rename = "schemaVersion")]
+    schema_version: u32,
+    kind: String,
+    #[serde(rename = "exportedAt")]
+    exported_at: String,
+    storages: Vec<ShareableStorage>,
+}
+
+#[derive(Debug, Serialize)]
+struct ShareableStorage {
+    name: String,
+    backend: String,
+    config: Value,
+    #[serde(rename = "requiredSecretFields")]
+    required_secret_fields: Vec<String>,
+    enabled: bool,
+    #[serde(rename = "mcpExposed")]
+    mcp_exposed: bool,
+    #[serde(rename = "readOnly")]
+    read_only: bool,
+    #[serde(rename = "mcpPolicy")]
+    mcp_policy: Value,
+}
+
 pub async fn export_config(
     ctx: &FsToolsContext,
-    input: ExportConfigInput,
 ) -> McpResult<ExportConfigOutput> {
     let storages = ctx.registry.load_all()?;
-    let _ = input.include_secrets;
-    // Native secret-store values are never materialized into JSON exports.
-    let exportable: Vec<StorageRecord> = storages.iter().map(mask_storage_record).collect();
 
-    let json = serde_json::to_string_pretty(&exportable).map_err(|e| {
+    let shareable: Vec<ShareableStorage> = storages
+        .iter()
+        .map(|s| {
+            let config = s.config.clone();
+            let required_secret_fields: Vec<String> = s
+                .secret_fields
+                .iter()
+                .map(|f| format!("/{f}"))
+                .collect();
+            ShareableStorage {
+                name: s.name.clone(),
+                backend: s.backend.clone(),
+                config,
+                required_secret_fields,
+                enabled: s.enabled,
+                mcp_exposed: false,
+                read_only: s.read_only,
+                mcp_policy: serde_json::to_value(&s.mcp_policy)
+                    .unwrap_or_default(),
+            }
+        })
+        .collect();
+
+    let export = ShareableExport {
+        schema_version: 2,
+        kind: "infimount-shareable-config".to_string(),
+        exported_at: chrono::Utc::now().to_rfc3339(),
+        storages: shareable,
+    };
+
+    let json = serde_json::to_string_pretty(&export).map_err(|e| {
         err_with_details(
             McpErrorCode::ERR_INTERNAL,
-            "failed to serialize storage registry",
+            "failed to serialize shareable export",
             serde_json::json!({ "serde_error": e.to_string() }),
         )
     })?;

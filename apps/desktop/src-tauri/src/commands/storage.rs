@@ -8,8 +8,9 @@ use infimount_mcp::opendal_adapter::{get_capabilities, StorageBackendCapabilitie
 use infimount_mcp::policy::{migrate_legacy_policy, normalize_storage_policy, McpStoragePolicy};
 use infimount_mcp::registry::{ensure_unique_name, validate_storage_name, StorageRecord};
 use infimount_mcp::tools_storage::{
-    export_config, import_config, validate_storage_record, ExportConfigInput, ExportConfigOutput,
-    ImportConfigInput, ImportConfigOutput, ValidateStorageOutput,
+    apply_storage_import, export_config, import_config, preview_storage_import,
+    validate_storage_record, ApplyStorageImportInput, ApplyStorageImportResult, ExportConfigOutput,
+    ImportConfigInput, ImportConfigOutput, StorageImportPreview, ValidateStorageOutput,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -688,17 +689,26 @@ pub async fn import_storage_config(
 }
 
 #[tauri::command]
-pub async fn export_storage_config(
+pub async fn export_shareable_config(
     state: State<'_, AppState>,
-    includeSecrets: bool,
 ) -> Result<ExportConfigOutput, McpError> {
-    export_config(
-        &state.fs_context()?,
-        ExportConfigInput {
-            include_secrets: includeSecrets,
-        },
-    )
-    .await
+    export_config(&state.fs_context()?).await
+}
+
+#[tauri::command]
+pub async fn preview_storage_import_cmd(
+    state: State<'_, AppState>,
+    json: String,
+) -> Result<StorageImportPreview, McpError> {
+    preview_storage_import(&state.fs_context()?, json).await
+}
+
+#[tauri::command]
+pub async fn apply_storage_import_cmd(
+    state: State<'_, AppState>,
+    request: ApplyStorageImportInput,
+) -> Result<ApplyStorageImportResult, McpError> {
+    apply_storage_import(&state.fs_context()?, request).await
 }
 
 #[tauri::command]

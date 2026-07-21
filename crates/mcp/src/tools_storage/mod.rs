@@ -11,8 +11,11 @@ mod validate_storage;
 
 pub use add_storage::{add_storage, AddStorageInput, AddStorageOutput};
 pub use edit_storage::{edit_storage, EditStorageInput, EditStorageOutput, EditStoragePatch};
-pub use export_config::{export_config, ExportConfigInput, ExportConfigOutput};
-pub use import_config::{import_config, ImportConfigInput, ImportConfigOutput};
+pub use export_config::{export_config, ExportConfigOutput};
+pub use import_config::{
+    apply_storage_import, import_config, preview_storage_import, ApplyStorageImportInput,
+    ApplyStorageImportResult, ImportConfigInput, ImportConfigOutput, StorageImportPreview,
+};
 pub use list_storages::{list_storages, ListStoragesInput, ListStoragesOutput};
 pub use remove_storage::{remove_storage, RemoveStorageInput, RemoveStorageOutput};
 pub use validate_storage::{

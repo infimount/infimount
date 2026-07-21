@@ -12,7 +12,7 @@ import {
   deletePath,
   denyMcpConfirmation,
   exportMcpAuditBundle,
-  exportStorageConfig,
+  exportShareableConfig,
   generateDownloadLink,
   getAppSettings,
   getMcpClientSnippets,
@@ -191,7 +191,7 @@ describe("api wrappers", () => {
 
     await transferEntries("from", "to", ["/a.txt"], "/target", "copy", "overwrite");
     await importStorageConfig({ json: "[]", mode: "merge", onConflict: "rename" });
-    await exportStorageConfig(false);
+    await exportShareableConfig();
     await expect(readFileVersion("s1", "/file.txt", "v1")).resolves.toEqual(new Uint8Array([1, 2]));
 
     expect(invokeMock).toHaveBeenNthCalledWith(1, "transfer_entries", {
@@ -205,9 +205,7 @@ describe("api wrappers", () => {
     expect(invokeMock).toHaveBeenNthCalledWith(2, "import_storage_config", {
       request: { json: "[]", mode: "merge", onConflict: "rename" },
     });
-    expect(invokeMock).toHaveBeenNthCalledWith(3, "export_storage_config", {
-      includeSecrets: false,
-    });
+    expect(invokeMock).toHaveBeenNthCalledWith(3, "export_shareable_config");
     expect(invokeMock).toHaveBeenNthCalledWith(4, "read_file_version", {
       sourceId: "s1",
       path: "/file.txt",

@@ -307,8 +307,53 @@ export function importStorageConfig(request: ImportStoragesRequest): Promise<Imp
   });
 }
 
-export function exportStorageConfig(includeSecrets: boolean): Promise<ExportStoragesResult> {
-  return invokeOrThrow<ExportStoragesResult>("export_storage_config", { includeSecrets });
+export function exportShareableConfig(): Promise<ExportStoragesResult> {
+  return invokeOrThrow<ExportStoragesResult>("export_shareable_config");
+}
+
+export interface StorageImportChange {
+  name: string;
+  backend: string;
+  changeType: string;
+}
+
+export interface MissingSecretField {
+  name: string;
+  storageName: string;
+}
+
+export interface StorageImportPreview {
+  previewId: string;
+  baseRegistryRevision: string;
+  additions: StorageImportChange[];
+  updates: StorageImportChange[];
+  renames: StorageImportChange[];
+  removals: StorageImportChange[];
+  policyChanges: StorageImportChange[];
+  exposureChanges: StorageImportChange[];
+  missingSecretFields: MissingSecretField[];
+  warnings: string[];
+}
+
+export interface ApplyStorageImportRequest {
+  previewId: string;
+  baseRegistryRevision: string;
+  mode: "merge" | "replace";
+  onConflict: "error" | "overwrite" | "rename";
+  confirmed: boolean;
+}
+
+export interface ApplyStorageImportResult {
+  applied: number;
+  warnings: string[];
+}
+
+export function previewStorageImport(json: string): Promise<StorageImportPreview> {
+  return invokeOrThrow<StorageImportPreview>("preview_storage_import_cmd", { json });
+}
+
+export function applyStorageImport(request: ApplyStorageImportRequest): Promise<ApplyStorageImportResult> {
+  return invokeOrThrow<ApplyStorageImportResult>("apply_storage_import_cmd", { request });
 }
 
 export function listStorageSchemas(): Promise<StorageKindSchema[]> {

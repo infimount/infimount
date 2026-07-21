@@ -80,7 +80,7 @@ vi.mock("@/lib/api", () => ({
   clearMcpAuditEvents: vi.fn(),
   completeOnboarding: vi.fn(),
   denyMcpConfirmation: vi.fn(),
-  exportStorageConfig: vi.fn(),
+  exportShareableConfig: vi.fn(),
   getAppSettings: vi.fn(),
   getMcpClientSnippets: vi.fn(),
   getMcpStatus: vi.fn(),

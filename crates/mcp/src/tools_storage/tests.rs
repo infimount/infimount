@@ -346,7 +346,7 @@ async fn import_config_defaults_to_not_mcp_exposed() {
 }
 
 #[tokio::test]
-async fn export_config_masks_by_default() {
+async fn export_config_is_shareable() {
     let dir = TempDir::new().unwrap();
     let registry = registry_in(&dir);
     let storage = crate::registry::StorageRecord::new(
@@ -367,17 +367,13 @@ async fn export_config_masks_by_default() {
         auth_token: None,
     };
 
-    let out = export_config(
-        &ctx,
-        ExportConfigInput {
-            include_secrets: false,
-        },
-    )
-    .await
-    .unwrap();
-    assert!(out.json.contains("********"));
-    assert!(!out.json.contains("service-account-json"));
-    assert!(out.json.contains("us-east-1"));
+    let out = export_config(&ctx).await.unwrap();
+    assert!(out.json.contains("\"kind\": \"infimount-shareable-config\""));
+    assert!(out.json.contains("\"mcpExposed\": false"));
+    assert!(out.json.contains("requiredSecretFields"));
+    assert!(!out.json.contains("\"id\":"));
+    assert!(!out.json.contains("secret_ref"));
+    assert!(!out.json.contains("secret_fields"));
 }
 
 #[tokio::test]

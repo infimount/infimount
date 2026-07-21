@@ -1,8 +1,13 @@
+use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::sync::Mutex;
+use std::sync::OnceLock;
+use std::time::Instant;
+
 use chrono::Utc;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::fs::OpenOptions;
 use uuid::Uuid;
 
 use crate::errors::{err, err_with_details, McpErrorCode, McpResult};
@@ -370,4 +375,367 @@ pub async fn import_config(
         storages: merged.iter().map(masked).collect(),
         warnings,
     })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MissingSecretField {
+    pub name: String,
+    pub storage_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageImportChange {
+    pub name: String,
+    pub backend: String,
+    pub change_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageImportPreview {
+    #[serde(rename = "previewId")]
+    pub preview_id: String,
+    #[serde(rename = "baseRegistryRevision")]
+    pub base_registry_revision: String,
+    pub additions: Vec<StorageImportChange>,
+    pub updates: Vec<StorageImportChange>,
+    pub renames: Vec<StorageImportChange>,
+    pub removals: Vec<StorageImportChange>,
+    pub policy_changes: Vec<StorageImportChange>,
+    pub exposure_changes: Vec<StorageImportChange>,
+    pub missing_secret_fields: Vec<MissingSecretField>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApplyStorageImportInput {
+    #[serde(rename = "previewId")]
+    pub preview_id: String,
+    #[serde(rename = "baseRegistryRevision")]
+    pub base_registry_revision: String,
+    pub mode: String,
+    #[serde(rename = "onConflict")]
+    pub on_conflict: String,
+    pub confirmed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApplyStorageImportResult {
+    pub applied: usize,
+    pub warnings: Vec<String>,
+}
+
+struct PreviewEntry {
+    #[allow(dead_code)]
+    changes: StorageImportPreview,
+    storages: Vec<StorageRecord>,
+    created_at: Instant,
+}
+
+fn preview_store() -> &'static Mutex<HashMap<String, PreviewEntry>> {
+    static STORE: OnceLock<Mutex<HashMap<String, PreviewEntry>>> = OnceLock::new();
+    STORE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn parse_shareable_json(input: &str) -> McpResult<Vec<ImportedStorage>> {
+    let value: Value = serde_json::from_str(input).map_err(|e| {
+        err_with_details(
+            McpErrorCode::ERR_INTERNAL,
+            "failed to parse import JSON",
+            serde_json::json!({ "serde_error": e.to_string() }),
+        )
+    })?;
+
+    let items = match &value {
+        Value::Object(map) => {
+            let kind = map.get("kind").and_then(Value::as_str);
+            if kind == Some("infimount-shareable-config") {
+                map.get("storages")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| {
+                        err(
+                            McpErrorCode::ERR_INTERNAL,
+                            "shareable export must have a 'storages' array",
+                        )
+                    })?
+                    .clone()
+            } else {
+                map.get("storages")
+                    .or_else(|| {
+                        if map.contains_key("name") || map.contains_key("backend") {
+                            Some(&value)
+                        } else {
+                            None
+                        }
+                    })
+                    .and_then(|v| {
+                        if v.is_array() {
+                            v.as_array().cloned()
+                        } else {
+                            Some(vec![v.clone()])
+                        }
+                    })
+                    .ok_or_else(|| {
+                        err(
+                            McpErrorCode::ERR_INTERNAL,
+                            "import JSON must contain a 'storages' array",
+                        )
+                    })?
+            }
+        }
+        Value::Array(items) => items.clone(),
+        _ => {
+            return Err(err(
+                McpErrorCode::ERR_INTERNAL,
+                "import JSON must be an array or an object",
+            ));
+        }
+    };
+
+    items
+        .into_iter()
+        .map(|item| {
+            #[derive(Deserialize)]
+            struct ImportedStorageWire {
+                name: String,
+                backend: String,
+                #[serde(default)]
+                config: Value,
+                #[serde(default = "default_true")]
+                enabled: bool,
+                #[serde(default)]
+                read_only: bool,
+            }
+            let wire: ImportedStorageWire = serde_json::from_value(item).map_err(|e| {
+                err_with_details(
+                    McpErrorCode::ERR_INTERNAL,
+                    "imported storage entry is invalid",
+                    serde_json::json!({ "serde_error": e.to_string() }),
+                )
+            })?;
+            Ok(ImportedStorage {
+                name: wire.name,
+                backend: wire.backend,
+                config: wire.config,
+                enabled: wire.enabled,
+                mcp_exposed: false,
+                read_only: wire.read_only,
+                id: None,
+                created_at: None,
+                updated_at: None,
+            })
+        })
+        .collect()
+}
+
+pub async fn preview_storage_import(
+    ctx: &FsToolsContext,
+    json: String,
+) -> McpResult<StorageImportPreview> {
+    let imported = parse_shareable_json(&json)?
+        .into_iter()
+        .map(ImportedStorage::into_record)
+        .collect::<McpResult<Vec<_>>>()?;
+
+    let existing = ctx.registry.load_all()?;
+    let existing_by_name: HashMap<&str, &StorageRecord> =
+        existing.iter().map(|s| (s.name.as_str(), s)).collect();
+
+    let mut additions = Vec::new();
+    let mut updates = Vec::new();
+    let mut removals = Vec::new();
+    let mut policy_changes = Vec::new();
+    let mut exposure_changes = Vec::new();
+    let mut missing_secret_fields = Vec::new();
+    let mut warnings = Vec::new();
+
+    let secret_names = infimount_core::secrets::discover_secret_field_names();
+
+    for incoming in &imported {
+        if let Some(existing_record) = existing_by_name.get(incoming.name.as_str()) {
+            let mut update_desc = format!("config updated");
+            if incoming.enabled != existing_record.enabled {
+                update_desc = format!("{update_desc}, enabled changed");
+            }
+            updates.push(StorageImportChange {
+                name: incoming.name.clone(),
+                backend: incoming.backend.clone(),
+                change_type: update_desc,
+            });
+            let has_plaintext = infimount_core::secrets::contains_plaintext_secrets(
+                &incoming.config,
+                &secret_names,
+            );
+            if has_plaintext {
+                missing_secret_fields.push(MissingSecretField {
+                    name: "plaintext credentials in config".into(),
+                    storage_name: incoming.name.clone(),
+                });
+            }
+        } else {
+            additions.push(StorageImportChange {
+                name: incoming.name.clone(),
+                backend: incoming.backend.clone(),
+                change_type: "new storage".into(),
+            });
+        }
+    }
+
+    for existing_record in &existing {
+        if !imported.iter().any(|i| i.name == existing_record.name) {
+            removals.push(StorageImportChange {
+                name: existing_record.name.clone(),
+                backend: existing_record.backend.clone(),
+                change_type: "not in import".into(),
+            });
+        }
+    }
+
+    let preview_id = Uuid::new_v4().to_string();
+    let base_revision = existing
+        .iter()
+        .map(|s| s.revision)
+        .max()
+        .unwrap_or(0)
+        .to_string();
+
+    let preview = StorageImportPreview {
+        preview_id: preview_id.clone(),
+        base_registry_revision: base_revision,
+        additions,
+        updates,
+        renames: Vec::new(),
+        removals,
+        policy_changes,
+        exposure_changes,
+        missing_secret_fields,
+        warnings,
+    };
+
+    let mut store = preview_store().lock().unwrap();
+    store.insert(
+        preview_id.clone(),
+        PreviewEntry {
+            changes: preview.clone(),
+            storages: imported,
+            created_at: Instant::now(),
+        },
+    );
+    store.retain(|_, entry| entry.created_at.elapsed().as_secs() < 600);
+
+    Ok(preview)
+}
+
+pub async fn apply_storage_import(
+    ctx: &FsToolsContext,
+    input: ApplyStorageImportInput,
+) -> McpResult<ApplyStorageImportResult> {
+    if !matches!(input.mode.as_str(), "merge" | "replace") {
+        return Err(err(
+            McpErrorCode::ERR_INTERNAL,
+            "mode must be 'merge' or 'replace'",
+        ));
+    }
+    if !matches!(input.on_conflict.as_str(), "error" | "overwrite" | "rename") {
+        return Err(err(
+            McpErrorCode::ERR_INTERNAL,
+            "on_conflict must be 'error', 'overwrite', or 'rename'",
+        ));
+    }
+    if input.mode == "replace" && !input.confirmed {
+        return Err(err(
+            McpErrorCode::ERR_IMPORT_CONFIRMATION_REQUIRED,
+            "replace mode requires explicit confirmation",
+        ));
+    }
+
+    let entry = {
+        let mut store = preview_store().lock().unwrap();
+        store.remove(&input.preview_id).ok_or_else(|| {
+            err(
+                McpErrorCode::ERR_IMPORT_PREVIEW_EXPIRED,
+                "import preview not found or expired; re-preview the import",
+            )
+        })?
+    };
+
+    let existing = ctx.registry.load_all()?;
+    let current_revision = existing
+        .iter()
+        .map(|s| s.revision)
+        .max()
+        .unwrap_or(0)
+        .to_string();
+    if current_revision != input.base_registry_revision {
+        return Err(err(
+            McpErrorCode::ERR_IMPORT_PREVIEW_STALE,
+            "storage registry has changed since preview; re-preview the import",
+        ));
+    }
+
+    let imported = entry.storages;
+    let imported_count = imported.len();
+    let merged = if input.mode == "replace" {
+        imported
+    } else {
+        let mut merged = existing.clone();
+        for incoming in imported {
+            if let Some(idx) = merged
+                .iter()
+                .position(|s| s.name == incoming.name)
+            {
+                match input.on_conflict.as_str() {
+                    "error" => {
+                        return Err(err_with_details(
+                            McpErrorCode::ERR_STORAGE_NAME_CONFLICT,
+                            format!("Storage name '{}' already exists", incoming.name),
+                            serde_json::json!({ "name": incoming.name }),
+                        ));
+                    }
+                    "overwrite" => {
+                        let mut record = incoming;
+                        record.id = merged[idx].id.clone();
+                        record.created_at = merged[idx].created_at.clone();
+                        record.updated_at = Utc::now().to_rfc3339();
+                        record.secret_ref = merged[idx].secret_ref.clone();
+                        record.secret_fields = merged[idx].secret_fields.clone();
+                        merged[idx] = record;
+                    }
+                    "rename" => {
+                        let mut record = incoming;
+                        record.name = next_renamed_name(&merged, &record.name);
+                        ensure_unique_name(&merged, &record.name, None)?;
+                        merged.push(record);
+                    }
+                    _ => unreachable!(),
+                }
+            } else {
+                ensure_unique_name(&merged, &incoming.name, None)?;
+                merged.push(incoming);
+            }
+        }
+        merged
+    };
+
+    let backup = serde_json::to_vec(&existing).map_err(|e| {
+        err_with_details(
+            McpErrorCode::ERR_INTERNAL,
+            "failed to create pre-import backup",
+            serde_json::json!({ "serde_error": e.to_string() }),
+        )
+    })?;
+
+    let result = ctx.registry.save_all_atomic_if_unchanged(&existing, &merged);
+    match result {
+        Ok(()) => Ok(ApplyStorageImportResult {
+            applied: imported_count,
+            warnings: Vec::new(),
+        }),
+        Err(error) => {
+            let _ = std::fs::write(
+                crate::registry::default_config_dir().join("import-backup.json"),
+                &backup,
+            );
+            Err(error)
+        }
+    }
 }

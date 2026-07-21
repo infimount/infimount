@@ -35,9 +35,8 @@ use crate::tools_fs::{
 // tools_storage functions remain available for desktop-internal calls
 use crate::tools_storage::{
     self, AddStorageInput, AddStorageOutput, EditStorageInput, EditStorageOutput,
-    ExportConfigInput, ExportConfigOutput, ImportConfigInput, ImportConfigOutput,
-    ListStoragesOutput, RemoveStorageInput, RemoveStorageOutput, ValidateStorageInput,
-    ValidateStorageOutput,
+    ExportConfigOutput, ImportConfigInput, ImportConfigOutput, ListStoragesOutput,
+    RemoveStorageInput, RemoveStorageOutput, ValidateStorageInput, ValidateStorageOutput,
 };
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -1115,9 +1114,8 @@ pub async fn invoke_import_config_typed(
 
 pub async fn invoke_export_config_typed(
     ctx: &FsToolsContext,
-    input: ExportConfigInput,
 ) -> McpResult<ExportConfigOutput> {
-    tools_storage::export_config(ctx, input).await
+    tools_storage::export_config(ctx).await
 }
 
 pub async fn invoke_validate_storage_typed(

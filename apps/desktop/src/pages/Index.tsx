@@ -17,7 +17,7 @@ import {
   completeOnboarding,
   denyMcpConfirmation,
   exportMcpAuditBundle,
-  exportStorageConfig,
+  exportShareableConfig,
   getAppSettings,
   getMcpClientSnippets,
   getMcpStatus,
@@ -579,7 +579,7 @@ const Index = () => {
   const handleExportStorages = () => {
     void (async () => {
       try {
-        const result = await exportStorageConfig(true);
+        const result = await exportShareableConfig();
         const blob = new Blob([result.json], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
@@ -603,7 +603,7 @@ const Index = () => {
   };
 
   const loadStorageConfigJson = async () => {
-    const result = await exportStorageConfig(true);
+    const result = await exportShareableConfig();
     return result.json;
   };
 

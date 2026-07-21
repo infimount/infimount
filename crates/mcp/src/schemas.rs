@@ -227,9 +227,7 @@ pub fn schema_import_config() -> serde_json::Value {
 pub fn schema_export_config() -> serde_json::Value {
     json!({
       "type": "object",
-      "properties": {
-        "include_secrets": { "type": "boolean", "default": false }
-      },
+      "properties": {},
       "additionalProperties": false
     })
 }
