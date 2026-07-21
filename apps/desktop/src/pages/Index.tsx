@@ -84,6 +84,16 @@ const StorageConfigEditorDialog = lazy(() =>
     default: module.StorageConfigEditorDialog,
   })),
 );
+const StorageImportDialog = lazy(() =>
+  import("@/components/StorageImportDialog").then((module) => ({
+    default: module.StorageImportDialog,
+  })),
+);
+const RecoveryBackupDialog = lazy(() =>
+  import("@/components/RecoveryBackupDialog").then((module) => ({
+    default: module.RecoveryBackupDialog,
+  })),
+);
 
 function mapWireStorage(storage: StorageRecordWire): StorageConfig {
   return {
@@ -276,6 +286,8 @@ const Index = () => {
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
   const [isAgentWorkspacesOpen, setIsAgentWorkspacesOpen] = useState(false);
   const [isMcpDialogOpen, setIsMcpDialogOpen] = useState(false);
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
+  const [isBackupDialogOpen, setIsBackupDialogOpen] = useState(false);
   const [mcpStatus, setMcpStatus] = useState<McpRuntimeStatus | null>(null);
   const [mcpSnippets, setMcpSnippets] = useState<McpClientSnippets | null>(null);
   const [mcpTools, setMcpTools] = useState<McpToolDefinition[]>([]);
@@ -538,68 +550,11 @@ const Index = () => {
   };
 
   const handleImportStorages = () => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = ".json,application/json";
-    input.onchange = (event) => {
-      const file = (event.target as HTMLInputElement).files?.[0];
-      if (!file) return;
-
-      const reader = new FileReader();
-      reader.onload = (loadEvent) => {
-        const text = (loadEvent.target?.result as string) ?? "";
-        void (async () => {
-          try {
-            const result = await importStorageConfig({
-              json: text,
-              mode: "replace",
-              onConflict: "overwrite",
-            });
-            await reloadStorages();
-            toast({
-              title: "Import successful",
-              description: result.warnings?.length
-                ? `Imported ${result.imported} storage configuration(s). ${result.warnings.join(" ")}`
-                : `Imported ${result.imported} storage configuration(s).`,
-            });
-          } catch (error: unknown) {
-            toast({
-              title: "Import failed",
-              description: error instanceof Error ? error.message : String(error),
-              variant: "destructive",
-            });
-          }
-        })();
-      };
-      reader.readAsText(file);
-    };
-    input.click();
+    setIsImportDialogOpen(true);
   };
 
   const handleExportStorages = () => {
-    void (async () => {
-      try {
-        const result = await exportShareableConfig();
-        const blob = new Blob([result.json], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = "infimount-storages.json";
-        link.click();
-        URL.revokeObjectURL(url);
-
-        toast({
-          title: "Export successful",
-          description: `Exported ${storages.length} storage configuration(s).`,
-        });
-      } catch (error: unknown) {
-        toast({
-          title: "Export failed",
-          description: error instanceof Error ? error.message : String(error),
-          variant: "destructive",
-        });
-      }
-    })();
+    setIsBackupDialogOpen(true);
   };
 
   const loadStorageConfigJson = async () => {
@@ -1087,6 +1042,22 @@ const Index = () => {
             onOpenChange={setIsAgentWorkspacesOpen}
             onSelectStorage={handleSelectStorage}
             onUpdateStoragePolicy={handleUpdateMcpStoragePolicy}
+          />
+        ) : null}
+
+        {isImportDialogOpen ? (
+          <StorageImportDialog
+            open={isImportDialogOpen}
+            onOpenChange={setIsImportDialogOpen}
+            onImportComplete={reloadStorages}
+          />
+        ) : null}
+
+        {isBackupDialogOpen ? (
+          <RecoveryBackupDialog
+            open={isBackupDialogOpen}
+            onOpenChange={setIsBackupDialogOpen}
+            onRestoreComplete={reloadStorages}
           />
         ) : null}
         </Suspense>

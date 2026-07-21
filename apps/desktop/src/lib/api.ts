@@ -462,6 +462,53 @@ export async function readFileVersion(
   return new Uint8Array(data);
 }
 
+export interface CreateBackupInput {
+  passphrase: string;
+}
+
+export interface CreateBackupResult {
+  armored: string;
+  storageCount: number;
+}
+
+export interface RestorePreviewInput {
+  passphrase: string;
+  armored: string;
+}
+
+export interface RestorePreviewResult {
+  storageCount: number;
+  hasMcpSettings: boolean;
+  hasAppSettings: boolean;
+  createdAt: string;
+  checksumValid: boolean;
+}
+
+export interface ApplyRestoreInput {
+  passphrase: string;
+  armored: string;
+  restoreMcpSettings: boolean;
+  restoreAppSettings: boolean;
+}
+
+export interface ApplyRestoreResult {
+  storagesRestored: number;
+  mcpSettingsRestored: boolean;
+  appSettingsRestored: boolean;
+}
+
+export function createRecoveryBackup(request: CreateBackupInput): Promise<CreateBackupResult> {
+  return invokeOrThrow<CreateBackupResult>("create_recovery_backup", { request });
+}
+
+export function previewRecoveryRestore(request: RestorePreviewInput): Promise<RestorePreviewResult> {
+  return invokeOrThrow<RestorePreviewResult>("preview_recovery_restore", { request });
+}
+
+export function applyRecoveryRestore(request: ApplyRestoreInput): Promise<ApplyRestoreResult> {
+  return invokeOrThrow<ApplyRestoreResult>("apply_recovery_restore", { request });
+}
+
 export function deleteFileVersion(
   sourceId: string,
   path: string,
