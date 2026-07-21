@@ -66,7 +66,7 @@ pub async fn mkdir(ctx: &FsToolsContext, input: MkdirInput) -> McpResult<MkdirOu
         false,
     )?;
 
-    let op = opendal_adapter::build_operator(&storage)?;
+    let op = opendal_adapter::build_operator(&storage, &ctx.registry)?;
 
     if parsed.backend_path.is_empty() {
         if input.exist_ok {

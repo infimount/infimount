@@ -41,7 +41,7 @@ pub async fn delete_version(
     }
 
     let resolved = resolve_storage_path(&ctx.registry, &parsed.normalized)?;
-    let op = opendal_adapter::build_operator(&resolved.storage)?;
+    let op = opendal_adapter::build_operator(&resolved.storage, &ctx.registry)?;
 
     if let Some(disabled) = opendal_adapter::check_versioning_disabled(&resolved.storage) {
         if disabled {

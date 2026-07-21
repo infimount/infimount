@@ -84,7 +84,7 @@ pub async fn write_file(ctx: &FsToolsContext, input: WriteFileInput) -> McpResul
         ));
     }
 
-    let op = opendal_adapter::build_operator(&storage)?;
+    let op = opendal_adapter::build_operator(&storage, &ctx.registry)?;
 
     if parsed.backend_path.is_empty() {
         return Err(err_with_details(

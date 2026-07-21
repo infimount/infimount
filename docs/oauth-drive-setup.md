@@ -7,8 +7,9 @@ Infimount can connect Google Drive and Microsoft OneDrive from the desktop Add S
 - The callback listener binds to `127.0.0.1` on a temporary random port and expects the `/oauth/callback` path.
 - The authorization request uses PKCE S256 and validates `state` before token exchange.
 - OAuth access tokens, refresh tokens, client secrets, authorization codes, device codes, and PKCE verifiers are treated as secrets and masked from UI text, logs, validation summaries, and provider error output.
-- Tokens are stored locally in the Infimount storage registry when you save the storage. Treat `~/.infimount/storages.json` as sensitive.
-- Infimount does not claim OAuth tokens are encrypted or stored in an OS keychain.
+- Tokens never enter the webview response. After token exchange they remain in a ten-minute, single-use in-memory OAuth session.
+- Saving consumes that session and stores tokens locally in the operating system's native secret store. `~/.infimount/storages.json` contains only public configuration and an opaque secret reference.
+- If native secret storage is locked or unavailable, saving fails without writing tokens to plaintext.
 - MCP exposure remains off by default. Connecting a drive does not expose it to agents.
 - Manual token fields remain available as an advanced fallback.
 

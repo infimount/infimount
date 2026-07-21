@@ -17,10 +17,12 @@ const status: McpRuntimeStatus = {
     port: 7331,
     enabledTools: ["list_dir"],
     securityBaselineVersion: 2,
+    authTokenConfigured: false,
   },
   runningHttp: false,
   endpoint: null,
   endpointDisplay: "http://127.0.0.1:7331/mcp",
+  authTokenConfigured: false,
 };
 
 const snippets: McpClientSnippets = {
@@ -132,7 +134,7 @@ describe("McpSettingsDialog integration", () => {
     );
   });
 
-  it("preserves a loaded auth token while saving before HTTP start", async () => {
+  it("keeps a configured auth token without returning it to the webview", async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     const onStartHttp = vi.fn().mockResolvedValue(undefined);
 
@@ -142,7 +144,7 @@ describe("McpSettingsDialog integration", () => {
         onOpenChange={() => undefined}
         status={{
           ...status,
-          settings: { ...status.settings, authToken: "persisted-token" },
+          settings: { ...status.settings, authTokenConfigured: true },
         }}
         snippets={snippets}
         tools={tools}
@@ -165,7 +167,7 @@ describe("McpSettingsDialog integration", () => {
       />,
     );
 
-    expect(screen.getByDisplayValue("persisted-token")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("persisted-token")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Save & Start HTTP Server/i }));
 
     await waitFor(() => {
@@ -175,8 +177,7 @@ describe("McpSettingsDialog integration", () => {
         bindAddress: "127.0.0.1",
         port: 7331,
         enabledTools: ["list_dir"],
-        securityBaselineVersion: 2,
-        authToken: "persisted-token",
+        authTokenMutation: { action: "keep" },
       });
       expect(onStartHttp).toHaveBeenCalled();
     });
@@ -243,8 +244,7 @@ describe("McpSettingsDialog integration", () => {
         bindAddress: "0.0.0.0",
         port: 7331,
         enabledTools: ["list_dir"],
-        securityBaselineVersion: 2,
-        authToken: "test-token",
+        authTokenMutation: { action: "set", value: "test-token" },
       });
       expect(onStartHttp).toHaveBeenCalled();
     });

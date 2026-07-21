@@ -20,6 +20,8 @@ interface McpRuntimeSectionProps {
   settings: McpSettings;
   onSettingsChange: Dispatch<SetStateAction<McpSettings>>;
   status: McpRuntimeStatus | null;
+  authTokenDraft: string | undefined;
+  onAuthTokenDraftChange: (value: string | undefined) => void;
   isBusy: boolean;
   isSaving: boolean;
   isTogglingHttp: boolean;
@@ -36,6 +38,8 @@ export function McpRuntimeSection({
   settings,
   onSettingsChange,
   status,
+  authTokenDraft,
+  onAuthTokenDraftChange,
   isBusy,
   isSaving,
   isTogglingHttp,
@@ -121,19 +125,34 @@ export function McpRuntimeSection({
               </Label>
               <Input
                 type="password"
-                value={settings.authToken ?? ""}
-                placeholder={showNetworkWarning ? "Required for non-loopback HTTP" : "Optional for loopback HTTP"}
-                onChange={(event) =>
-                  onSettingsChange((current) => ({
-                    ...current,
-                    authToken: event.target.value,
-                  }))
+                value={authTokenDraft ?? ""}
+                placeholder={
+                  settings.authTokenConfigured
+                    ? "Stored locally — leave blank to keep"
+                    : showNetworkWarning
+                      ? "Required for non-loopback HTTP"
+                      : "Optional for loopback HTTP"
                 }
+                onChange={(event) => onAuthTokenDraftChange(event.target.value)}
                 className={`border border-border bg-card text-sm text-[hsl(var(--card-foreground))] ${FIELD_FOCUS_CLASS}`}
               />
-              <p className="text-[11px] text-muted-foreground">
-                Clients must send <span className="font-mono">Authorization: Bearer …</span> when a token is set.
-              </p>
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[11px] text-muted-foreground">
+                  {settings.authTokenConfigured
+                    ? "A token is stored locally. Enter a replacement, leave untouched to keep it, or clear it explicitly."
+                    : "Clients must send Authorization: Bearer … when a token is set."}
+                </p>
+                {settings.authTokenConfigured ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onAuthTokenDraftChange("")}
+                  >
+                    Clear token
+                  </Button>
+                ) : null}
+              </div>
             </div>
             {showNetworkWarning ? (
               <div className="rounded-lg border border-amber-300/80 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">

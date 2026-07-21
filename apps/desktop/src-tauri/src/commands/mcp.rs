@@ -9,10 +9,9 @@ use infimount_mcp::server::ToolDefinition;
 use infimount_mcp::session::Session;
 use infimount_mcp::settings::McpSettings;
 use serde::{Deserialize, Serialize};
-use std::fs;
 use tauri::State;
 
-use crate::state::{AppState, McpClientSnippets, McpRuntimeStatus};
+use crate::state::{AppState, AuthTokenMutation, McpClientSnippets, McpRuntimeStatus};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,21 +37,41 @@ pub struct ExportMcpAuditBundleOutput {
 }
 
 #[tauri::command]
-pub fn get_mcp_settings(state: State<'_, AppState>) -> Result<McpSettings, McpError> {
-    state.settings_store.load()
-}
-
-#[tauri::command]
 pub fn list_mcp_tools() -> Vec<ToolDefinition> {
     infimount_mcp::server::tool_definitions()
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpSettingsUpdate {
+    pub enabled: bool,
+    pub transport: infimount_mcp::settings::McpTransport,
+    pub bind_address: String,
+    pub port: u16,
+    pub enabled_tools: Vec<String>,
+    pub auth_token_mutation: AuthTokenMutation,
+}
+
 #[tauri::command]
-pub async fn update_mcp_settings(
+pub async fn update_mcp_settings_with_auth(
     state: State<'_, AppState>,
-    settings: McpSettings,
+    update: McpSettingsUpdate,
 ) -> Result<McpRuntimeStatus, McpError> {
-    state.apply_mcp_settings(settings).await
+    let settings = McpSettings {
+        schema_version: infimount_mcp::settings::MCP_SETTINGS_SCHEMA_VERSION,
+        enabled: update.enabled,
+        transport: update.transport,
+        bind_address: update.bind_address,
+        port: update.port,
+        enabled_tools: update.enabled_tools,
+        auth_token_ref: None,
+        auth_token: None,
+        security_baseline_version: infimount_mcp::settings::SECURITY_BASELINE_VERSION,
+    };
+
+    state
+        .apply_mcp_settings_with_auth(settings, update.auth_token_mutation)
+        .await
 }
 
 #[tauri::command]
@@ -110,11 +129,11 @@ pub fn export_mcp_audit_bundle(
     });
 
     let export_dir = default_config_dir().join("exports");
-    fs::create_dir_all(&export_dir).map_err(|error| {
+    infimount_core::atomic_file::create_dir_all(&export_dir).map_err(|_| {
         err_with_details(
             McpErrorCode::ERR_INTERNAL,
             "failed to create MCP audit export directory",
-            serde_json::json!({ "io_error": error.to_string(), "path": export_dir }),
+            serde_json::json!({}),
         )
     })?;
     let filename = format!("mcp-audit-{}.json", Utc::now().format("%Y%m%dT%H%M%SZ"));
@@ -126,11 +145,16 @@ pub fn export_mcp_audit_bundle(
             serde_json::json!({ "serde_error": error.to_string() }),
         )
     })?;
-    fs::write(&path, payload).map_err(|error| {
+    infimount_core::atomic_file::atomic_write_file(
+        &path,
+        &payload,
+        infimount_core::atomic_file::FILE_MODE,
+    )
+    .map_err(|_| {
         err_with_details(
             McpErrorCode::ERR_INTERNAL,
             "failed to write MCP audit export bundle",
-            serde_json::json!({ "io_error": error.to_string(), "path": path }),
+            serde_json::json!({}),
         )
     })?;
 

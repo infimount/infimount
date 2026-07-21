@@ -2467,7 +2467,11 @@ mod tests {
 
         let err = result.expect_err("duplicate destination names must fail before copying");
         assert!(
-            err.to_string().contains("same destination name"),
+            matches!(
+                err,
+                crate::models::CoreError::Storage(ref error)
+                    if error.kind() == opendal::ErrorKind::AlreadyExists
+            ),
             "unexpected error: {err}"
         );
         assert!(!to_op.exists("target/file.txt").await.unwrap());
@@ -2498,8 +2502,11 @@ mod tests {
 
         let err = result.expect_err("copying a folder into itself must fail before recursion");
         assert!(
-            err.to_string().contains("Cannot copy")
-                && err.to_string().contains("folder into itself"),
+            matches!(
+                err,
+                crate::models::CoreError::Storage(ref error)
+                    if error.kind() == opendal::ErrorKind::IsSameFile
+            ),
             "unexpected error: {err}"
         );
         assert!(!op.exists("demo/child/demo/").await.unwrap());

@@ -12,13 +12,20 @@ pub struct RemoveStorageInput {
 #[derive(Debug, Serialize)]
 pub struct RemoveStorageOutput {
     pub removed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
 }
 
 pub async fn remove_storage(
     ctx: &FsToolsContext,
     input: RemoveStorageInput,
 ) -> McpResult<RemoveStorageOutput> {
+    let mut secret_ref = None;
     ctx.registry.with_locked_mutation(|storages| {
+        secret_ref = storages
+            .iter()
+            .find(|storage| storage.name == input.name)
+            .and_then(|storage| storage.secret_ref.clone());
         let before = storages.len();
         storages.retain(|storage| storage.name != input.name);
         if storages.len() == before {
@@ -30,6 +37,22 @@ pub async fn remove_storage(
         }
         Ok(())
     })?;
+    let mut warning = None;
+    if let Some(account) = secret_ref {
+        if ctx.registry.secret_store().delete(&account).is_err() {
+            warning = Some(
+                if super::import_config::append_cleanup_journal(&account).is_ok() {
+                    "Credential cleanup is pending and will be retried."
+                } else {
+                    "Credential cleanup failed and could not be journaled; remove the native secret-store entry manually."
+                }
+                .to_string(),
+            );
+        }
+    }
 
-    Ok(RemoveStorageOutput { removed: true })
+    Ok(RemoveStorageOutput {
+        removed: true,
+        warning,
+    })
 }

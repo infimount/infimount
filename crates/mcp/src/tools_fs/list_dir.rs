@@ -90,7 +90,7 @@ pub async fn list_dir(ctx: &FsToolsContext, input: ListDirInput) -> McpResult<Li
         false,
         false,
     )?;
-    let op = opendal_adapter::build_operator(&resolved.storage)?;
+    let op = opendal_adapter::build_operator(&resolved.storage, &ctx.registry)?;
 
     if !parsed.backend_path.is_empty() {
         let meta = op

@@ -59,7 +59,7 @@ pub async fn search_paths(
         false,
         false,
     )?;
-    let op = opendal_adapter::build_operator(&resolved.storage)?;
+    let op = opendal_adapter::build_operator(&resolved.storage, &ctx.registry)?;
 
     if parsed.backend_path.is_empty() {
         let mut matches = Vec::new();

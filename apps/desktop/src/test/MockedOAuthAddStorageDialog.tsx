@@ -110,15 +110,13 @@ export function MockedOAuthAddStorageDialog({
 
     return {
       provider,
-      config: {
-        accessToken: "playwright-access-token",
-        refreshToken: "playwright-refresh-token",
+      oauthSessionId: "playwright-oauth-session",
+      publicConfig: {
         clientId: input.clientId,
-        clientSecret: input.clientSecret,
         rootPath: input.rootPath,
         ...(provider === "onedrive" ? { versioning: input.versioning ?? false } : {}),
       },
-      expiresAt: null,
+      expiresAt: "2026-01-01T00:10:00Z",
     };
   };
 

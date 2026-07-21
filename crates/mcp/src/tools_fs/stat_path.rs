@@ -58,7 +58,7 @@ pub async fn stat_path(ctx: &FsToolsContext, input: StatPathInput) -> McpResult<
         false,
         false,
     )?;
-    let op = opendal_adapter::build_operator(&resolved.storage)?;
+    let op = opendal_adapter::build_operator(&resolved.storage, &ctx.registry)?;
 
     if parsed.backend_path.is_empty() {
         return Ok(StatPathOutput {

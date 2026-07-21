@@ -1,15 +1,19 @@
-use std::io::Write;
-
-use crate::errors::{err, err_with_details, map_io_error, McpErrorCode, McpResult};
+use crate::errors::{err, err_with_details, map_core_error, map_io_error, McpErrorCode, McpResult};
 use crate::policy::{
     migrate_legacy_policy, normalize_storage_policy, McpStoragePolicy, MCP_POLICY_VERSION,
 };
 use chrono::Utc;
 use fs2::FileExt;
+use infimount_core::atomic_file::{atomic_write_file, ensure_parent};
+use infimount_core::secrets::{
+    discover_secret_field_names, extract_secret_fields, merge_secret_config, strip_secret_fields,
+    NativeSecretStore, SecretStore,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use tracing::info;
@@ -98,17 +102,30 @@ impl StorageRecord {
 pub struct StorageRegistry {
     path: PathBuf,
     lock_path: PathBuf,
+    secret_store: Arc<dyn SecretStore>,
 }
 
 impl StorageRegistry {
     pub fn new(path: Option<PathBuf>) -> Self {
+        Self::with_secret_store(path, Arc::new(NativeSecretStore::new()))
+    }
+
+    pub fn with_secret_store(path: Option<PathBuf>, secret_store: Arc<dyn SecretStore>) -> Self {
         let path = path.unwrap_or_else(default_registry_path);
         let lock_path = path.with_extension("lock");
-        Self { path, lock_path }
+        Self {
+            path,
+            lock_path,
+            secret_store,
+        }
     }
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub fn secret_store(&self) -> &Arc<dyn SecretStore> {
+        &self.secret_store
     }
 
     pub fn load_all(&self) -> McpResult<Vec<StorageRecord>> {
@@ -118,6 +135,42 @@ impl StorageRegistry {
     pub fn save_all_atomic(&self, storages: &[StorageRecord]) -> McpResult<()> {
         self.with_file_lock(REGISTRY_LOCK_TIMEOUT, || {
             self.save_all_atomic_unlocked(storages)
+        })
+    }
+
+    pub fn save_all_atomic_if_unchanged(
+        &self,
+        expected: &[StorageRecord],
+        replacement: &[StorageRecord],
+    ) -> McpResult<()> {
+        self.with_file_lock(REGISTRY_LOCK_TIMEOUT, || {
+            let current = self.load_all_unlocked()?;
+            let unchanged = current.len() == expected.len()
+                && current.iter().all(|record| {
+                    expected.iter().any(|old| {
+                        old.id == record.id
+                            && old.revision == record.revision
+                            && old.updated_at == record.updated_at
+                    })
+                });
+            if !unchanged {
+                return Err(err(
+                    McpErrorCode::ERR_INTERNAL,
+                    "storage registry changed during transaction; retry the operation",
+                ));
+            }
+            self.save_all_atomic_unlocked(replacement)
+        })
+    }
+
+    pub fn save_legacy_records_secure(&self, mut storages: Vec<StorageRecord>) -> McpResult<()> {
+        self.with_file_lock(REGISTRY_LOCK_TIMEOUT, || {
+            let rollback = self.migrate_secrets_in_batch(&mut storages)?;
+            if let Err(error) = self.save_all_atomic_unlocked(&storages) {
+                self.rollback_secret_writes(rollback)?;
+                return Err(error);
+            }
+            Ok(())
         })
     }
 
@@ -169,6 +222,42 @@ impl StorageRegistry {
         Ok(storage)
     }
 
+    pub fn resolve_storage(&self, record: &StorageRecord) -> McpResult<ResolvedStorageRecord> {
+        let resolved_config = if let Some(ref secret_ref) = record.secret_ref {
+            let secret_bundle = self
+                .secret_store
+                .get_json(secret_ref)
+                .map_err(|_| {
+                    err_with_details(
+                        McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                        "native secret storage is unavailable",
+                        json!({ "storage_id": record.id }),
+                    )
+                })?
+                .ok_or_else(|| {
+                    err_with_details(
+                        McpErrorCode::ERR_SECRET_NOT_FOUND,
+                        "stored credentials are missing",
+                        json!({ "storage_id": record.id }),
+                    )
+                })?;
+            merge_secret_config(&record.config, &secret_bundle)
+        } else if record.secret_fields.is_empty() {
+            record.config.clone()
+        } else {
+            return Err(err_with_details(
+                McpErrorCode::ERR_SECRET_NOT_FOUND,
+                "stored credential reference is missing",
+                json!({ "storage_id": record.id }),
+            ));
+        };
+
+        Ok(ResolvedStorageRecord {
+            record: record.clone(),
+            resolved_config,
+        })
+    }
+
     fn load_all_unlocked(&self) -> McpResult<Vec<StorageRecord>> {
         if !self.path.exists() {
             return Ok(Vec::new());
@@ -190,27 +279,153 @@ impl StorageRegistry {
         let needs_schema_migration = storages
             .iter()
             .any(|s| !schema_version_matches_current(s.schema_version));
+        let schema_secret_names = discover_secret_field_names();
+        let needs_secret_migration = storages.iter().any(|storage| {
+            infimount_core::secrets::contains_plaintext_secrets(
+                &storage.config,
+                &schema_secret_names,
+            )
+        });
 
-        if needs_policy_migration || needs_schema_migration {
+        if needs_policy_migration || needs_schema_migration || needs_secret_migration {
             let backup_path = self.create_pre_migration_backup(&data)?;
-            for storage in &mut storages {
-                if storage.mcp_policy.version != MCP_POLICY_VERSION {
-                    let mut policy = storage.mcp_policy.clone();
-                    migrate_legacy_policy(&mut policy)?;
-                    storage.mcp_policy = policy;
-                }
-                if !schema_version_matches_current(storage.schema_version) {
+
+            let rollback = if needs_secret_migration {
+                self.migrate_secrets_in_batch(&mut storages)?
+            } else {
+                Vec::new()
+            };
+
+            let migration_result = (|| -> McpResult<()> {
+                for storage in &mut storages {
+                    if storage.mcp_policy.version != MCP_POLICY_VERSION {
+                        let mut policy = storage.mcp_policy.clone();
+                        migrate_legacy_policy(&mut policy)?;
+                        storage.mcp_policy = policy;
+                    }
                     storage.schema_version = STORAGE_RECORD_SCHEMA_VERSION;
                 }
+                self.save_all_atomic_unlocked(&storages)?;
+                let persisted = fs::read(&self.path).map_err(|error| {
+                    map_io_error(&error, McpErrorCode::ERR_SECRET_MIGRATION_FAILED)
+                })?;
+                let persisted_records: Vec<StorageRecord> = serde_json::from_slice(&persisted)
+                    .map_err(|_| {
+                        err(
+                            McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+                            "failed to verify migrated storage registry",
+                        )
+                    })?;
+                if persisted_records.iter().any(|storage| {
+                    infimount_core::secrets::contains_plaintext_secrets(
+                        &storage.config,
+                        &schema_secret_names,
+                    )
+                }) {
+                    return Err(err(
+                        McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+                        "plaintext credentials remained after migration",
+                    ));
+                }
+                Ok(())
+            })();
+            if let Err(error) = migration_result {
+                atomic_write_file(&self.path, data.as_bytes(), 0o600).map_err(|_| {
+                    err(
+                        McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+                        "failed to restore registry after migration; staged credentials were retained",
+                    )
+                })?;
+                let restored = fs::read(&self.path).map_err(|_| {
+                    err(
+                        McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+                        "failed to verify restored registry; staged credentials were retained",
+                    )
+                })?;
+                if restored != data.as_bytes() {
+                    return Err(err(
+                        McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+                        "restored registry verification failed; staged credentials were retained",
+                    ));
+                }
+                self.rollback_secret_writes(rollback)?;
+                return Err(error);
             }
-            self.save_all_atomic_unlocked(&storages)?;
-            info!(
-                "migrated storage registry policy v1 -> v2 with backup at {:?}",
-                backup_path
-            );
+            info!("migrated storage registry with backup at {:?}", backup_path);
         }
 
         Ok(storages)
+    }
+
+    fn migrate_secrets_in_batch(
+        &self,
+        storages: &mut [StorageRecord],
+    ) -> McpResult<Vec<(String, Option<Value>)>> {
+        let schema_secret_names = discover_secret_field_names();
+        let mut rollback = Vec::new();
+        for storage in storages.iter_mut() {
+            let secret_fields = extract_secret_fields(&storage.config, &schema_secret_names);
+            if secret_fields.is_empty() {
+                continue;
+            }
+            let secret_ref = storage
+                .secret_ref
+                .clone()
+                .unwrap_or_else(|| format!("storage/{}", storage.id));
+            let previous = match self.secret_store.get_json(&secret_ref) {
+                Ok(value) => value,
+                Err(_) => {
+                    self.rollback_secret_writes(rollback)?;
+                    return Err(err(
+                        McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+                        "failed to stage credential migration",
+                    ));
+                }
+            };
+            let mut bundle = previous.clone().unwrap_or_else(|| json!({}));
+            let Some(object) = bundle.as_object_mut() else {
+                self.rollback_secret_writes(rollback)?;
+                return Err(err(
+                    McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+                    "stored secret bundle is invalid",
+                ));
+            };
+            let extracted_names = secret_fields
+                .iter()
+                .map(|(name, _)| name.clone())
+                .collect::<Vec<_>>();
+            object.extend(secret_fields);
+            rollback.push((secret_ref.clone(), previous));
+            if self.secret_store.put_json(&secret_ref, &bundle).is_err() {
+                self.rollback_secret_writes(rollback)?;
+                return Err(err(
+                    McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+                    "failed to migrate credentials to native secret storage",
+                ));
+            }
+            strip_secret_fields(&mut storage.config, &schema_secret_names);
+            storage.secret_ref = Some(secret_ref);
+            storage.secret_fields = extracted_names;
+            storage.schema_version = STORAGE_RECORD_SCHEMA_VERSION;
+            storage.revision = storage.revision.saturating_add(1);
+        }
+        Ok(rollback)
+    }
+
+    fn rollback_secret_writes(&self, rollback: Vec<(String, Option<Value>)>) -> McpResult<()> {
+        for (account, previous) in rollback.into_iter().rev() {
+            let restored = match previous {
+                Some(value) => self.secret_store.put_json(&account, &value),
+                None => self.secret_store.delete(&account),
+            };
+            if restored.is_err() {
+                return Err(err(
+                    McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+                    "credential rollback failed; manual secret-store cleanup is required",
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn create_pre_migration_backup(&self, original_data: &str) -> McpResult<PathBuf> {
@@ -225,24 +440,34 @@ impl StorageRegistry {
                 )
             })?
             .join("backups");
-        fs::create_dir_all(&backups_dir)
-            .map_err(|e| map_io_error(&e, McpErrorCode::ERR_INTERNAL))?;
+        infimount_core::atomic_file::create_dir_all(&backups_dir)
+            .map_err(|error| map_core_error(&error))?;
 
         let timestamp = Utc::now().format("%Y%m%d%H%M%S%3f");
-        let backup_name = format!("storages.pre-policy-v2.{}.json", timestamp);
+        let backup_name = format!("storages.pre-secrets-v2.{}.json", timestamp);
         let backup_path = backups_dir.join(backup_name);
 
         let payload = original_data.as_bytes();
-        atomic_write_file(&backup_path, payload, 0o600)?;
+        atomic_write_file(&backup_path, payload, 0o600).map_err(|e| map_core_error(&e))?;
 
         Ok(backup_path)
     }
 
     fn save_all_atomic_unlocked(&self, storages: &[StorageRecord]) -> McpResult<()> {
-        ensure_parent(&self.path)?;
+        ensure_parent(&self.path).map_err(|e| map_core_error(&e))?;
 
         let mut normalized_storages = storages.to_vec();
+        let schema_secret_names = discover_secret_field_names();
         for storage in &mut normalized_storages {
+            if infimount_core::secrets::contains_plaintext_secrets(
+                &storage.config,
+                &schema_secret_names,
+            ) {
+                return Err(err(
+                    McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+                    "refusing to persist plaintext credentials",
+                ));
+            }
             if storage.mcp_policy.version != MCP_POLICY_VERSION {
                 migrate_legacy_policy(&mut storage.mcp_policy)?;
             }
@@ -258,7 +483,7 @@ impl StorageRegistry {
             )
         })?;
 
-        atomic_write_file(&self.path, &payload, 0o600)
+        atomic_write_file(&self.path, &payload, 0o600).map_err(|e| map_core_error(&e))
     }
 
     fn with_file_lock<T>(
@@ -266,7 +491,7 @@ impl StorageRegistry {
         timeout: Duration,
         f: impl FnOnce() -> McpResult<T>,
     ) -> McpResult<T> {
-        ensure_parent(&self.lock_path)?;
+        ensure_parent(&self.lock_path).map_err(|e| map_core_error(&e))?;
 
         let lock_file = OpenOptions::new()
             .create(true)
@@ -294,6 +519,90 @@ impl StorageRegistry {
         let _ = FileExt::unlock(&lock_file);
         result
     }
+}
+
+pub struct ResolvedStorageRecord {
+    pub record: StorageRecord,
+    pub resolved_config: serde_json::Value,
+}
+
+pub fn retry_pending_secret_cleanup(secret_store: &dyn SecretStore) -> McpResult<()> {
+    let path = default_config_dir().join("secret-cleanup.json");
+    if !path.exists() {
+        return Ok(());
+    }
+    let lock = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(path.with_extension("lock"))
+        .map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))?;
+    let start = Instant::now();
+    loop {
+        match lock.try_lock_exclusive() {
+            Ok(()) => break,
+            Err(_) if start.elapsed() >= Duration::from_secs(2) => {
+                return Err(err(
+                    McpErrorCode::ERR_REGISTRY_LOCK_TIMEOUT,
+                    "timed out acquiring secret cleanup journal lock",
+                ));
+            }
+            Err(_) => thread::sleep(Duration::from_millis(50)),
+        }
+    }
+    let document: Value = serde_json::from_slice(
+        &fs::read(&path).map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))?,
+    )
+    .map_err(|_| {
+        err(
+            McpErrorCode::ERR_INTERNAL,
+            "secret cleanup journal is invalid",
+        )
+    })?;
+    let active_secret_refs = if default_registry_path().exists() {
+        serde_json::from_slice::<Vec<StorageRecord>>(
+            &fs::read(default_registry_path())
+                .map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))?,
+        )
+        .map_err(|_| err(McpErrorCode::ERR_INTERNAL, "storage registry is invalid"))?
+        .into_iter()
+        .filter_map(|record| record.secret_ref)
+        .collect::<std::collections::HashSet<_>>()
+    } else {
+        std::collections::HashSet::new()
+    };
+    let remaining = document
+        .get("pending")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|item| {
+            item.get("account")
+                .and_then(Value::as_str)
+                .is_some_and(|account| {
+                    if active_secret_refs.contains(account) {
+                        false
+                    } else {
+                        secret_store.delete(account).is_err()
+                    }
+                })
+        })
+        .collect::<Vec<_>>();
+    if remaining.is_empty() {
+        fs::remove_file(&path).map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))?;
+    } else {
+        let payload =
+            serde_json::to_vec_pretty(&json!({ "pending": remaining })).map_err(|_| {
+                err(
+                    McpErrorCode::ERR_INTERNAL,
+                    "failed to update cleanup journal",
+                )
+            })?;
+        atomic_write_file(&path, &payload, 0o600).map_err(|error| map_core_error(&error))?;
+    }
+    Ok(())
 }
 
 pub fn validate_storage_name(raw: &str) -> McpResult<String> {
@@ -352,8 +661,28 @@ pub fn ensure_unique_name(
 }
 
 pub fn mask_storage_record(storage: &StorageRecord) -> StorageRecord {
+    fn insert_mask(config: &mut Value, path: &str) {
+        let Some(root) = config.as_object_mut() else {
+            return;
+        };
+        let mut current = root;
+        let mut parts = path.split('.').peekable();
+        while let Some(part) = parts.next() {
+            if parts.peek().is_none() {
+                current.insert(part.to_string(), Value::String("********".to_string()));
+                return;
+            }
+            let entry = current
+                .entry(part.to_string())
+                .or_insert_with(|| Value::Object(serde_json::Map::new()));
+            current = entry.as_object_mut().expect("mask path object");
+        }
+    }
     let mut masked = storage.clone();
     masked.config = mask_secrets_in_value(&masked.config);
+    for field in &masked.secret_fields {
+        insert_mask(&mut masked.config, field);
+    }
     masked
 }
 
@@ -428,94 +757,6 @@ pub fn default_registry_path() -> PathBuf {
     default_config_dir().join("storages.json")
 }
 
-fn ensure_parent(path: &Path) -> McpResult<()> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).map_err(|e| map_io_error(&e, McpErrorCode::ERR_INTERNAL))?;
-        }
-    }
-    Ok(())
-}
-
-fn atomic_write_file(path: &Path, payload: &[u8], mode: u32) -> McpResult<()> {
-    ensure_parent(path)?;
-    #[cfg(not(unix))]
-    let _ = mode;
-
-    let parent = path.parent().ok_or_else(|| {
-        err_with_details(
-            McpErrorCode::ERR_INTERNAL,
-            "path has no parent directory",
-            json!({ "path": path }),
-        )
-    })?;
-
-    let tmp_name = format!(
-        ".{}.tmp.{}.{}",
-        path.file_name().and_then(|n| n.to_str()).unwrap_or("file"),
-        std::process::id(),
-        Utc::now().timestamp_nanos_opt().unwrap_or_default()
-    );
-    let tmp_path = parent.join(tmp_name);
-
-    let write_result = (|| -> std::io::Result<()> {
-        let mut options = OpenOptions::new();
-        options.create_new(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(mode);
-        }
-        let mut file = options.open(&tmp_path)?;
-        file.write_all(payload)?;
-        file.sync_all()?;
-
-        #[cfg(windows)]
-        {
-            use std::os::windows::ffi::OsStrExt;
-            use windows_sys::Win32::Storage::FileSystem::{
-                MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-            };
-            let source = tmp_path
-                .as_os_str()
-                .encode_wide()
-                .chain(Some(0))
-                .collect::<Vec<_>>();
-            let destination = path
-                .as_os_str()
-                .encode_wide()
-                .chain(Some(0))
-                .collect::<Vec<_>>();
-            let result = unsafe {
-                MoveFileExW(
-                    source.as_ptr(),
-                    destination.as_ptr(),
-                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-                )
-            };
-            if result == 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-        }
-        #[cfg(not(windows))]
-        fs::rename(&tmp_path, path)?;
-        Ok(())
-    })();
-    if let Err(error) = write_result {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(map_io_error(&error, McpErrorCode::ERR_INTERNAL));
-    }
-
-    // Sync the parent directory to ensure the rename/replace is durable
-    if let Some(parent) = path.parent() {
-        if let Ok(dir) = fs::File::open(parent) {
-            let _ = dir.sync_all();
-        }
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -523,6 +764,62 @@ mod tests {
 
     use super::*;
     use crate::policy::McpAccessMode;
+
+    #[test]
+    fn schema_v2_plaintext_is_migrated_to_memory_secret_store() {
+        let dir = TempDir::new().expect("temp dir");
+        let path = dir.path().join("storages.json");
+        let secret_store = std::sync::Arc::new(infimount_core::secrets::MemorySecretStore::new());
+        let registry = StorageRegistry::with_secret_store(Some(path.clone()), secret_store.clone());
+        let mut record = StorageRecord::new(
+            "S3".to_string(),
+            "s3".to_string(),
+            json!({
+                "bucket": "example",
+                "nested": { "secretAccessKey": "seeded-secret-value" }
+            }),
+        );
+        record.schema_version = STORAGE_RECORD_SCHEMA_VERSION;
+        fs::write(&path, serde_json::to_vec_pretty(&vec![record]).unwrap()).unwrap();
+
+        let loaded = registry.load_all().expect("migrate registry");
+        assert!(loaded[0]
+            .config
+            .pointer("/nested/secretAccessKey")
+            .is_none());
+        assert_eq!(
+            secret_store
+                .get_json(&format!("storage/{}", loaded[0].id))
+                .unwrap()
+                .unwrap()["nested.secretAccessKey"],
+            "seeded-secret-value"
+        );
+        assert!(!fs::read_to_string(&path)
+            .unwrap()
+            .contains("seeded-secret-value"));
+    }
+
+    #[test]
+    fn unavailable_secret_store_preserves_plaintext_registry_bytes() {
+        let dir = TempDir::new().expect("temp dir");
+        let path = dir.path().join("storages.json");
+        let registry = StorageRegistry::with_secret_store(
+            Some(path.clone()),
+            std::sync::Arc::new(infimount_core::secrets::UnavailableSecretStore::new(
+                "locked",
+            )),
+        );
+        let record = StorageRecord::new(
+            "S3".to_string(),
+            "s3".to_string(),
+            json!({ "secretAccessKey": "seeded-secret-value" }),
+        );
+        let original = serde_json::to_vec_pretty(&vec![record]).unwrap();
+        fs::write(&path, &original).unwrap();
+        let error = registry.load_all().expect_err("migration should fail");
+        assert_eq!(error.code, McpErrorCode::ERR_SECRET_MIGRATION_FAILED);
+        assert_eq!(fs::read(&path).unwrap(), original);
+    }
 
     #[test]
     fn storage_name_rules() {
@@ -803,16 +1100,8 @@ mod tests {
             &format!("[\n{}\n]", v1_policy_storage_json("original", "read_only")),
         );
 
-        // Corrupt the backups directory by making it a file (so create_dir_all fails... no wait, that fails)
-        // Instead, make backups_dir non-writable via permissions
-        let backups_dir = dir.path().join("backups");
-        fs::create_dir_all(&backups_dir).expect("create backups dir");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&backups_dir, std::fs::Permissions::from_mode(0o444))
-                .expect("set read-only on backups dir");
-        }
+        // A file at the backup directory path fails deterministically on every platform.
+        fs::write(dir.path().join("backups"), b"not a directory").expect("create backup blocker");
 
         // Loading should fail because backup can't be written
         let registry = StorageRegistry::new(Some(dir.path().join("storages.json")));

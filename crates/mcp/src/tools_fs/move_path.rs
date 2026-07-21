@@ -100,8 +100,8 @@ pub async fn move_path(ctx: &FsToolsContext, input: MovePathInput) -> McpResult<
         ));
     }
 
-    let src_op = opendal_adapter::build_operator(&src_resolved.storage)?;
-    let dst_op = opendal_adapter::build_operator(&dst_resolved.storage)?;
+    let src_op = opendal_adapter::build_operator(&src_resolved.storage, &ctx.registry)?;
+    let dst_op = opendal_adapter::build_operator(&dst_resolved.storage, &ctx.registry)?;
 
     let src_meta = if src_parsed.backend_path.is_empty() {
         None

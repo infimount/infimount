@@ -2,7 +2,7 @@
 name = "infimount"
 version = "0.7.1"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.94"
 
 [dependencies]
 tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
@@ -12,6 +12,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 infimount_core = { path = "../../../crates/core" }
 infimount_mcp = { path = "../../../crates/mcp" }
+fs2 = "0.4"
 tokio = { version = "1.50.0", features = ["sync", "net", "io-util", "time"] }
 reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "json", "form"] }
 rand = "0.9"
@@ -19,6 +20,7 @@ sha2 = "0.10"
 base64 = "0.22"
 urlencoding = "2.1"
 open = "5"
+uuid = { version = "1", features = ["v4"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

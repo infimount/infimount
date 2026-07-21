@@ -82,7 +82,7 @@ pub async fn list_versions(
         false,
         false,
     )?;
-    let op = opendal_adapter::build_operator(&resolved.storage)?;
+    let op = opendal_adapter::build_operator(&resolved.storage, &ctx.registry)?;
 
     if let Some(disabled) = opendal_adapter::check_versioning_disabled(&resolved.storage) {
         if disabled {
@@ -163,7 +163,7 @@ async fn collect_versions(
                 err_with_details(
                     McpErrorCode::ERR_VERSIONS_NOT_SUPPORTED,
                     "version listing not supported for this storage backend",
-                    json!({ "backend_error": e.to_string() }),
+                    json!({ "kind": "Unsupported", "temporary": e.is_temporary() }),
                 )
             } else {
                 map_opendal_error(&e, McpErrorCode::ERR_INTERNAL)

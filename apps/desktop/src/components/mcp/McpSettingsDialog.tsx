@@ -22,6 +22,7 @@ import type {
   McpClientSnippets,
   McpRuntimeStatus,
   McpSettings,
+  McpSettingsUpdate,
   McpConfirmationRules,
   McpStoragePolicy,
   McpAuditEvent,
@@ -48,7 +49,7 @@ interface McpSettingsDialogProps {
   pendingConfirmations: PendingMcpConfirmation[];
   activeSessions: ActiveMcpSession[];
   notificationPermission: McpNotificationPermission;
-  onSave: (settings: McpSettings) => Promise<void>;
+  onSave: (settings: McpSettingsUpdate) => Promise<void>;
   onStartHttp: () => Promise<void>;
   onStopHttp: () => Promise<void>;
   onTestServer: () => Promise<void>;
@@ -91,7 +92,9 @@ export function McpSettingsDialog({
     port: 7331,
     enabledTools: [],
     securityBaselineVersion: 2,
+    authTokenConfigured: false,
   });
+  const [authTokenDraft, setAuthTokenDraft] = useState<string | undefined>();
   const [isSaving, setIsSaving] = useState(false);
   const [isTogglingHttp, setIsTogglingHttp] = useState(false);
   const [savingPolicyId, setSavingPolicyId] = useState<string | null>(null);
@@ -104,20 +107,23 @@ export function McpSettingsDialog({
   const isBusy = isSaving || isTogglingHttp || applyingPresetId !== null;
   const showNetworkWarning =
     settings.transport === "http" && !isLoopbackBindAddress(settings.bindAddress);
-  const httpAuthToken = settings.authToken?.trim() ?? "";
-  const nonLoopbackMissingAuth = showNetworkWarning && httpAuthToken.length === 0;
+  const httpAuthToken = authTokenDraft?.trim() ?? "";
+  const effectiveAuthConfigured =
+    authTokenDraft === undefined ? settings.authTokenConfigured : httpAuthToken.length > 0;
+  const nonLoopbackMissingAuth = showNetworkWarning && !effectiveAuthConfigured;
   const requiresHttpRestart = Boolean(
     status?.runningHttp &&
     settings.transport === "http" &&
     (settings.bindAddress !== status.settings.bindAddress ||
       settings.port !== status.settings.port ||
-      (settings.authToken ?? "") !== (status.settings.authToken ?? "") ||
+      authTokenDraft !== undefined ||
       !sameToolSet(settings.enabledTools, status.settings.enabledTools)),
   );
 
   useEffect(() => {
     if (!status || !open) return;
     setSettings(status.settings);
+    setAuthTokenDraft(undefined);
   }, [open, status]);
 
   useEffect(() => {
@@ -140,7 +146,8 @@ export function McpSettingsDialog({
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      await onSave({ ...settings, enabled: false });
+      await onSave(toSettingsUpdate(settings, authTokenDraft, false));
+      setAuthTokenDraft(undefined);
     } finally {
       setIsSaving(false);
     }
@@ -238,7 +245,7 @@ export function McpSettingsDialog({
 
     // Apply tool settings only after policy updates succeed
     try {
-      await onSave(nextSettings);
+      await onSave(toSettingsUpdate(nextSettings, undefined, nextSettings.enabled));
       setPolicyDrafts((current) => ({ ...current, ...nextDrafts }));
       toast({
         title: "Preset applied",
@@ -280,10 +287,12 @@ export function McpSettingsDialog({
     setIsTogglingHttp(true);
     try {
       if (status?.runningHttp) {
-        await onSave({ ...settings, enabled: false });
+        await onSave(toSettingsUpdate(settings, authTokenDraft, false));
+        setAuthTokenDraft(undefined);
         await onStopHttp();
       } else {
-        await onSave({ ...settings, enabled: true });
+        await onSave(toSettingsUpdate(settings, authTokenDraft, true));
+        setAuthTokenDraft(undefined);
         await onStartHttp();
       }
     } finally {
@@ -368,6 +377,8 @@ export function McpSettingsDialog({
               settings={settings}
               onSettingsChange={setSettings}
               status={status}
+              authTokenDraft={authTokenDraft}
+              onAuthTokenDraftChange={setAuthTokenDraft}
               isBusy={isBusy}
               isSaving={isSaving}
               isTogglingHttp={isTogglingHttp}
@@ -481,6 +492,27 @@ function sameToolSet(a: string[], b: string[]): boolean {
   const aSorted = [...a].sort();
   const bSorted = [...b].sort();
   return aSorted.every((name, index) => name === bSorted[index]);
+}
+
+function toSettingsUpdate(
+  settings: McpSettings,
+  authTokenDraft: string | undefined,
+  enabled: boolean,
+): McpSettingsUpdate {
+  const token = authTokenDraft?.trim();
+  return {
+    enabled,
+    transport: settings.transport,
+    bindAddress: settings.bindAddress,
+    port: settings.port,
+    enabledTools: settings.enabledTools,
+    authTokenMutation:
+      authTokenDraft === undefined
+        ? { action: "keep" }
+        : token
+          ? { action: "set", value: token }
+          : { action: "clear" },
+  };
 }
 
 function clonePolicy(policy: McpStoragePolicy): McpStoragePolicy {

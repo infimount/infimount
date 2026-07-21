@@ -47,11 +47,19 @@ pub async fn validate_storage(
     input: ValidateStorageInput,
 ) -> McpResult<ValidateStorageOutput> {
     let storage = ctx.registry.find_by_name(&input.name)?;
-    validate_storage_record(&storage).await
+    let op = opendal_adapter::build_operator(&storage, &ctx.registry)?;
+    validate_with_operator(&storage, op).await
 }
 
 pub async fn validate_storage_record(storage: &StorageRecord) -> McpResult<ValidateStorageOutput> {
-    let op = opendal_adapter::build_operator(storage)?;
+    let op = opendal_adapter::build_operator_from_config(storage)?;
+    validate_with_operator(storage, op).await
+}
+
+async fn validate_with_operator(
+    storage: &StorageRecord,
+    op: opendal::Operator,
+) -> McpResult<ValidateStorageOutput> {
     let caps = op.info().full_capability();
     let capabilities = storage_capabilities(storage, &op);
     let warnings = validation_warnings(storage, &capabilities);

@@ -96,12 +96,9 @@ describe("AddStorageDialog", () => {
   it("connects Google Drive through OAuth without rendering raw token text", async () => {
     const connectSpy = vi.spyOn(api, "connectOAuthStorage").mockResolvedValue({
       provider: "gdrive",
-      config: {
-        refreshToken: "raw-refresh-token",
-        clientId: "client-id",
-        clientSecret: "client-secret",
-      },
-      expiresAt: null,
+      oauthSessionId: "oauth-session-1",
+      publicConfig: {},
+      expiresAt: "2026-01-01T00:10:00Z",
     });
     const onUpdate = vi.fn().mockResolvedValue(undefined);
     const initialStorage: StorageConfig = {
@@ -110,10 +107,10 @@ describe("AddStorageDialog", () => {
       type: "google-drive",
       backend: "gdrive",
       config: {
-        accessToken: "old-access-token",
-        refreshToken: "old-refresh-token",
-        clientId: "client-id",
-        clientSecret: "client-secret",
+        accessToken: "********",
+        refreshToken: "********",
+        clientId: "********",
+        clientSecret: "********",
       },
       enabled: true,
       mcpExposed: false,
@@ -141,19 +138,24 @@ describe("AddStorageDialog", () => {
     renderDialog({ initialStorage, onUpdate });
 
     expect(await screen.findByText("Connect Google Drive")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("OAuth Client ID"), {
+      target: { value: "client-id" },
+    });
     fireEvent.click(screen.getByRole("button", { name: /Connect|Reconnect/ }));
 
     expect(await screen.findByText(/OAuth connected/)).toBeInTheDocument();
     expect(connectSpy).toHaveBeenCalledWith({
       provider: "gdrive",
       clientId: "client-id",
-      clientSecret: "client-secret",
+      clientSecret: undefined,
       rootPath: undefined,
       versioning: false,
+      storageId: "drive-1",
+      supersededSessionId: undefined,
     });
     expect(screen.getByLabelText("Access Token")).toHaveAttribute("type", "password");
     expect(screen.getByLabelText("Refresh Token")).toHaveAttribute("type", "password");
-    expect(screen.getByLabelText("Access Token")).toHaveValue("");
+    expect(screen.getByLabelText("Access Token")).toHaveValue("********");
     expect(screen.queryByText("raw-refresh-token")).not.toBeInTheDocument();
     expect(onUpdate).not.toHaveBeenCalled();
 
@@ -161,16 +163,20 @@ describe("AddStorageDialog", () => {
 
     await waitFor(() => {
       expect(onUpdate).toHaveBeenCalledWith("drive-1", {
+        storageId: "drive-1",
         name: "Drive",
         backend: "gdrive",
-        config: {
-          refreshToken: "raw-refresh-token",
-          clientId: "client-id",
-          clientSecret: "client-secret",
-        },
+        config: {},
         enabled: true,
         mcpExposed: false,
         readOnly: false,
+        secretMutations: {
+          accessToken: { action: "keep" },
+          refreshToken: { action: "keep" },
+          clientSecret: { action: "keep" },
+          clientId: { action: "set", value: "client-id" },
+        },
+        oauthSessionId: "oauth-session-1",
       });
     });
 
@@ -188,8 +194,8 @@ describe("AddStorageDialog", () => {
       type: "google-drive",
       backend: "gdrive",
       config: {
-        accessToken: "old-access-token",
-        refreshToken: "old-refresh-token",
+        accessToken: "********",
+        refreshToken: "********",
         clientId: "client-id",
       },
       enabled: true,
@@ -218,12 +224,12 @@ describe("AddStorageDialog", () => {
     renderDialog({ initialStorage, onUpdate });
 
     expect(await screen.findByText("Connect Google Drive")).toBeInTheDocument();
-    expect(screen.getByLabelText("Refresh Token")).toHaveValue("old-refresh-token");
-    fireEvent.click(screen.getByRole("button", { name: /Reconnect/ }));
+    expect(screen.getByLabelText("Refresh Token")).toHaveValue("********");
+    fireEvent.click(screen.getByRole("button", { name: /Connect|Reconnect/ }));
 
     expect(await screen.findByText("OAuth authorization failed.")).toBeInTheDocument();
-    expect(screen.getByLabelText("Access Token")).toHaveValue("old-access-token");
-    expect(screen.getByLabelText("Refresh Token")).toHaveValue("old-refresh-token");
+    expect(screen.getByLabelText("Access Token")).toHaveValue("********");
+    expect(screen.getByLabelText("Refresh Token")).toHaveValue("********");
     expect(onUpdate).not.toHaveBeenCalled();
 
     connectSpy.mockRestore();
@@ -364,10 +370,11 @@ describe("AddStorageDialog", () => {
       expect(onAdd).toHaveBeenCalledWith({
         name: "Artifacts",
         backend: "s3",
-        config: { bucket: "release-artifacts", secret: "top-secret" },
+        config: { bucket: "release-artifacts" },
         enabled: true,
         mcpExposed: false,
         readOnly: false,
+        secretMutations: { secret: { action: "set", value: "top-secret" } },
       });
     });
   });
@@ -463,13 +470,15 @@ describe("AddStorageDialog", () => {
         config: {
           bucket: "archive",
           bucketId: "bucket-id",
-          applicationKeyId: "key-id",
-          applicationKey: "secret-key",
           rootPath: "/team",
         },
         enabled: true,
         mcpExposed: false,
         readOnly: false,
+        secretMutations: {
+          applicationKeyId: { action: "set", value: "key-id" },
+          applicationKey: { action: "set", value: "secret-key" },
+        },
       });
     });
   });
@@ -521,13 +530,15 @@ describe("AddStorageDialog", () => {
         config: {
           bucket: "archive",
           endpoint: "https://oss-cn-beijing.aliyuncs.com",
-          accessKeyId: "key-id",
-          accessKeySecret: "key-secret",
           rootPath: "/team",
         },
         enabled: true,
         mcpExposed: false,
         readOnly: false,
+        secretMutations: {
+          accessKeyId: { action: "set", value: "key-id" },
+          accessKeySecret: { action: "set", value: "key-secret" },
+        },
       });
     });
   });
@@ -573,12 +584,14 @@ describe("AddStorageDialog", () => {
           config: {
             bucket: "archive",
             endpoint: "https://object.example.test",
-            [keyIdName]: "key-id",
-            [secretName]: "key-secret",
           },
           enabled: true,
           mcpExposed: false,
           readOnly: false,
+          secretMutations: {
+            [keyIdName]: { action: "set", value: "key-id" },
+            [secretName]: { action: "set", value: "key-secret" },
+          },
         });
       });
     },
@@ -639,7 +652,7 @@ describe("AddStorageDialog", () => {
       backend: "s3",
       config: {
         bucket: "old-bucket",
-        secret: "saved-secret",
+        secret: "********",
         endpoint: "https://s3.example.test",
       },
       enabled: false,
@@ -682,17 +695,29 @@ describe("AddStorageDialog", () => {
 
     await waitFor(() => {
       expect(onUpdate).toHaveBeenCalledWith("store-1", {
+        storageId: "store-1",
         name: "Existing bucket",
         backend: "s3",
         config: {
           endpoint: "https://s3.example.test",
           bucket: "new-bucket",
-          secret: "saved-secret",
         },
         enabled: false,
         mcpExposed: false,
         readOnly: true,
+        secretMutations: { secret: { action: "keep" } },
       });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear stored Secret key" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    await waitFor(() => {
+      expect(onUpdate).toHaveBeenLastCalledWith(
+        "store-1",
+        expect.objectContaining({
+          secretMutations: { secret: { action: "clear" } },
+        }),
+      );
     });
   });
 });

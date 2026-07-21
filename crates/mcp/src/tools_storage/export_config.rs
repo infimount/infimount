@@ -21,11 +21,9 @@ pub async fn export_config(
     input: ExportConfigInput,
 ) -> McpResult<ExportConfigOutput> {
     let storages = ctx.registry.load_all()?;
-    let exportable: Vec<StorageRecord> = if input.include_secrets {
-        storages
-    } else {
-        storages.iter().map(mask_storage_record).collect()
-    };
+    let _ = input.include_secrets;
+    // Native secret-store values are never materialized into JSON exports.
+    let exportable: Vec<StorageRecord> = storages.iter().map(mask_storage_record).collect();
 
     let json = serde_json::to_string_pretty(&exportable).map_err(|e| {
         err_with_details(

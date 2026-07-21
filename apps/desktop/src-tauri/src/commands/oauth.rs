@@ -13,6 +13,10 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
+use tauri::State;
+
+use crate::state::{AppState, PendingOAuthSession};
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OAuthConnectInput {
@@ -24,14 +28,19 @@ pub struct OAuthConnectInput {
     pub root_path: Option<String>,
     #[serde(default)]
     pub versioning: Option<bool>,
+    #[serde(default)]
+    pub storage_id: Option<String>,
+    #[serde(default)]
+    pub superseded_session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OAuthConnectOutput {
     pub provider: String,
-    pub config: Value,
-    pub expires_at: Option<String>,
+    pub oauth_session_id: String,
+    pub public_config: Value,
+    pub expires_at: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -41,6 +50,11 @@ struct OAuthTokenResponse {
     refresh_token: Option<String>,
     #[serde(default)]
     expires_in: Option<i64>,
+}
+
+#[tauri::command]
+pub fn cancel_oauth_storage(state: State<'_, AppState>, oauthSessionId: String) -> bool {
+    state.pending_oauth.cancel(&oauthSessionId)
 }
 
 fn oauth_storage_config_from_token(
@@ -111,9 +125,7 @@ fn oauth_provider_settings(
             "https://login.microsoftonline.com/common/oauth2/v2.0/token",
             "Files.ReadWrite offline_access",
         )),
-        other => Err(CoreError::Config(format!(
-            "unsupported OAuth provider '{other}'"
-        ))),
+        _ => Err(CoreError::Config("unsupported OAuth provider".to_string())),
     }
 }
 
@@ -190,13 +202,13 @@ async fn wait_for_oauth_callback_with_timeouts(
         return Err(CoreError::Config("OAuth state mismatch".to_string()));
     }
 
-    if let Some(error) = params.get("error") {
+    if params.contains_key("error") {
         let _ = stream
             .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOAuth authorization was denied or failed. Return to Infimount.")
             .await;
-        return Err(CoreError::Config(format!(
-            "OAuth authorization failed: {error}"
-        )));
+        return Err(CoreError::Config(
+            "OAuth authorization was denied or failed".to_string(),
+        ));
     }
 
     let code = params.get("code").cloned().ok_or_else(|| {
@@ -221,10 +233,9 @@ async fn exchange_oauth_token(
         .map_err(|_| CoreError::Config("OAuth token exchange failed".to_string()))?;
 
     if !response.status().is_success() {
-        return Err(CoreError::Config(format!(
-            "OAuth token exchange failed with provider status {}",
-            response.status().as_u16()
-        )));
+        return Err(CoreError::Config(
+            "OAuth token exchange was rejected by the provider".to_string(),
+        ));
     }
 
     response
@@ -235,6 +246,7 @@ async fn exchange_oauth_token(
 
 #[tauri::command]
 pub async fn connect_oauth_storage(
+    state: State<'_, AppState>,
     input: OAuthConnectInput,
 ) -> Result<OAuthConnectOutput, CoreError> {
     let client_id = input.client_id.trim().to_string();
@@ -244,12 +256,52 @@ pub async fn connect_oauth_storage(
 
     let (provider, auth_endpoint, token_endpoint, scope) =
         oauth_provider_settings(&input.provider)?;
+    if let Some(previous) = input.superseded_session_id.as_deref() {
+        state.pending_oauth.cancel(previous);
+    }
+    let mut client_secret = input
+        .client_secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "********")
+        .map(ToString::to_string);
+    if client_secret.is_none() {
+        if let Some(storage_id) = input.storage_id.as_deref() {
+            let record = state
+                .find_storage_by_id(storage_id)
+                .map_err(|_| CoreError::Config("storage was not found".to_string()))?;
+            if record.backend != provider {
+                return Err(CoreError::Config(
+                    "OAuth reconnect storage does not match the selected provider".to_string(),
+                ));
+            }
+            let account = record
+                .secret_ref
+                .clone()
+                .unwrap_or_else(|| format!("storage/{}", record.id));
+            let bundle = state
+                .secret_store
+                .get_json(&account)
+                .map_err(|_| CoreError::Config("stored credentials are unavailable".to_string()))?;
+            if bundle.is_none() && (record.secret_ref.is_some() || !record.secret_fields.is_empty())
+            {
+                return Err(CoreError::Config(
+                    "stored credentials are missing".to_string(),
+                ));
+            }
+            client_secret = bundle
+                .as_ref()
+                .and_then(|value| value.get("clientSecret"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string);
+        }
+    }
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(CoreError::Io)?;
     let port = listener.local_addr().map_err(CoreError::Io)?.port();
     let redirect_uri = format!("http://127.0.0.1:{port}/oauth/callback");
-    let state = oauth_random_urlsafe(32);
+    let oauth_state = oauth_random_urlsafe(32);
     let verifier = oauth_random_urlsafe(64);
     let challenge = oauth_pkce_challenge(&verifier);
 
@@ -258,7 +310,7 @@ pub async fn connect_oauth_storage(
         urlencoding::encode(&client_id),
         urlencoding::encode(&redirect_uri),
         urlencoding::encode(scope),
-        urlencoding::encode(&state),
+        urlencoding::encode(&oauth_state),
         urlencoding::encode(&challenge),
     );
     if provider == "gdrive" {
@@ -269,7 +321,7 @@ pub async fn connect_oauth_storage(
         CoreError::Config("Failed to open OAuth authorization URL in the browser".to_string())
     })?;
 
-    let code = wait_for_oauth_callback(listener, state).await?;
+    let code = wait_for_oauth_callback(listener, oauth_state).await?;
     let mut form: Vec<(&str, String)> = vec![
         ("grant_type", "authorization_code".to_string()),
         ("code", code),
@@ -277,12 +329,7 @@ pub async fn connect_oauth_storage(
         ("client_id", client_id.clone()),
         ("code_verifier", verifier),
     ];
-    if let Some(secret) = input
-        .client_secret
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
+    if let Some(secret) = client_secret.as_deref() {
         form.push(("client_secret", secret.to_string()));
     }
 
@@ -292,22 +339,45 @@ pub async fn connect_oauth_storage(
     let config = oauth_storage_config_from_token(
         provider,
         client_id,
-        input
-            .client_secret
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty()),
+        client_secret,
         token,
         input.root_path,
         input.versioning,
     );
 
-    let expires_at =
-        expires_in.map(|seconds| (Utc::now() + chrono::Duration::seconds(seconds)).to_rfc3339());
+    let _token_expires_at =
+        expires_in.map(|seconds| Utc::now() + chrono::Duration::seconds(seconds));
+    let session_expires_at = Utc::now() + chrono::Duration::minutes(10);
+
+    // Separate secret and public config
+    let secret_field_names = infimount_core::secrets::discover_secret_field_names();
+    let secret_fields =
+        infimount_core::secrets::extract_secret_fields(&config, &secret_field_names);
+    let mut public_config = config.clone();
+    infimount_core::secrets::strip_secret_fields(&mut public_config, &secret_field_names);
+
+    let secret_config = Value::Object(secret_fields.into_iter().collect());
+
+    let session_id = oauth_random_urlsafe(16);
+    let session = PendingOAuthSession {
+        id: session_id.clone(),
+        provider: provider.to_string(),
+        secret_config,
+        public_config: public_config.clone(),
+        expires_at: session_expires_at,
+        consumed: std::sync::atomic::AtomicBool::new(false),
+    };
+
+    state.pending_oauth.insert(session);
+
+    // Clean up expired sessions
+    state.pending_oauth.remove_expired();
 
     Ok(OAuthConnectOutput {
         provider: provider.to_string(),
-        config,
-        expires_at,
+        oauth_session_id: session_id,
+        public_config,
+        expires_at: session_expires_at.to_rfc3339(),
     })
 }
 
@@ -671,7 +741,7 @@ mod tests {
         .unwrap_err()
         .to_string();
 
-        assert!(error.contains("provider status 400"));
+        assert!(error.contains("rejected by the provider"));
         assert!(!error.contains("must-not-leak"));
         assert!(!error.contains("sensitive-auth-code"));
         server.await.unwrap();

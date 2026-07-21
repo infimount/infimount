@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::errors::{map_io_error, McpErrorCode, McpResult};
+use crate::errors::{err, map_io_error, McpErrorCode, McpResult};
 use crate::policy::McpOperation;
 use crate::registry::default_config_dir;
 
@@ -151,7 +151,12 @@ impl AuditStore {
                 json!({ "serde_error": e.to_string() }),
             )
         })?;
-        fs::write(&self.path, payload).map_err(|e| map_io_error(&e, McpErrorCode::ERR_INTERNAL))
+        infimount_core::atomic_file::atomic_write_file(
+            &self.path,
+            &payload,
+            infimount_core::atomic_file::FILE_MODE,
+        )
+        .map_err(|error| crate::errors::map_core_error(&error))
     }
 
     fn with_lock<T>(&self, f: impl FnOnce() -> McpResult<T>) -> McpResult<T> {
@@ -163,9 +168,19 @@ impl AuditStore {
             .truncate(false)
             .open(&self.lock_path)
             .map_err(|e| map_io_error(&e, McpErrorCode::ERR_INTERNAL))?;
-        lock_file
-            .lock_exclusive()
-            .map_err(|e| map_io_error(&e, McpErrorCode::ERR_INTERNAL))?;
+        let start = std::time::Instant::now();
+        loop {
+            match lock_file.try_lock_exclusive() {
+                Ok(()) => break,
+                Err(_) if start.elapsed() >= std::time::Duration::from_secs(2) => {
+                    return Err(err(
+                        McpErrorCode::ERR_REGISTRY_LOCK_TIMEOUT,
+                        "timed out acquiring audit log lock",
+                    ));
+                }
+                Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            }
+        }
         let result = f();
         let _ = FileExt::unlock(&lock_file);
         result
@@ -189,12 +204,8 @@ pub fn mask_presigned_url(value: &str) -> String {
 }
 
 fn ensure_parent(path: &Path) -> McpResult<()> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).map_err(|e| map_io_error(&e, McpErrorCode::ERR_INTERNAL))?;
-        }
-    }
-    Ok(())
+    infimount_core::atomic_file::ensure_parent(path)
+        .map_err(|error| crate::errors::map_core_error(&error))
 }
 
 #[cfg(test)]

@@ -52,6 +52,7 @@ import type {
   McpAuditEvent,
   McpRuntimeStatus,
   McpSettings,
+  McpSettingsUpdate,
   McpStoragePolicy,
   McpToolDefinition,
   PendingMcpConfirmation,
@@ -102,7 +103,6 @@ function mapWireStorage(storage: StorageRecordWire): StorageConfig {
 }
 
 function mapStatusWire(status: McpRuntimeStatusWire): McpRuntimeStatus {
-  const authToken = status.settings.authToken;
   return {
     settings: {
       enabled: status.settings.enabled,
@@ -111,12 +111,12 @@ function mapStatusWire(status: McpRuntimeStatusWire): McpRuntimeStatus {
       port: status.settings.port,
       enabledTools: status.settings.enabledTools ?? [],
       securityBaselineVersion: status.settings.securityBaselineVersion ?? 2,
-      authToken: authToken ?? undefined,
-      authTokenConfigured: authToken !== undefined && authToken !== null && authToken.trim().length > 0,
+      authTokenConfigured: status.authTokenConfigured,
     },
     runningHttp: status.runningHttp,
     endpoint: status.endpoint,
     endpointDisplay: status.endpointDisplay,
+    authTokenConfigured: status.authTokenConfigured,
   };
 }
 
@@ -252,7 +252,6 @@ interface McpSettingsWire {
   port: number;
   enabledTools?: string[];
   securityBaselineVersion?: number;
-  authToken?: string | null;
 }
 
 interface McpRuntimeStatusWire {
@@ -260,6 +259,7 @@ interface McpRuntimeStatusWire {
   runningHttp: boolean;
   endpoint: string | null;
   endpointDisplay: string;
+  authTokenConfigured: boolean;
 }
 
 const Index = () => {
@@ -313,8 +313,8 @@ const Index = () => {
       setMcpAuditEvents(auditEvents);
       setPendingMcpConfirmations(pendingConfirmations);
       setActiveMcpSessions(activeSessions);
-    } catch (error) {
-      console.error("Failed to load MCP status", error);
+    } catch {
+      // The settings dialog renders its unavailable state without exposing backend details.
     }
   }, []);
 
@@ -355,8 +355,8 @@ const Index = () => {
     void (async () => {
       try {
         setAppSettings(await getAppSettings());
-      } catch (error) {
-        console.error("Failed to load app settings", error);
+      } catch {
+        // Keep the safe in-memory defaults when local settings cannot be loaded.
       }
     })();
   }, []);
@@ -386,8 +386,8 @@ const Index = () => {
           setPendingMcpConfirmations(pendingConfirmations);
           setActiveMcpSessions(activeSessions);
         }
-      } catch (error) {
-        console.error("Failed to refresh pending MCP confirmations", error);
+      } catch {
+        // Retain the last successfully loaded local approval state.
       }
     };
 
@@ -472,7 +472,7 @@ const Index = () => {
 
   const handleUpdateStorage = async (id: string, draft: StorageDraft) => {
     try {
-      await apiUpdateStorage(id, mapDraftForBackend(draft));
+      const result = await apiUpdateStorage(id, mapDraftForBackend(draft));
       await reloadStorages();
       setStorageRefreshTick((current) => ({
         ...current,
@@ -480,7 +480,9 @@ const Index = () => {
       }));
       toast({
         title: "Storage updated",
-        description: `Successfully updated "${draft.name}".`,
+        description: result.warning
+          ? `Successfully updated "${draft.name}". ${result.warning}`
+          : `Successfully updated "${draft.name}".`,
       });
     } catch (error: unknown) {
       toast({
@@ -502,11 +504,12 @@ const Index = () => {
     const storage = storages.find((item) => item.id === id);
     void (async () => {
       try {
-        await apiRemoveStorage(id);
+        const removal = await apiRemoveStorage(id);
         await reloadStorages();
         toast({
-          title: "Storage deleted",
-          description: `${storage?.name ?? "Storage"} has been deleted.`,
+          title: removal.warning ? "Storage deleted with cleanup pending" : "Storage deleted",
+          description:
+            removal.warning ?? `${storage?.name ?? "Storage"} has been deleted.`,
           variant: "destructive",
         });
       } catch (error: unknown) {
@@ -555,7 +558,9 @@ const Index = () => {
             await reloadStorages();
             toast({
               title: "Import successful",
-              description: `Imported ${result.imported} storage configuration(s).`,
+              description: result.warnings?.length
+                ? `Imported ${result.imported} storage configuration(s). ${result.warnings.join(" ")}`
+                : `Imported ${result.imported} storage configuration(s).`,
             });
           } catch (error: unknown) {
             toast({
@@ -612,7 +617,9 @@ const Index = () => {
       await reloadStorages();
       toast({
         title: "Storage config updated",
-        description: `Applied ${result.imported} storage configuration(s) from JSON.`,
+        description: result.warnings?.length
+          ? `Applied ${result.imported} storage configuration(s). ${result.warnings.join(" ")}`
+          : `Applied ${result.imported} storage configuration(s) from JSON.`,
       });
     } catch (error: unknown) {
       toast({
@@ -624,17 +631,9 @@ const Index = () => {
     }
   };
 
-  const handleSaveMcpSettings = async (settings: McpSettings) => {
+  const handleSaveMcpSettings = async (settings: McpSettingsUpdate) => {
     try {
-      const status = await updateMcpSettings({
-        enabled: settings.enabled,
-        transport: settings.transport,
-        bindAddress: settings.bindAddress,
-        port: settings.port,
-        enabledTools: settings.enabledTools,
-        securityBaselineVersion: settings.securityBaselineVersion,
-        authToken: settings.authToken,
-      });
+      const status = await updateMcpSettings(settings);
       setMcpStatus(mapStatusWire(status as unknown as McpRuntimeStatusWire));
       setMcpSnippets(await getMcpClientSnippets());
     } catch (error: unknown) {

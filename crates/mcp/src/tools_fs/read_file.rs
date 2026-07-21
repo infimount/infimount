@@ -62,7 +62,7 @@ pub async fn read_file(ctx: &FsToolsContext, input: ReadFileInput) -> McpResult<
         false,
         false,
     )?;
-    let op = opendal_adapter::build_operator(&resolved.storage)?;
+    let op = opendal_adapter::build_operator(&resolved.storage, &ctx.registry)?;
 
     if parsed.backend_path.is_empty() {
         return Err(err_with_details(

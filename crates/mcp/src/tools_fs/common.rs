@@ -172,7 +172,9 @@ async fn collect_entries_inner(
                         )))
                     }
                 }
-                Err(e) => Err(infimount_core::models::CoreError::Config(e.to_string())),
+                Err(_) => Err(infimount_core::models::CoreError::Config(
+                    "storage policy evaluation failed".to_string(),
+                )),
             }
         } else {
             Ok(true)
@@ -287,7 +289,11 @@ pub(super) fn core_error_to_mcp_error(err: infimount_core::CoreError) -> crate::
                 .to_string();
             err_with_details(McpErrorCode::ERR_MCP_POLICY_DENIED, message, json!({}))
         }
-        _ => err_with_details(McpErrorCode::ERR_INTERNAL, err.to_string(), json!({})),
+        _ => err_with_details(
+            McpErrorCode::ERR_INTERNAL,
+            "storage operation failed",
+            json!({ "kind": "Core", "temporary": false }),
+        ),
     }
 }
 

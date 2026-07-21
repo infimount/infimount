@@ -5,7 +5,10 @@ use crate::tools_fs::FsToolsContext;
 use tempfile::TempDir;
 
 fn registry_in(dir: &TempDir) -> crate::registry::StorageRegistry {
-    crate::registry::StorageRegistry::new(Some(dir.path().join("storages.json")))
+    crate::registry::StorageRegistry::with_secret_store(
+        Some(dir.path().join("storages.json")),
+        std::sync::Arc::new(infimount_core::secrets::MemorySecretStore::new()),
+    )
 }
 
 fn sessions_in() -> crate::session::SessionManager {
@@ -21,7 +24,11 @@ async fn list_storages_masks_secrets() {
         "s3".to_string(),
         serde_json::json!({"access_key": "abc", "service_account_json": "{}", "region": "us-east-1"}),
     );
-    registry.save_all_atomic(&[storage]).unwrap();
+    std::fs::write(
+        registry.path(),
+        serde_json::to_vec_pretty(&vec![storage]).unwrap(),
+    )
+    .unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
         registry,
@@ -347,7 +354,11 @@ async fn export_config_masks_by_default() {
         "s3".to_string(),
         serde_json::json!({"token": "secret", "service_account_json": "raw-service-account-json", "region": "us-east-1"}),
     );
-    registry.save_all_atomic(&[storage]).unwrap();
+    std::fs::write(
+        registry.path(),
+        serde_json::to_vec_pretty(&vec![storage]).unwrap(),
+    )
+    .unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
         registry,

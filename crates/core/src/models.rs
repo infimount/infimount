@@ -9,13 +9,7 @@ fn format_storage_error(error: &opendal::Error) -> String {
     } else {
         "permanent"
     };
-
-    let message = error.message().trim();
-    if message.is_empty() || message.contains("http://") || message.contains("https://") {
-        format!("{} ({})", error.kind(), status)
-    } else {
-        format!("{} ({}) => {}", error.kind(), status, message)
-    }
+    format!("{} ({})", error.kind(), status)
 }
 
 /// Core error type used across the backend.
@@ -271,10 +265,8 @@ mod tests {
 
         let value = serde_json::to_value(&err).unwrap();
         let message = value["message"].as_str().unwrap();
-        assert_eq!(
-            message,
-            "storage error: Unexpected (permanent) => backend failed"
-        );
+        assert_eq!(message, "storage error: Unexpected (permanent)");
+        assert!(!message.contains("backend failed"));
         assert!(!message.contains("https://storage.example"));
         assert!(!message.contains("token=secret"));
     }

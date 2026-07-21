@@ -37,13 +37,26 @@ export type StorageBackend =
 export type McpTransport = "stdio" | "http";
 
 export interface StorageDraft {
+  storageId?: string;
   name: string;
   backend: StorageBackend;
   config: Record<string, unknown>;
   enabled: boolean;
   mcpExposed: boolean;
   readOnly: boolean;
+  secretMutations?: Record<string, SecretMutation>;
+  oauthSessionId?: string | null;
 }
+
+export type SecretMutation =
+  | { action: "keep" }
+  | { action: "set"; value: string }
+  | { action: "clear" };
+
+export type AuthTokenMutation =
+  | { action: "keep" }
+  | { action: "set"; value: string }
+  | { action: "clear" };
 
 export interface StorageConfig extends StorageDraft {
   id: string;
@@ -117,8 +130,16 @@ export interface McpSettings {
   port: number;
   enabledTools: string[];
   securityBaselineVersion: number;
-  authToken?: string | null;
-  authTokenConfigured?: boolean;
+  authTokenConfigured: boolean;
+}
+
+export interface McpSettingsUpdate {
+  enabled: boolean;
+  transport: McpTransport;
+  bindAddress: string;
+  port: number;
+  enabledTools: string[];
+  authTokenMutation: AuthTokenMutation;
 }
 
 export interface McpRuntimeStatus {
@@ -126,6 +147,7 @@ export interface McpRuntimeStatus {
   runningHttp: boolean;
   endpoint: string | null;
   endpointDisplay: string;
+  authTokenConfigured: boolean;
 }
 
 export interface McpClientSnippets {

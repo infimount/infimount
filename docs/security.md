@@ -7,19 +7,19 @@ Infimount is local-first by design. It does not require an Infimount-hosted back
 Default local files:
 
 - `~/.infimount/storages.json`: storage registry and backend configuration.
-- `~/.infimount/mcp_settings.json`: MCP runtime settings, transport, bind address, port, auth token, and enabled tool list.
+- `~/.infimount/mcp_settings.json`: MCP runtime settings, transport, bind address, port, secret reference, and enabled tool list.
 
-Treat these files as sensitive because storage credentials and OAuth tokens can be present in backend configuration.
+Storage credentials, OAuth tokens, and desktop MCP bearer tokens are stored in the operating system's native secret store. Stable v0.8 operation never falls back to plaintext credential persistence. Registry and settings files contain only public configuration and opaque secret references.
 
 ## Secret Handling
 
 Infimount masks secrets in desktop control-plane storage-management outputs by default. These operations are not public MCP tools.
 
 - Internal `list_storages` responses return masked secret values.
-- Internal `export_config` responses mask secrets unless explicitly requested by the trusted desktop control plane.
+- Internal `export_config` responses always exclude native secret-store values; exports contain public configuration only.
 - UI and MCP logs should not print raw storage config JSON or raw input payloads.
 - Browser/admin-style views should replace secrets instead of revealing them by default.
-- OAuth-backed storage fields such as `accessToken`, `refreshToken`, `clientSecret`, authorization codes, device codes, and PKCE verifiers are secrets and must not appear in logs, validation summaries, audit exports, or copyable diagnostic text. Guided desktop OAuth uses a local loopback callback with PKCE/state validation and stores final tokens only in the local Infimount registry when the user saves the storage. See [Guided OAuth for Google Drive and Microsoft OneDrive](oauth-drive-setup.md).
+- OAuth-backed storage fields such as `accessToken`, `refreshToken`, `clientSecret`, authorization codes, device codes, and PKCE verifiers are secrets and must not appear in logs, validation summaries, audit exports, or copyable diagnostic text. Guided desktop OAuth uses a local loopback callback with PKCE/state validation; tokens remain in a short-lived in-memory pending session and move to native secret storage only when the user saves the storage. See [Guided OAuth for Google Drive and Microsoft OneDrive](oauth-drive-setup.md).
 
 ## Data-Plane-Only MCP Surface
 
@@ -135,7 +135,7 @@ Clients must send:
 Authorization: Bearer replace-with-a-random-token
 ```
 
-Only bind to `0.0.0.0` or a LAN address when you intentionally expose the server and have a strong token plus a network boundary in place.
+Only bind to `0.0.0.0` or a LAN address when you intentionally expose the server and have a strong token plus a network boundary in place. Desktop bearer tokens are stored in native secret storage; generated snippets use an `INFIMOUNT_AUTH_TOKEN` placeholder and never reveal the stored value. If native secret storage is unavailable or locked, Infimount fails with an actionable error instead of persisting or using plaintext fallback credentials.
 
 ## Sessions and Scoped Access
 

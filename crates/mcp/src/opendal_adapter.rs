@@ -1,8 +1,10 @@
-use crate::errors::{McpError, McpErrorCode, McpResult};
-use crate::registry::StorageRecord;
+use crate::errors::{err_with_details, McpError, McpErrorCode, McpResult};
+use crate::registry::{ResolvedStorageRecord, StorageRecord, StorageRegistry};
 pub use infimount_core::models::StorageBackendCapabilities;
+use infimount_core::secrets::SecretStore;
 use infimount_core::{registry, Source, SourceKind};
 use opendal::Operator;
+use std::sync::Arc;
 
 pub fn get_capabilities(op: &Operator) -> StorageBackendCapabilities {
     registry::get_capabilities(op)
@@ -13,15 +15,44 @@ pub fn check_versioning_disabled(storage: &StorageRecord) -> Option<bool> {
     registry::check_versioning_disabled(&source)
 }
 
-pub fn build_operator(storage: &StorageRecord) -> McpResult<Operator> {
+pub fn build_operator(
+    storage: &StorageRecord,
+    storage_registry: &StorageRegistry,
+) -> McpResult<Operator> {
+    let resolved = storage_registry.resolve_storage(storage)?;
+    build_operator_resolved(&resolved)
+}
+
+/// Builds from an ephemeral draft config. Never use this for persisted records.
+pub fn build_operator_from_config(storage: &StorageRecord) -> McpResult<Operator> {
     let source = storage_record_to_source(storage)?;
     registry::build_operator(&source).map_err(core_error_to_mcp_error)
+}
+
+pub fn build_operator_resolved(resolved: &ResolvedStorageRecord) -> McpResult<Operator> {
+    let source = resolved_record_to_source(resolved)?;
+    registry::build_operator(&source).map_err(core_error_to_mcp_error)
+}
+
+pub fn resolve_and_build(
+    record: &StorageRecord,
+    secret_store: &Arc<dyn SecretStore>,
+) -> McpResult<Operator> {
+    let registry = StorageRegistry::with_secret_store(None, secret_store.clone());
+    let resolved = registry.resolve_storage(record).map_err(|_| {
+        err_with_details(
+            McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+            format!("failed to resolve storage '{}'", record.name),
+            serde_json::json!({ "storage_id": record.id }),
+        )
+    })?;
+    build_operator_resolved(&resolved)
 }
 
 fn storage_record_to_source(storage: &StorageRecord) -> McpResult<Source> {
     use std::str::FromStr;
     let kind = SourceKind::from_str(&storage.backend).map_err(|_| {
-        crate::errors::err_with_details(
+        err_with_details(
             McpErrorCode::ERR_BACKEND_UNSUPPORTED,
             format!("unsupported backend '{}'", storage.backend),
             serde_json::json!({ "backend": storage.backend }),
@@ -37,12 +68,30 @@ fn storage_record_to_source(storage: &StorageRecord) -> McpResult<Source> {
     })
 }
 
-fn core_error_to_mcp_error(err: infimount_core::CoreError) -> McpError {
-    use crate::errors::err_with_details;
+fn resolved_record_to_source(resolved: &ResolvedStorageRecord) -> McpResult<Source> {
+    use std::str::FromStr;
+    let kind = SourceKind::from_str(&resolved.record.backend).map_err(|_| {
+        err_with_details(
+            McpErrorCode::ERR_BACKEND_UNSUPPORTED,
+            format!("unsupported backend '{}'", resolved.record.backend),
+            serde_json::json!({ "backend": resolved.record.backend }),
+        )
+    })?;
+
+    Ok(Source {
+        id: resolved.record.id.clone(),
+        name: resolved.record.name.clone(),
+        kind,
+        root: String::new(),
+        config: resolved.resolved_config.clone(),
+    })
+}
+
+fn core_error_to_mcp_error(_error: infimount_core::CoreError) -> McpError {
     err_with_details(
         McpErrorCode::ERR_INTERNAL,
-        err.to_string(),
-        serde_json::json!({}),
+        "storage backend operation failed",
+        serde_json::json!({ "kind": "Unexpected", "temporary": false }),
     )
 }
 
@@ -53,6 +102,57 @@ mod tests {
 
     fn storage(backend: &str, config: serde_json::Value) -> StorageRecord {
         StorageRecord::new("Test".to_string(), backend.to_string(), config)
+    }
+
+    #[test]
+    fn resolves_s3_and_oauth_drive_credentials_only_in_memory() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let secret_store = Arc::new(infimount_core::secrets::MemorySecretStore::new());
+        let registry = StorageRegistry::with_secret_store(
+            Some(temp.path().join("storages.json")),
+            secret_store.clone(),
+        );
+        for (backend, public, secret) in [
+            (
+                "s3",
+                json!({ "bucket": "example", "region": "us-east-1" }),
+                json!({ "accessKeyId": "key-id", "secretAccessKey": "key-secret" }),
+            ),
+            (
+                "gdrive",
+                json!({ "rootPath": "/" }),
+                json!({ "clientId": "client-id", "accessToken": "access-token" }),
+            ),
+            (
+                "onedrive",
+                json!({ "rootPath": "/", "versioning": false }),
+                json!({ "clientId": "client-id", "accessToken": "access-token" }),
+            ),
+        ] {
+            let mut record = storage(backend, public);
+            let account = format!("storage/{}", record.id);
+            secret_store
+                .put_json(&account, &secret)
+                .expect("store secret");
+            record.secret_ref = Some(account);
+            let operator = build_operator(&record, &registry).expect("resolve operator");
+            assert!(!operator.info().scheme().to_string().is_empty());
+            assert!(record.config.get("accessToken").is_none());
+            assert!(record.config.get("secretAccessKey").is_none());
+        }
+    }
+
+    #[test]
+    fn missing_secret_bundle_fails_closed() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let registry = StorageRegistry::with_secret_store(
+            Some(temp.path().join("storages.json")),
+            Arc::new(infimount_core::secrets::MemorySecretStore::new()),
+        );
+        let mut record = storage("s3", json!({ "bucket": "example" }));
+        record.secret_ref = Some(format!("storage/{}", record.id));
+        let error = build_operator(&record, &registry).expect_err("missing bundle should fail");
+        assert_eq!(error.code, McpErrorCode::ERR_SECRET_NOT_FOUND);
     }
 
     #[test]
@@ -68,7 +168,7 @@ mod tests {
             }),
         );
 
-        let op = build_operator(&storage).expect("operator should build");
+        let op = build_operator_from_config(&storage).expect("operator should build");
         let caps = get_capabilities(&op);
         assert!(caps.presign_read);
         assert!(caps.write_with_user_metadata);
@@ -76,7 +176,7 @@ mod tests {
 
     #[test]
     fn unsupported_backend_returns_explicit_error() {
-        let err = build_operator(&storage("mystery", json!({}))).unwrap_err();
+        let err = build_operator_from_config(&storage("mystery", json!({}))).unwrap_err();
 
         assert_eq!(err.code, McpErrorCode::ERR_BACKEND_UNSUPPORTED);
         assert_eq!(err.details["backend"], "mystery");
@@ -88,7 +188,7 @@ mod tests {
 
     #[test]
     fn builds_ftp_operator() {
-        let op = build_operator(&storage(
+        let op = build_operator_from_config(&storage(
             "ftp",
             json!({
                 "endpoint": "ftp://example.com:21",
@@ -107,7 +207,7 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn builds_sftp_operator() {
-        let op = build_operator(&storage(
+        let op = build_operator_from_config(&storage(
             "sftp",
             json!({
                 "endpoint": "ssh://example.com:22",
@@ -148,7 +248,8 @@ mod tests {
                 true,
             ),
         ] {
-            let op = build_operator(&storage(backend, config)).expect("operator should build");
+            let op = build_operator_from_config(&storage(backend, config))
+                .expect("operator should build");
             let caps = get_capabilities(&op);
             assert!(op.info().full_capability().copy);
             assert!(op.info().full_capability().rename);
@@ -191,7 +292,8 @@ mod tests {
                 }),
             ),
         ] {
-            let op = build_operator(&storage(backend, config)).expect("operator should build");
+            let op = build_operator_from_config(&storage(backend, config))
+                .expect("operator should build");
             let caps = get_capabilities(&op);
             assert!(caps.presign_read);
         }

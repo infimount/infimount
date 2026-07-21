@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  cancelOAuthStorage,
   connectOAuthStorage,
   listStorageSchemas,
   type OAuthConnectInput,
@@ -167,6 +168,7 @@ export function AddStorageDialog({
   const [mcpExposed, setMcpExposed] = useState(false);
   const [readOnly, setReadOnly] = useState(false);
   const [revealSecrets, setRevealSecrets] = useState(false);
+  const [clearedSecrets, setClearedSecrets] = useState<Set<string>>(new Set());
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -175,6 +177,7 @@ export function AddStorageDialog({
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [oauthStatus, setOauthStatus] = useState<string | null>(null);
   const [isOAuthConnecting, setIsOAuthConnecting] = useState(false);
+  const [oauthSessionId, setOauthSessionId] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -183,8 +186,8 @@ export function AddStorageDialog({
         if (!mounted) return;
         setSchemas(items);
       })
-      .catch((error) => {
-        console.error("Failed to load storage schemas", error);
+      .catch(() => {
+        if (mounted) setFormError("Storage schemas could not be loaded.");
       });
 
     return () => {
@@ -212,6 +215,8 @@ export function AddStorageDialog({
       setCopyStatus(null);
       setOauthStatus(null);
       setIsOAuthConnecting(false);
+      setOauthSessionId(null);
+      setClearedSecrets(new Set());
       return;
     }
 
@@ -236,6 +241,7 @@ export function AddStorageDialog({
       setRevealSecrets(
         !(schema?.fields.some((field) => field.secret && nextFieldValues[field.name]) ?? false),
       );
+      setClearedSecrets(new Set());
       return;
     }
 
@@ -250,21 +256,32 @@ export function AddStorageDialog({
     setMcpExposed(false);
     setReadOnly(false);
     setRevealSecrets(true);
+    setClearedSecrets(new Set());
   }, [initialStorage, open, schemas]);
 
   const handleTypeChange = (value: StorageType) => {
+    if (oauthSessionId) {
+      void cancelOAuthStorage(oauthSessionId);
+    }
     const schema = schemas.find((item) => item.id === value);
     setType(value);
     setFieldValues(buildFieldValues(schema));
     setExtraConfig({});
     setRevealSecrets(true);
+    setClearedSecrets(new Set());
     setFormError(null);
     setVerifyResult(null);
     setVerifyMessage(null);
     setOauthStatus(null);
+    setOauthSessionId(null);
   };
 
   const handleFieldChange = (fieldName: string, value: string) => {
+    setClearedSecrets((current) => {
+      const next = new Set(current);
+      next.delete(fieldName);
+      return next;
+    });
     setFieldValues((current) => ({
       ...current,
       [fieldName]: value,
@@ -295,7 +312,7 @@ export function AddStorageDialog({
   const providerPresets = PROVIDER_PRESETS[type] ?? [];
   const isOAuthStorage = type === "google-drive" || type === "onedrive";
   const oauthProvider = type === "google-drive" ? "gdrive" : type === "onedrive" ? "onedrive" : null;
-  const oauthConnected = Boolean(fieldValues.accessToken || fieldValues.refreshToken);
+  const oauthConnected = Boolean(oauthSessionId);
 
   const handleOAuthConnect = async () => {
     if (!oauthProvider) return;
@@ -312,20 +329,21 @@ export function AddStorageDialog({
       const result = await connectOAuth({
         provider: oauthProvider,
         clientId,
-        clientSecret: (fieldValues.clientSecret ?? "").trim() || undefined,
+        clientSecret:
+          (fieldValues.clientSecret ?? "").trim() === "********"
+            ? undefined
+            : (fieldValues.clientSecret ?? "").trim() || undefined,
         rootPath: (fieldValues.rootPath ?? "").trim() || undefined,
         versioning: fieldValues.versioning === "true",
+        storageId: initialStorage?.id,
+        supersededSessionId: oauthSessionId ?? undefined,
       });
-      const oauthConfig = { ...result.config };
-      const mergedValues = { ...fieldValues, ...oauthConfig };
-      if ("refreshToken" in oauthConfig && !("accessToken" in oauthConfig)) {
-        mergedValues.accessToken = "";
-      }
-      if ("accessToken" in oauthConfig && !("refreshToken" in oauthConfig)) {
-        mergedValues.refreshToken = "";
-      }
-      const nextValues = buildFieldValues(currentSchema, mergedValues);
+      const nextValues = buildFieldValues(currentSchema, {
+        ...fieldValues,
+        ...result.publicConfig,
+      });
       setFieldValues(nextValues);
+      setOauthSessionId(result.oauthSessionId);
       setRevealSecrets(false);
       setOauthStatus("OAuth connected. Tokens are stored locally when you save this storage.");
       setName((current) => current.trim() || (oauthProvider === "gdrive" ? "Google Drive" : "Microsoft OneDrive"));
@@ -350,10 +368,11 @@ export function AddStorageDialog({
     }
 
     const config: Record<string, unknown> = { ...extraConfig };
+    const secretMutations: NonNullable<StorageDraft["secretMutations"]> = {};
 
     for (const field of currentSchema.fields) {
       const rawValue = fieldValues[field.name] ?? "";
-      if (field.required && !rawValue.trim()) {
+      if (field.required && !rawValue.trim() && !(field.secret && isEditing)) {
         setFormError(`${field.label} is required.`);
         return null;
       }
@@ -363,18 +382,31 @@ export function AddStorageDialog({
         continue;
       }
 
+      if (field.secret) {
+        if (clearedSecrets.has(field.name)) {
+          secretMutations[field.name] = { action: "clear" };
+        } else if (rawValue.trim() && rawValue !== "********") {
+          secretMutations[field.name] = { action: "set", value: rawValue };
+        } else if (isEditing) {
+          secretMutations[field.name] = { action: "keep" };
+        }
+        continue;
+      }
       if (!rawValue.trim()) continue;
       config[field.name] = rawValue;
     }
 
     setFormError(null);
     return {
+      ...(initialStorage?.id ? { storageId: initialStorage.id } : {}),
       name: trimmedName,
       backend: mapStorageTypeToBackend(type),
       config,
       enabled,
       mcpExposed,
       readOnly,
+      ...(Object.keys(secretMutations).length > 0 ? { secretMutations } : {}),
+      ...(oauthSessionId ? { oauthSessionId } : {}),
     };
   };
 
@@ -426,8 +458,16 @@ export function AddStorageDialog({
     }
   };
 
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && oauthSessionId) {
+      void cancelOAuthStorage(oauthSessionId);
+      setOauthSessionId(null);
+    }
+    onOpenChange(nextOpen);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-[720px] max-h-[88vh] overflow-y-auto rounded-2xl border border-border bg-background text-foreground shadow-2xl">
         <DialogHeader>
           <DialogTitle className="text-left text-base font-normal text-[hsl(var(--card-foreground))]">
@@ -603,13 +643,27 @@ export function AddStorageDialog({
 
             <div className="grid gap-4 rounded-xl border border-border/70 bg-card/40 p-4">
               {currentSchema?.fields.map((field) => (
-                <StorageFieldInput
-                  key={field.name}
-                  field={field}
-                  value={fieldValues[field.name] ?? ""}
-                  revealSecrets={revealSecrets}
-                  onChange={(value) => handleFieldChange(field.name, value)}
-                />
+                <div key={field.name} className="space-y-2">
+                  <StorageFieldInput
+                    field={field}
+                    value={clearedSecrets.has(field.name) ? "" : fieldValues[field.name] ?? ""}
+                    revealSecrets={revealSecrets}
+                    onChange={(value) => handleFieldChange(field.name, value)}
+                  />
+                  {isEditing && field.secret ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setClearedSecrets((current) => new Set(current).add(field.name));
+                        setFieldValues((current) => ({ ...current, [field.name]: "" }));
+                      }}
+                    >
+                      Clear stored {field.label}
+                    </Button>
+                  ) : null}
+                </div>
               ))}
             </div>
 

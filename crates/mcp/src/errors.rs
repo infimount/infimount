@@ -30,6 +30,14 @@ pub enum McpErrorCode {
     ERR_UNAUTHORIZED,
     ERR_MCP_POLICY_DENIED,
     ERR_CONFIRMATION_REQUIRED,
+    ERR_SECRET_MIGRATION_FAILED,
+    ERR_SECRET_STORE_UNAVAILABLE,
+    ERR_SECRET_NOT_FOUND,
+    ERR_SECRET_CLEANUP_PENDING,
+    ERR_OAUTH_SESSION_EXPIRED,
+    ERR_OAUTH_SESSION_ALREADY_USED,
+    ERR_OAUTH_SESSION_IN_USE,
+    ERR_OAUTH_SESSION_NOT_FOUND,
     ERR_INTERNAL,
 }
 
@@ -124,10 +132,33 @@ pub fn map_opendal_error(err: &opendal::Error, fallback: McpErrorCode) -> McpErr
         _ => fallback,
     };
 
+    let kind_str = format!("{:?}", err.kind());
     err_with_details(
         code,
         "storage operation failed",
-        json!({ "backend_error": err.to_string() }),
+        json!({
+            "kind": kind_str,
+            "temporary": err.is_temporary(),
+            "operation": "storage",
+        }),
+    )
+}
+
+pub fn map_core_error(err: &infimount_core::CoreError) -> McpError {
+    let code = match err {
+        infimount_core::CoreError::Config(_) => McpErrorCode::ERR_INTERNAL,
+        infimount_core::CoreError::Io(io_err) => match io_err.kind() {
+            std::io::ErrorKind::NotFound => McpErrorCode::ERR_PATH_NOT_FOUND,
+            std::io::ErrorKind::PermissionDenied => McpErrorCode::ERR_PERMISSION_DENIED,
+            std::io::ErrorKind::AlreadyExists => McpErrorCode::ERR_ALREADY_EXISTS,
+            _ => McpErrorCode::ERR_INTERNAL,
+        },
+        _ => McpErrorCode::ERR_INTERNAL,
+    };
+    err_with_details(
+        code,
+        "storage configuration operation failed",
+        json!({ "kind": "Core", "temporary": false, "operation": "configuration" }),
     )
 }
 
@@ -142,6 +173,6 @@ pub fn map_io_error(err: &std::io::Error, fallback: McpErrorCode) -> McpError {
     err_with_details(
         code,
         "I/O operation failed",
-        json!({ "io_error": err.to_string() }),
+        json!({ "kind": format!("{:?}", err.kind()), "temporary": false }),
     )
 }

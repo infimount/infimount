@@ -16,7 +16,6 @@ import {
   generateDownloadLink,
   getAppSettings,
   getMcpClientSnippets,
-  getMcpSettings,
   getMcpStatus,
   getStorageCapabilities,
   importStorageConfig,
@@ -46,7 +45,7 @@ import {
   verifyStorage,
   writeFile,
 } from "./api";
-import type { McpSettings, McpStoragePolicy, StorageDraft } from "@/types/storage";
+import type { McpSettingsUpdate, McpStoragePolicy, StorageDraft } from "@/types/storage";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -79,14 +78,13 @@ const policy: McpStoragePolicy = {
   },
 };
 
-const settings: McpSettings = {
+const settingsUpdate: McpSettingsUpdate = {
   enabled: true,
   transport: "http",
   bindAddress: "127.0.0.1",
   port: 7331,
   enabledTools: ["list_dir"],
-  securityBaselineVersion: 2,
-  authToken: "test-token",
+  authTokenMutation: { action: "set", value: "test-token" },
 };
 
 const auditEvent = {
@@ -143,9 +141,8 @@ describe("api wrappers", () => {
     ["listActiveMcpSessions", () => listActiveMcpSessions(), "list_active_mcp_sessions", undefined],
     ["approveMcpConfirmation", () => approveMcpConfirmation("op-1"), "approve_mcp_confirmation", { operationId: "op-1" }],
     ["denyMcpConfirmation", () => denyMcpConfirmation("op-1"), "deny_mcp_confirmation", { operationId: "op-1" }],
-    ["getMcpSettings", () => getMcpSettings(), "get_mcp_settings", undefined],
     ["listMcpTools", () => listMcpTools(), "list_mcp_tools", undefined],
-    ["updateMcpSettings", () => updateMcpSettings(settings), "update_mcp_settings", { settings }],
+    ["updateMcpSettings", () => updateMcpSettings(settingsUpdate), "update_mcp_settings_with_auth", { update: settingsUpdate }],
     ["getMcpStatus", () => getMcpStatus(), "get_mcp_status", undefined],
     ["startMcpHttp", () => startMcpHttp(), "start_mcp_http", undefined],
     ["stopMcpHttp", () => stopMcpHttp(), "stop_mcp_http", undefined],

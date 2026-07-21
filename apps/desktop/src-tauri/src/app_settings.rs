@@ -44,10 +44,6 @@ impl AppSettingsStore {
     }
 
     pub fn save_atomic(&self, settings: &AppSettings) -> McpResult<()> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|e| map_io_error(&e, McpErrorCode::ERR_INTERNAL))?;
-        }
-        let tmp_path = self.path.with_extension("json.tmp");
         let payload = serde_json::to_vec_pretty(settings).map_err(|e| {
             err_with_details(
                 McpErrorCode::ERR_INTERNAL,
@@ -55,8 +51,12 @@ impl AppSettingsStore {
                 json!({ "serde_error": e.to_string() }),
             )
         })?;
-        fs::write(&tmp_path, payload).map_err(|e| map_io_error(&e, McpErrorCode::ERR_INTERNAL))?;
-        fs::rename(&tmp_path, &self.path).map_err(|e| map_io_error(&e, McpErrorCode::ERR_INTERNAL))
+        infimount_core::atomic_file::atomic_write_file(
+            &self.path,
+            &payload,
+            infimount_core::atomic_file::FILE_MODE,
+        )
+        .map_err(|error| infimount_mcp::errors::map_core_error(&error))
     }
 
     pub fn mark_onboarding_completed(&self) -> McpResult<AppSettings> {

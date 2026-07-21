@@ -4,7 +4,7 @@ import type {
   McpAuditExportResult,
   McpClientSnippets,
   McpRuntimeStatus,
-  McpSettings,
+  McpSettingsUpdate,
   McpStoragePolicy,
   McpToolDefinition,
   PendingMcpConfirmation,
@@ -93,6 +93,7 @@ export interface ImportStoragesRequest {
 
 export interface ImportStoragesResult {
   imported: number;
+  warnings?: string[];
 }
 
 export interface ExportStoragesResult {
@@ -124,28 +125,37 @@ export interface OAuthConnectInput {
   clientSecret?: string;
   rootPath?: string;
   versioning?: boolean;
+  storageId?: string;
+  supersededSessionId?: string;
 }
 
 export interface OAuthConnectResult {
   provider: "gdrive" | "onedrive";
-  config: Record<string, unknown>;
-  expiresAt?: string | null;
+  oauthSessionId: string;
+  publicConfig: Record<string, unknown>;
+  expiresAt: string;
+}
+
+function sanitizeApiMessage(value: unknown): string {
+  const message =
+    typeof value === "string"
+      ? value
+      : value instanceof Error
+        ? value.message
+        : typeof value === "object" && value !== null && "message" in value
+          ? String((value as { message: unknown }).message)
+          : "";
+  const suspicious = /(https?:\/\/|authorization|bearer|token|secret|password|client[_ ]?secret|access[_ ]?key|[?&][^\s=]+=)/i;
+  if (!message || suspicious.test(message)) return "Infimount request failed.";
+  return message.slice(0, 240);
 }
 
 async function handleError(error: unknown): Promise<never> {
-  console.error("API Error:", error);
-  if (typeof error === "object" && error !== null && "code" in error && "message" in error) {
-    const apiErr = error as { code: string; message: string };
-    throw new TauriApiError(apiErr.message, apiErr.code);
-  }
-
-  const message =
-    typeof error === "string"
-      ? error
-      : error instanceof Error
-        ? error.message
-        : String(error);
-  throw new TauriApiError(message);
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? String((error as { code: unknown }).code)
+      : "UNKNOWN";
+  throw new TauriApiError(sanitizeApiMessage(error), code);
 }
 
 async function invokeOrThrow<T>(command: string): Promise<T>;
@@ -258,12 +268,22 @@ export function addStorage(storage: StorageDraft): Promise<StorageConfig> {
   return invokeOrThrow<StorageConfig>("add_storage", { storage });
 }
 
-export function updateStorage(storageId: string, storage: StorageDraft): Promise<StorageConfig> {
-  return invokeOrThrow<StorageConfig>("update_storage", { storageId, storage });
+export interface UpdateStorageResult {
+  storage: StorageConfig;
+  warning?: string | null;
 }
 
-export function removeStorage(storageId: string): Promise<void> {
-  return invokeOrThrow<void>("remove_storage", { storageId });
+export function updateStorage(storageId: string, storage: StorageDraft): Promise<UpdateStorageResult> {
+  return invokeOrThrow<UpdateStorageResult>("update_storage", { storageId, storage });
+}
+
+export interface RemoveStorageResult {
+  removed: boolean;
+  warning?: string | null;
+}
+
+export function removeStorage(storageId: string): Promise<RemoveStorageResult> {
+  return invokeOrThrow<RemoveStorageResult>("remove_storage", { storageId });
 }
 
 export function updateMcpStoragePolicy(
@@ -301,6 +321,10 @@ export function getStorageCapabilities(storageId: string): Promise<StorageCapabi
 
 export function connectOAuthStorage(input: OAuthConnectInput): Promise<OAuthConnectResult> {
   return invokeOrThrow<OAuthConnectResult>("connect_oauth_storage", { input });
+}
+
+export function cancelOAuthStorage(oauthSessionId: string): Promise<boolean> {
+  return invokeOrThrow<boolean>("cancel_oauth_storage", { oauthSessionId });
 }
 
 export function generateDownloadLink(
@@ -351,16 +375,12 @@ export function denyMcpConfirmation(operationId: string): Promise<PendingMcpConf
   return invokeOrThrow<PendingMcpConfirmation>("deny_mcp_confirmation", { operationId });
 }
 
-export function getMcpSettings(): Promise<McpSettings> {
-  return invokeOrThrow<McpSettings>("get_mcp_settings");
-}
-
 export function listMcpTools(): Promise<McpToolDefinition[]> {
   return invokeOrThrow<McpToolDefinition[]>("list_mcp_tools");
 }
 
-export function updateMcpSettings(settings: McpSettings): Promise<McpRuntimeStatus> {
-  return invokeOrThrow<McpRuntimeStatus>("update_mcp_settings", { settings });
+export function updateMcpSettings(update: McpSettingsUpdate): Promise<McpRuntimeStatus> {
+  return invokeOrThrow<McpRuntimeStatus>("update_mcp_settings_with_auth", { update });
 }
 
 export function getMcpStatus(): Promise<McpRuntimeStatus> {

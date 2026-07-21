@@ -66,7 +66,7 @@ pub async fn delete_path(
         false,
     )?;
 
-    let op = opendal_adapter::build_operator(&storage)?;
+    let op = opendal_adapter::build_operator(&storage, &ctx.registry)?;
     let target_meta = if parsed.backend_path.is_empty() {
         None
     } else {

@@ -5,8 +5,8 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::thread;
 use std::time::SystemTime;
 use std::time::{Duration, Instant};
@@ -16,6 +16,8 @@ pub const DEFAULT_HTTP_BIND_ADDRESS: &str = "127.0.0.1";
 pub const DEFAULT_HTTP_PORT: u16 = 7331;
 
 pub const SECURITY_BASELINE_VERSION: u32 = 2;
+pub const MCP_SETTINGS_SCHEMA_VERSION: u32 = 2;
+pub const MCP_AUTH_TOKEN_ACCOUNT: &str = "mcp/http-auth";
 
 static PRE_MIGRATION_PREFIX: &str = "mcp_settings.pre-v0.8.";
 
@@ -29,6 +31,8 @@ pub enum McpTransport {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpSettings {
+    #[serde(default)]
+    pub schema_version: u32,
     pub enabled: bool,
     pub transport: McpTransport,
     pub bind_address: String,
@@ -36,6 +40,8 @@ pub struct McpSettings {
     #[serde(default = "default_enabled_tool_names")]
     pub enabled_tools: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_token_ref: Option<String>,
+    #[serde(default, skip_serializing)]
     pub auth_token: Option<String>,
     #[serde(default)]
     pub security_baseline_version: u32,
@@ -44,11 +50,13 @@ pub struct McpSettings {
 impl Default for McpSettings {
     fn default() -> Self {
         Self {
+            schema_version: MCP_SETTINGS_SCHEMA_VERSION,
             enabled: false,
             transport: McpTransport::Stdio,
             bind_address: DEFAULT_HTTP_BIND_ADDRESS.to_string(),
             port: DEFAULT_HTTP_PORT,
             enabled_tools: default_enabled_tool_names(),
+            auth_token_ref: None,
             auth_token: None,
             security_baseline_version: SECURITY_BASELINE_VERSION,
         }
@@ -59,13 +67,28 @@ impl Default for McpSettings {
 pub struct McpSettingsStore {
     path: PathBuf,
     lock_path: PathBuf,
+    secret_store: Arc<dyn infimount_core::secrets::SecretStore>,
 }
 
 impl McpSettingsStore {
     pub fn new(path: Option<PathBuf>) -> Self {
+        Self::with_secret_store(
+            path,
+            Arc::new(infimount_core::secrets::NativeSecretStore::new()),
+        )
+    }
+
+    pub fn with_secret_store(
+        path: Option<PathBuf>,
+        secret_store: Arc<dyn infimount_core::secrets::SecretStore>,
+    ) -> Self {
         let path = path.unwrap_or_else(default_settings_path);
         let lock_path = path.with_extension("lock");
-        Self { path, lock_path }
+        Self {
+            path,
+            lock_path,
+            secret_store,
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -96,11 +119,96 @@ impl McpSettingsStore {
                 serde_json::json!({ "serde_error": e.to_string(), "path": self.path }),
             )
         })?;
-        let requires_migration = settings.security_baseline_version < SECURITY_BASELINE_VERSION;
-        let normalized = normalize_settings(settings);
+        let legacy_token = settings
+            .auth_token
+            .clone()
+            .filter(|token| !token.trim().is_empty());
+        let requires_migration = settings.schema_version < MCP_SETTINGS_SCHEMA_VERSION
+            || settings.security_baseline_version < SECURITY_BASELINE_VERSION
+            || legacy_token.is_some();
+        let mut normalized = normalize_settings(settings);
+        normalized.schema_version = MCP_SETTINGS_SCHEMA_VERSION;
         if requires_migration {
             self.create_pre_migration_backup(data.as_bytes())?;
-            self.save_atomic_unlocked(&normalized)?;
+            let previous = if legacy_token.is_some() {
+                self.secret_store
+                    .get_json(MCP_AUTH_TOKEN_ACCOUNT)
+                    .map_err(|_| {
+                        err(
+                            McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+                            "failed to stage HTTP auth migration",
+                        )
+                    })?
+            } else {
+                None
+            };
+            let changed_secret = if let Some(token) = legacy_token {
+                if self
+                    .secret_store
+                    .put_json(MCP_AUTH_TOKEN_ACCOUNT, &serde_json::json!({"token": token}))
+                    .is_err()
+                {
+                    restore_secret(
+                        self.secret_store.as_ref(),
+                        MCP_AUTH_TOKEN_ACCOUNT,
+                        previous.as_ref(),
+                    )?;
+                    return Err(err(
+                        McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+                        "failed to migrate HTTP auth token",
+                    ));
+                }
+                normalized.auth_token_ref = Some(MCP_AUTH_TOKEN_ACCOUNT.to_string());
+                true
+            } else {
+                false
+            };
+            if let Err(error) = self.save_atomic_unlocked(&normalized) {
+                if changed_secret {
+                    restore_secret(
+                        self.secret_store.as_ref(),
+                        MCP_AUTH_TOKEN_ACCOUNT,
+                        previous.as_ref(),
+                    )?;
+                }
+                return Err(error);
+            }
+            let verification = fs::read(&self.path)
+                .map_err(|_| {
+                    err(
+                        McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+                        "HTTP auth migration verification failed",
+                    )
+                })
+                .and_then(|bytes| {
+                    serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|_| {
+                        err(
+                            McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+                            "HTTP auth migration verification failed",
+                        )
+                    })
+                });
+            let verified = verification.as_ref().is_ok_and(|persisted| {
+                persisted.get("authToken").is_none()
+                    && persisted
+                        .get("schemaVersion")
+                        .and_then(|value| value.as_u64())
+                        == Some(MCP_SETTINGS_SCHEMA_VERSION as u64)
+            });
+            if !verified {
+                write_sensitive_atomic(&self.path, data.as_bytes())?;
+                if changed_secret {
+                    restore_secret(
+                        self.secret_store.as_ref(),
+                        MCP_AUTH_TOKEN_ACCOUNT,
+                        previous.as_ref(),
+                    )?;
+                }
+                return Err(err(
+                    McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+                    "HTTP auth migration verification failed",
+                ));
+            }
         }
         Ok(normalized)
     }
@@ -108,7 +216,10 @@ impl McpSettingsStore {
     fn save_atomic_unlocked(&self, settings: &McpSettings) -> McpResult<()> {
         ensure_parent(&self.path)?;
 
-        let normalized = normalize_settings(settings.clone());
+        let mut to_save = settings.clone();
+        to_save.auth_token = None;
+
+        let normalized = normalize_settings(to_save);
         let payload = serde_json::to_vec_pretty(&normalized).map_err(|e| {
             err_with_details(
                 McpErrorCode::ERR_INTERNAL,
@@ -129,8 +240,8 @@ impl McpSettingsStore {
             )
         })?;
         let backups_dir = parent.join("backups");
-        fs::create_dir_all(&backups_dir)
-            .map_err(|e| map_io_error(&e, McpErrorCode::ERR_INTERNAL))?;
+        infimount_core::atomic_file::create_dir_all(&backups_dir)
+            .map_err(|error| crate::errors::map_core_error(&error))?;
         let timestamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|duration| duration.as_nanos())
@@ -180,106 +291,88 @@ pub fn default_settings_path() -> PathBuf {
 }
 
 fn write_sensitive_atomic(path: &Path, payload: &[u8]) -> McpResult<()> {
-    ensure_parent(path)?;
-    let parent = path.parent().ok_or_else(|| {
-        err_with_details(
-            McpErrorCode::ERR_INTERNAL,
-            "settings path has no parent directory",
-            serde_json::json!({ "path": path }),
-        )
-    })?;
-    let tmp_path = parent.join(format!(
-        ".{}.tmp.{}.{}",
-        path.file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("mcp_settings"),
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|value| value.as_nanos())
-            .unwrap_or_default()
-    ));
-
-    let result = (|| -> std::io::Result<()> {
-        let mut options = OpenOptions::new();
-        options.create_new(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&tmp_path)?;
-        file.write_all(payload)?;
-        file.sync_all()?;
-        replace_file(&tmp_path, path)?;
-        #[cfg(unix)]
-        fs::File::open(parent)?.sync_all()?;
-        Ok(())
-    })();
-
-    if let Err(error) = result {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(map_io_error(&error, McpErrorCode::ERR_INTERNAL));
-    }
-    Ok(())
-}
-
-#[cfg(not(windows))]
-fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
-    fs::rename(source, destination)
-}
-
-#[cfg(windows)]
-fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-    };
-
-    let source = source
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let destination = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let result = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if result == 0 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
+    infimount_core::atomic_file::atomic_write_file(
+        path,
+        payload,
+        infimount_core::atomic_file::FILE_MODE,
+    )
+    .map_err(|error| crate::errors::map_core_error(&error))
 }
 
 fn ensure_parent(path: &Path) -> McpResult<()> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).map_err(|e| map_io_error(&e, McpErrorCode::ERR_INTERNAL))?;
-        }
-    }
-    Ok(())
+    infimount_core::atomic_file::ensure_parent(path)
+        .map_err(|error| crate::errors::map_core_error(&error))
 }
 
 fn normalize_settings(mut settings: McpSettings) -> McpSettings {
     settings = migrate_security_baseline(settings);
     settings.enabled_tools = sanitize_enabled_tools(settings.enabled_tools);
-    settings.auth_token = normalize_auth_token(settings.auth_token);
+    settings.auth_token = None;
+    settings.auth_token_ref = normalize_auth_token_ref(settings.auth_token_ref);
     settings
 }
 
-pub fn normalize_auth_token(value: Option<String>) -> Option<String> {
+pub fn normalize_auth_token_ref(value: Option<String>) -> Option<String> {
     value
         .map(|token| token.trim().to_string())
         .filter(|token| !token.is_empty())
+}
+
+pub fn normalize_auth_token(value: Option<String>) -> Option<String> {
+    normalize_auth_token_ref(value)
+}
+
+fn restore_secret(
+    secret_store: &dyn infimount_core::secrets::SecretStore,
+    account: &str,
+    previous: Option<&serde_json::Value>,
+) -> McpResult<()> {
+    let restored = match previous {
+        Some(value) => secret_store.put_json(account, value),
+        None => secret_store.delete(account),
+    };
+    restored.map_err(|_| {
+        err(
+            McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+            "HTTP credential rollback failed; manual secret-store cleanup is required",
+        )
+    })
+}
+
+pub fn resolve_auth_token(
+    auth_token_ref: &Option<String>,
+    secret_store: &dyn infimount_core::secrets::SecretStore,
+) -> McpResult<Option<String>> {
+    if let Some(account) = auth_token_ref {
+        let bundle = secret_store
+            .get_json(account)
+            .map_err(|_| {
+                err(
+                    McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                    "native secret storage is unavailable",
+                )
+            })?
+            .ok_or_else(|| {
+                err(
+                    McpErrorCode::ERR_SECRET_NOT_FOUND,
+                    "configured HTTP auth token is missing",
+                )
+            })?;
+        let token = bundle
+            .get("token")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty() && *value != "********")
+            .ok_or_else(|| {
+                err(
+                    McpErrorCode::ERR_SECRET_NOT_FOUND,
+                    "configured HTTP auth token is invalid",
+                )
+            })?;
+        return Ok(Some(token.to_string()));
+    }
+    Ok(std::env::var("INFIMOUNT_AUTH_TOKEN")
+        .ok()
+        .filter(|token| !token.trim().is_empty()))
 }
 
 fn sanitize_enabled_tools(enabled_tools: Vec<String>) -> Vec<String> {
@@ -314,9 +407,72 @@ fn migrate_security_baseline(mut settings: McpSettings) -> McpSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use infimount_core::secrets::SecretStore;
 
     fn safe_tools() -> Vec<String> {
         default_enabled_tool_names()
+    }
+
+    #[test]
+    fn legacy_plaintext_auth_token_migrates_transactionally() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("mcp_settings.json");
+        let secret_store = Arc::new(infimount_core::secrets::MemorySecretStore::new());
+        let store = McpSettingsStore::with_secret_store(Some(path.clone()), secret_store.clone());
+        let original = serde_json::json!({
+            "enabled": false,
+            "transport": "http",
+            "bindAddress": "127.0.0.1",
+            "port": 7331,
+            "enabledTools": ["list_dir"],
+            "authToken": "seeded-http-token",
+            "securityBaselineVersion": 2
+        });
+        fs::write(&path, serde_json::to_vec_pretty(&original).unwrap()).unwrap();
+
+        let loaded = store.load().expect("migrate settings");
+        assert_eq!(
+            loaded.auth_token_ref.as_deref(),
+            Some(MCP_AUTH_TOKEN_ACCOUNT)
+        );
+        assert!(loaded.auth_token.is_none());
+        assert_eq!(
+            secret_store
+                .get_json(MCP_AUTH_TOKEN_ACCOUNT)
+                .unwrap()
+                .unwrap()["token"],
+            "seeded-http-token"
+        );
+        assert!(!fs::read_to_string(path)
+            .unwrap()
+            .contains("seeded-http-token"));
+    }
+
+    #[test]
+    fn non_secret_settings_migration_does_not_require_keyring() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("mcp_settings.json");
+        let secret_store = Arc::new(infimount_core::secrets::UnavailableSecretStore::new(
+            "locked",
+        ));
+        let store = McpSettingsStore::with_secret_store(Some(path.clone()), secret_store);
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "enabled": false,
+                "transport": "stdio",
+                "bindAddress": "127.0.0.1",
+                "port": 7331,
+                "enabledTools": ["list_dir"],
+                "securityBaselineVersion": 1
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let migrated = store.load().expect("non-secret migration");
+        assert_eq!(migrated.schema_version, MCP_SETTINGS_SCHEMA_VERSION);
+        assert!(migrated.auth_token_ref.is_none());
     }
 
     #[test]
@@ -330,12 +486,14 @@ mod tests {
         assert_eq!(default_settings.transport, McpTransport::Stdio);
 
         let updated = McpSettings {
+            schema_version: MCP_SETTINGS_SCHEMA_VERSION,
             enabled: true,
             transport: McpTransport::Http,
             bind_address: "127.0.0.1".to_string(),
             port: 0,
             enabled_tools: vec!["list_dir".to_string(), "write_file".to_string()],
-            auth_token: Some("test-token".to_string()),
+            auth_token_ref: Some("mcp/http-auth".to_string()),
+            auth_token: None,
             security_baseline_version: SECURITY_BASELINE_VERSION,
         };
         store.save_atomic(&updated).expect("save settings");
@@ -349,7 +507,8 @@ mod tests {
             reloaded.enabled_tools,
             vec!["list_dir".to_string(), "write_file".to_string()]
         );
-        assert_eq!(reloaded.auth_token.as_deref(), Some("test-token"));
+        assert_eq!(reloaded.auth_token_ref.as_deref(), Some("mcp/http-auth"));
+        assert!(reloaded.auth_token.is_none());
         assert_eq!(
             reloaded.security_baseline_version,
             SECURITY_BASELINE_VERSION
@@ -363,18 +522,18 @@ mod tests {
     }
 
     #[test]
-    fn settings_store_normalizes_empty_and_whitespace_auth_tokens() {
+    fn settings_store_normalizes_empty_and_whitespace_auth_token_refs() {
         let settings = normalize_settings(McpSettings {
-            auth_token: Some("   ".to_string()),
+            auth_token_ref: Some("   ".to_string()),
             ..McpSettings::default()
         });
-        assert!(settings.auth_token.is_none());
+        assert!(settings.auth_token_ref.is_none());
 
         let settings = normalize_settings(McpSettings {
-            auth_token: Some("  secret-token  ".to_string()),
+            auth_token_ref: Some("  mcp/http-auth  ".to_string()),
             ..McpSettings::default()
         });
-        assert_eq!(settings.auth_token.as_deref(), Some("secret-token"));
+        assert_eq!(settings.auth_token_ref.as_deref(), Some("mcp/http-auth"));
     }
 
     #[test]

@@ -7,7 +7,7 @@ use crate::models::{Result, Source};
 ///
 /// Uses `~/.infimount/config.json` by default, or a custom
 /// path via the `INFIMOUNT_CONFIG` env var.
-fn config_path() -> PathBuf {
+pub fn config_path() -> PathBuf {
     if let Ok(p) = std::env::var("INFIMOUNT_CONFIG") {
         return PathBuf::from(p);
     }
@@ -45,13 +45,30 @@ pub fn load_sources() -> Result<Vec<Source>> {
 
 /// Persist the current list of sources.
 pub fn save_sources(sources: &[Source]) -> Result<()> {
-    let path = config_path();
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)?;
-        }
+    let value = serde_json::to_value(sources)?;
+    let secret_names = crate::secrets::discover_secret_field_names();
+    if crate::secrets::contains_plaintext_secrets(&value, &secret_names) {
+        return Err(crate::models::CoreError::Config(
+            "legacy config persistence refuses plaintext credentials".to_string(),
+        ));
     }
-    let data = serde_json::to_string_pretty(sources)?;
-    fs::write(path, data)?;
+    let data = serde_json::to_vec_pretty(sources)?;
+    crate::atomic_file::atomic_write_file(&config_path(), &data, crate::atomic_file::FILE_MODE)
+}
+
+pub fn remove_legacy_config() -> Result<()> {
+    let path = config_path();
+    if !path.exists() {
+        return Ok(());
+    }
+    let length = fs::metadata(&path)?.len() as usize;
+    if length > 0 {
+        crate::atomic_file::atomic_write_file(
+            &path,
+            &vec![0; length],
+            crate::atomic_file::FILE_MODE,
+        )?;
+    }
+    fs::remove_file(path)?;
     Ok(())
 }

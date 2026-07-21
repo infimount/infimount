@@ -109,10 +109,12 @@ const mcpStatus: McpRuntimeStatus = {
     port: 7331,
     enabledTools: [],
     securityBaselineVersion: 2,
+    authTokenConfigured: false,
   },
   runningHttp: false,
   endpoint: null,
   endpointDisplay: "http://127.0.0.1:7331/mcp",
+  authTokenConfigured: false,
 };
 
 const policy = {

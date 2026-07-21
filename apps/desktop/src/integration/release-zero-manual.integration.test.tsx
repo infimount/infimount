@@ -145,10 +145,12 @@ const mcpStatus: McpRuntimeStatus = {
     port: 7331,
     enabledTools: ["list_dir", "read_file"],
     securityBaselineVersion: 2,
+    authTokenConfigured: false,
   },
   runningHttp: false,
   endpoint: null,
   endpointDisplay: "http://127.0.0.1:7331/mcp",
+  authTokenConfigured: false,
 };
 
 describe("release zero-manual smoke path", () => {
@@ -275,7 +277,7 @@ describe("release zero-manual smoke path", () => {
         bindAddress: "127.0.0.1",
         port: 7331,
         enabledTools: ["list_dir", "read_file"],
-        securityBaselineVersion: 2,
+        authTokenMutation: { action: "keep" },
       });
       expect(startMcpHttp).toHaveBeenCalled();
     });

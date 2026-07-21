@@ -33,6 +33,22 @@ pub fn list_storage_schemas() -> Result<Vec<StorageKindSchema>> {
     Ok(items)
 }
 
+pub fn list_secret_field_names() -> Vec<String> {
+    let schemas = match list_storage_schemas() {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let mut names: Vec<String> = schemas
+        .iter()
+        .flat_map(|s| s.fields.iter())
+        .filter(|f| f.secret)
+        .map(|f| f.name.clone())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
