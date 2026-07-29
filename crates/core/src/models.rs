@@ -222,6 +222,44 @@ pub struct WriteRequest {
     pub data: Vec<u8>,
 }
 
+/// Paginated listing request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListEntriesPageRequest {
+    pub source_id: String,
+    pub path: String,
+    #[serde(default = "default_page_limit")]
+    pub limit: u32,
+    pub cursor: Option<String>,
+    #[serde(default)]
+    pub recursive: bool,
+}
+
+fn default_page_limit() -> u32 {
+    200
+}
+
+/// Paginated listing response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListEntriesPage {
+    pub entries: Vec<Entry>,
+    pub next_cursor: Option<String>,
+    pub truncated: bool,
+}
+
+/// Range read result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadFileRangeResult {
+    pub total_size: u64,
+    pub offset: u64,
+    pub bytes: Vec<u8>,
+    pub truncated: bool,
+}
+
+pub const DEFAULT_PREVIEW_MAX: u64 = 256 * 1024; // 256 KiB
+pub const MAX_READ_RANGE_BYTES: u64 = 2 * 1024 * 1024; // 2 MiB
+pub const MAX_LIST_LIMIT: u32 = 1000;
+pub const MAX_RECURSIVE_ITEMS: u32 = 10000;
+
 #[cfg(test)]
 mod tests {
     use super::*;

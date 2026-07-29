@@ -21,6 +21,7 @@ import type {
   OsInfo,
   ProductEvent,
 } from "@/types/diagnostics";
+import type { ListEntriesPage, ReadFileRangeResult } from "@/types/storage";
 
 export interface Entry {
   path: string;
@@ -181,6 +182,22 @@ export function listEntriesRecursive(sourceId: string, path = "/"): Promise<Entr
   return invokeOrThrow<Entry[]>("list_entries_recursive", { sourceId, path });
 }
 
+export function listEntriesPage(
+  sourceId: string,
+  path: string,
+  limit?: number,
+  cursor?: string,
+  recursive?: boolean,
+): Promise<ListEntriesPage> {
+  return invokeOrThrow<ListEntriesPage>("list_entries_page", {
+    sourceId,
+    path,
+    limit,
+    cursor,
+    recursive,
+  });
+}
+
 export function statEntry(sourceId: string, path: string): Promise<Entry> {
   return invokeOrThrow<Entry>("stat_entry", { sourceId, path });
 }
@@ -188,6 +205,20 @@ export function statEntry(sourceId: string, path: string): Promise<Entry> {
 export async function readFile(sourceId: string, path: string): Promise<Uint8Array> {
   const data = await invokeOrThrow<number[]>("read_file", { sourceId, path });
   return new Uint8Array(data);
+}
+
+export function readFileRange(
+  sourceId: string,
+  path: string,
+  offset: number,
+  maxBytes: number,
+): Promise<ReadFileRangeResult> {
+  return invokeOrThrow<ReadFileRangeResult>("read_file_range", {
+    sourceId,
+    path,
+    offset,
+    maxBytes,
+  });
 }
 
 export function writeFile(

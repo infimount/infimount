@@ -61,8 +61,10 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::list_entries,
             commands::list_entries_recursive,
+            commands::list_entries_page,
             commands::stat_entry,
             commands::read_file,
+            commands::read_file_range,
             commands::write_file,
             commands::create_directory,
             commands::delete_path,

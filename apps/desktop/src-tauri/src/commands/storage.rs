@@ -2,7 +2,10 @@
 
 use chrono::Utc;
 use fs2::FileExt;
-use infimount_core::{operations, schema::StorageKindSchema, secrets, CoreError, Entry};
+use infimount_core::{
+    models::{ListEntriesPage, ReadFileRangeResult},
+    operations, schema::StorageKindSchema, secrets, CoreError, Entry,
+};
 use infimount_mcp::errors::{err, err_with_details, McpError, McpErrorCode, McpResult};
 use infimount_mcp::opendal_adapter::{get_capabilities, StorageBackendCapabilities};
 use infimount_mcp::policy::{migrate_legacy_policy, normalize_storage_policy, McpStoragePolicy};
@@ -64,6 +67,38 @@ pub async fn list_entries_recursive(
 ) -> Result<Vec<Entry>, CoreError> {
     let op = state.operator_for_storage_id(&sourceId)?;
     operations::list_entries_recursive(&op, &path).await
+}
+
+#[tauri::command]
+pub async fn list_entries_page(
+    state: State<'_, AppState>,
+    sourceId: String,
+    path: String,
+    limit: Option<u32>,
+    cursor: Option<String>,
+    recursive: Option<bool>,
+) -> Result<ListEntriesPage, CoreError> {
+    let op = state.operator_for_storage_id(&sourceId)?;
+    operations::list_entries_page(
+        &op,
+        &path,
+        limit.unwrap_or(200),
+        cursor,
+        recursive.unwrap_or(false),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn read_file_range(
+    state: State<'_, AppState>,
+    sourceId: String,
+    path: String,
+    offset: u64,
+    maxBytes: u64,
+) -> Result<ReadFileRangeResult, CoreError> {
+    let op = state.operator_for_storage_id(&sourceId)?;
+    operations::read_file_range(&op, &path, offset, maxBytes).await
 }
 
 #[tauri::command]

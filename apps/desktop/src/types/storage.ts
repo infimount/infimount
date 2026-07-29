@@ -252,3 +252,25 @@ export interface ActiveMcpSession {
   created_at: string;
   expires_at: string;
 }
+
+export interface ListEntriesPage {
+  entries: Entry[];
+  nextCursor: string | null;
+  truncated: boolean;
+}
+
+export interface ReadFileRangeResult {
+  totalSize: number;
+  offset: number;
+  bytes: number[];
+  truncated: boolean;
+}
+
+export interface Entry {
+  path: string;
+  name: string;
+  is_dir: boolean;
+  size: number;
+  modified_at: string | null;
+  etag: string | null;
+}

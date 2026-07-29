@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use tokio::fs;
 
-use crate::models::{Entry, Result};
+use crate::models::{Entry, ListEntriesPage, ReadFileRangeResult, Result, MAX_LIST_LIMIT, MAX_RECURSIVE_ITEMS};
 use crate::util::extract_filename;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -249,6 +249,205 @@ pub async fn read_full(op: &Operator, path: &str) -> Result<Vec<u8>> {
     let p = normalize_opendal_path(path);
     let data = op.read(&p).await?;
     Ok(data.to_vec())
+}
+
+/// Read a range of a file. Respects max_bytes limits.
+/// Read a range of a file. Respects max_bytes limits.
+pub async fn read_file_range(
+    op: &Operator,
+    path: &str,
+    offset: u64,
+    max_bytes: u64,
+) -> Result<ReadFileRangeResult> {
+    let p = normalize_opendal_path(path);
+    let meta = op.stat(&p).await?;
+    let total_size = meta.content_length();
+
+    let actual_max = max_bytes.min(crate::models::MAX_READ_RANGE_BYTES);
+    let end = (offset + actual_max).min(total_size);
+    let actual_bytes = end.saturating_sub(offset);
+
+    if actual_bytes == 0 {
+        return Ok(ReadFileRangeResult {
+            total_size,
+            offset,
+            bytes: Vec::new(),
+            truncated: false,
+        });
+    }
+
+    use futures::AsyncReadExt;
+    let reader = op.reader(&p).await?;
+    let mut async_reader = reader.into_futures_async_read(offset..end).await?;
+    let mut bytes = Vec::with_capacity(actual_bytes as usize);
+    async_reader.read_to_end(&mut bytes).await?;
+
+    Ok(ReadFileRangeResult {
+        total_size,
+        offset,
+        bytes,
+        truncated: end < total_size,
+    })
+}
+
+/// List entries with pagination support.
+pub async fn list_entries_page(
+    op: &Operator,
+    path: &str,
+    limit: u32,
+    cursor: Option<String>,
+    recursive: bool,
+) -> Result<ListEntriesPage> {
+    let actual_limit = limit.min(MAX_LIST_LIMIT);
+    let skip_count: usize = cursor
+        .as_ref()
+        .and_then(|c| c.parse::<usize>().ok())
+        .unwrap_or(0);
+
+    if recursive {
+        return list_entries_page_recursive(op, path, actual_limit, skip_count).await;
+    }
+
+    let p = normalize_list_path(path);
+    let mut lister = if p.is_empty() {
+        match op.lister("").await {
+            Ok(l) => l,
+            Err(e) if e.kind() == ErrorKind::NotFound => op.lister("/").await?,
+            Err(e) => return Err(e.into()),
+        }
+    } else {
+        op.lister(&p).await?
+    };
+
+    let mut entries = Vec::new();
+    let mut skipped: usize = 0;
+    let mut has_more = false;
+
+    // Skip already-seen entries
+    while skipped < skip_count {
+        match lister.try_next().await? {
+            Some(_) => skipped += 1,
+            None => {
+                return Ok(ListEntriesPage {
+                    entries: Vec::new(),
+                    next_cursor: None,
+                    truncated: false,
+                });
+            }
+        }
+    }
+
+    // Collect up to limit
+    while let Some(obj) = lister.try_next().await? {
+        let full_path = obj.path().to_string();
+        if full_path.trim_end_matches('/').is_empty() {
+            continue;
+        }
+
+        if entries.len() >= actual_limit as usize {
+            has_more = true;
+            break;
+        }
+
+        let name = extract_filename(&full_path);
+        let (is_dir, size, modified_at, etag) = match op.stat(&full_path).await {
+            Ok(meta) => (
+                meta.is_dir(),
+                meta.content_length(),
+                meta.last_modified().map(|dt| dt.to_string()),
+                meta.etag().map(|s| s.to_string()),
+            ),
+            Err(e) if e.kind() == ErrorKind::NotFound => (false, 0, None, None),
+            Err(e) => return Err(e.into()),
+        };
+
+        entries.push(Entry {
+            path: full_path,
+            name,
+            is_dir,
+            size,
+            modified_at,
+            etag,
+        });
+    }
+
+    let next_offset = skip_count + entries.len();
+    let next_cursor = if has_more {
+        Some(next_offset.to_string())
+    } else {
+        None
+    };
+
+    Ok(ListEntriesPage {
+        entries,
+        next_cursor,
+        truncated: false,
+    })
+}
+
+async fn list_entries_page_recursive(
+    op: &Operator,
+    path: &str,
+    limit: u32,
+    skip_count: usize,
+) -> Result<ListEntriesPage> {
+    let root = normalize_list_path(path);
+    let actual_limit = limit.min(MAX_RECURSIVE_ITEMS);
+    let mut entries = Vec::new();
+    let mut stack = vec![root];
+    let mut skipped: usize = 0;
+
+    while let Some(base) = stack.pop() {
+        let mut lister = op.lister(&base).await?;
+        while let Some(obj) = lister.try_next().await? {
+            let full_path = obj.path().to_string();
+            let name = extract_filename(&full_path);
+            if full_path.is_empty() || name == "." || is_current_dir_marker(&base, &full_path) {
+                continue;
+            }
+
+            if skipped < skip_count {
+                skipped += 1;
+                continue;
+            }
+
+            if entries.len() >= actual_limit as usize {
+                let next_cursor = Some((skip_count + entries.len()).to_string());
+                return Ok(ListEntriesPage {
+                    entries,
+                    next_cursor,
+                    truncated: true,
+                });
+            }
+
+            let meta = op.stat(&full_path).await?;
+            let is_dir = meta.is_dir();
+            let entry_path = if is_dir {
+                ensure_dir_path(&full_path)
+            } else {
+                full_path.clone()
+            };
+
+            entries.push(Entry {
+                path: entry_path,
+                name,
+                is_dir,
+                size: if is_dir { 0 } else { meta.content_length() },
+                modified_at: meta.last_modified().map(|dt| dt.to_string()),
+                etag: meta.etag().map(|s| s.to_string()),
+            });
+
+            if is_dir {
+                stack.push(ensure_dir_path(&full_path));
+            }
+        }
+    }
+
+    Ok(ListEntriesPage {
+        entries,
+        next_cursor: None,
+        truncated: false,
+    })
 }
 
 /// Write the full contents of a file, overwriting if it exists.
