@@ -179,6 +179,9 @@ describe("release zero-manual smoke path", () => {
       onboardingSkipped: false,
       onboardingCompletedAt: "2026-05-24T00:00:00Z",
       onboardingSkippedAt: null,
+      wizardStep: null,
+      wizardCompletedSteps: [],
+      telemetryConsent: null,
     });
     vi.mocked(listStorageSchemas).mockResolvedValue([
       {

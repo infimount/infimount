@@ -392,6 +392,23 @@ export function skipOnboarding(): Promise<AppSettings> {
   return invokeOrThrow<AppSettings>("skip_onboarding");
 }
 
+export interface SaveWizardStateInput {
+  step: string | null;
+  completedSteps: string[];
+}
+
+export interface SetTelemetryConsentInput {
+  consent: boolean;
+}
+
+export function saveWizardState(request: SaveWizardStateInput): Promise<AppSettings> {
+  return invokeOrThrow<AppSettings>("save_wizard_state", { request });
+}
+
+export function setTelemetryConsent(request: SetTelemetryConsentInput): Promise<AppSettings> {
+  return invokeOrThrow<AppSettings>("set_telemetry_consent", { request });
+}
+
 export function listMcpAuditEvents(limit = 200): Promise<McpAuditEvent[]> {
   return invokeOrThrow<McpAuditEvent[]>("list_mcp_audit_events", { limit });
 }

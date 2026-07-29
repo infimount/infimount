@@ -112,6 +112,8 @@ fn main() {
             commands::update_workspace,
             commands::delete_workspace,
             commands::import_legacy_workspaces,
+            commands::save_wizard_state,
+            commands::set_telemetry_consent,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -190,6 +190,9 @@ export interface AppSettings {
   onboardingSkipped: boolean;
   onboardingCompletedAt: string | null;
   onboardingSkippedAt: string | null;
+  wizardStep: string | null;
+  wizardCompletedSteps: string[];
+  telemetryConsent: boolean | null;
 }
 
 export interface McpAuditExportManifest {

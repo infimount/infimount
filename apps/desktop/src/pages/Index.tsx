@@ -22,6 +22,7 @@ import {
   getMcpClientSnippets,
   getMcpStatus,
   listActiveMcpSessions,
+  saveWizardState,
   listPendingMcpConfirmations,
   listMcpAuditEvents,
   listMcpTools,
@@ -74,9 +75,9 @@ const McpSettingsDialog = lazy(() =>
     default: module.McpSettingsDialog,
   })),
 );
-const FirstRunOnboardingDialog = lazy(() =>
-  import("@/components/FirstRunOnboardingDialog").then((module) => ({
-    default: module.FirstRunOnboardingDialog,
+const ActivationWizard = lazy(() =>
+  import("@/components/ActivationWizard").then((module) => ({
+    default: module.ActivationWizard,
   })),
 );
 const StorageConfigEditorDialog = lazy(() =>
@@ -643,6 +644,14 @@ const Index = () => {
     setIsOnboardingOpen(false);
   };
 
+  const handleSaveWizardState = async (
+    step: string | null,
+    completedSteps: string[],
+  ) => {
+    const next = await saveWizardState({ step, completedSteps });
+    setAppSettings(next);
+  };
+
   const handleTestMcpConnection = async () => {
     await reloadMcpStatus();
     const exposedCount = storages.filter((storage) => storage.enabled && storage.mcpExposed).length;
@@ -959,7 +968,7 @@ const Index = () => {
 
         <Suspense fallback={null}>
         {isOnboardingOpen ? (
-          <FirstRunOnboardingDialog
+          <ActivationWizard
             open={isOnboardingOpen}
             onOpenChange={setIsOnboardingOpen}
             onAddStorage={() => {
@@ -970,9 +979,12 @@ const Index = () => {
               setIsOnboardingOpen(false);
               setIsMcpDialogOpen(true);
             }}
-            onTestConnection={handleTestMcpConnection}
             onComplete={handleCompleteOnboarding}
             onSkip={handleSkipOnboarding}
+            onSaveState={handleSaveWizardState}
+            storagesCount={storages.length}
+            mcpStatus={mcpStatus ?? undefined}
+            clientSnippets={mcpSnippets ?? undefined}
           />
         ) : null}
 
