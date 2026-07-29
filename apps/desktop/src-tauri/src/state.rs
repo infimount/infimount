@@ -11,6 +11,7 @@ use infimount_mcp::session::SessionManager;
 use infimount_mcp::settings::{
     resolve_auth_token, McpSettings, McpSettingsStore, McpTransport, MCP_AUTH_TOKEN_ACCOUNT,
 };
+use infimount_mcp::telemetry::ProductEventStore;
 use infimount_mcp::tools_fs::FsToolsContext;
 use opendal::Operator;
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,7 @@ pub struct AppState {
     pub secret_store: Arc<dyn SecretStore>,
     pub pending_oauth: PendingOAuthStore,
     pub workspaces: WorkspaceRegistry,
+    pub product_events: ProductEventStore,
     http_runtime: Mutex<Option<McpHttpServerHandle>>,
     transfer_cancellations: StdMutex<HashSet<String>>,
 }
@@ -229,6 +231,7 @@ impl AppState {
             secret_store,
             pending_oauth: PendingOAuthStore::new(),
             workspaces,
+            product_events: ProductEventStore::new(None),
             http_runtime: Mutex::new(None),
             transfer_cancellations: StdMutex::new(HashSet::new()),
         })

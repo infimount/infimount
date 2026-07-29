@@ -16,6 +16,11 @@ import type {
   StorageDraft,
   StorageValidationResult,
 } from "@/types/storage";
+import type {
+  DiagnosticsExportResult,
+  OsInfo,
+  ProductEvent,
+} from "@/types/diagnostics";
 
 export interface Entry {
   path: string;
@@ -594,4 +599,16 @@ export function deleteFileVersion(
   version: string,
 ): Promise<DeleteVersionResult> {
   return invokeOrThrow<DeleteVersionResult>("delete_version", { sourceId, path, version });
+}
+
+export function exportDiagnostics(): Promise<DiagnosticsExportResult> {
+  return invokeOrThrow<DiagnosticsExportResult>("export_diagnostics");
+}
+
+export function getProductEvents(): Promise<ProductEvent[]> {
+  return invokeOrThrow<ProductEvent[]>("get_product_events");
+}
+
+export function getOsInfo(): Promise<OsInfo> {
+  return invokeOrThrow<OsInfo>("get_os_info");
 }

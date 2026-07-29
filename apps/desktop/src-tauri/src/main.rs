@@ -5,6 +5,7 @@
 
 mod app_settings;
 mod commands;
+mod diagnostics;
 mod state;
 
 use tauri::menu::{Menu, MenuItem};
@@ -114,6 +115,9 @@ fn main() {
             commands::import_legacy_workspaces,
             commands::save_wizard_state,
             commands::set_telemetry_consent,
+            commands::export_diagnostics,
+            commands::get_product_events,
+            commands::get_os_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,4 +1,5 @@
 pub mod backup;
+pub mod diagnostics;
 pub mod mcp;
 pub mod mcp_sidecar;
 pub mod workspaces;
@@ -8,6 +9,7 @@ pub mod storage;
 pub mod transfers;
 
 pub use backup::*;
+pub use diagnostics::*;
 pub use mcp::*;
 pub use mcp_sidecar::*;
 pub use workspaces::*;
