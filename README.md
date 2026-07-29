@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <strong>Local-first storage browser for desktop and MCP workflows.</strong><br/>
-  Browse local folders, object storage, and WebDAV from one native app. Expose only selected storages to AI clients.
+  <strong>Safe storage access for AI agents.</strong><br/>
+  Browse local folders, object storage, and WebDAV from one native app. Control which storages and paths MCP agents can access — with confirmations, audit, and local-first security.
 </p>
 
 <p align="center">
@@ -28,7 +28,7 @@
 
 ## Install
 
-**Current stable release:** [v0.7.1](https://github.com/infimount/infimount/releases/tag/v0.7.1)
+**Current stable release:** [v0.8.0-rc.1](https://github.com/infimount/infimount/releases/tag/v0.8.0-rc.1)
 
 ### Linux
 
