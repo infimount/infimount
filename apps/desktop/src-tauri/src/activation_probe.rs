@@ -11,7 +11,6 @@ use infimount_mcp::runtime::start_http_server;
 use infimount_mcp::session::SessionManager;
 use infimount_mcp::telemetry::{build_os_arch, ProductEvent, ProductEventName, ProductEventStore};
 use serde::Serialize;
-use serde_json::json;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize)]

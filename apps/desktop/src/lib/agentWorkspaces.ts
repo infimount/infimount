@@ -147,7 +147,7 @@ export async function createAgentWorkspace({
     updatePolicy: updatePolicy ? policy : undefined,
   });
 
-  if (result.rollbackAttempted && result.rollbackErrors.length > 0) {
+  if (result.rollbackErrors.length > 0) {
     console.warn("Workspace creation rollback completed with errors:", result.rollbackErrors);
   }
 

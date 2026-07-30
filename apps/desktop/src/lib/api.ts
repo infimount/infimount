@@ -21,7 +21,12 @@ import type {
   OsInfo,
   ProductEvent,
 } from "@/types/diagnostics";
-import type { ListEntriesPage, ReadFileRangeResult, Entry } from "@/types/storage";
+import type {
+  ListEntriesPage,
+  ReadFileRangeResult,
+  Entry,
+  ActivationProbeOutput,
+} from "@/types/storage";
 
 export type { Entry } from "@/types/storage";
 
@@ -613,7 +618,6 @@ export interface CreateWorkspaceAtomicInput {
 export interface CreateWorkspaceAtomicOutput {
   workspace: WorkspaceRecord;
   policyUpdated: boolean;
-  rollbackAttempted: boolean;
   rollbackErrors: string[];
 }
 
@@ -671,4 +675,8 @@ export function getProductEvents(): Promise<ProductEvent[]> {
 
 export function getOsInfo(): Promise<OsInfo> {
   return invokeOrThrow<OsInfo>("get_os_info");
+}
+
+export function runActivationProbe(): Promise<ActivationProbeOutput> {
+  return invokeOrThrow<ActivationProbeOutput>("run_activation_probe");
 }

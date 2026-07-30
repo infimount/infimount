@@ -56,7 +56,8 @@ export type SecretMutation =
 export type AuthTokenMutation =
   | { action: "keep" }
   | { action: "set"; value: string }
-  | { action: "clear" };
+  | { action: "clear" }
+  | { action: "rotate" };
 
 export interface StorageConfig extends StorageDraft {
   id: string;
@@ -273,4 +274,23 @@ export interface Entry {
   size: number;
   modified_at: string | null;
   etag: string | null;
+}
+
+export interface SidecarValidation {
+  binaryFound: boolean;
+  binaryPath: string | null;
+  versionCheck: string | null;
+  versionMatch: boolean;
+  doctorHealthy: boolean;
+  doctorReport: unknown;
+}
+
+export interface ActivationProbeOutput {
+  sidecar: SidecarValidation;
+  mcpHandshakeOk: boolean;
+  mcpAllowedOpOk: boolean;
+  mcpDenialProven: boolean;
+  overallOk: boolean;
+  endpointUsed: string | null;
+  error: string | null;
 }

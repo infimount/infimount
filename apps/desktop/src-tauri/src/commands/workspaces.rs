@@ -1,6 +1,7 @@
 use infimount_core::workspaces::{WorkspaceRecord, WorkspaceRegistry};
 use infimount_mcp::errors::{err, err_with_details, McpError, McpErrorCode, McpResult};
 use infimount_mcp::policy::McpStoragePolicy;
+use infimount_mcp::registry::{StorageRecord, StorageRegistry};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -17,7 +18,7 @@ enum Mutation {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct TemplateFile {
+pub(crate) struct TemplateFile {
     path: String,
     content: String,
 }
@@ -40,7 +41,6 @@ pub struct CreateWorkspaceAtomicInput {
 pub struct CreateWorkspaceAtomicOutput {
     pub workspace: WorkspaceRecord,
     pub policy_updated: bool,
-    pub rollback_attempted: bool,
     pub rollback_errors: Vec<String>,
 }
 
@@ -121,11 +121,11 @@ pub async fn create_workspace_atomic(
 
     let mut mutations: Vec<Mutation> = Vec::new();
     let mut rollback_errors: Vec<String> = Vec::new();
-    let mut rollback_attempted = false;
 
     let result = try_create_workspace(
         &op,
-        &state,
+        &state.workspaces,
+        &state.registry,
         &request,
         &normalized_root,
         &workspace,
@@ -134,8 +134,7 @@ pub async fn create_workspace_atomic(
     .await;
 
     if let Err(e) = result {
-        rollback_attempted = true;
-        let rollback_errs = rollback_mutations(&op, &state, &request.storage_id, &mutations, &workspace).await;
+        let rollback_errs = rollback_mutations(&op, &state.workspaces, &request.storage_id, &mutations, &workspace).await;
         for re in rollback_errs {
             rollback_errors.push(re);
         }
@@ -145,14 +144,14 @@ pub async fn create_workspace_atomic(
     Ok(CreateWorkspaceAtomicOutput {
         workspace,
         policy_updated: mutations.iter().any(|m| matches!(m, Mutation::UpdatedPolicy)),
-        rollback_attempted,
         rollback_errors,
     })
 }
 
 async fn try_create_workspace(
     op: &opendal::Operator,
-    state: &AppState,
+    workspaces: &WorkspaceRegistry,
+    storage_registry: &StorageRegistry,
     request: &CreateWorkspaceAtomicInput,
     normalized_root: &str,
     workspace: &WorkspaceRecord,
@@ -225,7 +224,7 @@ async fn try_create_workspace(
     })?;
     mutations.push(Mutation::WroteManifest);
 
-    state.workspaces.create(workspace).map_err(|e| {
+    workspaces.create(workspace).map_err(|e| {
         err_with_details(
             McpErrorCode::ERR_INTERNAL,
             format!("failed to register workspace: {e}"),
@@ -237,9 +236,8 @@ async fn try_create_workspace(
     if let Some(ref policy) = request.update_policy {
         let mut policy = policy.clone();
         migrate_and_normalize_policy(&mut policy)?;
-        state
-            .registry
-            .with_locked_mutation(|storages| {
+        storage_registry
+            .with_locked_mutation(|storages: &mut Vec<StorageRecord>| {
                 let storage = storages
                     .iter_mut()
                     .find(|item| item.id == request.storage_id)
@@ -269,8 +267,8 @@ async fn try_create_workspace(
 
 async fn rollback_mutations(
     op: &opendal::Operator,
-    state: &AppState,
-    storage_id: &str,
+    workspaces: &WorkspaceRegistry,
+    _storage_id: &str,
     mutations: &[Mutation],
     workspace: &WorkspaceRecord,
 ) -> Vec<String> {
@@ -283,7 +281,7 @@ async fn rollback_mutations(
                 // Log the gap but do not block.
             }
             Mutation::RegisteredWorkspace => {
-                if let Err(e) = state.workspaces.delete(&workspace.id) {
+                if let Err(e) = workspaces.delete(&workspace.id) {
                     errors.push(format!("failed to rollback workspace registry entry: {e}"));
                 }
             }
@@ -525,4 +523,303 @@ pub fn import_legacy_workspaces(
             serde_json::json!({}),
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use infimount_core::workspaces::WorkspaceRegistry;
+    use infimount_mcp::registry::{StorageRecord, StorageRegistry};
+    use std::sync::Arc;
+    use tempfile::tempdir;
+
+    fn create_test_op() -> (tempfile::TempDir, opendal::Operator) {
+        let dir = tempdir().unwrap();
+        let builder = opendal::services::Fs::default()
+            .root(dir.path().to_str().unwrap());
+        let op = opendal::Operator::new(builder).unwrap().finish();
+        (dir, op)
+    }
+
+    fn create_test_registries(
+        temp_config: &tempfile::TempDir,
+    ) -> (WorkspaceRegistry, StorageRegistry) {
+        let workspace_registry =
+            WorkspaceRegistry::new(&temp_config.path().join("workspaces.json"));
+        let storage_registry = StorageRegistry::with_secret_store(
+            Some(temp_config.path().join("registry.json")),
+            Arc::new(infimount_core::secrets::MemorySecretStore::new()),
+        );
+        (workspace_registry, storage_registry)
+    }
+
+    fn create_test_storage(storage_registry: &StorageRegistry, dir: &tempfile::TempDir) {
+        let mut record = StorageRecord::new(
+            "test-storage".to_string(),
+            "local".to_string(),
+            serde_json::json!({
+                "root": dir.path().to_string_lossy().to_string(),
+            }),
+        );
+        record.id = "test-storage-id".to_string();
+        record.mcp_exposed = true;
+        storage_registry
+            .with_locked_mutation(|storages| {
+                storages.push(record.clone());
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    fn create_test_input(storage_id: &str, root_path: &str) -> CreateWorkspaceAtomicInput {
+        CreateWorkspaceAtomicInput {
+            id: "ws-test-1".to_string(),
+            storage_id: storage_id.to_string(),
+            name: "Test Workspace".to_string(),
+            root_path: root_path.to_string(),
+            template_id: "default".to_string(),
+            memory_files: vec!["notes.md".to_string()],
+            template_files: vec![TemplateFile {
+                path: "README.md".to_string(),
+                content: "# Test\n".to_string(),
+            }],
+            update_policy: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_atomic_create_success_path() {
+        let temp_config = tempdir().unwrap();
+        let (temp_storage, op) = create_test_op();
+        let (workspace_registry, storage_registry) = create_test_registries(&temp_config);
+        create_test_storage(&storage_registry, &temp_storage);
+
+        let input = create_test_input("test-storage-id", "/workspace1");
+
+        let mut mutations: Vec<Mutation> = Vec::new();
+        let workspace = WorkspaceRecord {
+            id: input.id.clone(),
+            storage_id: input.storage_id.clone(),
+            name: input.name.clone(),
+            root_path: "/workspace1".to_string(),
+            template_id: input.template_id.clone(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            memory_files: input.memory_files.clone(),
+            checkpoint_ids: vec![],
+        };
+
+        let result = try_create_workspace(
+            &op,
+            &workspace_registry,
+            &storage_registry,
+            &input,
+            "/workspace1",
+            &workspace,
+            &mut mutations,
+        )
+        .await;
+
+        assert!(result.is_ok(), "happy path should succeed: {:?}", result);
+
+        assert!(op.stat("/workspace1/.infimount/workspace.json").await.is_ok());
+        assert!(op.stat("/workspace1/README.md").await.is_ok());
+        assert!(op.stat("/workspace1/memory").await.is_ok());
+
+        let loaded = workspace_registry.load_all().unwrap();
+        assert!(loaded.iter().any(|w| w.id == "ws-test-1"));
+    }
+
+    #[tokio::test]
+    async fn test_atomic_create_rollback_on_failure() {
+        let temp_config = tempdir().unwrap();
+        let (temp_storage, op) = create_test_op();
+        let (workspace_registry, storage_registry) = create_test_registries(&temp_config);
+        create_test_storage(&storage_registry, &temp_storage);
+
+        let input = CreateWorkspaceAtomicInput {
+            id: "ws-rollback".to_string(),
+            storage_id: "test-storage-id".to_string(),
+            name: "Rollback Test".to_string(),
+            root_path: "/rollback-test".to_string(),
+            template_id: "default".to_string(),
+            memory_files: vec!["data.txt".to_string()],
+            template_files: vec![TemplateFile {
+                path: "a/b/c/file.txt".to_string(),
+                content: "content".to_string(),
+            }],
+            update_policy: None,
+        };
+
+        let mut mutations: Vec<Mutation> = Vec::new();
+
+        let workspace = WorkspaceRecord {
+            id: input.id.clone(),
+            storage_id: input.storage_id.clone(),
+            name: input.name.clone(),
+            root_path: "/rollback-test".to_string(),
+            template_id: input.template_id.clone(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            memory_files: input.memory_files.clone(),
+            checkpoint_ids: vec![],
+        };
+
+        // Simulate failure after directory creation but before file writes
+        // by making the workspace registry reject registration
+        let dirs = collect_directories("/rollback-test", &input.template_files);
+        for dir in &dirs {
+            infimount_core::operations::create_directory(&op, dir).await.unwrap();
+            mutations.push(Mutation::CreatedDirectory(dir.clone()));
+        }
+
+        for tf in &input.template_files {
+            let file_path = join_path("/rollback-test", &tf.path);
+            let data = tf.content.as_bytes().to_vec();
+            infimount_core::operations::write_full_with_user_metadata(&op, &file_path, &data, None)
+                .await
+                .unwrap();
+            mutations.push(Mutation::CreatedFile(file_path));
+        }
+
+        let manifest_path = join_path("/rollback-test", ".infimount/workspace.json");
+        let manifest_data = serde_json::to_vec_pretty(&serde_json::json!({})).unwrap();
+        infimount_core::operations::write_full_with_user_metadata(&op, &manifest_path, &manifest_data, None)
+            .await
+            .unwrap();
+        mutations.push(Mutation::WroteManifest);
+
+        let errors = rollback_mutations(&op, &workspace_registry, "test-storage-id", &mutations, &workspace).await;
+        assert!(errors.is_empty(), "rollback should succeed: {:?}", errors);
+
+        // Verify files were cleaned up
+        assert!(
+            op.stat("/rollback-test/.infimount/workspace.json").await.is_err(),
+            "manifest should be deleted"
+        );
+        assert!(
+            op.stat("/rollback-test/a/b/c/file.txt").await.is_err(),
+            "files should be deleted"
+        );
+        // Directories not deleted (policy: orphan dirs left)
+        assert!(
+            op.stat("/rollback-test/a/b/c").await.is_ok(),
+            "dirs should not be deleted during rollback"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_atomic_create_validates_root_path() {
+        let temp_config = tempdir().unwrap();
+        let (temp_storage, _op) = create_test_op();
+        let (_workspace_registry, storage_registry) = create_test_registries(&temp_config);
+        create_test_storage(&storage_registry, &temp_storage);
+
+        let result = normalize_workspace_root("");
+        assert!(result.is_err(), "empty root should be rejected");
+
+        let result = normalize_workspace_root("/");
+        assert!(result.is_err(), "root '/' should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_atomic_create_rejects_overlapping_roots() {
+        let temp_config = tempdir().unwrap();
+        let (_temp_storage, _op) = create_test_op();
+        let (workspace_registry, _storage_registry) = create_test_registries(&temp_config);
+
+        let ws1 = WorkspaceRecord {
+            id: "ws-1".to_string(),
+            storage_id: "test-storage-id".to_string(),
+            name: "WS1".to_string(),
+            root_path: "/base".to_string(),
+            template_id: "default".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            memory_files: vec![],
+            checkpoint_ids: vec![],
+        };
+        workspace_registry.create(&ws1).unwrap();
+
+        // Should reject overlapping root
+        let existing = workspace_registry.load_all().unwrap();
+        let overlaps = existing.iter().any(|w| {
+            w.storage_id == ws1.storage_id
+                && (w.root_path.trim_end_matches('/') == "/base"
+                    || "/base/sub".starts_with(&format!("{}/", w.root_path.trim_end_matches('/'))))
+        });
+        assert!(overlaps, "should detect overlapping root");
+    }
+
+    #[tokio::test]
+    async fn test_atomic_create_rollback_leaves_pre_existing_content() {
+        let temp_config = tempdir().unwrap();
+        let (temp_storage, op) = create_test_op();
+        let (workspace_registry, storage_registry) = create_test_registries(&temp_config);
+        create_test_storage(&storage_registry, &temp_storage);
+
+        // Create pre-existing file in target root
+        let pre_existing_path = "/workspace2/pre_existing.txt";
+        infimount_core::operations::write_full_with_user_metadata(
+            &op,
+            pre_existing_path,
+            b"pre-existing",
+            None,
+        )
+        .await
+        .unwrap();
+
+        let input = CreateWorkspaceAtomicInput {
+            id: "ws-pre-existing".to_string(),
+            storage_id: "test-storage-id".to_string(),
+            name: "Pre-existing Test".to_string(),
+            root_path: "/workspace2".to_string(),
+            template_id: "default".to_string(),
+            memory_files: vec![],
+            template_files: vec![TemplateFile {
+                path: "new_file.txt".to_string(),
+                content: "new".to_string(),
+            }],
+            update_policy: None,
+        };
+
+        let mut mutations: Vec<Mutation> = Vec::new();
+        let workspace = WorkspaceRecord {
+            id: input.id.clone(),
+            storage_id: input.storage_id.clone(),
+            name: input.name.clone(),
+            root_path: "/workspace2".to_string(),
+            template_id: input.template_id.clone(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            memory_files: input.memory_files.clone(),
+            checkpoint_ids: vec![],
+        };
+
+        // Simulate failure after registering workspace
+        let dirs = collect_directories("/workspace2", &input.template_files);
+        for dir in &dirs {
+            infimount_core::operations::create_directory(&op, dir).await.unwrap();
+            mutations.push(Mutation::CreatedDirectory(dir.clone()));
+        }
+        for tf in &input.template_files {
+            let file_path = join_path("/workspace2", &tf.path);
+            let data = tf.content.as_bytes().to_vec();
+            infimount_core::operations::write_full_with_user_metadata(&op, &file_path, &data, None)
+                .await
+                .unwrap();
+            mutations.push(Mutation::CreatedFile(file_path));
+        }
+        workspace_registry.create(&workspace).unwrap();
+        mutations.push(Mutation::RegisteredWorkspace);
+
+        let errors = rollback_mutations(&op, &workspace_registry, "test-storage-id", &mutations, &workspace).await;
+        assert!(errors.is_empty(), "rollback should succeed: {:?}", errors);
+
+        // Pre-existing file must survive
+        assert!(
+            op.stat(pre_existing_path).await.is_ok(),
+            "pre-existing files must survive rollback"
+        );
+    }
 }

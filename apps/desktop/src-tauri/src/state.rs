@@ -677,34 +677,6 @@ impl AppState {
         Ok(())
     }
 
-    /// Roll back the token in the secret store and the MCP settings after a
-    /// failed rotation. If `old_token_value` is Some, restore it in the keyring.
-    /// Always restore the old settings.
-    async fn rollback_token_and_secret(
-        &self,
-        account: &str,
-        old_token_value: &Option<String>,
-        existing_settings: &McpSettings,
-        _failed_settings: &McpSettings,
-    ) -> McpResult<()> {
-        let _ = self.stop_http_server_inner().await;
-
-        if let Some(token) = old_token_value {
-            let _ = self
-                .secret_store
-                .put_json(account, &json!({"token": token}));
-        }
-        self.settings_store.save_atomic(existing_settings).map_err(|_| {
-            err(
-                McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
-                "rollback: failed to restore MCP settings",
-            )
-        })?;
-
-        let _ = self.ensure_runtime_from_settings().await;
-        Ok(())
-    }
-
     fn status_with_endpoint(
         &self,
         settings: McpSettings,
