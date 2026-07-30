@@ -2704,7 +2704,7 @@ dependencies = [
 
 [[package]]
 name = "infimount"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2731,7 +2731,7 @@ dependencies = [
 
 [[package]]
 name = "infimount_core"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "age",
  "age-core",
@@ -2743,6 +2743,7 @@ dependencies = [
  "opendal",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -2751,7 +2752,7 @@ dependencies = [
 
 [[package]]
 name = "infimount_mcp"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "axum",
  "base64 0.22.1",

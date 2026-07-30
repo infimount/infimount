@@ -1,7 +1,7 @@
 import { createDirectory, listEntries, readFile, writeFile } from "@/lib/api";
 import {
   listWorkspaces,
-  createWorkspace as apiCreateWorkspace,
+  createWorkspaceAtomic,
   updateWorkspace as apiUpdateWorkspace,
   deleteWorkspace as apiDeleteWorkspace,
   importLegacyWorkspaces as apiImportLegacy,
@@ -43,7 +43,6 @@ export interface CreateAgentWorkspaceInput {
 
 const LEGACY_STORAGE_KEY = "infimount:agent-workspaces:v1";
 const CHECKPOINTS_STORAGE_KEY = "infimount:agent-workspace-checkpoints:v1";
-const WORKSPACE_MANIFEST_PATH = ".infimount/workspace.json";
 const CHECKPOINTS_DIR = ".infimount/checkpoints";
 
 export const AGENT_WORKSPACE_TEMPLATES: AgentWorkspaceTemplate[] = [
@@ -137,56 +136,31 @@ export async function createAgentWorkspace({
 
   const policy = buildWorkspacePolicy(normalizedRoot, currentPolicy, workspaceId);
 
-  await createWorkspaceDirectories(
-    storageId,
-    normalizedRoot,
-    template.files.map((file) => file.path),
-  );
-  await createDirectory(storageId, joinWorkspacePath(normalizedRoot, CHECKPOINTS_DIR)).catch(
-    () => undefined,
-  );
-
-  for (const file of template.files) {
-    await writeTextFile(storageId, joinWorkspacePath(normalizedRoot, file.path), file.content);
-  }
-
-  const now = new Date().toISOString();
-  const workspace: AgentWorkspace = {
-    id: workspaceId,
-    storageId,
-    name: name.trim(),
-    rootPath: normalizedRoot,
-    templateId,
-    createdAt: now,
-    updatedAt: now,
-    memoryFiles: template.memoryFiles,
-    checkpointIds: [],
-  };
-
-  await writeWorkspaceManifest(workspace);
-  await apiCreateWorkspace({
+  const result = await createWorkspaceAtomic({
     id: workspaceId,
     storageId,
     name: name.trim(),
     rootPath: normalizedRoot,
     templateId,
     memoryFiles: template.memoryFiles,
+    templateFiles: template.files.map((f) => ({ path: f.path, content: f.content })),
+    updatePolicy: updatePolicy ? policy : undefined,
   });
 
-  if (updatePolicy) {
-    await updatePolicy(policy);
+  if (result.rollbackAttempted && result.rollbackErrors.length > 0) {
+    console.warn("Workspace creation rollback completed with errors:", result.rollbackErrors);
   }
 
   appendActivityLogEvent({
     type: "workspace_created",
     operation: "workspace",
     sourceId: storageId,
-    workspaceId: workspace.id,
-    message: `Created agent workspace ${workspace.name}`,
-    summary: { rootPath: normalizedRoot, templateId, policyScoped: Boolean(updatePolicy) },
+    workspaceId: result.workspace.id,
+    message: `Created agent workspace ${result.workspace.name}`,
+    summary: { rootPath: normalizedRoot, templateId, policyScoped: result.policyUpdated },
   });
 
-  return workspace;
+  return result.workspace;
 }
 
 export async function listWorkspaceMemoryFiles(workspace: AgentWorkspace): Promise<string[]> {
@@ -460,50 +434,6 @@ export async function migrateLegacyWorkspaces(): Promise<number> {
     window.localStorage.removeItem(LEGACY_STORAGE_KEY);
   }
   return imported;
-}
-
-async function createWorkspaceDirectories(
-  storageId: string,
-  rootPath: string,
-  files: string[],
-): Promise<void> {
-  const directories = new Set<string>([
-    rootPath,
-    joinWorkspacePath(rootPath, "memory"),
-    joinWorkspacePath(rootPath, ".infimount"),
-    joinWorkspacePath(rootPath, CHECKPOINTS_DIR),
-  ]);
-  for (const file of files) {
-    const segments = file.split("/").filter(Boolean);
-    for (let index = 1; index < segments.length; index += 1) {
-      directories.add(joinWorkspacePath(rootPath, segments.slice(0, index).join("/")));
-    }
-  }
-
-  for (const directory of Array.from(directories).sort((a, b) => a.length - b.length)) {
-    await createDirectory(storageId, directory).catch(() => undefined);
-  }
-}
-
-async function writeWorkspaceManifest(workspace: AgentWorkspace): Promise<void> {
-  const manifest = {
-    kind: "infimount-agent-workspace",
-    version: 1,
-    workspace: {
-      id: workspace.id,
-      name: workspace.name,
-      rootPath: workspace.rootPath,
-      templateId: workspace.templateId,
-      memoryFiles: workspace.memoryFiles,
-      createdAt: workspace.createdAt,
-      updatedAt: workspace.updatedAt,
-    },
-  };
-  await writeJsonFile(
-    workspace.storageId,
-    joinWorkspacePath(workspace.rootPath, WORKSPACE_MANIFEST_PATH),
-    manifest,
-  );
 }
 
 async function writeCheckpointManifest(

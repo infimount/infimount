@@ -21,15 +21,9 @@ import type {
   OsInfo,
   ProductEvent,
 } from "@/types/diagnostics";
-import type { ListEntriesPage, ReadFileRangeResult } from "@/types/storage";
+import type { ListEntriesPage, ReadFileRangeResult, Entry } from "@/types/storage";
 
-export interface Entry {
-  path: string;
-  name: string;
-  is_dir: boolean;
-  size: number;
-  modified_at: string | null;
-}
+export type { Entry } from "@/types/storage";
 
 export interface ApiError {
   code: string;
@@ -522,6 +516,7 @@ export interface CreateBackupInput {
 export interface CreateBackupResult {
   armored: string;
   storageCount: number;
+  hasNativeSecrets: boolean;
 }
 
 export interface RestorePreviewInput {
@@ -533,8 +528,11 @@ export interface RestorePreviewResult {
   storageCount: number;
   hasMcpSettings: boolean;
   hasAppSettings: boolean;
+  hasWorkspaces: boolean;
+  hasSecrets: boolean;
   createdAt: string;
   checksumValid: boolean;
+  unsupportedVersion: boolean;
 }
 
 export interface ApplyRestoreInput {
@@ -542,12 +540,16 @@ export interface ApplyRestoreInput {
   armored: string;
   restoreMcpSettings: boolean;
   restoreAppSettings: boolean;
+  restoreWorkspaces: boolean;
+  restoreSecrets: boolean;
 }
 
 export interface ApplyRestoreResult {
   storagesRestored: number;
   mcpSettingsRestored: boolean;
   appSettingsRestored: boolean;
+  workspacesRestored: boolean;
+  secretsRestored: number;
 }
 
 export function createRecoveryBackup(request: CreateBackupInput): Promise<CreateBackupResult> {
@@ -592,6 +594,29 @@ export interface CreateWorkspaceInput {
   memoryFiles: string[];
 }
 
+export interface TemplateFile {
+  path: string;
+  content: string;
+}
+
+export interface CreateWorkspaceAtomicInput {
+  id: string;
+  storageId: string;
+  name: string;
+  rootPath: string;
+  templateId: string;
+  memoryFiles: string[];
+  templateFiles: TemplateFile[];
+  updatePolicy?: McpStoragePolicy;
+}
+
+export interface CreateWorkspaceAtomicOutput {
+  workspace: WorkspaceRecord;
+  policyUpdated: boolean;
+  rollbackAttempted: boolean;
+  rollbackErrors: string[];
+}
+
 export interface UpdateWorkspaceInput {
   id: string;
   name?: string;
@@ -610,6 +635,10 @@ export function listWorkspaces(): Promise<WorkspaceRecord[]> {
 
 export function createWorkspace(request: CreateWorkspaceInput): Promise<WorkspaceRecord> {
   return invokeOrThrow<WorkspaceRecord>("create_workspace", { request });
+}
+
+export function createWorkspaceAtomic(request: CreateWorkspaceAtomicInput): Promise<CreateWorkspaceAtomicOutput> {
+  return invokeOrThrow<CreateWorkspaceAtomicOutput>("create_workspace_atomic", { request });
 }
 
 export function updateWorkspace(request: UpdateWorkspaceInput): Promise<WorkspaceRecord> {

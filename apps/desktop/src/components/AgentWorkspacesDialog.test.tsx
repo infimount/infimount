@@ -140,6 +140,7 @@ describe("AgentWorkspacesDialog", () => {
         is_dir: false,
         size: 7,
         modified_at: null,
+        etag: null,
       },
     ]);
     vi.mocked(readFile).mockResolvedValue(new TextEncoder().encode("# Tasks\n"));

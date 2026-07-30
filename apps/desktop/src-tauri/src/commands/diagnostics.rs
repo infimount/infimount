@@ -7,12 +7,33 @@ use crate::diagnostics::{export_diagnostics_bundle, DiagnosticsExportResult};
 use crate::state::AppState;
 
 #[tauri::command]
-pub fn export_diagnostics(state: State<'_, AppState>) -> Result<DiagnosticsExportResult, String> {
-    let mcp_status = get_mcp_running_status(&state);
+pub async fn export_diagnostics(state: State<'_, AppState>) -> Result<DiagnosticsExportResult, String> {
+    let tool_count = state
+        .settings_store
+        .load()
+        .ok()
+        .map(|s| s.enabled_tools.len())
+        .unwrap_or(0);
+
+    let http_running = state.is_http_running().await;
+
+    let error_codes = state
+        .product_events
+        .read_all()
+        .ok()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|e| e.error_code)
+        .collect();
+
     export_diagnostics_bundle(
         &state.app_settings_store,
-        mcp_status.tool_count,
-        mcp_status.http_running,
+        &state.registry,
+        &state.settings_store,
+        state.secret_store.as_ref(),
+        tool_count,
+        error_codes,
+        http_running,
     )
 }
 
@@ -34,21 +55,4 @@ pub fn get_os_info() -> Result<OsInfo, McpError> {
 pub struct OsInfo {
     pub os_arch: String,
     pub app_version: String,
-}
-
-struct McpRunningStatus {
-    tool_count: usize,
-    http_running: bool,
-}
-
-fn get_mcp_running_status(state: &AppState) -> McpRunningStatus {
-    let status = state.settings_store.load().ok();
-
-    McpRunningStatus {
-        tool_count: status
-            .as_ref()
-            .map(|s| s.enabled_tools.len())
-            .unwrap_or(0),
-        http_running: false,
-    }
 }

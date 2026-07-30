@@ -382,6 +382,7 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
                         is_dir: false,
                         size: 40,
                         modified_at: null,
+                        etag: null,
                     },
                 ]);
             }
@@ -393,6 +394,7 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
                     is_dir: true,
                     size: 0,
                     modified_at: null,
+                    etag: null,
                 },
                 {
                     path: "/report.txt",
@@ -400,6 +402,7 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
                     is_dir: false,
                     size: 12,
                     modified_at: null,
+                    etag: null,
                 },
                 {
                     path: "/notes.md",
@@ -407,6 +410,7 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
                     is_dir: false,
                     size: 6,
                     modified_at: null,
+                    etag: null,
                 },
             ]);
         });
@@ -438,6 +442,7 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
                 is_dir: false,
                 size: 1,
                 modified_at: null,
+                etag: null,
             },
             {
                 path: "/zzz-large.txt",
@@ -445,6 +450,7 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
                 is_dir: false,
                 size: 100,
                 modified_at: null,
+                etag: null,
             },
         ]);
 
@@ -739,6 +745,7 @@ describe("FileBrowser transfer and download flows", () => {
                 is_dir: false,
                 size: 12,
                 modified_at: null,
+                etag: null,
             },
         ]);
         vi.mocked(listEntriesRecursive).mockResolvedValue([
@@ -748,6 +755,7 @@ describe("FileBrowser transfer and download flows", () => {
                 is_dir: false,
                 size: 12,
                 modified_at: null,
+                etag: null,
             },
         ]);
         vi.mocked(readFile).mockResolvedValue(new TextEncoder().encode("hello"));
@@ -907,6 +915,7 @@ describe("FileBrowser transfer and download flows", () => {
                 is_dir: true,
                 size: 0,
                 modified_at: null,
+                etag: null,
             },
             {
                 path: "/report.txt",
@@ -914,6 +923,7 @@ describe("FileBrowser transfer and download flows", () => {
                 is_dir: false,
                 size: 12,
                 modified_at: null,
+                etag: null,
             },
         ]);
         vi.mocked(transferEntries)

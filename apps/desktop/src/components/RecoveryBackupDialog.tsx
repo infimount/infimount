@@ -46,6 +46,8 @@ export function RecoveryBackupDialog({ open, onOpenChange, onRestoreComplete }: 
   const [restorePreview, setRestorePreview] = useState<RestorePreviewResult | null>(null);
   const [restoreMcp, setRestoreMcp] = useState(true);
   const [restoreApp, setRestoreApp] = useState(true);
+  const [restoreWorkspaces, setRestoreWorkspaces] = useState(true);
+  const [restoreSecrets, setRestoreSecrets] = useState(true);
   const [restoring, setRestoring] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
 
@@ -145,10 +147,12 @@ export function RecoveryBackupDialog({ open, onOpenChange, onRestoreComplete }: 
         armored: restoreArmored,
         restoreMcpSettings: restoreMcp,
         restoreAppSettings: restoreApp,
+        restoreWorkspaces,
+        restoreSecrets,
       });
       toast({
         title: "Restore complete",
-        description: `Restored ${result.storagesRestored} storage(s), MCP settings: ${result.mcpSettingsRestored}, app settings: ${result.appSettingsRestored}.`,
+        description: `Restored ${result.storagesRestored} storage(s), MCP settings: ${result.mcpSettingsRestored}, app settings: ${result.appSettingsRestored}, workspaces: ${result.workspacesRestored}, secrets: ${result.secretsRestored}.`,
       });
       onRestoreComplete?.();
       handleClose();
@@ -223,6 +227,7 @@ export function RecoveryBackupDialog({ open, onOpenChange, onRestoreComplete }: 
                     <p className="font-medium text-green-800">Backup created successfully</p>
                     <p className="text-sm text-green-700 mt-1">
                       {createResult.storageCount} storage configuration(s) encrypted.
+                      {createResult.hasNativeSecrets && " Native secrets included."}
                     </p>
                   </div>
                 </div>
@@ -290,6 +295,9 @@ export function RecoveryBackupDialog({ open, onOpenChange, onRestoreComplete }: 
                   <p>Storages: {restorePreview.storageCount}</p>
                   {restorePreview.hasMcpSettings && <p>Includes MCP settings</p>}
                   {restorePreview.hasAppSettings && <p>Includes app settings</p>}
+                  {restorePreview.hasWorkspaces && <p>Includes workspaces</p>}
+                  {restorePreview.hasSecrets && <p>Includes native secrets</p>}
+                  {restorePreview.unsupportedVersion && <p className="text-amber-600">Unsupported backup format version</p>}
                 </div>
                 <div className="flex items-center gap-4 pt-1">
                   <label className="flex items-center gap-2 text-sm">
@@ -299,6 +307,14 @@ export function RecoveryBackupDialog({ open, onOpenChange, onRestoreComplete }: 
                   <label className="flex items-center gap-2 text-sm">
                     <Switch checked={restoreApp} onCheckedChange={setRestoreApp} />
                     Restore app settings
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <Switch checked={restoreWorkspaces} onCheckedChange={setRestoreWorkspaces} />
+                    Restore workspaces
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <Switch checked={restoreSecrets} onCheckedChange={setRestoreSecrets} />
+                    Restore secrets
                   </label>
                 </div>
                 <div className="flex justify-end gap-3 pt-2">

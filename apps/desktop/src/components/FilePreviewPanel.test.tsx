@@ -79,6 +79,7 @@ describe("FilePreviewPanel", () => {
       is_dir: false,
       size: 128,
       modified_at: "2026-03-13T10:00:00Z",
+      etag: null,
     });
     vi.mocked(writeFile).mockResolvedValue(undefined);
 
@@ -170,6 +171,7 @@ describe("FilePreviewPanel", () => {
         is_dir: false,
         size: 128,
         modified_at: "2026-03-13T10:00:00Z",
+        etag: null,
       })
       .mockResolvedValueOnce({
         path: "/notes.txt",
@@ -177,6 +179,7 @@ describe("FilePreviewPanel", () => {
         is_dir: false,
         size: 128,
         modified_at: "2026-03-13T10:05:00Z",
+        etag: null,
       })
       .mockResolvedValueOnce({
         path: "/notes.txt",
@@ -184,6 +187,7 @@ describe("FilePreviewPanel", () => {
         is_dir: false,
         size: 129,
         modified_at: "2026-03-13T10:06:00Z",
+        etag: null,
       })
       .mockResolvedValueOnce({
         path: "/notes.txt",
@@ -191,6 +195,7 @@ describe("FilePreviewPanel", () => {
         is_dir: false,
         size: 129,
         modified_at: "2026-03-13T10:06:00Z",
+        etag: null,
       });
     vi.mocked(writeFile).mockResolvedValue(undefined);
 

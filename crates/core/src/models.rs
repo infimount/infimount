@@ -240,6 +240,7 @@ fn default_page_limit() -> u32 {
 
 /// Paginated listing response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListEntriesPage {
     pub entries: Vec<Entry>,
     pub next_cursor: Option<String>,
@@ -248,6 +249,7 @@ pub struct ListEntriesPage {
 
 /// Range read result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReadFileRangeResult {
     pub total_size: u64,
     pub offset: u64,

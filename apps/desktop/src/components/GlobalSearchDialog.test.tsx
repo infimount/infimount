@@ -91,6 +91,7 @@ describe("GlobalSearchDialog", () => {
         is_dir: false,
         size: 12,
         modified_at: null,
+        etag: null,
       },
     ]);
 
@@ -125,6 +126,7 @@ describe("GlobalSearchDialog", () => {
         is_dir: false,
         size: 12,
         modified_at: null,
+        etag: null,
       },
     ]);
 
@@ -141,6 +143,7 @@ describe("GlobalSearchDialog", () => {
         is_dir: false,
         size: 12,
         modified_at: null,
+        etag: null,
       },
     ]);
     const onSelectStorage = vi.fn();

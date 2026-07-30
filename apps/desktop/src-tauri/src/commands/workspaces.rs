@@ -1,9 +1,372 @@
 use infimount_core::workspaces::{WorkspaceRecord, WorkspaceRegistry};
-use infimount_mcp::errors::{err_with_details, McpError, McpErrorCode};
-use serde::Deserialize;
+use infimount_mcp::errors::{err, err_with_details, McpError, McpErrorCode, McpResult};
+use infimount_mcp::policy::McpStoragePolicy;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::state::AppState;
+
+#[derive(Debug)]
+enum Mutation {
+    CreatedDirectory(String),
+    CreatedFile(String),
+    WroteManifest,
+    RegisteredWorkspace,
+    UpdatedPolicy,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TemplateFile {
+    path: String,
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateWorkspaceAtomicInput {
+    pub id: String,
+    pub storage_id: String,
+    pub name: String,
+    pub root_path: String,
+    pub template_id: String,
+    pub memory_files: Vec<String>,
+    pub template_files: Vec<TemplateFile>,
+    pub update_policy: Option<McpStoragePolicy>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateWorkspaceAtomicOutput {
+    pub workspace: WorkspaceRecord,
+    pub policy_updated: bool,
+    pub rollback_attempted: bool,
+    pub rollback_errors: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn create_workspace_atomic(
+    state: State<'_, AppState>,
+    request: CreateWorkspaceAtomicInput,
+) -> Result<CreateWorkspaceAtomicOutput, McpError> {
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let normalized_root = normalize_workspace_root(&request.root_path)?;
+    if normalized_root == "/" {
+        return Err(err(
+            McpErrorCode::ERR_INVALID_PATH,
+            "workspace root path must not be '/'",
+        ));
+    }
+
+    let op = state.operator_for_storage_id(&request.storage_id).map_err(|e| {
+        err_with_details(
+            McpErrorCode::ERR_STORAGE_NOT_FOUND,
+            format!("storage '{}' not found or inaccessible: {e}", request.storage_id),
+            serde_json::json!({ "storageId": request.storage_id }),
+        )
+    })?;
+
+    let existing = state.workspaces.load_all().map_err(|e| {
+        err(
+            McpErrorCode::ERR_INTERNAL,
+            format!("failed to load workspaces: {e}"),
+        )
+    })?;
+    for ws in &existing {
+        if ws.name == request.name && ws.storage_id == request.storage_id {
+            return Err(err_with_details(
+                McpErrorCode::ERR_ALREADY_EXISTS,
+                format!("workspace '{}' already exists in this storage", request.name),
+                serde_json::json!({ "name": request.name, "storageId": request.storage_id }),
+            ));
+        }
+    }
+
+    for ws in &existing {
+        if ws.storage_id == request.storage_id {
+            let existing_root = ws.root_path.trim_end_matches('/');
+            let new_root = normalized_root.trim_end_matches('/');
+            if existing_root == new_root
+                || new_root.starts_with(&format!("{existing_root}/"))
+                || existing_root.starts_with(&format!("{new_root}/"))
+            {
+                return Err(err_with_details(
+                    McpErrorCode::ERR_INVALID_PATH,
+                    format!(
+                        "root path '{}' overlaps with existing workspace '{}' at '{}'",
+                        normalized_root, ws.name, ws.root_path
+                    ),
+                    serde_json::json!({
+                        "existingWorkspace": ws.name,
+                        "existingRoot": ws.root_path,
+                        "newRoot": normalized_root,
+                    }),
+                ));
+            }
+        }
+    }
+
+    let workspace = WorkspaceRecord {
+        id: request.id.clone(),
+        storage_id: request.storage_id.clone(),
+        name: request.name.clone(),
+        root_path: normalized_root.clone(),
+        template_id: request.template_id.clone(),
+        created_at: now.clone(),
+        updated_at: now,
+        memory_files: request.memory_files.clone(),
+        checkpoint_ids: vec![],
+    };
+
+    let mut mutations: Vec<Mutation> = Vec::new();
+    let mut rollback_errors: Vec<String> = Vec::new();
+    let mut rollback_attempted = false;
+
+    let result = try_create_workspace(
+        &op,
+        &state,
+        &request,
+        &normalized_root,
+        &workspace,
+        &mut mutations,
+    )
+    .await;
+
+    if let Err(e) = result {
+        rollback_attempted = true;
+        let rollback_errs = rollback_mutations(&op, &state, &request.storage_id, &mutations, &workspace).await;
+        for re in rollback_errs {
+            rollback_errors.push(re);
+        }
+        return Err(e);
+    }
+
+    Ok(CreateWorkspaceAtomicOutput {
+        workspace,
+        policy_updated: mutations.iter().any(|m| matches!(m, Mutation::UpdatedPolicy)),
+        rollback_attempted,
+        rollback_errors,
+    })
+}
+
+async fn try_create_workspace(
+    op: &opendal::Operator,
+    state: &AppState,
+    request: &CreateWorkspaceAtomicInput,
+    normalized_root: &str,
+    workspace: &WorkspaceRecord,
+    mutations: &mut Vec<Mutation>,
+) -> Result<(), McpError> {
+    let dirs_to_create = collect_directories(normalized_root, &request.template_files);
+    for dir in &dirs_to_create {
+        infimount_core::operations::create_directory(op, dir)
+            .await
+            .map_err(|e| {
+                err_with_details(
+                    McpErrorCode::ERR_INTERNAL,
+                    format!("failed to create directory '{dir}': {e}"),
+                    serde_json::json!({ "path": dir }),
+                )
+            })?;
+        mutations.push(Mutation::CreatedDirectory(dir.clone()));
+    }
+
+    for tf in &request.template_files {
+        let file_path = join_path(normalized_root, &tf.path);
+        let data = tf.content.as_bytes().to_vec();
+        infimount_core::operations::write_full_with_user_metadata(
+            op, &file_path, &data, None,
+        )
+        .await
+        .map_err(|e| {
+            err_with_details(
+                McpErrorCode::ERR_INTERNAL,
+                format!("failed to write file '{file_path}': {e}"),
+                serde_json::json!({ "path": file_path }),
+            )
+        })?;
+        mutations.push(Mutation::CreatedFile(file_path));
+    }
+
+    let manifest_path = join_path(normalized_root, ".infimount/workspace.json");
+    let manifest = serde_json::json!({
+        "kind": "infimount-agent-workspace",
+        "version": 1,
+        "workspace": {
+            "id": workspace.id,
+            "name": workspace.name,
+            "rootPath": workspace.root_path,
+            "templateId": workspace.template_id,
+            "memoryFiles": workspace.memory_files,
+            "createdAt": workspace.created_at,
+            "updatedAt": workspace.updated_at,
+        },
+    });
+    let manifest_data = serde_json::to_vec_pretty(&manifest).map_err(|e| {
+        err(
+            McpErrorCode::ERR_INTERNAL,
+            format!("failed to serialize manifest: {e}"),
+        )
+    })?;
+    infimount_core::operations::write_full_with_user_metadata(
+        op,
+        &manifest_path,
+        &manifest_data,
+        None,
+    )
+    .await
+    .map_err(|e| {
+        err_with_details(
+            McpErrorCode::ERR_INTERNAL,
+            format!("failed to write workspace manifest '{manifest_path}': {e}"),
+            serde_json::json!({ "path": manifest_path }),
+        )
+    })?;
+    mutations.push(Mutation::WroteManifest);
+
+    state.workspaces.create(workspace).map_err(|e| {
+        err_with_details(
+            McpErrorCode::ERR_INTERNAL,
+            format!("failed to register workspace: {e}"),
+            serde_json::json!({}),
+        )
+    })?;
+    mutations.push(Mutation::RegisteredWorkspace);
+
+    if let Some(ref policy) = request.update_policy {
+        let mut policy = policy.clone();
+        migrate_and_normalize_policy(&mut policy)?;
+        state
+            .registry
+            .with_locked_mutation(|storages| {
+                let storage = storages
+                    .iter_mut()
+                    .find(|item| item.id == request.storage_id)
+                    .ok_or_else(|| {
+                        err_with_details(
+                            McpErrorCode::ERR_STORAGE_NOT_FOUND,
+                            format!("storage '{}' not found", request.storage_id),
+                            serde_json::json!({ "storageId": request.storage_id }),
+                        )
+                    })?;
+                storage.mcp_policy = policy.clone();
+                storage.updated_at = chrono::Utc::now().to_rfc3339();
+                Ok(())
+            })
+            .map_err(|e| {
+                err_with_details(
+                    McpErrorCode::ERR_INTERNAL,
+                    format!("failed to update MCP storage policy: {e}"),
+                    serde_json::json!({}),
+                )
+            })?;
+        mutations.push(Mutation::UpdatedPolicy);
+    }
+
+    Ok(())
+}
+
+async fn rollback_mutations(
+    op: &opendal::Operator,
+    state: &AppState,
+    storage_id: &str,
+    mutations: &[Mutation],
+    workspace: &WorkspaceRecord,
+) -> Vec<String> {
+    let mut errors = Vec::new();
+
+    for mutation in mutations.iter().rev() {
+        match mutation {
+            Mutation::UpdatedPolicy => {
+                // Cannot reliably restore previous policy without snapshotting it.
+                // Log the gap but do not block.
+            }
+            Mutation::RegisteredWorkspace => {
+                if let Err(e) = state.workspaces.delete(&workspace.id) {
+                    errors.push(format!("failed to rollback workspace registry entry: {e}"));
+                }
+            }
+            Mutation::WroteManifest => {
+                let manifest_path = join_path(&workspace.root_path, ".infimount/workspace.json");
+                let _ = infimount_core::operations::delete(op, &manifest_path).await;
+            }
+            Mutation::CreatedFile(path) => {
+                let _ = infimount_core::operations::delete(op, path).await;
+            }
+            Mutation::CreatedDirectory(_dir) => {
+                // Do not delete directories during rollback: they may have
+                // pre-existing content or have been created by a prior retry.
+                // Empty orphan directories are harmless.
+            }
+        }
+    }
+
+    errors
+}
+
+fn collect_directories(root: &str, files: &[TemplateFile]) -> Vec<String> {
+    use std::collections::BTreeSet;
+    let mut dirs = BTreeSet::new();
+    dirs.insert(root.to_string());
+    dirs.insert(join_path(root, "memory"));
+    dirs.insert(join_path(root, ".infimount"));
+    dirs.insert(join_path(root, ".infimount/checkpoints"));
+
+    for tf in files {
+        let segments: Vec<&str> = tf.path.split('/').collect();
+        let mut acc = root.to_string();
+        for i in 0..segments.len().saturating_sub(1) {
+            acc = format!("{acc}/{}", segments[i]);
+            dirs.insert(acc.clone());
+        }
+    }
+
+    dirs.into_iter().collect()
+}
+
+fn join_path(root: &str, relative: &str) -> String {
+    let root = root.trim_end_matches('/');
+    let relative = relative.trim_start_matches('/');
+    format!("{root}/{relative}")
+}
+
+fn normalize_workspace_root(raw: &str) -> Result<String, McpError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(err(McpErrorCode::ERR_INVALID_PATH, "workspace root path must not be empty"));
+    }
+
+    let with_root = if trimmed.starts_with('/') {
+        trimmed.to_string()
+    } else {
+        format!("/{trimmed}")
+    };
+
+    let collapsed = with_root
+        .replace('\\', "/")
+        .split('/')
+        .filter(|s| !s.is_empty() && *s != ".")
+        .collect::<Vec<_>>()
+        .join("/");
+
+    let normalized = format!("/{collapsed}");
+
+    if normalized == "/" {
+        return Err(err(
+            McpErrorCode::ERR_INVALID_PATH,
+            "workspace root path must not be or resolve to '/'",
+        ));
+    }
+
+    Ok(normalized)
+}
+
+fn migrate_and_normalize_policy(policy: &mut McpStoragePolicy) -> McpResult<()> {
+    infimount_mcp::policy::migrate_legacy_policy(policy)?;
+    infimount_mcp::policy::normalize_storage_policy(policy)?;
+    Ok(())
+}
 
 #[tauri::command]
 pub fn list_workspaces(state: State<'_, AppState>) -> Result<Vec<WorkspaceRecord>, McpError> {
@@ -46,7 +409,6 @@ pub fn create_workspace(
     };
 
     let registry = &state.workspaces;
-    // Check for duplicate name within same storage
     let existing = registry.load_all().map_err(|e| {
         err_with_details(
             McpErrorCode::ERR_INTERNAL,

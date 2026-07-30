@@ -14,10 +14,6 @@
         "core:window:allow-is-maximized",
         "core:window:allow-start-dragging",
         "updater:default",
-        "shell:allow-execute",
-        "shell:allow-spawn",
-        "shell:allow-stdin-write",
-        "shell:allow-kill",
         {
             "identifier": "shell:allow-execute",
             "allow": [
