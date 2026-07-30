@@ -236,6 +236,41 @@ pub(super) fn parent_path(path: &str) -> Option<String> {
     }
 }
 
+pub(super) async fn missing_directory_paths(
+    op: &opendal::Operator,
+    backend_path: &str,
+    storage_name: &str,
+    full_path: &str,
+) -> McpResult<Vec<String>> {
+    let trimmed = backend_path.trim().trim_matches('/');
+    let mut current = String::new();
+    let mut missing = Vec::new();
+    for segment in trimmed.split('/').filter(|segment| !segment.is_empty()) {
+        if !current.is_empty() {
+            current.push('/');
+        }
+        current.push_str(segment);
+        match op.stat(&current).await {
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => {
+                return Err(err_with_details(
+                    McpErrorCode::ERR_ALREADY_EXISTS,
+                    "path already exists as a file",
+                    json!({
+                        "path": full_path,
+                        "intermediate_path": format!("/{}/{}", storage_name, current)
+                    }),
+                ));
+            }
+            Err(error) if error.kind() == opendal::ErrorKind::NotFound => {
+                missing.push(current.clone());
+            }
+            Err(error) => return Err(map_opendal_error(&error, McpErrorCode::ERR_INTERNAL)),
+        }
+    }
+    Ok(missing)
+}
+
 pub(super) async fn create_dir_chain(
     op: &opendal::Operator,
     backend_path: &str,

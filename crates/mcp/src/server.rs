@@ -1112,9 +1112,7 @@ pub async fn invoke_import_config_typed(
     tools_storage::import_config(ctx, input).await
 }
 
-pub async fn invoke_export_config_typed(
-    ctx: &FsToolsContext,
-) -> McpResult<ExportConfigOutput> {
+pub async fn invoke_export_config_typed(ctx: &FsToolsContext) -> McpResult<ExportConfigOutput> {
     tools_storage::export_config(ctx).await
 }
 

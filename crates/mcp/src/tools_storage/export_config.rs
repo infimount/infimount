@@ -35,20 +35,15 @@ struct ShareableStorage {
     mcp_policy: Value,
 }
 
-pub async fn export_config(
-    ctx: &FsToolsContext,
-) -> McpResult<ExportConfigOutput> {
+pub async fn export_config(ctx: &FsToolsContext) -> McpResult<ExportConfigOutput> {
     let storages = ctx.registry.load_all()?;
 
     let shareable: Vec<ShareableStorage> = storages
         .iter()
         .map(|s| {
             let config = s.config.clone();
-            let required_secret_fields: Vec<String> = s
-                .secret_fields
-                .iter()
-                .map(|f| format!("/{f}"))
-                .collect();
+            let required_secret_fields: Vec<String> =
+                s.secret_fields.iter().map(|f| format!("/{f}")).collect();
             ShareableStorage {
                 name: s.name.clone(),
                 backend: s.backend.clone(),
@@ -57,8 +52,7 @@ pub async fn export_config(
                 enabled: s.enabled,
                 mcp_exposed: false,
                 read_only: s.read_only,
-                mcp_policy: serde_json::to_value(&s.mcp_policy)
-                    .unwrap_or_default(),
+                mcp_policy: serde_json::to_value(&s.mcp_policy).unwrap_or_default(),
             }
         })
         .collect();

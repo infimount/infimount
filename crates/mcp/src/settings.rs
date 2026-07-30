@@ -419,16 +419,8 @@ mod tests {
         let path = temp.path().join("mcp_settings.json");
         let secret_store = Arc::new(infimount_core::secrets::MemorySecretStore::new());
         let store = McpSettingsStore::with_secret_store(Some(path.clone()), secret_store.clone());
-        let original = serde_json::json!({
-            "enabled": false,
-            "transport": "http",
-            "bindAddress": "127.0.0.1",
-            "port": 7331,
-            "enabledTools": ["list_dir"],
-            "authToken": "seeded-http-token",
-            "securityBaselineVersion": 2
-        });
-        fs::write(&path, serde_json::to_vec_pretty(&original).unwrap()).unwrap();
+        let original = include_str!("../../../tests/fixtures/v0.7/mcp-settings-all-tools.json");
+        fs::write(&path, original).unwrap();
 
         let loaded = store.load().expect("migrate settings");
         assert_eq!(
@@ -441,11 +433,14 @@ mod tests {
                 .get_json(MCP_AUTH_TOKEN_ACCOUNT)
                 .unwrap()
                 .unwrap()["token"],
-            "seeded-http-token"
+            "TEST_HTTP_BEARER_TOKEN_DO_NOT_SHIP"
         );
-        assert!(!fs::read_to_string(path)
-            .unwrap()
-            .contains("seeded-http-token"));
+        let persisted = fs::read_to_string(path).unwrap();
+        assert!(!persisted.contains("TEST_HTTP_BEARER_TOKEN_DO_NOT_SHIP"));
+        assert!(!loaded
+            .enabled_tools
+            .iter()
+            .any(|tool| tool == "add_storage"));
     }
 
     #[test]

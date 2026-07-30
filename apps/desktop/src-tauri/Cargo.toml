@@ -6,7 +6,6 @@ rust-version.workspace = true
 
 [dependencies]
 tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
-tauri-plugin-shell = "2"
 chrono = { version = "0.4", features = ["clock"] }
 opendal = "0.56.0"
 serde = { version = "1.0", features = ["derive"] }

@@ -4,7 +4,9 @@ use chrono::Utc;
 use fs2::FileExt;
 use infimount_core::{
     models::{ListEntriesPage, ReadFileRangeResult},
-    operations, schema::StorageKindSchema, secrets, CoreError, Entry,
+    operations,
+    schema::StorageKindSchema,
+    secrets, CoreError, Entry,
 };
 use infimount_mcp::errors::{err, err_with_details, McpError, McpErrorCode, McpResult};
 use infimount_mcp::opendal_adapter::{get_capabilities, StorageBackendCapabilities};
@@ -19,8 +21,12 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs::OpenOptions;
+use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::time::Duration;
 use tauri::State;
+use tokio::io::AsyncWriteExt;
+use uuid::Uuid;
 
 use crate::state::{AppState, PendingOAuthClaim, PendingOAuthSession, SecretMutation};
 
@@ -78,13 +84,14 @@ pub async fn list_entries_page(
     cursor: Option<String>,
     recursive: Option<bool>,
 ) -> Result<ListEntriesPage, CoreError> {
-    let op = state.operator_for_storage_id(&sourceId)?;
+    let (op, revision) = state.operator_and_revision_for_storage_id(&sourceId)?;
     operations::list_entries_page(
         &op,
         &path,
         limit.unwrap_or(200),
         cursor,
         recursive.unwrap_or(false),
+        revision,
     )
     .await
 }
@@ -95,10 +102,16 @@ pub async fn read_file_range(
     sourceId: String,
     path: String,
     offset: u64,
-    maxBytes: u64,
+    maxBytes: Option<u64>,
 ) -> Result<ReadFileRangeResult, CoreError> {
     let op = state.operator_for_storage_id(&sourceId)?;
-    operations::read_file_range(&op, &path, offset, maxBytes).await
+    operations::read_file_range(
+        &op,
+        &path,
+        offset,
+        maxBytes.unwrap_or(infimount_core::models::DEFAULT_PREVIEW_MAX),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -121,6 +134,72 @@ pub async fn read_file(
     operations::read_full(&op, &path).await
 }
 
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadFileResult {
+    pub file_name: String,
+    pub bytes: u64,
+}
+
+fn unique_download_path(directory: &std::path::Path, file_name: &str) -> PathBuf {
+    let candidate = directory.join(file_name);
+    if !candidate.exists() {
+        return candidate;
+    }
+    let path = std::path::Path::new(file_name);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("download");
+    let extension = path.extension().and_then(|value| value.to_str());
+    for index in 2_u32.. {
+        let renamed = match extension {
+            Some(extension) => format!("{stem} ({index}).{extension}"),
+            None => format!("{stem} ({index})"),
+        };
+        let candidate = directory.join(renamed);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    unreachable!("unbounded download suffix search")
+}
+
+#[tauri::command]
+pub async fn download_file_to_downloads(
+    state: State<'_, AppState>,
+    sourceId: String,
+    path: String,
+) -> Result<DownloadFileResult, CoreError> {
+    let file_name = std::path::Path::new(path.trim_end_matches('/'))
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty() && *value != "." && *value != "..")
+        .ok_or_else(|| CoreError::Config("download path has no valid file name".to_string()))?
+        .to_string();
+    let directory = dirs::download_dir().ok_or_else(|| {
+        CoreError::Config("the operating system Downloads directory is unavailable".to_string())
+    })?;
+    tokio::fs::create_dir_all(&directory).await?;
+    let destination = unique_download_path(&directory, &file_name);
+    let staging = directory.join(format!(".infimount-download-{}.part", Uuid::new_v4()));
+    let op = state.operator_for_storage_id(&sourceId)?;
+    let bytes = operations::download_file_to_local_path(&op, &path, &staging).await?;
+    if let Err(error) = tokio::fs::hard_link(&staging, &destination).await {
+        let _ = tokio::fs::remove_file(&staging).await;
+        return Err(error.into());
+    }
+    tokio::fs::remove_file(&staging).await?;
+    Ok(DownloadFileResult {
+        file_name: destination
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or(&file_name)
+            .to_string(),
+        bytes,
+    })
+}
+
 #[tauri::command]
 pub async fn write_file(
     state: State<'_, AppState>,
@@ -131,6 +210,283 @@ pub async fn write_file(
 ) -> Result<(), CoreError> {
     let op = state.operator_for_storage_id(&sourceId)?;
     operations::write_full_with_user_metadata(&op, &path, &data, userMetadata).await
+}
+
+const MAX_UPLOAD_CHUNK_BYTES: usize = 4 * 1024 * 1024;
+const MAX_STAGED_UPLOAD_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+const MAX_STAGED_UPLOAD_AGGREGATE_BYTES: u64 = 20 * 1024 * 1024 * 1024;
+const MAX_UPLOAD_SESSIONS: usize = 32;
+const STALE_UPLOAD_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+
+fn validate_upload_usage(
+    session_count: usize,
+    aggregate_bytes: u64,
+    additional_bytes: u64,
+) -> Result<(), CoreError> {
+    if session_count >= MAX_UPLOAD_SESSIONS {
+        return Err(CoreError::Config(format!(
+            "too many staged uploads (maximum {MAX_UPLOAD_SESSIONS})"
+        )));
+    }
+    if aggregate_bytes.saturating_add(additional_bytes) > MAX_STAGED_UPLOAD_AGGREGATE_BYTES {
+        return Err(CoreError::Config(
+            "staged upload aggregate exceeds 20 GiB".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn upload_staging_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+fn upload_staging_dir() -> PathBuf {
+    std::env::temp_dir().join("infimount-upload-staging")
+}
+
+fn upload_staging_path(upload_id: &str) -> Result<PathBuf, CoreError> {
+    let id = Uuid::parse_str(upload_id)
+        .map_err(|_| CoreError::Config("invalid upload session".to_string()))?;
+    Ok(upload_staging_dir().join(format!("{id}.part")))
+}
+
+async fn cleanup_stale_uploads_and_usage() -> Result<(usize, u64), CoreError> {
+    let dir = upload_staging_dir();
+    let mut entries = match tokio::fs::read_dir(&dir).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((0, 0)),
+        Err(error) => return Err(error.into()),
+    };
+    let mut count = 0usize;
+    let mut total = 0_u64;
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        let tracked = matches!(
+            path.extension().and_then(|value| value.to_str()),
+            Some("part" | "uploading")
+        );
+        if !tracked {
+            continue;
+        }
+        let metadata = match entry.metadata().await {
+            Ok(metadata) if metadata.is_file() => metadata,
+            _ => continue,
+        };
+        let stale = metadata
+            .modified()
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age > STALE_UPLOAD_AGE);
+        if stale {
+            let _ = tokio::fs::remove_file(path).await;
+            continue;
+        }
+        count += 1;
+        total = total.saturating_add(metadata.len());
+    }
+    Ok((count, total))
+}
+
+#[tauri::command]
+pub async fn begin_file_upload() -> Result<String, CoreError> {
+    let _guard = upload_staging_lock().lock().await;
+    let dir = upload_staging_dir();
+    tokio::fs::create_dir_all(&dir).await?;
+    let (session_count, aggregate_bytes) = cleanup_stale_uploads_and_usage().await?;
+    validate_upload_usage(session_count, aggregate_bytes, 0)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).await?;
+    }
+    let id = Uuid::new_v4();
+    let path = dir.join(format!("{id}.part"));
+    tokio::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&path)
+        .await?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).await?;
+    }
+    Ok(id.to_string())
+}
+
+#[tauri::command]
+pub async fn append_file_upload_chunk(uploadId: String, data: Vec<u8>) -> Result<(), CoreError> {
+    if data.len() > MAX_UPLOAD_CHUNK_BYTES {
+        return Err(CoreError::Config(format!(
+            "upload chunk exceeds {MAX_UPLOAD_CHUNK_BYTES} bytes"
+        )));
+    }
+    let _guard = upload_staging_lock().lock().await;
+    let path = upload_staging_path(&uploadId)?;
+    let current_len = tokio::fs::metadata(&path).await?.len();
+    if current_len.saturating_add(data.len() as u64) > MAX_STAGED_UPLOAD_BYTES {
+        return Err(CoreError::Config(
+            "staged upload exceeds 10 GiB".to_string(),
+        ));
+    }
+    let (_, aggregate_bytes) = cleanup_stale_uploads_and_usage().await?;
+    validate_upload_usage(0, aggregate_bytes, data.len() as u64)?;
+    let mut file = tokio::fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .await?;
+    file.write_all(&data).await?;
+    file.flush().await?;
+    Ok(())
+}
+
+async fn finish_file_upload_inner(
+    state: &AppState,
+    uploadId: String,
+    sourceId: String,
+    targetPath: String,
+) -> Result<(), CoreError> {
+    let path = upload_staging_path(&uploadId)?;
+    let transfer_path = path.with_extension("uploading");
+    {
+        let _guard = upload_staging_lock().lock().await;
+        tokio::fs::rename(&path, &transfer_path).await?;
+    }
+    let result = match state.operator_for_storage_id(&sourceId) {
+        Ok(op) => operations::upload_local_file_to_path(&op, &transfer_path, &targetPath).await,
+        Err(error) => Err(error),
+    };
+    let cleanup = tokio::fs::remove_file(&transfer_path).await;
+    match result {
+        Err(error) => Err(error),
+        Ok(()) => cleanup.map_err(CoreError::from),
+    }
+}
+
+#[tauri::command]
+pub async fn finish_file_upload(
+    state: State<'_, AppState>,
+    uploadId: String,
+    sourceId: String,
+    targetPath: String,
+) -> Result<(), CoreError> {
+    finish_file_upload_inner(&state, uploadId, sourceId, targetPath).await
+}
+
+#[tauri::command]
+pub async fn cancel_file_upload(uploadId: String) -> Result<(), CoreError> {
+    let _guard = upload_staging_lock().lock().await;
+    let path = upload_staging_path(&uploadId)?;
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn new_activation_demo_root(config_dir: &std::path::Path) -> PathBuf {
+    config_dir.join(format!("activation-demo-{}", Uuid::new_v4()))
+}
+
+#[tauri::command]
+pub async fn create_activation_demo_storage(
+    state: State<'_, AppState>,
+) -> Result<StorageRecord, McpError> {
+    let _lifecycle = state.lifecycle_mutation.lock().await;
+    let config_dir = state
+        .registry
+        .path()
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let existing = state.registry.load_all()?.into_iter().find(|storage| {
+        let Some(root) = storage.config.get("root").and_then(Value::as_str) else {
+            return false;
+        };
+        let root = std::path::Path::new(root);
+        storage.backend == "local"
+            && root.parent() == Some(config_dir)
+            && root
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("activation-demo-"))
+    });
+    if let Some(existing) = existing {
+        return Ok(existing);
+    }
+
+    // Always create a fresh, invocation-owned root. This prevents stale or user-created
+    // data at a predictable path from ever being overwritten or deleted on rollback.
+    let root = new_activation_demo_root(config_dir);
+    tokio::fs::create_dir(&root).await.map_err(|_| {
+        err(
+            McpErrorCode::ERR_INTERNAL,
+            "failed to reserve a private demo root",
+        )
+    })?;
+    let root_text = root.to_string_lossy().to_string();
+    let create_result: Result<(), McpError> = async {
+        let workspace_dir = root.join("workspace");
+        let outside_dir = root.join("outside");
+        tokio::fs::create_dir(&workspace_dir).await.map_err(|_| {
+            err(
+                McpErrorCode::ERR_INTERNAL,
+                "failed to create demo workspace",
+            )
+        })?;
+        tokio::fs::create_dir(&outside_dir).await.map_err(|_| {
+            err(
+                McpErrorCode::ERR_INTERNAL,
+                "failed to create demo deny fixture",
+            )
+        })?;
+        for (path, contents) in [
+            (
+                workspace_dir.join("README.md"),
+                b"# Infimount demo workspace\n\nThis read-only fixture is safe for activation checks.\n".as_slice(),
+            ),
+            (
+                workspace_dir.join("sample.txt"),
+                b"Infimount activation sample\n".as_slice(),
+            ),
+            (
+                outside_dir.join("denied.txt"),
+                b"This fixture must be denied by policy.\n".as_slice(),
+            ),
+        ] {
+            infimount_core::atomic_file::atomic_write_file(
+                &path,
+                contents,
+                infimount_core::atomic_file::FILE_MODE,
+            )
+            .map_err(|_| err(McpErrorCode::ERR_INTERNAL, "failed to write demo fixture"))?;
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(error) = create_result {
+        let _ = std::fs::remove_dir_all(&root);
+        return Err(error);
+    }
+
+    let mut record = StorageRecord::new(
+        "Infimount Activation Demo".to_string(),
+        "local".to_string(),
+        json!({ "root": root_text }),
+    );
+    record.enabled = true;
+    record.mcp_exposed = true;
+    record.read_only = true;
+    record.mcp_policy.denied_paths = vec!["outside".to_string()];
+    let result = state.registry.with_locked_mutation(|storages| {
+        ensure_unique_name(storages, &record.name, None)?;
+        storages.push(record.clone());
+        Ok(record.clone())
+    });
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(&root);
+    }
+    result
 }
 
 #[tauri::command]
@@ -192,10 +548,11 @@ fn claim_oauth_session(state: &State<'_, AppState>, id: &str) -> McpResult<Pendi
 }
 
 #[tauri::command]
-pub fn add_storage(
+pub async fn add_storage(
     state: State<'_, AppState>,
     storage: StorageDraft,
 ) -> Result<StorageRecord, McpError> {
+    let _lifecycle = state.lifecycle_mutation.lock().await;
     validate_storage_draft(&storage)?;
     let name = validate_storage_name(&storage.name)?;
     let schema_secret_names = secrets::discover_secret_field_names();
@@ -284,6 +641,14 @@ fn add_storage_with_config(
             infimount_mcp::registry::default_config_dir().join("secret-cleanup.json");
         append_secret_cleanup(&journal_path, &account)?;
     }
+    if let Ok(created) = &result {
+        let mut event = infimount_mcp::telemetry::ProductEvent::new(
+            infimount_mcp::telemetry::ProductEventName::StorageAdded,
+        );
+        event.backend_type = Some(created.backend.clone());
+        event.success = Some(true);
+        let _ = state.product_events.record(event);
+    }
     result
 }
 
@@ -326,11 +691,12 @@ pub struct UpdateStorageResult {
 }
 
 #[tauri::command]
-pub fn update_storage(
+pub async fn update_storage(
     state: State<'_, AppState>,
     storageId: String,
     mut storage: StorageDraft,
 ) -> Result<UpdateStorageResult, McpError> {
+    let _lifecycle = state.lifecycle_mutation.lock().await;
     let claimed = if let Some(oauth_id) = storage.oauth_session_id.as_deref() {
         let session = claim_oauth_session(&state, oauth_id)?;
         let expected_backend = if session.provider == "gdrive" {
@@ -490,6 +856,9 @@ fn update_storage_with_draft(
             .to_string(),
         );
     }
+    if result.is_ok() {
+        state.operator_cache.invalidate(&storageId);
+    }
     result.map(|storage| (storage, warning))
 }
 
@@ -501,10 +870,11 @@ pub struct RemoveStorageResult {
 }
 
 #[tauri::command]
-pub fn remove_storage(
+pub async fn remove_storage(
     state: State<'_, AppState>,
     storageId: String,
 ) -> Result<RemoveStorageResult, McpError> {
+    let _lifecycle = state.lifecycle_mutation.lock().await;
     let secret_store = state.secret_store.clone();
     let mut secret_ref_to_delete: Option<String> = None;
 
@@ -522,6 +892,7 @@ pub fn remove_storage(
         }
         Ok(())
     })?;
+    state.operator_cache.invalidate(&storageId);
 
     // Delete keyring entry after successful registry mutation
     if let Some(ref secret_ref) = secret_ref_to_delete {
@@ -616,11 +987,12 @@ fn append_secret_cleanup(path: &std::path::Path, account: &str) -> McpResult<()>
 }
 
 #[tauri::command]
-pub fn update_mcp_storage_policy(
+pub async fn update_mcp_storage_policy(
     state: State<'_, AppState>,
     storageId: String,
     policy: McpStoragePolicy,
 ) -> Result<StorageRecord, McpError> {
+    let _lifecycle = state.lifecycle_mutation.lock().await;
     state.registry.with_locked_mutation(|storages| {
         let storage = storages
             .iter_mut()
@@ -704,7 +1076,20 @@ pub async fn verify_storage(
     record.enabled = storage.enabled;
     record.mcp_exposed = storage.mcp_exposed;
     record.read_only = storage.read_only;
-    validate_storage_record(&record).await
+    let backend = record.backend.clone();
+    let result = validate_storage_record(&record).await;
+    let mut event = infimount_mcp::telemetry::ProductEvent::new(
+        infimount_mcp::telemetry::ProductEventName::StorageValidationCompleted,
+    );
+    event.backend_type = Some(backend);
+    event.success = Some(result.as_ref().is_ok_and(|output| output.valid));
+    let _ = state.product_events.record(event);
+    result
+}
+
+fn invalidate_operator_caches_after_import(state: &AppState) {
+    state.operator_cache.clear();
+    infimount_mcp::opendal_adapter::clear_operator_cache();
 }
 
 #[tauri::command]
@@ -712,7 +1097,8 @@ pub async fn import_storage_config(
     state: State<'_, AppState>,
     request: ImportStoragesRequest,
 ) -> Result<ImportConfigOutput, McpError> {
-    import_config(
+    let _lifecycle = state.lifecycle_mutation.lock().await;
+    let result = import_config(
         &state.fs_context()?,
         ImportConfigInput {
             json: request.json,
@@ -720,7 +1106,11 @@ pub async fn import_storage_config(
             on_conflict: request.on_conflict,
         },
     )
-    .await
+    .await;
+    if result.is_ok() {
+        invalidate_operator_caches_after_import(&state);
+    }
+    result
 }
 
 #[tauri::command]
@@ -743,7 +1133,12 @@ pub async fn apply_storage_import_cmd(
     state: State<'_, AppState>,
     request: ApplyStorageImportInput,
 ) -> Result<ApplyStorageImportResult, McpError> {
-    apply_storage_import(&state.fs_context()?, request).await
+    let _lifecycle = state.lifecycle_mutation.lock().await;
+    let result = apply_storage_import(&state.fs_context()?, request).await;
+    if result.is_ok() {
+        invalidate_operator_caches_after_import(&state);
+    }
+    result
 }
 
 #[tauri::command]
@@ -900,6 +1295,100 @@ mod tests {
             };
             validate_storage_draft(&storage).expect("backend should be accepted");
         }
+    }
+
+    #[test]
+    fn activation_demo_roots_are_unique_and_do_not_reuse_predictable_data() {
+        let config = std::path::Path::new("/tmp/infimount-test-config");
+        let first = new_activation_demo_root(config);
+        let second = new_activation_demo_root(config);
+        assert_ne!(first, second);
+        assert_eq!(first.parent(), Some(config));
+        assert!(first
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("activation-demo-")));
+    }
+
+    #[test]
+    fn staged_upload_usage_rejects_session_and_aggregate_exhaustion() {
+        assert!(validate_upload_usage(MAX_UPLOAD_SESSIONS, 0, 0).is_err());
+        assert!(validate_upload_usage(0, MAX_STAGED_UPLOAD_AGGREGATE_BYTES, 1,).is_err());
+        assert!(validate_upload_usage(
+            MAX_UPLOAD_SESSIONS - 1,
+            MAX_STAGED_UPLOAD_AGGREGATE_BYTES - 1,
+            1,
+        )
+        .is_ok());
+    }
+
+    #[tokio::test]
+    async fn staged_upload_is_bounded_and_cancellable() {
+        let upload_id = begin_file_upload().await.expect("begin upload");
+        append_file_upload_chunk(upload_id.clone(), b"hello".to_vec())
+            .await
+            .expect("append chunk");
+        let path = upload_staging_path(&upload_id).expect("staging path");
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"hello");
+
+        let oversized = vec![0; MAX_UPLOAD_CHUNK_BYTES + 1];
+        assert!(append_file_upload_chunk(upload_id.clone(), oversized)
+            .await
+            .is_err());
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"hello");
+
+        cancel_file_upload(upload_id.clone())
+            .await
+            .expect("cancel upload");
+        assert!(!path.exists());
+        cancel_file_upload(upload_id)
+            .await
+            .expect("cancel is idempotent");
+    }
+
+    #[tokio::test]
+    async fn finish_upload_cleans_staging_when_storage_is_invalid() {
+        use infimount_core::secrets::MemorySecretStore;
+        use std::sync::Arc;
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(dir.path(), Arc::new(MemorySecretStore::new()));
+        let upload_id = begin_file_upload().await.unwrap();
+        append_file_upload_chunk(upload_id.clone(), b"data".to_vec())
+            .await
+            .unwrap();
+        let part = upload_staging_path(&upload_id).unwrap();
+        let uploading = part.with_extension("uploading");
+
+        let result = finish_file_upload_inner(
+            &state,
+            upload_id,
+            "missing-storage".to_string(),
+            "target.bin".to_string(),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(!part.exists());
+        assert!(!uploading.exists());
+    }
+
+    #[test]
+    fn import_invalidation_clears_desktop_operator_cache() {
+        use infimount_core::runtime::CacheKey;
+        use infimount_core::secrets::MemorySecretStore;
+        use opendal::services::Memory;
+        use std::sync::Arc;
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(dir.path(), Arc::new(MemorySecretStore::new()));
+        let key = CacheKey {
+            storage_id: "storage-1".to_string(),
+            revision: 1,
+        };
+        let op = opendal::Operator::new(Memory::default()).unwrap().finish();
+        state.operator_cache.insert(key.clone(), op);
+        assert!(state.operator_cache.get(&key).is_some());
+        invalidate_operator_caches_after_import(&state);
+        assert!(state.operator_cache.get(&key).is_none());
     }
 
     #[test]

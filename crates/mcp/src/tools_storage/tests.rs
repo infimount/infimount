@@ -368,7 +368,9 @@ async fn export_config_is_shareable() {
     };
 
     let out = export_config(&ctx).await.unwrap();
-    assert!(out.json.contains("\"kind\": \"infimount-shareable-config\""));
+    assert!(out
+        .json
+        .contains("\"kind\": \"infimount-shareable-config\""));
     assert!(out.json.contains("\"mcpExposed\": false"));
     assert!(out.json.contains("requiredSecretFields"));
     assert!(!out.json.contains("\"id\":"));
@@ -419,6 +421,303 @@ async fn import_config_rename_conflict_appends_suffix() {
         .collect::<Vec<_>>();
     assert!(names.contains(&"Local".to_string()));
     assert!(names.contains(&"Local (2)".to_string()));
+}
+
+#[tokio::test]
+async fn legacy_overwrite_increments_revision_without_bumping_untouched_records() {
+    let dir = TempDir::new().unwrap();
+    let registry = registry_in(&dir);
+    let mut overwritten = crate::registry::StorageRecord::new(
+        "Local".to_string(),
+        "local".to_string(),
+        serde_json::json!({"root": "/tmp/one"}),
+    );
+    overwritten.revision = 7;
+    let mut untouched = crate::registry::StorageRecord::new(
+        "Other".to_string(),
+        "local".to_string(),
+        serde_json::json!({"root": "/tmp/other"}),
+    );
+    untouched.revision = 4;
+    registry
+        .save_all_atomic(&[overwritten.clone(), untouched.clone()])
+        .unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+
+    import_config(
+        &ctx,
+        ImportConfigInput {
+            json: serde_json::json!([{
+                "name": "Local",
+                "backend": "local",
+                "config": {"root": "/tmp/two"}
+            }])
+            .to_string(),
+            mode: "merge".to_string(),
+            on_conflict: "overwrite".to_string(),
+        },
+    )
+    .await
+    .unwrap();
+
+    let records = ctx.registry.load_all().unwrap();
+    assert_eq!(
+        records
+            .iter()
+            .find(|item| item.name == "Local")
+            .unwrap()
+            .revision,
+        8
+    );
+    assert_eq!(
+        records
+            .iter()
+            .find(|item| item.name == "Other")
+            .unwrap()
+            .revision,
+        4
+    );
+}
+
+#[tokio::test]
+async fn shareable_preview_and_apply_honor_policy_secrets_and_exposure() {
+    let dir = TempDir::new().unwrap();
+    let registry = registry_in(&dir);
+    let mut existing = crate::registry::StorageRecord::new(
+        "Docs".to_string(),
+        "s3".to_string(),
+        serde_json::json!({"bucket": "old"}),
+    );
+    existing.mcp_exposed = true;
+    existing.secret_ref = Some("storage/docs".to_string());
+    existing.secret_fields = vec!["accessKeyId".to_string()];
+    registry
+        .secret_store()
+        .put_json(
+            "storage/docs",
+            &serde_json::json!({"accessKeyId": "stored-key"}),
+        )
+        .unwrap();
+    registry
+        .save_all_atomic(std::slice::from_ref(&existing))
+        .unwrap();
+    let original_registry = std::fs::read(registry.path()).unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+
+    let preview = preview_storage_import(
+        &ctx,
+        serde_json::json!({
+            "schemaVersion": 2,
+            "kind": "infimount-shareable-config",
+            "storages": [{
+                "name": "Docs",
+                "backend": "s3",
+                "config": {"bucket": "new"},
+                "requiredSecretFields": ["/accessKeyId", "/secretAccessKey"],
+                "enabled": true,
+                "mcpExposed": true,
+                "readOnly": true,
+                "mcpPolicy": {
+                    "version": 2,
+                    "default_access": "read_only",
+                    "rules": [],
+                    "denied_paths": ["private"],
+                    "confirmation_rules": {
+                        "require_for_write": true,
+                        "require_for_overwrite": true,
+                        "require_for_delete": true,
+                        "require_for_version_delete": true,
+                        "require_for_presign": true,
+                        "require_for_cross_storage_copy": true
+                    }
+                }
+            }]
+        })
+        .to_string(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(preview.updates.len(), 1);
+    assert_eq!(preview.policy_changes.len(), 1);
+    assert_eq!(preview.exposure_changes.len(), 1);
+    assert_eq!(preview.missing_secret_fields.len(), 1);
+    assert_eq!(preview.missing_secret_fields[0].name, "secretAccessKey");
+    assert_eq!(preview.warnings.len(), 1);
+
+    let result = apply_storage_import(
+        &ctx,
+        ApplyStorageImportInput {
+            preview_id: preview.preview_id,
+            base_registry_revision: preview.base_registry_revision,
+            mode: "merge".to_string(),
+            on_conflict: "overwrite".to_string(),
+            confirmed: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.applied, 1);
+
+    let stored = ctx.registry.load_all().unwrap().remove(0);
+    assert_eq!(stored.config, serde_json::json!({"bucket": "new"}));
+    assert_eq!(stored.revision, existing.revision + 1);
+    assert!(!stored.mcp_exposed);
+    assert!(stored.read_only);
+    assert_eq!(stored.mcp_policy.default_access, McpAccessMode::ReadOnly);
+    assert_eq!(stored.mcp_policy.denied_paths, vec!["private"]);
+    assert_eq!(stored.secret_ref.as_deref(), Some("storage/docs"));
+    assert_eq!(
+        stored.secret_fields,
+        vec!["accessKeyId".to_string(), "secretAccessKey".to_string()]
+    );
+
+    let backups = std::fs::read_dir(dir.path().join("backups"))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(backups.len(), 1);
+    assert_eq!(std::fs::read(backups[0].path()).unwrap(), original_registry);
+}
+
+#[tokio::test]
+async fn full_registry_change_invalidates_shareable_preview() {
+    let dir = TempDir::new().unwrap();
+    let registry = registry_in(&dir);
+    let existing = crate::registry::StorageRecord::new(
+        "Local".to_string(),
+        "local".to_string(),
+        serde_json::json!({"root": "/tmp/one"}),
+    );
+    registry
+        .save_all_atomic(std::slice::from_ref(&existing))
+        .unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+    let preview = preview_storage_import(
+        &ctx,
+        serde_json::json!({"storages": [{
+            "name": "Other",
+            "backend": "local",
+            "config": {"root": "/tmp/other"}
+        }]})
+        .to_string(),
+    )
+    .await
+    .unwrap();
+
+    let mut changed = existing;
+    changed.config = serde_json::json!({"root": "/tmp/two"});
+    // Deliberately retain the same per-record revision and timestamp. The full
+    // registry snapshot, rather than max(revision), must invalidate the preview.
+    ctx.registry.save_all_atomic(&[changed.clone()]).unwrap();
+
+    let error = apply_storage_import(
+        &ctx,
+        ApplyStorageImportInput {
+            preview_id: preview.preview_id,
+            base_registry_revision: preview.base_registry_revision,
+            mode: "merge".to_string(),
+            on_conflict: "error".to_string(),
+            confirmed: false,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, McpErrorCode::ERR_IMPORT_PREVIEW_STALE);
+    assert_eq!(ctx.registry.load_all().unwrap()[0].config, changed.config);
+}
+
+#[tokio::test]
+async fn expired_shareable_preview_cannot_be_applied() {
+    let dir = TempDir::new().unwrap();
+    let ctx = FsToolsContext {
+        registry: registry_in(&dir),
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+    let preview = preview_storage_import(
+        &ctx,
+        serde_json::json!([{"name": "Local", "backend": "local", "config": {"root": "/tmp"}}])
+            .to_string(),
+    )
+    .await
+    .unwrap();
+    super::import_config::expire_storage_import_preview(&preview.preview_id);
+
+    let error = apply_storage_import(
+        &ctx,
+        ApplyStorageImportInput {
+            preview_id: preview.preview_id,
+            base_registry_revision: preview.base_registry_revision,
+            mode: "merge".to_string(),
+            on_conflict: "error".to_string(),
+            confirmed: false,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, McpErrorCode::ERR_IMPORT_PREVIEW_EXPIRED);
+    assert!(ctx.registry.load_all().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn pre_import_backup_failure_preserves_registry() {
+    let dir = TempDir::new().unwrap();
+    let registry = registry_in(&dir);
+    let existing = crate::registry::StorageRecord::new(
+        "Original".to_string(),
+        "local".to_string(),
+        serde_json::json!({"root": "/tmp/original"}),
+    );
+    registry
+        .save_all_atomic(std::slice::from_ref(&existing))
+        .unwrap();
+    let original_bytes = std::fs::read(registry.path()).unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+    let preview = preview_storage_import(
+        &ctx,
+        serde_json::json!([{"name": "Added", "backend": "local", "config": {"root": "/tmp/added"}}])
+            .to_string(),
+    )
+    .await
+    .unwrap();
+    std::fs::write(dir.path().join("backups"), b"not a directory").unwrap();
+
+    apply_storage_import(
+        &ctx,
+        ApplyStorageImportInput {
+            preview_id: preview.preview_id,
+            base_registry_revision: preview.base_registry_revision,
+            mode: "merge".to_string(),
+            on_conflict: "error".to_string(),
+            confirmed: false,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(std::fs::read(ctx.registry.path()).unwrap(), original_bytes);
+    assert_eq!(ctx.registry.load_all().unwrap()[0].name, existing.name);
 }
 
 #[tokio::test]

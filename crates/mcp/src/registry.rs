@@ -771,32 +771,24 @@ mod tests {
         let path = dir.path().join("storages.json");
         let secret_store = std::sync::Arc::new(infimount_core::secrets::MemorySecretStore::new());
         let registry = StorageRegistry::with_secret_store(Some(path.clone()), secret_store.clone());
-        let mut record = StorageRecord::new(
-            "S3".to_string(),
-            "s3".to_string(),
-            json!({
-                "bucket": "example",
-                "nested": { "secretAccessKey": "seeded-secret-value" }
-            }),
-        );
-        record.schema_version = STORAGE_RECORD_SCHEMA_VERSION;
-        fs::write(&path, serde_json::to_vec_pretty(&vec![record]).unwrap()).unwrap();
+        fs::write(
+            &path,
+            include_str!("../../../tests/fixtures/v0.7/storages-plaintext.json"),
+        )
+        .unwrap();
 
         let loaded = registry.load_all().expect("migrate registry");
-        assert!(loaded[0]
-            .config
-            .pointer("/nested/secretAccessKey")
-            .is_none());
+        assert!(loaded[0].config.get("secretAccessKey").is_none());
         assert_eq!(
             secret_store
                 .get_json(&format!("storage/{}", loaded[0].id))
                 .unwrap()
-                .unwrap()["nested.secretAccessKey"],
-            "seeded-secret-value"
+                .unwrap()["secretAccessKey"],
+            "TEST_SECRET_ACCESS_KEY_DO_NOT_SHIP"
         );
         assert!(!fs::read_to_string(&path)
             .unwrap()
-            .contains("seeded-secret-value"));
+            .contains("TEST_SECRET_ACCESS_KEY_DO_NOT_SHIP"));
     }
 
     #[test]

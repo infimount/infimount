@@ -37,6 +37,9 @@ pub struct ListDirOutput {
 #[derive(Debug, Serialize, Deserialize)]
 struct CursorV1 {
     v: u8,
+    path: String,
+    recursive: bool,
+    revision: u64,
     offset: usize,
 }
 
@@ -51,12 +54,21 @@ pub async fn list_dir(ctx: &FsToolsContext, input: ListDirInput) -> McpResult<Li
 
     let parsed = parse_mcp_path(&input.path)?;
     enforce_root_operation(FsOp::ListDir, &parsed)?;
-    let offset = decode_cursor(input.cursor.as_deref())?;
 
     if parsed.is_root {
-        let entries = ctx
-            .registry
-            .list_exposed_enabled()?
+        let storages = ctx.registry.list_exposed_enabled()?;
+        let revision = storages
+            .iter()
+            .fold(storages.len() as u64, |revision, storage| {
+                revision.wrapping_mul(31).wrapping_add(storage.revision)
+            });
+        let offset = decode_cursor(
+            input.cursor.as_deref(),
+            &parsed.normalized,
+            input.recursive,
+            revision,
+        )?;
+        let entries = storages
             .into_iter()
             .map(|storage| ListDirEntry {
                 name: storage.name.clone(),
@@ -73,10 +85,18 @@ pub async fn list_dir(ctx: &FsToolsContext, input: ListDirInput) -> McpResult<Li
             entries,
             offset,
             input.limit as usize,
+            input.recursive,
+            revision,
         ));
     }
 
     let resolved = resolve_storage_path(&ctx.registry, &parsed.normalized)?;
+    let offset = decode_cursor(
+        input.cursor.as_deref(),
+        &parsed.normalized,
+        input.recursive,
+        resolved.storage.revision,
+    )?;
     ctx.validate_session(
         input.session_id.as_deref(),
         &resolved.storage.name,
@@ -122,6 +142,8 @@ pub async fn list_dir(ctx: &FsToolsContext, input: ListDirInput) -> McpResult<Li
         entries,
         offset,
         input.limit as usize,
+        input.recursive,
+        resolved.storage.revision,
     ))
 }
 
@@ -130,12 +152,14 @@ fn paginate_entries(
     entries: Vec<ListDirEntry>,
     offset: usize,
     limit: usize,
+    recursive: bool,
+    revision: u64,
 ) -> ListDirOutput {
     let start = offset.min(entries.len());
     let end = (start + limit).min(entries.len());
     let page = entries[start..end].to_vec();
     let next_cursor = if end < entries.len() {
-        Some(encode_cursor(end))
+        Some(encode_cursor(&path, recursive, revision, end))
     } else {
         None
     };
@@ -147,7 +171,12 @@ fn paginate_entries(
     }
 }
 
-fn decode_cursor(cursor: Option<&str>) -> McpResult<usize> {
+fn decode_cursor(
+    cursor: Option<&str>,
+    path: &str,
+    recursive: bool,
+    revision: u64,
+) -> McpResult<usize> {
     let Some(cursor) = cursor else {
         return Ok(0);
     };
@@ -180,10 +209,42 @@ fn decode_cursor(cursor: Option<&str>) -> McpResult<usize> {
         ));
     }
 
+    if parsed.path != path || parsed.recursive != recursive || parsed.revision != revision {
+        return Err(err_with_details(
+            McpErrorCode::ERR_INVALID_PATH,
+            "cursor does not match the current query or storage revision",
+            json!({}),
+        ));
+    }
+
     Ok(parsed.offset)
 }
 
-fn encode_cursor(offset: usize) -> String {
-    let payload = serde_json::to_vec(&CursorV1 { v: 1, offset }).unwrap_or_else(|_| b"{}".to_vec());
+fn encode_cursor(path: &str, recursive: bool, revision: u64, offset: usize) -> String {
+    let payload = serde_json::to_vec(&CursorV1 {
+        v: 1,
+        path: path.to_string(),
+        recursive,
+        revision,
+        offset,
+    })
+    .unwrap_or_else(|_| b"{}".to_vec());
     URL_SAFE_NO_PAD.encode(payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cursor_is_bound_to_query_and_revision() {
+        let cursor = encode_cursor("/storage/path", true, 9, 20);
+        assert_eq!(
+            decode_cursor(Some(&cursor), "/storage/path", true, 9).unwrap(),
+            20
+        );
+        assert!(decode_cursor(Some(&cursor), "/storage/other", true, 9).is_err());
+        assert!(decode_cursor(Some(&cursor), "/storage/path", false, 9).is_err());
+        assert!(decode_cursor(Some(&cursor), "/storage/path", true, 10).is_err());
+    }
 }

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use age::secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use zeroize::{Zeroize, Zeroizing};
 
 #[derive(Debug)]
 pub enum BackupError {
@@ -53,7 +54,7 @@ impl From<std::io::Error> for BackupError {
 
 const BACKUP_SCHEMA_VERSION: u32 = 2;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BackupPayload {
     pub schema_version: u32,
     pub created_at: String,
@@ -63,6 +64,29 @@ pub struct BackupPayload {
     pub workspaces: Option<serde_json::Value>,
     pub secrets: HashMap<String, String>,
     pub checksum: String,
+}
+
+impl std::fmt::Debug for BackupPayload {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("BackupPayload")
+            .field("schema_version", &self.schema_version)
+            .field("created_at", &self.created_at)
+            .field("storage_count", &self.storages.len())
+            .field("has_mcp_settings", &self.mcp_settings.is_some())
+            .field("has_app_settings", &self.app_settings.is_some())
+            .field("has_workspaces", &self.workspaces.is_some())
+            .field("secret_count", &self.secrets.len())
+            .finish()
+    }
+}
+
+impl Drop for BackupPayload {
+    fn drop(&mut self) {
+        for secret in self.secrets.values_mut() {
+            secret.zeroize();
+        }
+    }
 }
 
 fn canonical_bytes(payload: &BackupPayload) -> Result<Vec<u8>, BackupError> {
@@ -121,21 +145,21 @@ impl BackupPayload {
 }
 
 pub fn encrypt_backup(passphrase: &str, payload: &BackupPayload) -> Result<String, BackupError> {
-    let plaintext = serde_json::to_vec(payload)?;
+    let plaintext = Zeroizing::new(serde_json::to_vec(payload)?);
     let secret = SecretString::from(passphrase.to_owned());
     let recipient = age::scrypt::Recipient::new(secret);
-    let armored = age::encrypt_and_armor(&recipient, &plaintext)?;
+    let armored = age::encrypt_and_armor(&recipient, plaintext.as_slice())?;
     Ok(armored)
 }
 
 pub fn decrypt_backup(passphrase: &str, armored: &str) -> Result<BackupPayload, BackupError> {
     let secret = SecretString::from(passphrase.to_owned());
     let identity = age::scrypt::Identity::new(secret);
-    let plaintext = age::decrypt(&identity, armored.as_bytes()).map_err(|e| {
+    let plaintext = Zeroizing::new(age::decrypt(&identity, armored.as_bytes()).map_err(|e| {
         BackupError::Decryption(format!("wrong passphrase or corrupted backup: {e}"))
-    })?;
+    })?);
 
-    let payload: BackupPayload = serde_json::from_slice(&plaintext)?;
+    let payload: BackupPayload = serde_json::from_slice(plaintext.as_slice())?;
     if payload.schema_version == 0 || payload.schema_version > BACKUP_SCHEMA_VERSION {
         return Err(BackupError::Serialization(format!(
             "unsupported backup format version: {}",
@@ -175,12 +199,7 @@ pub fn decrypt_backup_from_file(
 }
 
 pub fn zeroize(value: &mut String) {
-    unsafe {
-        for byte in value.as_bytes_mut() {
-            *byte = 0;
-        }
-    }
-    value.clear();
+    value.zeroize();
 }
 
 #[cfg(test)]
@@ -196,6 +215,16 @@ mod tests {
             HashMap::new(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn committed_v08_recovery_fixture_is_valid() {
+        let payload: BackupPayload = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/v0.8/recovery-payload.json"
+        ))
+        .expect("parse recovery fixture");
+        assert_eq!(payload.schema_version, BACKUP_SCHEMA_VERSION);
+        assert!(payload.verify());
     }
 
     #[test]
@@ -236,8 +265,9 @@ mod tests {
         let payload = sample_payload();
         let armored = encrypt_backup("p", &payload).unwrap();
         let mut decrypted = decrypt_backup("p", &armored).unwrap();
-        decrypted.checksum = "0000000000000000000000000000000000000000000000000000000000000000".into();
-        let result = serde_json::to_vec(&decrypted).unwrap();
+        decrypted.checksum =
+            "0000000000000000000000000000000000000000000000000000000000000000".into();
+        let _result = serde_json::to_vec(&decrypted).unwrap();
         let re_encrypted = encrypt_backup("p", &decrypted).unwrap();
         let outcome = decrypt_backup("p", &re_encrypted);
         assert!(
@@ -251,7 +281,9 @@ mod tests {
         let payload = sample_payload();
         let armored = encrypt_backup("p", &payload).unwrap();
         let mut decrypted = decrypt_backup("p", &armored).unwrap();
-        decrypted.storages.push(serde_json::json!({"id": "injected"}));
+        decrypted
+            .storages
+            .push(serde_json::json!({"id": "injected"}));
         assert!(!decrypted.verify());
     }
 

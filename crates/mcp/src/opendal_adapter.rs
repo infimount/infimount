@@ -1,10 +1,19 @@
 use crate::errors::{err_with_details, McpError, McpErrorCode, McpResult};
 use crate::registry::{ResolvedStorageRecord, StorageRecord, StorageRegistry};
 pub use infimount_core::models::StorageBackendCapabilities;
+use infimount_core::runtime::{get_or_create_operator, OperatorCache};
 use infimount_core::secrets::SecretStore;
 use infimount_core::{registry, Source, SourceKind};
 use opendal::Operator;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+
+static MCP_OPERATOR_CACHE: OnceLock<OperatorCache> = OnceLock::new();
+
+pub fn clear_operator_cache() {
+    if let Some(cache) = MCP_OPERATOR_CACHE.get() {
+        cache.clear();
+    }
+}
 
 pub fn get_capabilities(op: &Operator) -> StorageBackendCapabilities {
     registry::get_capabilities(op)
@@ -31,7 +40,9 @@ pub fn build_operator_from_config(storage: &StorageRecord) -> McpResult<Operator
 
 pub fn build_operator_resolved(resolved: &ResolvedStorageRecord) -> McpResult<Operator> {
     let source = resolved_record_to_source(resolved)?;
-    registry::build_operator(&source).map_err(core_error_to_mcp_error)
+    let cache = MCP_OPERATOR_CACHE.get_or_init(OperatorCache::new);
+    get_or_create_operator(cache, &source, resolved.record.revision)
+        .map_err(core_error_to_mcp_error)
 }
 
 pub fn resolve_and_build(
@@ -46,7 +57,8 @@ pub fn resolve_and_build(
             serde_json::json!({ "storage_id": record.id }),
         )
     })?;
-    build_operator_resolved(&resolved)
+    let source = resolved_record_to_source(&resolved)?;
+    registry::build_operator(&source).map_err(core_error_to_mcp_error)
 }
 
 fn storage_record_to_source(storage: &StorageRecord) -> McpResult<Source> {

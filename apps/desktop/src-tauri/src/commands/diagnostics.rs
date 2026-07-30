@@ -1,45 +1,71 @@
 use tauri::State;
 
+use infimount_mcp::audit::AuditStore;
 use infimount_mcp::errors::McpError;
 use infimount_mcp::telemetry::{build_os_arch, ProductEvent};
 
-use crate::diagnostics::{export_diagnostics_bundle, DiagnosticsExportResult};
+use crate::diagnostics::{
+    export_diagnostics_bundle, reveal_diagnostics_export as reveal_export, DiagnosticsExportResult,
+    DiagnosticsInput,
+};
 use crate::state::AppState;
 
 #[tauri::command]
-pub async fn export_diagnostics(state: State<'_, AppState>) -> Result<DiagnosticsExportResult, String> {
-    let tool_count = state
-        .settings_store
-        .load()
-        .ok()
-        .map(|s| s.enabled_tools.len())
-        .unwrap_or(0);
-
+pub async fn export_diagnostics(
+    state: State<'_, AppState>,
+) -> Result<DiagnosticsExportResult, String> {
     let http_running = state.is_http_running().await;
 
-    let error_codes = state
-        .product_events
-        .read_all()
-        .ok()
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|e| e.error_code)
+    let product_events = state.product_events.read_all().unwrap_or_default();
+    let error_codes = product_events
+        .iter()
+        .filter_map(|event| event.error_code.clone())
         .collect();
+    let audit_events = AuditStore::new(None).list_recent(100).unwrap_or_default();
+    let sidecar =
+        tauri::async_runtime::spawn_blocking(crate::activation_probe::validate_sidecar_binary)
+            .await
+            .map_err(|_| "sidecar diagnostics failed".to_string())?;
+    let sidecar_status = if sidecar.version_match && sidecar.doctor_healthy {
+        "healthy"
+    } else if !sidecar.binary_found {
+        "not_found"
+    } else if !sidecar.executable {
+        "not_executable"
+    } else if !sidecar.version_match {
+        "version_mismatch"
+    } else {
+        "doctor_failed"
+    }
+    .to_string();
 
-    export_diagnostics_bundle(
-        &state.app_settings_store,
-        &state.registry,
-        &state.settings_store,
-        state.secret_store.as_ref(),
-        tool_count,
+    export_diagnostics_bundle(DiagnosticsInput {
+        settings_store: &state.app_settings_store,
+        storage_registry: &state.registry,
+        settings: &state.settings_store,
+        secret_store: state.secret_store.as_ref(),
         error_codes,
         http_running,
-    )
+        sidecar_version: sidecar.version,
+        sidecar_status,
+        product_events,
+        audit_events,
+    })
 }
 
 #[tauri::command]
 pub fn get_product_events(state: State<'_, AppState>) -> Result<Vec<ProductEvent>, McpError> {
     state.product_events.read_all()
+}
+
+#[tauri::command]
+pub fn clear_product_events(state: State<'_, AppState>) -> Result<(), McpError> {
+    state.product_events.clear()
+}
+
+#[tauri::command]
+pub fn reveal_diagnostics_export(export_id: String) -> Result<(), String> {
+    reveal_export(&export_id)
 }
 
 #[tauri::command]

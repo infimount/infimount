@@ -1,7 +1,8 @@
+use base64::Engine;
 use chrono::{DateTime, Utc};
+use infimount_core::runtime::OperatorCache;
 use infimount_core::workspaces::WorkspaceRegistry;
 use infimount_core::{config, secrets, CoreError, SecretStore, Source, SourceKind};
-use infimount_core::runtime::OperatorCache;
 use infimount_mcp::confirmation::ConfirmationManager;
 use infimount_mcp::errors::{err, err_with_details, McpError, McpErrorCode, McpResult};
 use infimount_mcp::registry::{StorageRecord, StorageRegistry};
@@ -12,7 +13,7 @@ use infimount_mcp::session::SessionManager;
 use infimount_mcp::settings::{
     resolve_auth_token, McpSettings, McpSettingsStore, McpTransport, MCP_AUTH_TOKEN_ACCOUNT,
 };
-use infimount_mcp::telemetry::ProductEventStore;
+use infimount_mcp::telemetry::{ProductEvent, ProductEventName, ProductEventStore};
 use infimount_mcp::tools_fs::FsToolsContext;
 use opendal::Operator;
 use serde::{Deserialize, Serialize};
@@ -20,7 +21,6 @@ use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
-use base64::Engine;
 use tokio::sync::Mutex;
 
 use crate::app_settings::AppSettingsStore;
@@ -39,6 +39,7 @@ pub struct AppState {
     pub product_events: ProductEventStore,
     pub operator_cache: OperatorCache,
     http_runtime: Mutex<Option<McpHttpServerHandle>>,
+    pub(crate) lifecycle_mutation: Mutex<()>,
     transfer_cancellations: StdMutex<HashSet<String>>,
 }
 
@@ -228,7 +229,7 @@ impl AppState {
         let config_dir = infimount_mcp::registry::default_config_dir();
         let workspaces = WorkspaceRegistry::new(&config_dir);
 
-        Ok(Self {
+        let state = Self {
             registry,
             settings_store,
             app_settings_store: AppSettingsStore::new(None),
@@ -240,8 +241,42 @@ impl AppState {
             product_events: ProductEventStore::new(None),
             operator_cache: OperatorCache::new(),
             http_runtime: Mutex::new(None),
+            lifecycle_mutation: Mutex::new(()),
             transfer_cancellations: StdMutex::new(HashSet::new()),
-        })
+        };
+        crate::commands::backup::recover_interrupted_restore(&state)?;
+        let mut event = ProductEvent::new(ProductEventName::AppLaunched);
+        event.success = Some(true);
+        let _ = state.product_events.record(event);
+        Ok(state)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_test(
+        config_dir: &std::path::Path,
+        secret_store: Arc<dyn SecretStore>,
+    ) -> Self {
+        Self {
+            registry: StorageRegistry::with_secret_store(
+                Some(config_dir.join("storages.json")),
+                secret_store.clone(),
+            ),
+            settings_store: McpSettingsStore::with_secret_store(
+                Some(config_dir.join("mcp_settings.json")),
+                secret_store.clone(),
+            ),
+            app_settings_store: AppSettingsStore::new(Some(config_dir.join("app_settings.json"))),
+            confirmations: ConfirmationManager::new(),
+            sessions: SessionManager::new(),
+            secret_store,
+            pending_oauth: PendingOAuthStore::new(),
+            workspaces: WorkspaceRegistry::new(config_dir),
+            product_events: ProductEventStore::new(Some(config_dir.join("events.jsonl"))),
+            operator_cache: OperatorCache::new(),
+            http_runtime: Mutex::new(None),
+            lifecycle_mutation: Mutex::new(()),
+            transfer_cancellations: StdMutex::new(HashSet::new()),
+        }
     }
 
     pub fn fs_context(&self) -> McpResult<FsToolsContext> {
@@ -294,15 +329,29 @@ impl AppState {
     }
 
     pub fn operator_for_storage_id(&self, storage_id: &str) -> Result<Operator, CoreError> {
+        self.operator_and_revision_for_storage_id(storage_id)
+            .map(|(operator, _)| operator)
+    }
+
+    pub fn operator_and_revision_for_storage_id(
+        &self,
+        storage_id: &str,
+    ) -> Result<(Operator, u64), CoreError> {
         let storage = self
             .find_storage_by_id(storage_id)
             .map_err(mcp_error_to_core_error)?;
+        let revision = storage.revision;
         let resolved = self.registry.resolve_storage(&storage).map_err(|e| {
             CoreError::Config(format!("failed to resolve storage secrets: {}", e.message))
         })?;
         let source = resolved_record_to_source(&resolved)?;
-        infimount_core::runtime::get_or_create_operator(&self.operator_cache, &source)
-            .map_err(|_| CoreError::Config("storage backend configuration failed".to_string()))
+        let operator = infimount_core::runtime::get_or_create_operator(
+            &self.operator_cache,
+            &source,
+            revision,
+        )
+        .map_err(|_| CoreError::Config("storage backend configuration failed".to_string()))?;
+        Ok((operator, revision))
     }
 
     pub async fn apply_mcp_settings_with_auth(
@@ -310,21 +359,34 @@ impl AppState {
         settings: McpSettings,
         auth_mutation: AuthTokenMutation,
     ) -> McpResult<McpRuntimeStatus> {
+        let _lifecycle = self.lifecycle_mutation.lock().await;
         let existing = self.settings_store.load()?;
+        let old_was_running = self.http_runtime.lock().await.is_some();
+        let account = MCP_AUTH_TOKEN_ACCOUNT;
+        let mutation_account = match &auth_mutation {
+            AuthTokenMutation::Clear => existing.auth_token_ref.as_deref().unwrap_or(account),
+            _ => account,
+        };
+
+        let previous_secret = self.secret_store.get_json(mutation_account).map_err(|_| {
+            err(
+                McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                "failed to access native secret storage",
+            )
+        })?;
+        let old_token = resolve_auth_token(&existing.auth_token_ref, self.secret_store.as_ref())?;
+
         let mut final_settings = settings;
         final_settings.auth_token_ref = existing.auth_token_ref.clone();
         final_settings.auth_token = None;
-        let account = MCP_AUTH_TOKEN_ACCOUNT;
-        let mut previous = None;
-        let mut changed_secret = false;
-        match auth_mutation {
+
+        let (new_secret, expected_token, secret_changed) = match auth_mutation {
+            AuthTokenMutation::Keep => {
+                let token =
+                    resolve_auth_token(&existing.auth_token_ref, self.secret_store.as_ref())?;
+                (previous_secret.clone(), token, false)
+            }
             AuthTokenMutation::Set { value } => {
-                previous = self.secret_store.get_json(account).map_err(|_| {
-                    err(
-                        McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
-                        "failed to access native secret storage",
-                    )
-                })?;
                 let token = value.trim();
                 if token.is_empty() || token == "********" {
                     return Err(err(
@@ -332,203 +394,181 @@ impl AppState {
                         "auth token must not be empty or masked",
                     ));
                 }
-                if self
-                    .secret_store
-                    .put_json(account, &json!({"token": token}))
-                    .is_err()
-                {
-                    restore_secret_bundle(self.secret_store.as_ref(), account, previous.as_ref())?;
-                    return Err(err(
-                        McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
-                        "failed to store auth token",
-                    ));
-                }
                 final_settings.auth_token_ref = Some(account.to_string());
-                changed_secret = true;
+                (Some(json!({"token": token})), Some(token.to_string()), true)
             }
             AuthTokenMutation::Clear => {
-                if existing.auth_token_ref.is_some() {
-                    previous = self.secret_store.get_json(account).map_err(|_| {
-                        err(
-                            McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
-                            "failed to access native secret storage",
-                        )
-                    })?;
-                    if self.secret_store.delete(account).is_err() {
-                        restore_secret_bundle(
-                            self.secret_store.as_ref(),
-                            account,
-                            previous.as_ref(),
-                        )?;
-                        return Err(err(
-                            McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
-                            "failed to clear auth token",
-                        ));
-                    }
-                    changed_secret = true;
-                }
                 final_settings.auth_token_ref = None;
+                (None, None, previous_secret.is_some())
             }
-            AuthTokenMutation::Keep => {}
             AuthTokenMutation::Rotate => {
                 if existing.auth_token_ref.is_none()
                     && std::env::var("INFIMOUNT_AUTH_TOKEN")
-                        .map(|v| !v.trim().is_empty())
+                        .map(|value| !value.trim().is_empty())
                         .unwrap_or(false)
                 {
                     return Err(err(
                         McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
-                        "cannot rotate INFIMOUNT_AUTH_TOKEN env var; unset it and use Set instead",
+                        "cannot rotate an environment-provided auth token",
                     ));
                 }
-                if existing.auth_token_ref.is_none() {
+                if existing.auth_token_ref.as_deref() != Some(account) {
                     return Err(err(
                         McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
-                        "cannot rotate: no auth token configured",
+                        "cannot rotate: no managed auth token is configured",
                     ));
                 }
-                let old_token_value: Option<Value> = self
-                    .secret_store
-                    .get_json(account)
-                    .ok()
-                    .flatten();
-
-                let old_token_str: Option<String> = old_token_value
-                    .as_ref()
-                    .and_then(|v| v.get("token"))
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-
-                let new_token = generate_auth_token();
-                if self
-                    .secret_store
-                    .put_json(account, &json!({"token": new_token.clone()}))
-                    .is_err()
-                {
+                let managed_old_token = token_from_bundle(previous_secret.as_ref())?;
+                if managed_old_token.is_none() || managed_old_token != old_token {
                     return Err(err(
-                        McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
-                        "failed to store rotated auth token",
+                        McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+                        "cannot rotate: the existing managed auth token is missing or invalid",
                     ));
                 }
+                let token = generate_auth_token();
                 final_settings.auth_token_ref = Some(account.to_string());
-
-                let old_token_bundle = old_token_value.clone();
-
-                if let Err(error) = self.settings_store.save_atomic(&final_settings) {
-                    if let Some(ref bundle) = old_token_bundle {
-                        restore_secret_bundle(self.secret_store.as_ref(), account, Some(bundle))?;
-                    }
-                    return Err(error);
-                }
-                let persisted = self.settings_store.load();
-                if !matches!(persisted, Ok(ref v) if v.auth_token_ref == final_settings.auth_token_ref)
-                {
-                    self.settings_store.save_atomic(&existing).ok();
-                    if let Some(ref bundle) = old_token_bundle {
-                        restore_secret_bundle(self.secret_store.as_ref(), account, Some(bundle))?;
-                    }
-                    return Err(err(
-                        McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
-                        "failed to persist rotated auth token settings",
-                    ));
-                }
-
-                let restart_result = self.restart_http_runtime_with_auth(&new_token).await;
-                if let Err(e) = restart_result {
-                    self.settings_store.save_atomic(&existing).ok();
-                    if let Some(ref bundle) = old_token_bundle {
-                        restore_secret_bundle(self.secret_store.as_ref(), account, Some(bundle))?;
-                    }
-                    self.ensure_runtime_from_settings().await.ok();
-                    return Err(e);
-                }
-
-                let endpoint = self
-                    .http_runtime
-                    .lock()
-                    .await
-                    .as_ref()
-                    .map(|s| s.endpoint().to_string());
-
-                if let Some(ref ep) = endpoint {
-                    let new_ok = verify_auth_token_accepted(ep, &new_token).await;
-                    if !new_ok {
-                        self.settings_store.save_atomic(&existing).ok();
-                        if let Some(ref bundle) = old_token_bundle {
-                            restore_secret_bundle(self.secret_store.as_ref(), account, Some(bundle))?;
-                        }
-                        self.restart_http_runtime_with_auth(
-                            &old_token_str.clone().unwrap_or_default(),
-                        )
-                        .await
-                        .ok();
-                        return Err(err(
-                            McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
-                            "rotated auth token rejected by runtime",
-                        ));
-                    }
-
-                    if let Some(ref old) = old_token_str {
-                        let old_rejected = verify_auth_token_rejected(ep, old).await;
-                        if !old_rejected {
-                            self.settings_store.save_atomic(&existing).ok();
-                            if let Some(ref bundle) = old_token_bundle {
-                                restore_secret_bundle(self.secret_store.as_ref(), account, Some(bundle))?;
-                            }
-                            self.restart_http_runtime_with_auth(old).await.ok();
-                            return Err(err(
-                                McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
-                                "old auth token was not invalidated after rotation",
-                            ));
-                        }
-                    }
-                }
-
-                return self.mcp_status().await;
+                (Some(json!({"token": token})), Some(token), true)
             }
-        }
+        };
 
+        if secret_changed {
+            persist_secret_bundle(
+                self.secret_store.as_ref(),
+                mutation_account,
+                new_secret.as_ref(),
+            )?;
+        }
         if let Err(error) = self.settings_store.save_atomic(&final_settings) {
-            if changed_secret {
-                restore_secret_bundle(self.secret_store.as_ref(), account, previous.as_ref())?;
-            }
-            return Err(error);
+            let rollback = persist_secret_bundle(
+                self.secret_store.as_ref(),
+                mutation_account,
+                previous_secret.as_ref(),
+            );
+            return match rollback {
+                Ok(()) => Err(error),
+                Err(_) => Err(auth_rollback_error(&["secret"])),
+            };
         }
-        let persisted = self.settings_store.load();
-        if !matches!(persisted, Ok(ref value) if value.auth_token_ref == final_settings.auth_token_ref)
-        {
-            self.settings_store.save_atomic(&existing).map_err(|_| {
+
+        let persisted = match self.settings_store.load() {
+            Ok(settings) => settings,
+            Err(error) => {
+                let rollback_errors = self
+                    .rollback_auth_transaction_async(
+                        &existing,
+                        mutation_account,
+                        previous_secret.as_ref(),
+                        old_was_running,
+                        old_token.as_deref(),
+                    )
+                    .await;
+                return Err(if rollback_errors.is_empty() {
+                    error
+                } else {
+                    auth_rollback_error(&rollback_errors)
+                });
+            }
+        };
+        let persisted_json = serde_json::to_value(&persisted).unwrap_or_default();
+        let expected_json = serde_json::to_value(&final_settings).unwrap_or_default();
+        let readback_token =
+            match resolve_auth_token(&persisted.auth_token_ref, self.secret_store.as_ref()) {
+                Ok(token) => token,
+                Err(error) => {
+                    let rollback_errors = self
+                        .rollback_auth_transaction_async(
+                            &existing,
+                            mutation_account,
+                            previous_secret.as_ref(),
+                            old_was_running,
+                            old_token.as_deref(),
+                        )
+                        .await;
+                    return Err(if rollback_errors.is_empty() {
+                        error
+                    } else {
+                        auth_rollback_error(&rollback_errors)
+                    });
+                }
+            };
+        if persisted_json != expected_json || readback_token != expected_token {
+            let rollback_errors = self
+                .rollback_auth_transaction_async(
+                    &existing,
+                    mutation_account,
+                    previous_secret.as_ref(),
+                    old_was_running,
+                    old_token.as_deref(),
+                )
+                .await;
+            return Err(if rollback_errors.is_empty() {
                 err(
                     McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
-                    "failed to restore MCP settings after verification failure",
+                    "failed to verify persisted MCP authentication settings",
                 )
-            })?;
-            if changed_secret {
-                restore_secret_bundle(self.secret_store.as_ref(), account, previous.as_ref())?;
-            }
-            return Err(err(
-                McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
-                "failed to verify MCP settings update",
-            ));
+            } else {
+                auth_rollback_error(&rollback_errors)
+            });
         }
-        match self.mcp_status().await {
-            Ok(status) => Ok(status),
-            Err(error) => {
-                self.settings_store.save_atomic(&existing).map_err(|_| {
+
+        if let Err(error) = self
+            .reconcile_runtime_inner(&final_settings, expected_token.as_deref())
+            .await
+        {
+            let rollback_errors = self
+                .rollback_auth_transaction_async(
+                    &existing,
+                    mutation_account,
+                    previous_secret.as_ref(),
+                    old_was_running,
+                    old_token.as_deref(),
+                )
+                .await;
+            return Err(if rollback_errors.is_empty() {
+                error
+            } else {
+                auth_rollback_error(&rollback_errors)
+            });
+        }
+
+        let endpoint = self
+            .http_runtime
+            .lock()
+            .await
+            .as_ref()
+            .map(|server| server.endpoint().to_string());
+        if let (Some(endpoint), Some(token)) = (endpoint.as_deref(), expected_token.as_deref()) {
+            let new_accepted = verify_auth_token_accepted(endpoint, token).await;
+            let old_rejected = match old_token.as_deref() {
+                Some(old) if old != token => verify_auth_token_rejected(endpoint, old).await,
+                _ => true,
+            };
+            if !new_accepted || !old_rejected {
+                let rollback_errors = self
+                    .rollback_auth_transaction_async(
+                        &existing,
+                        mutation_account,
+                        previous_secret.as_ref(),
+                        old_was_running,
+                        old_token.as_deref(),
+                    )
+                    .await;
+                return Err(if rollback_errors.is_empty() {
                     err(
                         McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
-                        "failed to restore MCP settings after runtime failure",
+                        "live MCP authentication verification failed",
                     )
-                })?;
-                if changed_secret {
-                    restore_secret_bundle(self.secret_store.as_ref(), account, previous.as_ref())?;
-                }
-                Err(error)
+                } else {
+                    auth_rollback_error(&rollback_errors)
+                });
             }
         }
+
+        self.mcp_status().await
     }
 
     pub async fn start_http_server(&self) -> McpResult<McpRuntimeStatus> {
+        let _lifecycle = self.lifecycle_mutation.lock().await;
         let settings = self.settings_store.load()?;
         if settings.transport != McpTransport::Http {
             return Err(err_with_details(
@@ -537,45 +577,40 @@ impl AppState {
                 json!({ "transport": settings.transport }),
             ));
         }
-
-        self.stop_http_server_inner().await?;
         let auth_token = resolve_auth_token(&settings.auth_token_ref, self.secret_store.as_ref())?;
-        let allow_insecure =
-            auth_token.is_none() && is_loopback_bind_address(&settings.bind_address);
-        let mut runtime_settings = settings.clone();
-        runtime_settings.auth_token = auth_token;
-        let server = start_http_server_from_settings(
-            self.registry.clone(),
-            &runtime_settings,
-            allow_insecure,
-            self.confirmations.clone(),
-            self.sessions.clone(),
-        )
-        .await
-        .map_err(map_runtime_io_error)?;
-        let endpoint = server.endpoint().to_string();
-
-        let mut guard = self.http_runtime.lock().await;
-        *guard = Some(server);
-        drop(guard);
-
-        self.status_with_endpoint(settings, Some(endpoint))
+        self.reconcile_runtime_inner(&settings, auth_token.as_deref())
+            .await?;
+        let endpoint = self
+            .http_runtime
+            .lock()
+            .await
+            .as_ref()
+            .map(|server| server.endpoint().to_string());
+        self.status_with_endpoint(settings, endpoint)
     }
 
     pub async fn stop_http_server(&self) -> McpResult<McpRuntimeStatus> {
+        let _lifecycle = self.lifecycle_mutation.lock().await;
         let settings = self.settings_store.load()?;
         self.stop_http_server_inner().await?;
         self.status_with_endpoint(settings, None)
     }
 
     pub async fn ensure_runtime_from_settings(&self) -> McpResult<()> {
+        let _lifecycle = self.lifecycle_mutation.lock().await;
+        self.ensure_runtime_from_settings_locked().await
+    }
+
+    pub(crate) async fn ensure_runtime_from_settings_locked(&self) -> McpResult<()> {
+        infimount_mcp::opendal_adapter::clear_operator_cache();
         let settings = self.settings_store.load()?;
-        if settings.enabled && settings.transport == McpTransport::Http {
-            let _ = self.start_http_server().await?;
-        } else {
-            let _ = self.stop_http_server().await?;
-        }
-        Ok(())
+        let auth_token = resolve_auth_token(&settings.auth_token_ref, self.secret_store.as_ref())?;
+        self.reconcile_runtime_inner(&settings, auth_token.as_deref())
+            .await
+    }
+
+    pub(crate) async fn stop_http_server_locked(&self) -> McpResult<()> {
+        self.stop_http_server_inner().await
     }
 
     pub async fn is_http_running(&self) -> bool {
@@ -599,31 +634,22 @@ impl AppState {
             suggested_http_endpoint(&status.settings.bind_address, status.settings.port)
         });
 
-        let bundled_mcp = std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(|p| p.join("mcp")))
-            .filter(|p| p.exists())
-            .or_else(|| {
-                let path = infimount_mcp::registry::default_config_dir().join("mcp");
-                if path.exists() { Some(path) } else { None }
-            })
-            .or_else(|| {
-                std::env::var_os("INFIMOUNT_MCP_PATH")
-                    .map(std::path::PathBuf::from)
-                    .filter(|p| p.exists())
-            });
-
-        let stdio_command = match bundled_mcp {
-            Some(path) => path.to_string_lossy().to_string(),
-            None => "infimount_mcp".to_string(),
-        };
+        let stdio_command = crate::activation_probe::verified_sidecar_path()
+            .map_err(|code| {
+                infimount_mcp::errors::err(
+                    infimount_mcp::errors::McpErrorCode::ERR_INTERNAL,
+                    format!("bundled MCP sidecar is unavailable ({code})"),
+                )
+            })?
+            .to_string_lossy()
+            .to_string();
 
         Ok(McpClientSnippets {
             stdio: serde_json::to_string_pretty(&json!({
                 "mcpServers": {
                     "infimount": {
                         "command": stdio_command,
-                        "args": ["--transport", "stdio"]
+                        "args": ["serve", "--transport", "stdio"]
                     }
                 }
             }))
@@ -649,19 +675,19 @@ impl AppState {
         Ok(())
     }
 
-    /// Restart the HTTP runtime with a new auth token, stopping the existing
-    /// server first if one is running. On failure the caller must handle rollback.
-    async fn restart_http_runtime_with_auth(&self, auth_token: &str) -> McpResult<()> {
-        let settings = self.settings_store.load()?;
-        if settings.transport != McpTransport::Http || !settings.enabled {
+    async fn reconcile_runtime_inner(
+        &self,
+        settings: &McpSettings,
+        auth_token: Option<&str>,
+    ) -> McpResult<()> {
+        self.stop_http_server_inner().await?;
+        if !settings.enabled || settings.transport != McpTransport::Http {
             return Ok(());
         }
-
-        self.stop_http_server_inner().await?;
-
-        let allow_insecure = false;
+        let allow_insecure =
+            auth_token.is_none() && is_loopback_bind_address(&settings.bind_address);
         let mut runtime_settings = settings.clone();
-        runtime_settings.auth_token = Some(auth_token.to_string());
+        runtime_settings.auth_token = auth_token.map(str::to_string);
         let server = start_http_server_from_settings(
             self.registry.clone(),
             &runtime_settings,
@@ -671,10 +697,51 @@ impl AppState {
         )
         .await
         .map_err(map_runtime_io_error)?;
-
-        let mut guard = self.http_runtime.lock().await;
-        *guard = Some(server);
+        *self.http_runtime.lock().await = Some(server);
         Ok(())
+    }
+
+    async fn rollback_auth_transaction_async(
+        &self,
+        settings: &McpSettings,
+        secret_account: &str,
+        secret: Option<&Value>,
+        runtime_was_running: bool,
+        token: Option<&str>,
+    ) -> Vec<&'static str> {
+        let mut failures = Vec::new();
+        if self.stop_http_server_inner().await.is_err() {
+            failures.push("stop_runtime");
+        }
+        if persist_secret_bundle(self.secret_store.as_ref(), secret_account, secret).is_err() {
+            failures.push("restore_secret");
+        }
+        if self.settings_store.save_atomic(settings).is_err() {
+            failures.push("restore_settings");
+        }
+        if runtime_was_running && failures.is_empty() {
+            if self.reconcile_runtime_inner(settings, token).await.is_err() {
+                failures.push("restore_runtime");
+            } else if let Some(token) = token {
+                let endpoint = self
+                    .http_runtime
+                    .lock()
+                    .await
+                    .as_ref()
+                    .map(|server| server.endpoint().to_string());
+                let restored_token_works = match endpoint {
+                    Some(endpoint) => verify_auth_token_accepted(&endpoint, token).await,
+                    None => false,
+                };
+                if !restored_token_works {
+                    failures.push("verify_restored_runtime");
+                }
+            }
+        }
+        if !failures.is_empty() {
+            let _ = self.stop_http_server_inner().await;
+        }
+        failures
     }
 
     fn status_with_endpoint(
@@ -746,21 +813,48 @@ fn is_loopback_bind_address(value: &str) -> bool {
         || normalized.starts_with("127.")
 }
 
-fn restore_secret_bundle(
+fn persist_secret_bundle(
     secret_store: &dyn SecretStore,
     account: &str,
-    previous: Option<&Value>,
+    value: Option<&Value>,
 ) -> McpResult<()> {
-    let restored = match previous {
+    let result = match value {
         Some(value) => secret_store.put_json(account, value),
         None => secret_store.delete(account),
     };
-    restored.map_err(|_| {
+    result.map_err(|_| {
         err(
-            McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
-            "MCP auth rollback failed; manual secret-store repair is required",
+            McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+            "failed to update native MCP authentication state",
         )
     })
+}
+
+fn token_from_bundle(bundle: Option<&Value>) -> McpResult<Option<String>> {
+    let Some(bundle) = bundle else {
+        return Ok(None);
+    };
+    let token = bundle
+        .as_object()
+        .and_then(|object| object.get("token"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .ok_or_else(|| {
+            err(
+                McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+                "stored MCP authentication state is malformed",
+            )
+        })?;
+    Ok(Some(token.to_string()))
+}
+
+fn auth_rollback_error(stages: &[&str]) -> McpError {
+    err_with_details(
+        McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+        "MCP authentication rollback failed; the HTTP runtime was stopped",
+        json!({ "rollbackFailedStages": stages }),
+    )
 }
 
 fn generate_auth_token() -> String {
@@ -772,43 +866,54 @@ fn generate_auth_token() -> String {
 /// Make a test request to the MCP HTTP endpoint and return true if the
 /// response indicates the given auth token is accepted.
 async fn verify_auth_token_accepted(endpoint: &str, token: &str) -> bool {
-    let url = format!("{endpoint}/mcp");
-    let client = reqwest::Client::new();
+    let Ok(client) = auth_verification_client() else {
+        return false;
+    };
     let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"infimount-verify","version":"0.0.0"}}}"#;
-    let resp = client
-        .post(&url)
+    let response = client
+        .post(endpoint)
         .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
         .header("Authorization", format!("Bearer {token}"))
         .body(body)
-        .timeout(std::time::Duration::from_secs(3))
         .send()
         .await;
-    match resp {
-        Ok(r) => {
-            let status = r.status();
-            status.is_success() || status.as_u16() == 202
-        }
-        Err(_) => false,
+    let Ok(response) = response else {
+        return false;
+    };
+    if !response.status().is_success() && response.status().as_u16() != 202 {
+        return false;
     }
+    response
+        .text()
+        .await
+        .ok()
+        .is_some_and(|body| body.contains("\"id\":1") && body.contains("\"result\""))
 }
 
 /// Make a test request with the given token and verify it is rejected.
 async fn verify_auth_token_rejected(endpoint: &str, token: &str) -> bool {
-    let url = format!("{endpoint}/mcp");
-    let client = reqwest::Client::new();
+    let Ok(client) = auth_verification_client() else {
+        return false;
+    };
     let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"infimount-verify","version":"0.0.0"}}}"#;
-    let resp = client
-        .post(&url)
+    client
+        .post(endpoint)
         .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
         .header("Authorization", format!("Bearer {token}"))
         .body(body)
-        .timeout(std::time::Duration::from_secs(3))
         .send()
-        .await;
-    match resp {
-        Ok(r) => r.status().as_u16() == 401,
-        Err(_) => false,
-    }
+        .await
+        .is_ok_and(|response| response.status().as_u16() == 401)
+}
+
+fn auth_verification_client() -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
 }
 
 fn suggested_http_endpoint(bind_address: &str, configured_port: u16) -> String {
@@ -1026,9 +1131,15 @@ mod tests {
     #[test]
     fn generate_auth_token_produces_urlsafe_base64() {
         let token = generate_auth_token();
-        assert_eq!(token.len(), 43, "32 bytes = 43 chars in URL-safe base64 without padding");
+        assert_eq!(
+            token.len(),
+            43,
+            "32 bytes = 43 chars in URL-safe base64 without padding"
+        );
         assert!(
-            token.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+            token
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
             "token should be URL-safe base64: {token}"
         );
     }
@@ -1052,18 +1163,172 @@ mod tests {
         assert!(matches!(clear, AuthTokenMutation::Clear));
     }
 
-    #[test]
-    fn auth_token_verify_helpers_accept_valid_http_server() {
-        let token = generate_auth_token();
-        assert_eq!(token.len(), 43);
+    fn test_app_state(dir: &tempfile::TempDir, secret_store: Arc<dyn SecretStore>) -> AppState {
+        AppState {
+            registry: StorageRegistry::with_secret_store(
+                Some(dir.path().join("storages.json")),
+                secret_store.clone(),
+            ),
+            settings_store: McpSettingsStore::with_secret_store(
+                Some(dir.path().join("mcp_settings.json")),
+                secret_store.clone(),
+            ),
+            app_settings_store: AppSettingsStore::new(Some(dir.path().join("app_settings.json"))),
+            confirmations: ConfirmationManager::new(),
+            sessions: SessionManager::new(),
+            secret_store,
+            pending_oauth: PendingOAuthStore::new(),
+            workspaces: WorkspaceRegistry::new(dir.path()),
+            product_events: ProductEventStore::new(Some(dir.path().join("events.jsonl"))),
+            operator_cache: OperatorCache::new(),
+            http_runtime: Mutex::new(None),
+            lifecycle_mutation: Mutex::new(()),
+            transfer_cancellations: StdMutex::new(HashSet::new()),
+        }
+    }
 
-        let rejected = verify_auth_token_rejected("http://127.0.0.1:1", "does-not-matter");
-        // Port 1 is unlikely to have an HTTP server; we just verify the function
-        // completes without panicking and returns false (no connection).
-        let result = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(rejected);
-        // No server, so the request should fail and return false
-        assert!(!result);
+    #[tokio::test]
+    async fn auth_token_verify_helpers_use_managed_endpoint_and_mcp_headers() {
+        use infimount_mcp::runtime::start_http_server;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let registry = StorageRegistry::with_secret_store(
+            Some(dir.path().join("storages.json")),
+            Arc::new(infimount_core::secrets::MemorySecretStore::new()),
+        );
+        let token = generate_auth_token();
+        let old_token = generate_auth_token();
+        let server = start_http_server(
+            registry,
+            "127.0.0.1",
+            0,
+            infimount_mcp::server::all_tool_names(),
+            false,
+            Some(token.clone()),
+            ConfirmationManager::new(),
+            SessionManager::new(),
+        )
+        .await
+        .expect("start authenticated MCP server");
+
+        assert!(verify_auth_token_accepted(server.endpoint(), &token).await);
+        assert!(verify_auth_token_rejected(server.endpoint(), &old_token).await);
+
+        server.stop().await.expect("stop MCP server");
+    }
+
+    #[tokio::test]
+    async fn rotate_and_set_replace_live_http_credentials() {
+        use infimount_core::secrets::MemorySecretStore;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let secret_store: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+        secret_store
+            .put_json(MCP_AUTH_TOKEN_ACCOUNT, &json!({"token": "old-token"}))
+            .unwrap();
+        let state = test_app_state(&dir, secret_store.clone());
+        let settings = McpSettings {
+            enabled: true,
+            transport: McpTransport::Http,
+            bind_address: "127.0.0.1".to_string(),
+            port: 0,
+            auth_token_ref: Some(MCP_AUTH_TOKEN_ACCOUNT.to_string()),
+            ..McpSettings::default()
+        };
+        state.settings_store.save_atomic(&settings).unwrap();
+        state.ensure_runtime_from_settings().await.unwrap();
+
+        let rotated = state
+            .apply_mcp_settings_with_auth(settings.clone(), AuthTokenMutation::Rotate)
+            .await
+            .expect("rotate live token");
+        let endpoint = rotated.endpoint.expect("running endpoint");
+        let rotated_token = resolve_auth_token(
+            &Some(MCP_AUTH_TOKEN_ACCOUNT.to_string()),
+            secret_store.as_ref(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_ne!(rotated_token, "old-token");
+        assert!(verify_auth_token_accepted(&endpoint, &rotated_token).await);
+        assert!(verify_auth_token_rejected(&endpoint, "old-token").await);
+
+        let replaced = state
+            .apply_mcp_settings_with_auth(
+                settings,
+                AuthTokenMutation::Set {
+                    value: "replacement-token".to_string(),
+                },
+            )
+            .await
+            .expect("replace live token");
+        let endpoint = replaced.endpoint.expect("running endpoint");
+        assert!(verify_auth_token_accepted(&endpoint, "replacement-token").await);
+        assert!(verify_auth_token_rejected(&endpoint, &rotated_token).await);
+
+        state.stop_http_server().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn concurrent_auth_mutations_are_serialized() {
+        use infimount_core::secrets::MemorySecretStore;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let secret_store: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+        secret_store
+            .put_json(MCP_AUTH_TOKEN_ACCOUNT, &json!({"token": "initial"}))
+            .unwrap();
+        let state = test_app_state(&dir, secret_store.clone());
+        let settings = McpSettings {
+            enabled: true,
+            transport: McpTransport::Http,
+            bind_address: "127.0.0.1".to_string(),
+            port: 0,
+            auth_token_ref: Some(MCP_AUTH_TOKEN_ACCOUNT.to_string()),
+            ..McpSettings::default()
+        };
+        state.settings_store.save_atomic(&settings).unwrap();
+        state.ensure_runtime_from_settings().await.unwrap();
+
+        let first = state.apply_mcp_settings_with_auth(
+            settings.clone(),
+            AuthTokenMutation::Set {
+                value: "first-token".to_string(),
+            },
+        );
+        let second = state.apply_mcp_settings_with_auth(
+            settings,
+            AuthTokenMutation::Set {
+                value: "second-token".to_string(),
+            },
+        );
+        let (first_result, second_result) = tokio::join!(first, second);
+        assert!(first_result.is_ok());
+        assert!(second_result.is_ok());
+
+        let final_token = resolve_auth_token(
+            &Some(MCP_AUTH_TOKEN_ACCOUNT.to_string()),
+            secret_store.as_ref(),
+        )
+        .unwrap()
+        .unwrap();
+        let endpoint = state.mcp_status().await.unwrap().endpoint.unwrap();
+        assert!(verify_auth_token_accepted(&endpoint, &final_token).await);
+        assert!(final_token == "first-token" || final_token == "second-token");
+        state.stop_http_server().await.unwrap();
+    }
+
+    #[test]
+    fn token_bundle_validation_rejects_missing_or_empty_tokens() {
+        assert_eq!(
+            token_from_bundle(Some(&json!({"token": "valid"}))).unwrap(),
+            Some("valid".to_string())
+        );
+        assert!(token_from_bundle(Some(&json!({"token": ""}))).is_err());
+        assert!(token_from_bundle(Some(&json!({"wrong": "field"}))).is_err());
+        assert_eq!(token_from_bundle(None).unwrap(), None);
     }
 }

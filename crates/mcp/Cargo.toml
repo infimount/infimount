@@ -12,6 +12,7 @@ fs2 = "0.4"
 futures = "0.3"
 opendal = { version = "0.56.0", features = ["services-fs", "services-s3", "services-webdav", "services-azblob", "services-gcs", "services-b2", "services-oss", "services-cos", "services-obs"] }
 rmcp = { version = "1.2.0", features = ["transport-io", "transport-streamable-http-server"] }
+reqwest = { version = "0.13.2", default-features = false, features = ["blocking", "json", "rustls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
