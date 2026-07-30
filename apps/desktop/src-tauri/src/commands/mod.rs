@@ -1,3 +1,4 @@
+pub mod activation_probe;
 pub mod backup;
 pub mod diagnostics;
 pub mod mcp;
@@ -8,6 +9,7 @@ pub mod settings;
 pub mod storage;
 pub mod transfers;
 
+pub use activation_probe::*;
 pub use backup::*;
 pub use diagnostics::*;
 pub use mcp::*;

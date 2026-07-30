@@ -3,6 +3,7 @@
     windows_subsystem = "windows"
 )]
 
+mod activation_probe;
 mod app_settings;
 mod commands;
 mod diagnostics;
@@ -112,6 +113,7 @@ fn main() {
             commands::get_mcp_sidecar_info,
             commands::list_workspaces,
             commands::create_workspace,
+            commands::create_workspace_atomic,
             commands::update_workspace,
             commands::delete_workspace,
             commands::import_legacy_workspaces,
@@ -120,6 +122,7 @@ fn main() {
             commands::export_diagnostics,
             commands::get_product_events,
             commands::get_os_info,
+            commands::run_activation_probe,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

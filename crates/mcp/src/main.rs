@@ -6,6 +6,7 @@ use infimount_mcp::settings::{
     resolve_auth_token, McpSettingsStore, DEFAULT_HTTP_BIND_ADDRESS, DEFAULT_HTTP_PORT,
 };
 use infimount_mcp::telemetry::init_telemetry;
+use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -15,6 +16,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .with_writer(std::io::stderr)
         .try_init();
+
+    if arg_present("--doctor") {
+        let json_output = arg_present("--json");
+        let report = doctor_report();
+        if json_output {
+            println!("{}", serde_json::to_string_pretty(&report).unwrap());
+        } else {
+            println!("{}", serde_json::to_string_pretty(&report).unwrap());
+        }
+        let is_healthy = report.get("healthy").and_then(|v| v.as_bool()).unwrap_or(false);
+        std::process::exit(if is_healthy { 0 } else { 1 });
+    }
 
     let _ = init_telemetry();
 
@@ -72,6 +85,67 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(2);
         }
     }
+}
+
+fn doctor_report() -> serde_json::Value {
+    let version = env!("CARGO_PKG_VERSION").to_string();
+    let os_arch = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+    let config_dir = infimount_mcp::registry::default_config_dir();
+    let config_dir_exists = config_dir.exists();
+
+    let registry_path = config_dir.join("registry.json");
+    let registry_exists = registry_path.exists();
+
+    let settings_path = config_dir.join("settings.json");
+    let settings_exists = settings_path.exists();
+
+    let mut checks: Vec<serde_json::Value> = Vec::new();
+
+    checks.push(json!({
+        "name": "binary_version",
+        "status": "ok",
+        "value": version
+    }));
+
+    checks.push(json!({
+        "name": "config_dir",
+        "status": if config_dir_exists { "ok" } else { "missing" },
+        "path": config_dir.to_string_lossy()
+    }));
+
+    checks.push(json!({
+        "name": "registry_file",
+        "status": if registry_exists { "ok" } else { "missing" },
+        "path": registry_path.to_string_lossy()
+    }));
+
+    checks.push(json!({
+        "name": "settings_file",
+        "status": if settings_exists { "ok" } else { "missing" },
+        "path": settings_path.to_string_lossy()
+    }));
+
+    let auth_env = std::env::var("INFIMOUNT_AUTH_TOKEN").ok();
+    let auth_env_info = auth_env
+        .as_ref()
+        .map(|_| "set")
+        .unwrap_or("not_set")
+        .to_string();
+    checks.push(json!({
+        "name": "auth_env",
+        "status": "ok",
+        "value": auth_env_info
+    }));
+
+    let all_ok = checks.iter().all(|c| c["status"] == "ok");
+
+    json!({
+        "app": "infimount-mcp",
+        "version": version,
+        "os_arch": os_arch,
+        "healthy": all_ok,
+        "checks": checks
+    })
 }
 
 fn arg_value(name: &str) -> Option<String> {
