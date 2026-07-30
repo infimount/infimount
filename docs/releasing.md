@@ -32,7 +32,7 @@ Required release preparation:
 2. Choose next version by impact:
    - patch (`X.Y.Z+1`) for fixes only
    - minor (`X.Y+1.0`) for new user-facing features
-3. If you want signed installers, configure release secrets first.
+3. Configure signing secrets before a stable tag. Stable tags fail before builds if any required signing material is absent; unsigned output is allowed only for a tag containing a prerelease suffix and is published as a prerelease.
    - macOS signing/notarization secrets:
      - `APPLE_CERTIFICATE`
      - `APPLE_CERTIFICATE_PASSWORD`
@@ -43,6 +43,9 @@ Required release preparation:
    - Windows signing secrets:
      - `WINDOWS_CERTIFICATE_BASE64`
      - `WINDOWS_CERTIFICATE_PASSWORD`
+   - Tauri updater signing secrets:
+     - `TAURI_SIGNING_PRIVATE_KEY`
+     - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
 4. Update `CHANGELOG.md`.
 5. Confirm no secrets or local artifacts are staged:
    - `git status`
@@ -72,22 +75,21 @@ The `Release` workflow is triggered by `v*` tags and will:
   - zero-manual release policy check (`scripts/check-zero-manual-release-gate.sh`)
 - sync app manifest versions from the pushed tag via `scripts/sync-release-version.mjs`
 - build Linux, macOS, Windows binaries
-- sign/notarize macOS artifacts if Apple signing secrets are present
-- sign Windows installers if Windows signing secrets are present
-- run artifact smoke checks, including Linux AppImage launch/migration, `.deb` install/launch/migration, and RPM package metadata checks
+- require and use macOS signing/notarization, Windows Authenticode signing configured before Tauri bundling, and updater signing for stable tags; the Windows app executable, bundled sidecar, installers, and executable updater payloads are verified as one signed chain
+- permit unsigned platform output only for clearly marked prerelease tags
+- run artifact smoke checks, including Linux AppImage launch/migration, `.deb` install/launch/migration, and sidecar extraction/version checks for AppImage, DEB, RPM, DMG, MSI, and NSIS installers
 - validate release asset presence, updater metadata, checksum entries, and per-file `.sha256` files
-- generate SHA256 checksum files
-- generate `SBOM.spdx.json`
-- create GitHub release draft with all assets, including single-command install scripts
+- generate `SHA256SUMS.txt` and per-file checksum files for every published payload, including updater archives, updater signatures, metadata, installers, scripts, and SBOM
+- generate mandatory `SBOM.spdx.json` from the release assets plus the three platform sidecars, then require an explicit `infimount_mcp` component with platform-binary checksums
+- validate all collected assets, checksums, cryptographic updater signatures, updater URL references, install-script fixtures, SBOM sidecar coverage, and provenance inputs before and after draft upload
+- create a draft release, re-download and validate the uploaded assets and checksums, then automatically publish stable tags only after those validations pass; prerelease tags publish with prerelease status
 - emit artifact provenance attestation
 
-## 3. Validate draft release
+## 3. Validate the published release
 
-The release workflow already performs automated artifact presence, checksum, updater metadata, install-script, package, and provenance checks. The remaining human action is release approval/publishing, not manual product testing.
+The release workflow performs automated artifact presence, checksum, updater metadata, install-script, package, and provenance checks before publication. After publication, confirm the expected assets exist:
 
-In the release draft:
-
-1. Confirm all expected assets exist:
+1. Expected assets:
    - `Infimount-amd64.deb`
    - `Infimount-x86_64.rpm`
    - `Infimount-x86_64.AppImage`
@@ -97,12 +99,29 @@ In the release draft:
    - `install.sh`
    - `install.ps1`
    - `SHA256SUMS.txt`
-   - `*.sha256`
-   - `SBOM.spdx.json`
-2. Confirm the generated release notes are acceptable.
-3. Publish release.
+   - updater payload archive(s) and matching `.sig` files referenced by `latest.json`
+   - `*.sha256` for every published payload
+   - `SBOM.spdx.json` with an `infimount_mcp` component
+2. Confirm the generated release notes and stable/prerelease marker are correct.
 
 Manual checksum or install sanity checks are optional spot audits only; they are no longer required release tests because the workflow validates checksums, package structure, and Linux artifact launch/install smoke paths automatically.
+
+### Optional signing verification
+
+The release workflow imports the Windows certificate before bundling, signs the sidecar first, lets Tauri sign the app/installers/updater chain, and verifies Authenticode on the app executable, sidecar, installers, extracted installer executables, and executable updater payloads. It also runs macOS `codesign`, Gatekeeper, sidecar-signature, and notarization-ticket checks before publication. Users can independently spot-check downloaded artifacts:
+
+```bash
+# macOS
+codesign --verify --deep --strict --verbose=2 /Applications/Infimount.app
+spctl --assess --type execute --verbose=2 /Applications/Infimount.app
+xcrun stapler validate Infimount.dmg
+
+# Windows (Developer Command Prompt)
+signtool verify /pa /all /v Infimount.msi
+signtool verify /pa /all /v Infimount-setup.exe
+```
+
+The updater public key is embedded in `apps/desktop/src-tauri/tauri.conf.json`; updater signatures are produced only from the corresponding protected private key. Platform sidecar copies are used only to produce and validate the SBOM and are not published as standalone downloads. Installed sidecars live inside each platform's application resources (for example, `Infimount.app/Contents/MacOS/mcp` on macOS and the Infimount installation directory on Windows/Linux), not on the user's `PATH`.
 
 ## 4. Post-release checks
 

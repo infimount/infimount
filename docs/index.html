@@ -1087,7 +1087,7 @@
           <div class="hero-copy">
             <div class="meta-row">
               <span class="meta-pill">Open source</span>
-              <span class="meta-pill">v0.7.1 released</span>
+              <span class="meta-pill">v0.8.0 release candidate</span>
               <span class="meta-pill">MIT licensed</span>
             </div>
             <h1 id="hero-title">Infimount</h1>
@@ -1110,8 +1110,8 @@
               >
               <a
                 class="mini-stat"
-                href="https://github.com/infimount/infimount/releases/tag/v0.7.1"
-                >v0.7.1 release</a
+                href="https://github.com/infimount/infimount/releases/tag/v0.8.0"
+                >v0.8.0 release page after publication</a
               >
             </div>
           </div>
@@ -1339,11 +1339,11 @@
                   <button class="copy-command" type="button" aria-label="Copy Windows PowerShell install command">Copy</button>
                   <pre class="code-block">irm https://github.com/infimount/infimount/releases/latest/download/install.ps1 | iex</pre>
                 </div>
-                <span class="command-note">Run in PowerShell. Unsigned installers may trigger SmartScreen.</span>
+                <span class="command-note">Run in PowerShell. Stable installers are Authenticode-signed; do not continue if Windows reports an invalid or missing signature.</span>
               </div>
             </div>
             <p>
-              To pin this stable release, set <code>INFIMOUNT_VERSION=v0.7.1</code> before running the command.
+              After the v0.8.0 release candidate is published, pin it with <code>INFIMOUNT_VERSION=v0.8.0</code>. Until then, the command installs the current stable release.
             </p>
           </article>
           <article id="homebrew" class="info-card">
@@ -1370,13 +1370,10 @@ brew install --cask infimount</pre>
                 <code>chmod +x Infimount-*.AppImage</code> before launch.
               </li>
               <li>
-                <strong>macOS:</strong> drag the app to Applications, then
-                right-click and choose <code>Open</code> on first launch if
-                Gatekeeper warns.
+                <strong>macOS:</strong> drag the app to Applications. Stable builds are signed and notarized; do not bypass a failed signature or notarization check.
               </li>
               <li>
-                <strong>Windows:</strong> if SmartScreen appears, choose
-                <code>More info</code> then <code>Run anyway</code>.
+                <strong>Windows:</strong> stable installers are Authenticode-signed. Do not use an installer that Windows reports as unsigned or invalid.
               </li>
             </ul>
           </article>
@@ -1389,9 +1386,9 @@ brew install --cask infimount</pre>
         aria-labelledby="downloads-title"
       >
         <div class="section-head">
-          <h2 id="downloads-title">Manual downloads for v0.7.1</h2>
+          <h2 id="downloads-title">Manual downloads for the current stable release</h2>
           <p>
-            Prefer the install script above, or choose a package manually for your platform.
+            Prefer the install script above, or choose a published package manually. Manual downloads for the v0.8.0 release candidate appear only after publication.
           </p>
         </div>
         <div class="download-grid">

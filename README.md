@@ -28,7 +28,9 @@
 
 ## Install
 
-**Current stable release:** [v0.8.0-rc.1](https://github.com/infimount/infimount/releases/tag/v0.8.0-rc.1)
+**Current stable release:** [v0.7.1](https://github.com/infimount/infimount/releases/tag/v0.7.1)
+
+**Release candidate under validation:** v0.8.0 (not published yet)
 
 ### Linux
 
@@ -74,7 +76,7 @@ Manual downloads:
 
 ### Install notes
 
-Install scripts verify selected downloads against `SHA256SUMS.txt`. To pin a version, set `INFIMOUNT_VERSION=v0.7.1` before running the command. macOS and Windows binaries may be unsigned for some releases, see [Installation Notes](#installation-notes).
+Install scripts verify selected downloads against `SHA256SUMS.txt`. After v0.8.0 is published, pin it with `INFIMOUNT_VERSION=v0.8.0`; until then, `latest` installs the current stable release. Stable releases require signed macOS, Windows, and updater artifacts; prereleases may be unsigned and are marked prerelease.
 
 ## What Infimount does
 
@@ -127,9 +129,9 @@ Linux RPM:
 sudo rpm -i Infimount-x86_64.rpm
 ```
 
-macOS DMG: open the DMG, drag Infimount to Applications, then right-click and choose `Open` on first launch if Gatekeeper warns.
+macOS DMG: open the DMG and drag Infimount to Applications. Stable releases are signed and notarized; do not bypass a failed Gatekeeper signature check.
 
-Windows MSI or EXE: run the installer. If SmartScreen appears, choose `More info` then `Run anyway`.
+Windows MSI or EXE: run the installer. Stable releases are Authenticode-signed; do not bypass an invalid or missing signature warning.
 
 Upgrade by running the latest installer again. For Homebrew installs:
 
@@ -183,13 +185,15 @@ Agent integration guide: [Agent Integrations](docs/agent-integrations.md)
 
 Security model: [Security Model](docs/security.md)
 
+Operational guides: [Agent Workspaces](docs/agent-workspaces.md), [Recovery](docs/recovery.md), [Privacy](docs/privacy.md), and [Troubleshooting](docs/troubleshooting.md)
+
 ---
 
 ## 🛠️ Building from Source
 
 ### Prerequisites
 
-- **Rust 1.85+** (latest stable recommended) — [rustup.rs](https://rustup.rs/)
+- **Rust 1.94+** — [rustup.rs](https://rustup.rs/) (the pinned workspace toolchain and current MSRV)
 - **Node.js 18+** and **pnpm** — [pnpm.io](https://pnpm.io/installation)
 - **Tauri dependencies** — [Platform-specific setup](https://tauri.app/start/prerequisites/)
 
@@ -299,16 +303,11 @@ Your sponsorship helps:
 
 ### macOS
 
-Binaries may be unsigned/not notarized in some releases. To open:
-
-1. Open the `.dmg`
-2. Drag `Infimount.app` to `Applications`
-3. Right-click the app and select `Open`
-4. Click `Open` in the dialog
+Stable releases are signed and notarized. Open the `.dmg`, drag `Infimount.app` to Applications, and stop if Gatekeeper reports an invalid signature or missing notarization ticket. Clearly marked prereleases may be unsigned; verify checksums and the prerelease label before deciding whether to use one.
 
 ### Windows
 
-SmartScreen may block the installer. Click `More info` -> `Run anyway`.
+Stable MSI and EXE installers are Authenticode-signed. Check the Digital Signatures property and stop if Windows reports an invalid or missing signature. Clearly marked prereleases may be unsigned.
 
 ### Linux
 

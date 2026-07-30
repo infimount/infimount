@@ -1,0 +1,7 @@
+{
+  "onboardingCompleted": false,
+  "onboardingSkipped": false,
+  "wizardStep": "storage",
+  "wizardCompletedSteps": ["welcome"],
+  "telemetryEnabled": false
+}

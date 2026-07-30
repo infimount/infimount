@@ -34,6 +34,7 @@ const updateJsonVersion = (path) => {
   fs.writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 };
 
+updateJsonVersion("package.json");
 updateJsonVersion("apps/desktop/package.json");
 updateJsonVersion("apps/desktop/src-tauri/tauri.conf.json");
 

@@ -1,8 +1,8 @@
 # ADR 0004: Bundled MCP Sidecar
 
-**Status:** Accepted  
-**Date:** 2026-07-18  
-**Driver:** v0.8 Trust & Activation  
+**Status:** Accepted
+**Date:** 2026-07-18
+**Driver:** v0.8 Trust & Activation
 
 ## Context
 
@@ -49,7 +49,7 @@ Root `Cargo.toml`:
 [workspace.package]
 version = "0.8.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.94"
 ```
 
 All Rust packages use `version.workspace = true`, `edition.workspace = true`,

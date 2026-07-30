@@ -1,0 +1,20 @@
+{
+  "enabled": true,
+  "transport": "http",
+  "bindAddress": "127.0.0.1",
+  "port": 7331,
+  "enabledTools": [
+    "list_dir",
+    "stat_path",
+    "read_file",
+    "write_file",
+    "mkdir",
+    "copy_path",
+    "move_path",
+    "delete_path",
+    "add_storage",
+    "remove_storage"
+  ],
+  "authToken": "TEST_HTTP_BEARER_TOKEN_DO_NOT_SHIP",
+  "securityBaselineVersion": 1
+}

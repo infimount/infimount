@@ -9,7 +9,7 @@ Default local files:
 - `~/.infimount/storages.json`: storage registry and backend configuration.
 - `~/.infimount/mcp_settings.json`: MCP runtime settings, transport, bind address, port, secret reference, and enabled tool list.
 
-Storage credentials, OAuth tokens, and desktop MCP bearer tokens are stored in the operating system's native secret store. Stable v0.8 operation never falls back to plaintext credential persistence. Registry and settings files contain only public configuration and opaque secret references.
+Storage credentials, OAuth tokens, and desktop MCP bearer tokens are stored in the operating system's native secret store. The v0.8 release candidate never falls back to plaintext credential persistence. Registry and settings files contain only public configuration and opaque secret references.
 
 ## Secret Handling
 

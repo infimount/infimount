@@ -51,6 +51,7 @@ for gate in "${required_gates[@]}"; do
 done
 
 for build_job in build-linux build-macos build-windows; do
+  require_job_needs "$build_job" "release-signing-preflight"
   for gate in "${required_gates[@]}"; do
     if [[ "$gate" == "release-policy-gate" ]]; then
       require_job_needs "$build_job" "$gate"
@@ -86,6 +87,11 @@ require_file_contains "$RELEASE_WORKFLOW" "check-release-assets.sh"
 require_file_contains "$RELEASE_WORKFLOW" "smoke-install-scripts.sh"
 require_file_contains "$RELEASE_WORKFLOW" "check-release-consistency.mjs"
 require_file_contains "$RELEASE_WORKFLOW" "check-feature-docs.mjs"
+require_file_contains "$RELEASE_WORKFLOW" "check-updater-assets.sh"
+require_file_contains "$RELEASE_WORKFLOW" "add-sidecar-to-sbom.mjs"
+require_file_contains "$RELEASE_WORKFLOW" "Cryptographically verify updater signatures"
+require_file_contains "$RELEASE_WORKFLOW" "Verify Windows Authenticode chain"
+require_file_contains "$RELEASE_WORKFLOW" "Re-download and validate draft release assets"
 
 require_file_contains "$POST_RELEASE_WORKFLOW" "types: [published]"
 require_file_contains "$POST_RELEASE_WORKFLOW" "check-release-links.sh"
