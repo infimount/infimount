@@ -10,7 +10,9 @@ import {
   createDirectory,
   deleteFileVersion,
   deletePath,
+  deleteWorkspaceWithFiles,
   denyMcpConfirmation,
+  downloadFileToDownloads,
   exportMcpAuditBundle,
   exportShareableConfig,
   generateDownloadLink,
@@ -23,11 +25,15 @@ import {
   listEntries,
   listEntriesRecursive,
   listMcpAuditEvents,
+  listMcpClientAdapters,
   listMcpTools,
   listPendingMcpConfirmations,
   listStorageSchemas,
   listStorages,
   planTransferEntries,
+  previewMcpClientInstall,
+  applyMcpClientInstall,
+  rollbackMcpClientInstall,
   listVersions,
   readFile,
   readFileVersion,
@@ -42,6 +48,7 @@ import {
   updateMcpStoragePolicy,
   updateStorage,
   uploadDroppedFiles,
+  uploadFileStreaming,
   verifyStorage,
   writeFile,
 } from "./api";
@@ -213,6 +220,25 @@ describe("api wrappers", () => {
     });
   });
 
+  it("maps MCP client adapter preview, apply, and rollback commands", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    await listMcpClientAdapters();
+    await previewMcpClientInstall("cursor", "/project/.cursor/mcp.json");
+    await applyMcpClientInstall("preview-1", false);
+    await rollbackMcpClientInstall("rollback-1");
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "list_mcp_client_adapters");
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "preview_mcp_client_install", {
+      input: { kind: "cursor", targetPath: "/project/.cursor/mcp.json" },
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(3, "apply_mcp_client_install", {
+      input: { previewId: "preview-1", confirmExecution: false },
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(4, "rollback_mcp_client_install", {
+      rollbackId: "rollback-1",
+    });
+  });
+
   it("serializes transfer dry-run plans", async () => {
     invokeMock.mockResolvedValue({ entries: [], summary: { totalItems: 0, totalBytes: 0 } });
 
@@ -244,6 +270,18 @@ describe("api wrappers", () => {
     });
   });
 
+  it("routes desktop downloads through the native streaming command", async () => {
+    invokeMock.mockResolvedValue({ fileName: "report.txt", bytes: 12 });
+    await expect(downloadFileToDownloads("s1", "/report.txt")).resolves.toEqual({
+      fileName: "report.txt",
+      bytes: 12,
+    });
+    expect(invokeMock).toHaveBeenCalledWith("download_file_to_downloads", {
+      sourceId: "s1",
+      path: "/report.txt",
+    });
+  });
+
   it("defaults download link expiry and audit limit", async () => {
     invokeMock.mockResolvedValue("ok");
 
@@ -256,6 +294,64 @@ describe("api wrappers", () => {
       expiresSeconds: 900,
     });
     expect(invokeMock).toHaveBeenNthCalledWith(2, "list_mcp_audit_events", { limit: 200 });
+  });
+
+  it("streams browser uploads through a bounded staging lifecycle", async () => {
+    invokeMock
+      .mockResolvedValueOnce("upload-1")
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined);
+
+    const bytes = new TextEncoder().encode("hello");
+    await uploadFileStreaming("s1", "/file.txt", {
+      size: bytes.byteLength,
+      arrayBuffer: async () => bytes.buffer,
+      slice: (start = 0, end = bytes.byteLength) => ({
+        arrayBuffer: async () => bytes.slice(start, end).buffer,
+      }) as Blob,
+    });
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "begin_file_upload");
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "append_file_upload_chunk", {
+      uploadId: "upload-1",
+      data: [104, 101, 108, 108, 111],
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(3, "finish_file_upload", {
+      uploadId: "upload-1",
+      sourceId: "s1",
+      targetPath: "/file.txt",
+    });
+  });
+
+  it("cleans up a cancelled browser upload", async () => {
+    invokeMock.mockResolvedValueOnce("upload-2").mockResolvedValueOnce(undefined);
+    const bytes = new TextEncoder().encode("hello");
+    await expect(
+      uploadFileStreaming("s1", "/file.txt", {
+        size: bytes.byteLength,
+        arrayBuffer: async () => bytes.buffer,
+        slice: () => ({ arrayBuffer: async () => bytes.buffer }) as Blob,
+      }, {
+        isCancelled: () => true,
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(invokeMock).toHaveBeenLastCalledWith("cancel_file_upload", { uploadId: "upload-2" });
+  });
+
+  it("requires an explicit backend confirmation flag for workspace file deletion", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    await deleteWorkspaceWithFiles("workspace-1", true);
+    expect(invokeMock).toHaveBeenCalledWith("delete_workspace_with_files", {
+      request: { id: "workspace-1", confirmDeleteFiles: true },
+    });
+  });
+
+  it("rejects non-slice upload sources before reading or opening a session", async () => {
+    const arrayBuffer = vi.fn(async () => new ArrayBuffer(16));
+    await expect(uploadFileStreaming("s1", "/file.txt", { arrayBuffer }))
+      .rejects.toThrow("bounded chunk reads");
+    expect(arrayBuffer).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 
   it("maps structured Tauri errors into TauriApiError", async () => {

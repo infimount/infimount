@@ -11,7 +11,11 @@ import {
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "@/hooks/use-toast";
-import { exportDiagnostics as apiExportDiagnostics, getOsInfo } from "@/lib/api";
+import {
+  exportDiagnostics as apiExportDiagnostics,
+  getOsInfo,
+  revealDiagnosticsExport,
+} from "@/lib/api";
 import type { DiagnosticsExportResult, OsInfo } from "@/types/diagnostics";
 
 interface DiagnosticsDialogProps {
@@ -45,7 +49,7 @@ export function DiagnosticsDialog({ open, onOpenChange }: DiagnosticsDialogProps
       setExportResult(result);
       toast({
         title: "Diagnostics exported",
-        description: `Saved to ${result.path}`,
+        description: `Created ${result.bundleName}`,
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Export failed");
@@ -56,11 +60,11 @@ export function DiagnosticsDialog({ open, onOpenChange }: DiagnosticsDialogProps
   const handleOpenFolder = async () => {
     if (!exportResult) return;
     try {
-      await window.open(exportResult.path, "_blank");
+      await revealDiagnosticsExport(exportResult.exportId);
     } catch {
       toast({
         title: "Diagnostics path",
-        description: exportResult.path,
+        description: exportResult.bundleName,
       });
     }
   };
@@ -99,9 +103,11 @@ export function DiagnosticsDialog({ open, onOpenChange }: DiagnosticsDialogProps
             <div className="flex items-start gap-2">
               <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
               <div className="text-xs leading-5 text-amber-700 dark:text-amber-400">
-                <strong>Privacy-safe.</strong> The diagnostics bundle contains no storage names, file
-                paths, endpoints, credentials, or tokens. All sensitive fields are redacted before
-                export. Review the redaction manifest before sharing.
+                <strong>Privacy-safe.</strong> The diagnostics bundle contains app and sidecar
+                status, storage/backend counts, sanitized errors, and up to 100 schema-limited
+                product-event and MCP audit summaries. It excludes storage names, file paths,
+                storage endpoints, credentials, tokens, and contents, then validates the generated
+                files against a local sensitive-value corpus. Review the manifest before sharing.
               </div>
             </div>
           </div>
@@ -115,7 +121,7 @@ export function DiagnosticsDialog({ open, onOpenChange }: DiagnosticsDialogProps
                 </span>
               </div>
               <p className="mt-1 text-xs text-green-600 dark:text-green-400 break-all">
-                {exportResult.path}
+                {exportResult.bundleName}
               </p>
               <div className="mt-2 flex flex-wrap gap-2">
                 <Button

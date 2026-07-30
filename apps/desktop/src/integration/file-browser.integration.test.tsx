@@ -3,11 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FileBrowser } from "@/components/FileBrowser";
 import { AppZoomProvider } from "@/hooks/use-app-zoom";
 import { TransferQueueProvider } from "@/hooks/use-transfer-queue";
-import { createDirectory, listEntries } from "@/lib/api";
+import { createDirectory, listEntriesPage } from "@/lib/api";
 
 vi.mock("@/lib/api", () => ({
   connectOAuthStorage: vi.fn(),
-  listEntries: vi.fn(),
+  listEntriesPage: vi.fn(),
   readFile: vi.fn(),
   createDirectory: vi.fn(),
   deletePath: vi.fn(),
@@ -28,7 +28,11 @@ vi.mock("@/components/WindowControls", () => ({
 describe("FileBrowser integration flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(listEntries).mockResolvedValue([]);
+    vi.mocked(listEntriesPage).mockResolvedValue({
+      entries: [],
+      nextCursor: null,
+      truncated: false,
+    });
     vi.mocked(createDirectory).mockResolvedValue(undefined);
   });
 
@@ -42,7 +46,7 @@ describe("FileBrowser integration flow", () => {
     );
 
     await waitFor(() => {
-      expect(listEntries).toHaveBeenCalledWith("s1", "/");
+      expect(listEntriesPage).toHaveBeenCalledWith("s1", "/", 200, undefined, false);
     });
 
     fireEvent.keyDown(window, { key: "f", ctrlKey: true });

@@ -9,9 +9,16 @@ import {
   Terminal,
   TestTube2,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import {
+  applyMcpClientInstall,
+  listMcpClientAdapters,
+  previewMcpClientInstall,
+  rollbackMcpClientInstall,
+  runActivationProbe,
+} from "@/lib/api";
 import { Card } from "@/components/ui/card";
 import {
   Dialog,
@@ -21,29 +28,54 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
-import type { McpClientSnippets, McpRuntimeStatus } from "@/types/storage";
+import type {
+  ActivationProbeOutput,
+  McpClientAdapterInfo,
+  McpClientInstallPreview,
+  McpRuntimeStatus,
+} from "@/types/storage";
 
-export type WizardStepId = "welcome" | "storage" | "mcp" | "client" | "verify" | "done";
+export type WizardStepId =
+  | "welcome"
+  | "storage"
+  | "workspace"
+  | "mcp"
+  | "client"
+  | "verify"
+  | "done";
 
 export interface ActivationWizardProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onAddStorage: () => void;
+  onCreateDemo: () => Promise<void>;
+  onOpenWorkspaces: () => void;
   onOpenMcpSettings: () => void;
   onComplete: () => Promise<void>;
   onSkip: () => Promise<void>;
   onSaveState: (step: WizardStepId | null, completed: WizardStepId[]) => Promise<void>;
   storagesCount: number;
+  workspacesCount: number;
   mcpStatus?: McpRuntimeStatus;
-  clientSnippets?: McpClientSnippets;
+  initialStep?: string | null;
+  initialCompletedSteps?: string[];
 }
 
-const STEP_ORDER: WizardStepId[] = ["welcome", "storage", "mcp", "client", "verify", "done"];
+const STEP_ORDER: WizardStepId[] = [
+  "welcome",
+  "storage",
+  "workspace",
+  "mcp",
+  "client",
+  "verify",
+  "done",
+];
 
 const STEP_LABELS: Record<WizardStepId, string> = {
   welcome: "Welcome",
   storage: "Add Storage",
-  mcp: "MCP Safety",
+  workspace: "Scope Workspace",
+  mcp: "Verify Sidecar",
   client: "Connect Client",
   verify: "Verify",
   done: "Done",
@@ -52,7 +84,8 @@ const STEP_LABELS: Record<WizardStepId, string> = {
 const STEP_ICONS: Record<WizardStepId, typeof Sparkles> = {
   welcome: Sparkles,
   storage: Database,
-  mcp: ShieldCheck,
+  workspace: ShieldCheck,
+  mcp: Terminal,
   client: PlugZap,
   verify: TestTube2,
   done: CheckCircle2,
@@ -62,23 +95,64 @@ export function ActivationWizard({
   open,
   onOpenChange,
   onAddStorage,
+  onCreateDemo,
+  onOpenWorkspaces,
   onOpenMcpSettings,
   onComplete,
   onSkip,
   onSaveState,
   storagesCount,
+  workspacesCount,
   mcpStatus,
-  clientSnippets,
+  initialStep,
+  initialCompletedSteps = [],
 }: ActivationWizardProps) {
-  const [currentStep, setCurrentStep] = useState<WizardStepId>("welcome");
-  const [completedSteps, setCompletedSteps] = useState<WizardStepId[]>([]);
+  const validInitialStep = initialStep && STEP_ORDER.includes(initialStep as WizardStepId)
+    ? initialStep as WizardStepId
+    : "welcome";
+  const validInitialCompletedSteps = initialCompletedSteps.filter(
+    (step): step is WizardStepId => STEP_ORDER.includes(step as WizardStepId),
+  );
+  const [currentStep, setCurrentStep] = useState<WizardStepId>(validInitialStep);
+  const [completedSteps, setCompletedSteps] = useState<WizardStepId[]>(validInitialCompletedSteps);
+  const [probe, setProbe] = useState<ActivationProbeOutput>();
+  const [probeRunning, setProbeRunning] = useState(false);
+  const [probeRequestError, setProbeRequestError] = useState(false);
+  const [demoCreating, setDemoCreating] = useState(false);
+  const [demoError, setDemoError] = useState(false);
+  const [clientReviewed, setClientReviewed] = useState(false);
+  const [finishRunning, setFinishRunning] = useState(false);
+  const [finishError, setFinishError] = useState<string>();
 
   const currentIndex = STEP_ORDER.indexOf(currentStep);
+
+  useEffect(() => {
+    if (!open) return;
+    setCurrentStep(
+      initialStep && STEP_ORDER.includes(initialStep as WizardStepId)
+        ? initialStep as WizardStepId
+        : "welcome",
+    );
+    setCompletedSteps(initialCompletedSteps.filter(
+      (step): step is WizardStepId => STEP_ORDER.includes(step as WizardStepId),
+    ));
+    setClientReviewed(false);
+    setFinishError(undefined);
+  }, [initialCompletedSteps, initialStep, open]);
 
   const isStepComplete = (step: WizardStepId) => completedSteps.includes(step);
   const isStepCurrent = (step: WizardStepId) => step === currentStep;
 
   const goToStep = (step: WizardStepId) => {
+    const targetIndex = STEP_ORDER.indexOf(step);
+    const furthestUnlocked = Math.min(
+      STEP_ORDER.length - 1,
+      completedSteps.reduce(
+        (furthest, completed) => Math.max(furthest, STEP_ORDER.indexOf(completed) + 1),
+        0,
+      ),
+    );
+    if (targetIndex > furthestUnlocked) return;
     setCurrentStep(step);
     void onSaveState(step, completedSteps);
   };
@@ -88,21 +162,25 @@ export function ActivationWizard({
       ? completedSteps
       : [...completedSteps, step];
     setCompletedSteps(next);
-    void onSaveState(step, next);
+    return next;
   };
 
   const goNext = () => {
-    completeStep(currentStep);
+    const nextCompleted = completeStep(currentStep);
     const nextIndex = currentIndex + 1;
     if (nextIndex < STEP_ORDER.length) {
-      setCurrentStep(STEP_ORDER[nextIndex]);
+      const nextStep = STEP_ORDER[nextIndex];
+      setCurrentStep(nextStep);
+      void onSaveState(nextStep, nextCompleted);
     }
   };
 
   const goBack = () => {
     const prevIndex = currentIndex - 1;
     if (prevIndex >= 0) {
-      setCurrentStep(STEP_ORDER[prevIndex]);
+      const previousStep = STEP_ORDER[prevIndex];
+      setCurrentStep(previousStep);
+      void onSaveState(previousStep, completedSteps);
     }
   };
 
@@ -110,16 +188,51 @@ export function ActivationWizard({
     switch (currentStep) {
       case "welcome": return true;
       case "storage": return storagesCount > 0;
-      case "mcp": return true;
-      case "client": return true;
-      case "verify": return true;
+      case "workspace": return workspacesCount > 0;
+      case "mcp": return mcpStatus?.settings.enabled === true
+        && probe?.sidecar.versionMatch === true
+        && probe.sidecar.doctorHealthy === true;
+      case "client": return clientReviewed;
+      case "verify": return probe?.overallOk === true;
       case "done": return false;
     }
-  }, [currentStep, storagesCount]);
+  }, [
+    clientReviewed,
+    currentStep,
+    mcpStatus?.settings.enabled,
+    probe?.overallOk,
+    probe?.sidecar.doctorHealthy,
+    probe?.sidecar.versionMatch,
+    storagesCount,
+    workspacesCount,
+  ]);
 
-  const handleFinish = () => {
-    completeStep("done");
-    void onComplete();
+  const handleRunProbe = async () => {
+    setProbeRunning(true);
+    setProbeRequestError(false);
+    try {
+      const result = await runActivationProbe();
+      setProbe(result);
+    } catch {
+      setProbe(undefined);
+      setProbeRequestError(true);
+    } finally {
+      setProbeRunning(false);
+    }
+  };
+
+  const handleFinish = async () => {
+    if (!probe?.overallOk || finishRunning) return;
+    setFinishRunning(true);
+    setFinishError(undefined);
+    try {
+      await onComplete();
+      completeStep("done");
+    } catch (error) {
+      setFinishError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setFinishRunning(false);
+    }
   };
 
   const StepIcon = STEP_ICONS[currentStep];
@@ -147,6 +260,14 @@ export function ActivationWizard({
               key={step}
               type="button"
               onClick={() => goToStep(step)}
+              disabled={
+                STEP_ORDER.indexOf(step) >
+                completedSteps.reduce(
+                  (furthest, completed) =>
+                    Math.max(furthest, STEP_ORDER.indexOf(completed) + 1),
+                  0,
+                )
+              }
               className={`flex h-2 flex-1 rounded-full transition-colors ${
                 isStepComplete(step) || isStepCurrent(step)
                   ? "bg-primary"
@@ -163,20 +284,58 @@ export function ActivationWizard({
         <div className="min-h-[280px]">
           {currentStep === "welcome" && <WelcomeStep />}
           {currentStep === "storage" && (
-            <StorageStep storagesCount={storagesCount} onAddStorage={onAddStorage} />
+            <StorageStep
+              storagesCount={storagesCount}
+              onAddStorage={onAddStorage}
+              onCreateDemo={async () => {
+                setDemoCreating(true);
+                setDemoError(false);
+                try {
+                  await onCreateDemo();
+                } catch {
+                  setDemoError(true);
+                } finally {
+                  setDemoCreating(false);
+                }
+              }}
+              demoCreating={demoCreating}
+              demoError={demoError}
+            />
+          )}
+          {currentStep === "workspace" && (
+            <WorkspaceStep
+              workspacesCount={workspacesCount}
+              onOpenWorkspaces={onOpenWorkspaces}
+            />
           )}
           {currentStep === "mcp" && (
             <McpStep
               mcpStatus={mcpStatus}
+              sidecar={probe?.sidecar}
+              probeRunning={probeRunning}
+              onValidateSidecar={handleRunProbe}
               onOpenMcpSettings={onOpenMcpSettings}
             />
           )}
-          {currentStep === "client" && <ClientStep clientSnippets={clientSnippets} />}
-          {currentStep === "verify" && <VerifyStep mcpStatus={mcpStatus} />}
+          {currentStep === "client" && <ClientStep onReviewed={() => setClientReviewed(true)} />}
+          {currentStep === "verify" && (
+            <VerifyStep
+              probe={probe}
+              running={probeRunning}
+              requestError={probeRequestError}
+              onRun={handleRunProbe}
+            />
+          )}
           {currentStep === "done" && <DoneStep />}
         </div>
 
         <Separator />
+
+        {finishError ? (
+          <p role="alert" className="text-sm text-destructive">
+            Final server-side verification failed: {finishError}
+          </p>
+        ) : null}
 
         {/* Navigation */}
         <div className="flex items-center justify-between">
@@ -193,8 +352,12 @@ export function ActivationWizard({
               Skip
             </Button>
             {currentStep === "done" ? (
-              <Button type="button" onClick={handleFinish}>
-                Finish
+              <Button
+                type="button"
+                onClick={() => void handleFinish()}
+                disabled={!probe?.overallOk || finishRunning}
+              >
+                {finishRunning ? "Verifying again…" : "Finish"}
               </Button>
             ) : (
               <Button type="button" onClick={goNext} disabled={!canGoNext}>
@@ -218,8 +381,9 @@ function WelcomeStep() {
           Welcome to Infimount
         </h3>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          Infimount is a local-first storage browser that lets you connect cloud and local storage
-          backends, then safely expose them to AI coding agents via the Model Context Protocol (MCP).
+          Infimount starts with read-only MCP tools, no administration tools, no whole-storage
+          grants, and no exposed storage. Access is added only through an explicit path-scoped
+          workspace.
         </p>
       </div>
 
@@ -231,8 +395,8 @@ function WelcomeStep() {
         />
         <SafetyCard
           icon={<ShieldCheck className="h-4 w-4" />}
-          title="Control access"
-          description="Choose which storages and tools MCP agents can use. Path-scoped policies."
+          title="Read-only workspace"
+          description="Default access is scoped to one workspace path; everything else remains denied."
         />
         <SafetyCard
           icon={<PlugZap className="h-4 w-4" />}
@@ -247,7 +411,7 @@ function WelcomeStep() {
           <code className="rounded bg-amber-100 px-1 dark:bg-amber-900/30">
             ~/.infimount/
           </code>
-          . Nothing is sent to a cloud service.
+          . Optional product telemetry remains off unless you explicitly opt in later.
         </p>
       </div>
     </div>
@@ -257,9 +421,15 @@ function WelcomeStep() {
 function StorageStep({
   storagesCount,
   onAddStorage,
+  onCreateDemo,
+  demoCreating,
+  demoError,
 }: {
   storagesCount: number;
   onAddStorage: () => void;
+  onCreateDemo: () => Promise<void>;
+  demoCreating: boolean;
+  demoError: boolean;
 }) {
   return (
     <div className="space-y-4 py-2">
@@ -287,10 +457,56 @@ function StorageStep({
           <p className="text-sm text-muted-foreground">
             No storages configured yet.
           </p>
-          <Button type="button" onClick={onAddStorage} variant="default">
-            Add storage
-          </Button>
+          <div className="flex flex-wrap justify-center gap-2">
+            <Button type="button" onClick={() => void onCreateDemo()} disabled={demoCreating}>
+              {demoCreating ? "Creating safe demo…" : "Create safe demo"}
+            </Button>
+            <Button type="button" onClick={onAddStorage} variant="outline">
+              Add and validate storage
+            </Button>
+          </div>
+          {demoError ? (
+            <p role="alert" className="text-xs text-destructive">
+              Demo setup failed. No MCP access was broadened; retry or add a storage manually.
+            </p>
+          ) : null}
         </Card>
+      )}
+    </div>
+  );
+}
+
+function WorkspaceStep({
+  workspacesCount,
+  onOpenWorkspaces,
+}: {
+  workspacesCount: number;
+  onOpenWorkspaces: () => void;
+}) {
+  return (
+    <div className="space-y-4 py-2">
+      <div className="rounded-xl border border-border/80 bg-card p-4">
+        <h3 className="flex items-center gap-2 text-sm font-medium">
+          <ShieldCheck className="h-4 w-4 text-primary" />
+          Scope access to a workspace
+        </h3>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          Create a read-only workspace. Infimount grants only that path; the rest of the storage
+          remains denied. The safe demo creates <code>workspace/</code> and keeps
+          <code>outside/denied.txt</code> inaccessible.
+        </p>
+      </div>
+      {workspacesCount > 0 ? (
+        <div className="flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 p-3 dark:border-green-900/30 dark:bg-green-950/10">
+          <CheckCircle2 className="h-4 w-4 text-green-600" />
+          <span className="text-sm text-green-700 dark:text-green-400">
+            {workspacesCount} scoped workspace{workspacesCount === 1 ? "" : "s"} ready.
+          </span>
+        </div>
+      ) : (
+        <Button type="button" onClick={onOpenWorkspaces}>
+          Create read-only workspace
+        </Button>
       )}
     </div>
   );
@@ -298,9 +514,15 @@ function StorageStep({
 
 function McpStep({
   mcpStatus,
+  sidecar,
+  probeRunning,
+  onValidateSidecar,
   onOpenMcpSettings,
 }: {
   mcpStatus?: McpRuntimeStatus;
+  sidecar?: ActivationProbeOutput["sidecar"];
+  probeRunning: boolean;
+  onValidateSidecar: () => Promise<void>;
   onOpenMcpSettings: () => void;
 }) {
   const isReady = mcpStatus?.runningHttp || mcpStatus?.settings.enabled;
@@ -338,18 +560,41 @@ function McpStep({
         </div>
       ) : null}
 
-      <Button type="button" variant="outline" onClick={onOpenMcpSettings}>
-        Open MCP settings
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="outline" onClick={onOpenMcpSettings}>
+          Open MCP settings
+        </Button>
+        <Button type="button" onClick={() => void onValidateSidecar()} disabled={probeRunning}>
+          {probeRunning ? "Validating bundled sidecar…" : "Validate sidecar and policy"}
+        </Button>
+      </div>
+      {sidecar ? (
+        <p className={sidecar.versionMatch && sidecar.doctorHealthy ? "text-sm text-green-600" : "text-sm text-destructive"}>
+          {sidecar.versionMatch && sidecar.doctorHealthy
+            ? `Bundled sidecar ${sidecar.version ?? ""} passed version and doctor checks.`
+            : `Sidecar validation failed (${sidecar.errorCode ?? "ERR_SIDECAR_VALIDATION_FAILED"}).`}
+        </p>
+      ) : null}
     </div>
   );
 }
 
-function ClientStep({
-  clientSnippets,
-}: {
-  clientSnippets?: McpClientSnippets;
-}) {
+function ClientStep({ onReviewed }: { onReviewed: () => void }) {
+  const [adapters, setAdapters] = useState<McpClientAdapterInfo[]>([]);
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    let cancelled = false;
+    void listMcpClientAdapters()
+      .then((items) => {
+        if (!cancelled) setAdapters(items);
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   return (
     <div className="space-y-4 py-2">
       <div className="rounded-xl border border-border/80 bg-card p-4">
@@ -358,97 +603,184 @@ function ClientStep({
           Connect an MCP client
         </h3>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          Add this configuration to your MCP client to give it access to your exposed storages.
+          Every adapter uses the verified, same-version bundled sidecar. Review exact changes before any config write or command execution.
         </p>
       </div>
 
-      <div className="grid gap-3">
-        <ClientAdapterCard
-          name="Claude Code / Cursor / VS Code"
-          description="Add the stdio configuration to your MCP client settings file."
-          icon={<Terminal className="h-4 w-4" />}
-          snippet={clientSnippets?.stdio ?? null}
-          label="Stdio config"
-        />
-        <ClientAdapterCard
-          name="OpenCode / Claude Desktop"
-          description="Use the HTTP endpoint for network-connected clients."
-          icon={<Terminal className="h-4 w-4" />}
-          snippet={clientSnippets?.http ?? null}
-          label="HTTP config"
-        />
+      {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+      {!error && adapters.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Detecting MCP clients…</p>
+      ) : null}
+      <div className="grid gap-3 md:grid-cols-2">
+        {adapters.map((adapter) => (
+          <ClientAdapterCard key={adapter.kind} adapter={adapter} onReviewed={onReviewed} />
+        ))}
       </div>
     </div>
   );
 }
 
 function ClientAdapterCard({
-  name,
-  description,
-  icon,
-  snippet,
-  label,
+  adapter,
+  onReviewed,
 }: {
-  name: string;
-  description: string;
-  icon: React.ReactNode;
-  snippet: string | null;
-  label: string;
+  adapter: McpClientAdapterInfo;
+  onReviewed: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [targetPath, setTargetPath] = useState(adapter.defaultTarget ?? "");
+  const [preview, setPreview] = useState<McpClientInstallPreview>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const [confirmed, setConfirmed] = useState(false);
+  const [rollbackId, setRollbackId] = useState<string>();
 
   const handleCopy = () => {
-    if (!snippet) return;
-    void navigator.clipboard.writeText(snippet);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    void navigator.clipboard.writeText(adapter.snippet).then(() => {
+      setCopied(true);
+      onReviewed();
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  const handlePreview = async () => {
+    setBusy(true);
+    setError(undefined);
+    setRollbackId(undefined);
+    try {
+      setPreview(await previewMcpClientInstall(adapter.kind, targetPath || undefined));
+    } catch (reason: unknown) {
+      setPreview(undefined);
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleApply = async () => {
+    if (!preview) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const result = await applyMcpClientInstall(preview.previewId, confirmed);
+      setRollbackId(result.rollbackId ?? undefined);
+      onReviewed();
+      setPreview(undefined);
+      setConfirmed(false);
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRollback = async () => {
+    if (!rollbackId) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await rollbackMcpClientInstall(rollbackId);
+      setRollbackId(undefined);
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
-    <div className="rounded-xl border border-border/80 bg-card p-3">
+    <div className="rounded-xl border border-border/80 bg-card p-3" data-testid={`client-adapter-${adapter.kind}`}>
       <div className="flex items-start gap-3">
         <div className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-background text-primary">
-          {icon}
+          <Terminal className="h-4 w-4" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium">{name}</div>
-          <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
-          {snippet ? (
-            <div className="mt-2">
-              <div className="max-h-32 overflow-auto rounded-lg bg-muted p-2">
-                <pre className="whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed">
-                  {snippet}
-                </pre>
-              </div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-sm font-medium">{adapter.name}</div>
+            <span className="text-[10px] text-muted-foreground">{adapter.detected ? "Detected" : "Not detected"}</span>
+          </div>
+          <p className="mt-0.5 text-xs text-muted-foreground">{adapter.description}</p>
+          <p className="mt-1 break-all text-[10px] text-muted-foreground">{adapter.detection}</p>
+
+          {adapter.writeCapable && adapter.defaultTarget !== null ? (
+            <label className="mt-2 block text-[11px]">
+              Config path
+              <input
+                aria-label={`${adapter.name} config path`}
+                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 font-mono text-[10px]"
+                value={targetPath}
+                onChange={(event) => setTargetPath(event.target.value)}
+              />
+            </label>
+          ) : null}
+
+          <div className="mt-2 max-h-28 overflow-auto rounded-lg bg-muted p-2">
+            <pre className="whitespace-pre-wrap break-all font-mono text-[10px] leading-relaxed">{adapter.snippet}</pre>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={handleCopy}>
+              {copied ? "Copied!" : "Copy"}
+            </Button>
+            {adapter.writeCapable ? (
+              <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void handlePreview()}>
+                Preview install
+              </Button>
+            ) : null}
+            {rollbackId ? (
+              <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void handleRollback()}>
+                Roll back
+              </Button>
+            ) : null}
+          </div>
+
+          {preview ? (
+            <div className="mt-2 space-y-2 rounded border border-border p-2 text-[11px]">
+              <div className="font-medium">Reviewed {preview.action} preview (secrets redacted)</div>
+              {preview.targetPath ? <div className="break-all">Target: {preview.targetPath}</div> : null}
+              {preview.before !== null ? (
+                <details><summary>Before</summary><pre className="max-h-24 overflow-auto whitespace-pre-wrap break-all">{preview.before}</pre></details>
+              ) : null}
+              <details open><summary>After</summary><pre className="max-h-24 overflow-auto whitespace-pre-wrap break-all">{preview.after}</pre></details>
+              {preview.requiresExecutionConfirmation ? (
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
+                  I confirm execution of this exact command
+                </label>
+              ) : null}
               <Button
                 type="button"
-                variant="outline"
                 size="sm"
-                className="mt-2"
-                onClick={handleCopy}
+                disabled={busy || !preview.canApply || (preview.requiresExecutionConfirmation && !confirmed)}
+                onClick={() => void handleApply()}
               >
-                {copied ? "Copied!" : `Copy ${label}`}
+                {preview.requiresExecutionConfirmation ? "Confirm and execute" : "Apply exact change"}
               </Button>
             </div>
-          ) : (
-            <p className="mt-2 text-xs text-muted-foreground">
-              Configure MCP settings to generate a snippet.
-            </p>
-          )}
+          ) : null}
+          {error ? <p role="alert" className="mt-2 text-xs text-destructive">{error}</p> : null}
         </div>
       </div>
     </div>
   );
 }
 
-function VerifyStep({ mcpStatus }: { mcpStatus?: McpRuntimeStatus }) {
+function VerifyStep({
+  probe,
+  running,
+  requestError,
+  onRun,
+}: {
+  probe?: ActivationProbeOutput;
+  running: boolean;
+  requestError: boolean;
+  onRun: () => Promise<void>;
+}) {
   const checks = [
-    { label: "MCP runtime", ok: Boolean(mcpStatus?.runningHttp || mcpStatus?.settings.enabled) },
-    { label: "Storage connected", ok: Boolean(mcpStatus) },
-    { label: "Tools available", ok: Boolean(mcpStatus?.settings.enabledTools.length) },
+    { label: "Bundled sidecar verified", ok: probe?.sidecar.versionMatch === true },
+    { label: "MCP handshake completed", ok: probe?.mcpHandshakeOk === true },
+    { label: "Workspace access allowed", ok: probe?.mcpAllowedOpOk === true },
+    { label: "Outside-workspace access denied", ok: probe?.mcpDenialProven === true },
   ];
-
-  const allPass = checks.every((c) => c.ok);
 
   return (
     <div className="space-y-4 py-2">
@@ -458,10 +790,24 @@ function VerifyStep({ mcpStatus }: { mcpStatus?: McpRuntimeStatus }) {
           Verify your setup
         </h3>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          {allPass
-            ? "Everything looks good. Your Infimount setup is ready for MCP clients."
-            : "Some checks did not pass. Review the steps above to complete the setup."}
+          {probe?.overallOk
+            ? "The packaged MCP sidecar passed the workspace access and policy-denial checks."
+            : "Run the safety probe. Setup cannot finish until allowed workspace access succeeds and outside access is denied."}
         </p>
+        {(requestError || probe?.errorCode) && (
+          <p className="mt-2 text-xs text-destructive" role="alert">
+            Verification failed{probe?.errorCode ? ` (${probe.errorCode})` : ""}. Review MCP and workspace settings, then retry.
+          </p>
+        )}
+        <Button
+          type="button"
+          variant="outline"
+          className="mt-3"
+          disabled={running}
+          onClick={() => void onRun()}
+        >
+          {running ? "Running safety probe…" : "Run safety probe"}
+        </Button>
       </div>
 
       <div className="space-y-2">

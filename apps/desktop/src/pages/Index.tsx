@@ -15,6 +15,7 @@ import {
   addStorage as apiAddStorage,
   approveMcpConfirmation,
   completeOnboarding,
+  createActivationDemoStorage,
   denyMcpConfirmation,
   exportMcpAuditBundle,
   exportShareableConfig,
@@ -28,7 +29,9 @@ import {
   listMcpTools,
   importStorageConfig,
   listStorages,
+  listWorkspaces,
   removeStorage as apiRemoveStorage,
+  runActivationProbe,
   clearMcpAuditEvents,
   skipOnboarding,
   startMcpHttp,
@@ -93,6 +96,16 @@ const StorageImportDialog = lazy(() =>
 const RecoveryBackupDialog = lazy(() =>
   import("@/components/RecoveryBackupDialog").then((module) => ({
     default: module.RecoveryBackupDialog,
+  })),
+);
+const DiagnosticsDialog = lazy(() =>
+  import("@/components/DiagnosticsDialog").then((module) => ({
+    default: module.DiagnosticsDialog,
+  })),
+);
+const PrivacySettings = lazy(() =>
+  import("@/components/PrivacySettings").then((module) => ({
+    default: module.PrivacySettings,
   })),
 );
 
@@ -286,9 +299,12 @@ const Index = () => {
   const [isStorageConfigEditorOpen, setIsStorageConfigEditorOpen] = useState(false);
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
   const [isAgentWorkspacesOpen, setIsAgentWorkspacesOpen] = useState(false);
+  const [workspaceCount, setWorkspaceCount] = useState(0);
   const [isMcpDialogOpen, setIsMcpDialogOpen] = useState(false);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [isBackupDialogOpen, setIsBackupDialogOpen] = useState(false);
+  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
+  const [isPrivacyOpen, setIsPrivacyOpen] = useState(false);
   const [mcpStatus, setMcpStatus] = useState<McpRuntimeStatus | null>(null);
   const [mcpSnippets, setMcpSnippets] = useState<McpClientSnippets | null>(null);
   const [mcpTools, setMcpTools] = useState<McpToolDefinition[]>([]);
@@ -365,6 +381,17 @@ const Index = () => {
   }, [reloadStorages]);
 
   useEffect(() => {
+    void import("@/lib/agentWorkspaces")
+      .then(({ migrateLegacyWorkspaces }) => migrateLegacyWorkspaces())
+      .then((result) => {
+        if (result.imported > 0) void reloadStorages();
+      })
+      .catch(() => {
+        // Preserve legacy browser state for a later retry.
+      });
+  }, [reloadStorages]);
+
+  useEffect(() => {
     void (async () => {
       try {
         setAppSettings(await getAppSettings());
@@ -376,14 +403,14 @@ const Index = () => {
 
   useEffect(() => {
     if (isStoragesLoading || !appSettings) return;
-    const onboardingDone = appSettings.onboardingCompleted || appSettings.onboardingSkipped;
-    setIsOnboardingOpen(!onboardingDone && storages.length === 0);
+    setIsOnboardingOpen(!appSettings.onboardingCompleted && !appSettings.onboardingSkipped);
   }, [appSettings, isStoragesLoading, storages.length]);
 
   useEffect(() => {
-    if (!isMcpDialogOpen) return;
+    if (!isMcpDialogOpen && !isOnboardingOpen) return;
     void reloadMcpStatus();
-  }, [isMcpDialogOpen, reloadMcpStatus]);
+    void listWorkspaces().then((workspaces) => setWorkspaceCount(workspaces.length)).catch(() => undefined);
+  }, [isMcpDialogOpen, isOnboardingOpen, reloadMcpStatus]);
 
   useEffect(() => {
     if (!mcpStatus?.runningHttp) return;
@@ -632,6 +659,27 @@ const Index = () => {
     }
   };
 
+  const handleCreateActivationDemo = async () => {
+    const storage = await createActivationDemoStorage();
+    const { createAgentWorkspace, listAgentWorkspaces } = await import("@/lib/agentWorkspaces");
+    const existing = (await listAgentWorkspaces()).find(
+      (workspace) => workspace.storageId === storage.id && workspace.rootPath === "workspace",
+    );
+    if (!existing) {
+      await createAgentWorkspace({
+        storageId: storage.id,
+        name: "Activation Demo Workspace",
+        rootPath: "workspace",
+        templateId: "research",
+        adoptExisting: true,
+        accessProfile: "read_only",
+      });
+    }
+    await reloadStorages();
+    setWorkspaceCount((await listWorkspaces()).length);
+    await reloadMcpStatus();
+  };
+
   const handleCompleteOnboarding = async () => {
     const next = await completeOnboarding();
     setAppSettings(next);
@@ -653,12 +701,18 @@ const Index = () => {
   };
 
   const handleTestMcpConnection = async () => {
+    const probe = await runActivationProbe();
     await reloadMcpStatus();
-    const exposedCount = storages.filter((storage) => storage.enabled && storage.mcpExposed).length;
     toast({
-      title: "MCP setup check",
-      description: `${mcpTools.length} function(s) available. ${exposedCount} storage(s) currently exposed.`,
+      title: probe.overallOk ? "Real MCP probe passed" : "Real MCP probe failed",
+      description: probe.overallOk
+        ? "The bundled sidecar completed handshake, allowed-workspace, and exact policy-denial checks."
+        : `The real sidecar probe did not pass (${probe.errorCode ?? "ERR_ACTIVATION_PROBE_FAILED"}).`,
+      variant: probe.overallOk ? "default" : "destructive",
     });
+    if (!probe.overallOk) {
+      throw new Error(probe.errorCode ?? "ERR_ACTIVATION_PROBE_FAILED");
+    }
   };
 
   const handleClearMcpAudit = async () => {
@@ -791,6 +845,8 @@ const Index = () => {
                 onOpenOnboarding={() => setIsOnboardingOpen(true)}
                 onOpenGlobalSearch={() => setIsGlobalSearchOpen(true)}
                 onOpenAgentWorkspaces={() => setIsAgentWorkspacesOpen(true)}
+                onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
+                onOpenPrivacy={() => setIsPrivacyOpen(true)}
                 isLoading={isStoragesLoading}
               />
             </ResizablePanel>
@@ -829,6 +885,8 @@ const Index = () => {
             onOpenOnboarding={() => setIsOnboardingOpen(true)}
             onOpenGlobalSearch={() => setIsGlobalSearchOpen(true)}
             onOpenAgentWorkspaces={() => setIsAgentWorkspacesOpen(true)}
+            onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
+            onOpenPrivacy={() => setIsPrivacyOpen(true)}
             isLoading={isStoragesLoading}
           />
         </div>
@@ -971,6 +1029,11 @@ const Index = () => {
           <ActivationWizard
             open={isOnboardingOpen}
             onOpenChange={setIsOnboardingOpen}
+            onCreateDemo={handleCreateActivationDemo}
+            onOpenWorkspaces={() => {
+              setIsOnboardingOpen(false);
+              setIsAgentWorkspacesOpen(true);
+            }}
             onAddStorage={() => {
               setIsOnboardingOpen(false);
               setIsAddDialogOpen(true);
@@ -983,8 +1046,10 @@ const Index = () => {
             onSkip={handleSkipOnboarding}
             onSaveState={handleSaveWizardState}
             storagesCount={storages.length}
+            workspacesCount={workspaceCount}
             mcpStatus={mcpStatus ?? undefined}
-            clientSnippets={mcpSnippets ?? undefined}
+            initialStep={appSettings?.wizardStep}
+            initialCompletedSteps={appSettings?.wizardCompletedSteps}
           />
         ) : null}
 
@@ -993,7 +1058,12 @@ const Index = () => {
             open={isAddDialogOpen}
             onOpenChange={(open) => {
               setIsAddDialogOpen(open);
-              if (!open) setEditingStorage(null);
+              if (!open) {
+                setEditingStorage(null);
+                if (appSettings && !appSettings.onboardingCompleted && !appSettings.onboardingSkipped) {
+                  setIsOnboardingOpen(true);
+                }
+              }
             }}
             onAdd={handleAddStorage}
             onUpdate={handleUpdateStorage}
@@ -1005,7 +1075,12 @@ const Index = () => {
         {isMcpDialogOpen ? (
           <McpSettingsDialog
             open={isMcpDialogOpen}
-            onOpenChange={setIsMcpDialogOpen}
+            onOpenChange={(open) => {
+              setIsMcpDialogOpen(open);
+              if (!open && appSettings && !appSettings.onboardingCompleted && !appSettings.onboardingSkipped) {
+                setIsOnboardingOpen(true);
+              }
+            }}
             status={mcpStatus}
             snippets={mcpSnippets}
             tools={mcpTools}
@@ -1051,9 +1126,18 @@ const Index = () => {
             open={isAgentWorkspacesOpen}
             storages={storages}
             auditEvents={mcpAuditEvents}
-            onOpenChange={setIsAgentWorkspacesOpen}
+            onOpenChange={(open) => {
+              setIsAgentWorkspacesOpen(open);
+              if (!open) {
+                void listWorkspaces()
+                  .then((workspaces) => setWorkspaceCount(workspaces.length))
+                  .catch(() => undefined);
+                if (appSettings && !appSettings.onboardingCompleted && !appSettings.onboardingSkipped) {
+                  setIsOnboardingOpen(true);
+                }
+              }
+            }}
             onSelectStorage={handleSelectStorage}
-            onUpdateStoragePolicy={handleUpdateMcpStoragePolicy}
           />
         ) : null}
 
@@ -1072,7 +1156,31 @@ const Index = () => {
             onRestoreComplete={reloadStorages}
           />
         ) : null}
+
+        {isDiagnosticsOpen ? (
+          <DiagnosticsDialog open={isDiagnosticsOpen} onOpenChange={setIsDiagnosticsOpen} />
+        ) : null}
+
+        {isPrivacyOpen && appSettings ? (
+          <PrivacySettings
+            open={isPrivacyOpen}
+            onOpenChange={setIsPrivacyOpen}
+            currentConsent={appSettings.telemetryConsent}
+            onConsentChange={(telemetryConsent) =>
+              setAppSettings((current) => current ? { ...current, telemetryConsent } : current)
+            }
+          />
+        ) : null}
         </Suspense>
+
+        {appSettings?.onboardingSkipped && !appSettings.onboardingCompleted ? (
+          <div className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-amber-500/30 bg-background px-4 py-3 shadow-lg">
+            <p className="text-sm">Activation is incomplete. MCP access remains unverified.</p>
+            <Button type="button" size="sm" onClick={() => setIsOnboardingOpen(true)}>
+              Finish setup
+            </Button>
+          </div>
+        ) : null}
       </div>
     </TransferQueueProvider>
   );

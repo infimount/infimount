@@ -57,9 +57,11 @@ export function RecoveryBackupDialog({ open, onOpenChange, onRestoreComplete }: 
       setActiveTab("create");
       setCreatePassphrase("");
       setCreateConfirm("");
+      setShowCreatePass(false);
       setCreating(false);
       setCreateResult(null);
       setRestorePassphrase("");
+      setShowRestorePass(false);
       setRestoreArmored("");
       setRestorePreview(null);
       setRestoring(false);
@@ -91,6 +93,9 @@ export function RecoveryBackupDialog({ open, onOpenChange, onRestoreComplete }: 
         variant: "destructive",
       });
     } finally {
+      setCreatePassphrase("");
+      setCreateConfirm("");
+      setShowCreatePass(false);
       setCreating(false);
     }
   }, [createPassphrase, createConfirm, toast]);
@@ -116,6 +121,8 @@ export function RecoveryBackupDialog({ open, onOpenChange, onRestoreComplete }: 
     const reader = new FileReader();
     reader.onload = (ev) => {
       setRestoreArmored((ev.target?.result as string) ?? "");
+      setRestorePreview(null);
+      setRestoreError(null);
     };
     reader.readAsText(file);
     e.target.value = "";
@@ -131,9 +138,16 @@ export function RecoveryBackupDialog({ open, onOpenChange, onRestoreComplete }: 
         setRestoreError("Backup checksum mismatch; data may be corrupted.");
         return;
       }
+      setRestoreMcp(preview.hasMcpSettings);
+      setRestoreApp(preview.hasAppSettings);
+      setRestoreWorkspaces(preview.hasWorkspaces);
+      setRestoreSecrets(preview.hasSecrets);
       setRestorePreview(preview);
     } catch (err: unknown) {
       setRestoreError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRestorePassphrase("");
+      setShowRestorePass(false);
     }
   }, [restoreArmored, restorePassphrase]);
 
@@ -143,8 +157,7 @@ export function RecoveryBackupDialog({ open, onOpenChange, onRestoreComplete }: 
     setRestoreError(null);
     try {
       const result = await applyRecoveryRestore({
-        passphrase: restorePassphrase,
-        armored: restoreArmored,
+        previewId: restorePreview.previewId,
         restoreMcpSettings: restoreMcp,
         restoreAppSettings: restoreApp,
         restoreWorkspaces,
@@ -161,7 +174,7 @@ export function RecoveryBackupDialog({ open, onOpenChange, onRestoreComplete }: 
     } finally {
       setRestoring(false);
     }
-  }, [restorePreview, restorePassphrase, restoreArmored, restoreMcp, restoreApp, toast, onRestoreComplete, handleClose]);
+  }, [restorePreview, restoreMcp, restoreApp, restoreWorkspaces, restoreSecrets, toast, onRestoreComplete, handleClose]);
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) handleClose(); }}>
@@ -254,7 +267,11 @@ export function RecoveryBackupDialog({ open, onOpenChange, onRestoreComplete }: 
               <textarea
                 id="restore-armored"
                 value={restoreArmored}
-                onChange={(e) => setRestoreArmored(e.target.value)}
+                onChange={(e) => {
+                  setRestoreArmored(e.target.value);
+                  setRestorePreview(null);
+                  setRestoreError(null);
+                }}
                 placeholder="Paste the armored .age backup content here"
                 className="mt-1 w-full min-h-[120px] rounded border border-input bg-background px-3 py-2 text-xs font-mono"
               />
@@ -267,7 +284,11 @@ export function RecoveryBackupDialog({ open, onOpenChange, onRestoreComplete }: 
                   id="restore-pass"
                   type={showRestorePass ? "text" : "password"}
                   value={restorePassphrase}
-                  onChange={(e) => setRestorePassphrase(e.target.value)}
+                  onChange={(e) => {
+                    setRestorePassphrase(e.target.value);
+                    setRestorePreview(null);
+                    setRestoreError(null);
+                  }}
                   placeholder="Enter the backup passphrase"
                 />
                 <button
@@ -293,6 +314,14 @@ export function RecoveryBackupDialog({ open, onOpenChange, onRestoreComplete }: 
                 <div className="text-sm space-y-1 text-muted-foreground">
                   <p>Created: {new Date(restorePreview.createdAt).toLocaleString()}</p>
                   <p>Storages: {restorePreview.storageCount}</p>
+                  <p>
+                    Changes: {restorePreview.storageAdditions} added, {restorePreview.storageUpdates} replaced,
+                    {" "}{restorePreview.storageRemovals} removed
+                  </p>
+                  <p className="text-amber-700">
+                    Applying this restore replaces the current storage registry. The preview is single-use and
+                    expires in {Math.ceil(restorePreview.expiresInSeconds / 60)} minute(s).
+                  </p>
                   {restorePreview.hasMcpSettings && <p>Includes MCP settings</p>}
                   {restorePreview.hasAppSettings && <p>Includes app settings</p>}
                   {restorePreview.hasWorkspaces && <p>Includes workspaces</p>}
@@ -301,20 +330,36 @@ export function RecoveryBackupDialog({ open, onOpenChange, onRestoreComplete }: 
                 </div>
                 <div className="flex items-center gap-4 pt-1">
                   <label className="flex items-center gap-2 text-sm">
-                    <Switch checked={restoreMcp} onCheckedChange={setRestoreMcp} />
+                    <Switch
+                      checked={restoreMcp}
+                      disabled={!restorePreview.hasMcpSettings}
+                      onCheckedChange={setRestoreMcp}
+                    />
                     Restore MCP settings
                   </label>
                   <label className="flex items-center gap-2 text-sm">
-                    <Switch checked={restoreApp} onCheckedChange={setRestoreApp} />
+                    <Switch
+                      checked={restoreApp}
+                      disabled={!restorePreview.hasAppSettings}
+                      onCheckedChange={setRestoreApp}
+                    />
                     Restore app settings
                   </label>
                   <label className="flex items-center gap-2 text-sm">
-                    <Switch checked={restoreWorkspaces} onCheckedChange={setRestoreWorkspaces} />
+                    <Switch
+                      checked={restoreWorkspaces}
+                      disabled={!restorePreview.hasWorkspaces}
+                      onCheckedChange={setRestoreWorkspaces}
+                    />
                     Restore workspaces
                   </label>
                   <label className="flex items-center gap-2 text-sm">
-                    <Switch checked={restoreSecrets} onCheckedChange={setRestoreSecrets} />
-                    Restore secrets
+                    <Switch
+                      checked={restoreSecrets}
+                      disabled
+                      onCheckedChange={setRestoreSecrets}
+                    />
+                    Restore required secrets
                   </label>
                 </div>
                 <div className="flex justify-end gap-3 pt-2">

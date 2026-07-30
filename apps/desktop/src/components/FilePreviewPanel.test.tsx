@@ -6,16 +6,23 @@ import {
   generateDownloadLink,
   getStorageCapabilities,
   readFile,
+  readFileRange,
   statEntry,
   writeFile,
 } from "@/lib/api";
 import type { FileItem } from "@/types/storage";
 
+const { readFileMock } = vi.hoisted(() => ({ readFileMock: vi.fn() }));
+
 vi.mock("@/lib/api", () => ({
   connectOAuthStorage: vi.fn(),
   generateDownloadLink: vi.fn(),
   getStorageCapabilities: vi.fn(),
-  readFile: vi.fn(),
+  readFile: readFileMock,
+  readFileRange: vi.fn(async (sourceId: string, path: string, offset: number) => {
+    const bytes = await readFileMock(sourceId, path);
+    return { totalSize: bytes.length, offset, bytes: Array.from(bytes), truncated: false };
+  }),
   statEntry: vi.fn(),
   writeFile: vi.fn(),
 }));
@@ -126,6 +133,38 @@ describe("FilePreviewPanel", () => {
     expect(image).toHaveAttribute("src", "blob:image-preview");
     expect(createObjectURL).toHaveBeenCalled();
 
+    createObjectURL.mockRestore();
+  });
+
+  it("does not render a truncated image blob as a complete preview", async () => {
+    const file: FileItem = {
+      id: "/large.png",
+      name: "large.png",
+      type: "file",
+      extension: "png",
+      size: 0,
+      modified: new Date(),
+    };
+    vi.mocked(readFileRange).mockResolvedValueOnce({
+      totalSize: 5 * 1024 * 1024,
+      offset: 0,
+      bytes: [137, 80, 78, 71],
+      truncated: true,
+    });
+    const createObjectURL = vi.spyOn(URL, "createObjectURL");
+
+    render(
+      <FilePreviewPanel
+        file={file}
+        sourceId="storage-1"
+        onClose={() => undefined}
+        onDownload={() => undefined}
+      />,
+    );
+
+    expect(await screen.findByText(/too large to preview completely/i)).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "large.png" })).not.toBeInTheDocument();
+    expect(createObjectURL).not.toHaveBeenCalled();
     createObjectURL.mockRestore();
   });
 

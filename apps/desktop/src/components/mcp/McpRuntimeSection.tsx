@@ -31,6 +31,7 @@ interface McpRuntimeSectionProps {
   primaryActionLabel: string;
   endpointDisplay: string;
   onSave: () => void;
+  onRotateAuthToken: () => void;
   onHttpToggle: () => void;
 }
 
@@ -49,6 +50,7 @@ export function McpRuntimeSection({
   primaryActionLabel,
   endpointDisplay,
   onSave,
+  onRotateAuthToken,
   onHttpToggle,
 }: McpRuntimeSectionProps) {
   return (
@@ -143,14 +145,26 @@ export function McpRuntimeSection({
                     : "Clients must send Authorization: Bearer … when a token is set."}
                 </p>
                 {settings.authTokenConfigured ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => onAuthTokenDraftChange("")}
-                  >
-                    Clear token
-                  </Button>
+                  <div className="flex shrink-0 gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={isBusy}
+                      onClick={onRotateAuthToken}
+                    >
+                      Rotate token
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={isBusy}
+                      onClick={() => onAuthTokenDraftChange("")}
+                    >
+                      Clear token
+                    </Button>
+                  </div>
                 ) : null}
               </div>
             </div>

@@ -76,12 +76,15 @@ const installTauriMocks = ({ entriesByPath, failRoot = false, transferConflict =
         if (cmd === "plugin:event|listen") return args?.handler ?? 1;
         if (cmd === "plugin:event|unlisten") return null;
         if (cmd.includes("updater") || cmd.includes("window")) return null;
-        if (cmd === "list_entries") {
+        if (cmd === "list_entries" || cmd === "list_entries_page") {
           if (failRoot) {
             throw { code: "IO_ERROR", message: "backend request failed" };
           }
           const path = typeof args?.path === "string" ? args.path : "/";
-          return entriesByPath[path] ?? [];
+          const entries = entriesByPath[path] ?? [];
+          return cmd === "list_entries_page"
+            ? { entries, nextCursor: null, truncated: false }
+            : entries;
         }
         if (cmd === "plan_transfer_entries") return { ...defaultPlan, conflictPolicy: args?.conflictPolicy ?? "fail" };
         if (cmd === "transfer_entries") {

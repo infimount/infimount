@@ -32,10 +32,11 @@ import { TransferQueuePanel } from "./TransferQueuePanel";
 import { FileItem } from "@/types/storage";
 import {
   Entry,
-  listEntries,
+  listEntriesPage,
   listEntriesRecursive,
-  readFile,
+  downloadFileToDownloads,
   writeFile,
+  uploadFileStreaming,
   createDirectory,
   deletePath,
   TauriApiError,
@@ -135,7 +136,9 @@ async function collectFilesFromDataTransfer(
       return [
         {
           name: relativeName,
+          size: file.size,
           arrayBuffer: () => file.arrayBuffer(),
+          slice: (start, end) => file.slice(start, end),
         },
       ];
     }
@@ -194,7 +197,9 @@ async function collectFilesFromDataTransfer(
     if (file) {
       files.push({
         name: file.name,
+        size: file.size,
         arrayBuffer: () => file.arrayBuffer(),
+        slice: (start, end) => file.slice(start, end),
       });
     }
   }
@@ -531,8 +536,17 @@ export function FileBrowser({
     setLoading(true);
     setError(null);
     try {
-      const entries = await listEntries(sourceId, path);
-      if (requestId !== loadRequestIdRef.current) return;
+      const entries: Entry[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await listEntriesPage(sourceId, path, 200, cursor, false);
+        if (requestId !== loadRequestIdRef.current) return;
+        entries.push(...page.entries);
+        cursor = page.nextCursor ?? undefined;
+        if (entries.length >= 10_000) {
+          cursor = undefined;
+        }
+      } while (cursor);
 
       const filtered = entries.filter(
         (e) => e.path !== path && e.path !== "" && e.name !== ".",
@@ -1058,25 +1072,10 @@ export function FileBrowser({
   const downloadOne = async (file: FileItem) => {
     if (file.type !== "file") return;
     try {
-      const data = await readFile(sourceId, file.id);
-      const arrayBuffer = data.buffer.slice(
-        data.byteOffset,
-        data.byteOffset + data.byteLength,
-      ) as ArrayBuffer;
-      const blob = new Blob([arrayBuffer], {
-        type: "application/octet-stream",
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = file.name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      const result = await downloadFileToDownloads(sourceId, file.id);
       toast({
-        title: "Download started",
-        description: `Downloading "${file.name}"`,
+        title: "Download complete",
+        description: `Saved "${result.fileName}" to Downloads.`,
       });
     } catch (error: unknown) {
       toast({
@@ -1295,11 +1294,14 @@ export function FileBrowser({
             reservedPaths.add(targetPath);
           }
 
-          const buffer = await file.arrayBuffer();
-          if (uploadCancelRef.current) break;
-          await writeFile(sourceId, targetPath, new Uint8Array(buffer));
+          await uploadFileStreaming(sourceId, targetPath, file, {
+            isCancelled: () => uploadCancelRef.current,
+          });
           successCount += 1;
         } catch (error: unknown) {
+          if (uploadCancelRef.current || (error instanceof DOMException && error.name === "AbortError")) {
+            break;
+          }
           failedCount += 1;
           setUploadProgress((current) =>
             current

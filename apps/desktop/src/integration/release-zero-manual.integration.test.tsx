@@ -14,6 +14,8 @@ import {
   listPendingMcpConfirmations,
   listStorageSchemas,
   listStorages,
+  listWorkspaces,
+  runActivationProbe,
   startMcpHttp,
   updateMcpSettings,
 } from "@/lib/api";
@@ -92,7 +94,9 @@ vi.mock("@/lib/api", () => ({
   listPendingMcpConfirmations: vi.fn(),
   listStorageSchemas: vi.fn(),
   listStorages: vi.fn(),
+  listWorkspaces: vi.fn(),
   removeStorage: vi.fn(),
+  runActivationProbe: vi.fn(),
   skipOnboarding: vi.fn(),
   startMcpHttp: vi.fn(),
   stopMcpHttp: vi.fn(),
@@ -181,7 +185,7 @@ describe("release zero-manual smoke path", () => {
       onboardingSkippedAt: null,
       wizardStep: null,
       wizardCompletedSteps: [],
-      telemetryConsent: null,
+      telemetryConsent: "unknown",
     });
     vi.mocked(listStorageSchemas).mockResolvedValue([
       {
@@ -193,6 +197,22 @@ describe("release zero-manual smoke path", () => {
         ],
       },
     ]);
+    vi.mocked(listWorkspaces).mockResolvedValue([]);
+    vi.mocked(runActivationProbe).mockResolvedValue({
+      sidecar: {
+        binaryFound: true,
+        executable: true,
+        version: "0.8.0",
+        versionMatch: true,
+        doctorHealthy: true,
+        errorCode: null,
+      },
+      mcpHandshakeOk: true,
+      mcpAllowedOpOk: true,
+      mcpDenialProven: true,
+      overallOk: true,
+      errorCode: null,
+    });
     vi.mocked(listStorages).mockImplementation(
       async () => storages as unknown as Awaited<ReturnType<typeof listStorages>>,
     );

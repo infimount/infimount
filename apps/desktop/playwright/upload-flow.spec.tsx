@@ -26,6 +26,7 @@ const installTauriMocks = ({ entries, keepWritesPending }: { entries: Array<Reco
     configurable: true,
     value: [] as WriteCall[],
   });
+  const uploadBytes = new Map<string, number>();
 
   Object.defineProperty(window, "__TAURI_EVENT_PLUGIN_INTERNALS__", {
     configurable: true,
@@ -46,14 +47,32 @@ const installTauriMocks = ({ entries, keepWritesPending }: { entries: Array<Reco
         if (cmd === "plugin:event|unlisten") return null;
         if (cmd.includes("updater") || cmd.includes("window")) return null;
         if (cmd === "list_entries") return entries;
-        if (cmd === "write_file") {
+        if (cmd === "list_entries_page") return { entries, nextCursor: null, truncated: false };
+        if (cmd === "begin_file_upload") {
+          const uploadId = `upload-${uploadBytes.size + 1}`;
+          uploadBytes.set(uploadId, 0);
+          return uploadId;
+        }
+        if (cmd === "append_file_upload_chunk") {
+          const uploadId = String(args?.uploadId);
+          const chunkLength = Array.isArray(args?.data) ? args.data.length : 0;
+          uploadBytes.set(uploadId, (uploadBytes.get(uploadId) ?? 0) + chunkLength);
+          return null;
+        }
+        if (cmd === "finish_file_upload") {
+          const uploadId = String(args?.uploadId);
           const writes = (window as unknown as { __infimountWrites: WriteCall[] }).__infimountWrites;
           writes.push({
             sourceId: args?.sourceId,
-            path: args?.path,
-            dataLength: Array.isArray(args?.data) ? args.data.length : 0,
+            path: args?.targetPath,
+            dataLength: uploadBytes.get(uploadId) ?? 0,
           });
           if (keepWritesPending) return new Promise(() => undefined);
+          uploadBytes.delete(uploadId);
+          return null;
+        }
+        if (cmd === "cancel_file_upload") {
+          uploadBytes.delete(String(args?.uploadId));
           return null;
         }
         return null;

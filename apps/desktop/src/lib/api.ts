@@ -2,6 +2,10 @@ import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 
 import type {
   McpAuditExportResult,
+  McpClientAdapterInfo,
+  McpClientInstallPreview,
+  McpClientInstallResult,
+  McpClientKind,
   McpClientSnippets,
   McpRuntimeStatus,
   McpSettingsUpdate,
@@ -173,6 +177,32 @@ async function invokeOrThrow<T>(command: string, args?: Record<string, unknown>)
   }
 }
 
+export function listMcpClientAdapters(): Promise<McpClientAdapterInfo[]> {
+  return invokeOrThrow<McpClientAdapterInfo[]>("list_mcp_client_adapters");
+}
+
+export function previewMcpClientInstall(
+  kind: McpClientKind,
+  targetPath?: string,
+): Promise<McpClientInstallPreview> {
+  return invokeOrThrow<McpClientInstallPreview>("preview_mcp_client_install", {
+    input: { kind, targetPath },
+  });
+}
+
+export function applyMcpClientInstall(
+  previewId: string,
+  confirmExecution = false,
+): Promise<McpClientInstallResult> {
+  return invokeOrThrow<McpClientInstallResult>("apply_mcp_client_install", {
+    input: { previewId, confirmExecution },
+  });
+}
+
+export function rollbackMcpClientInstall(rollbackId: string): Promise<void> {
+  return invokeOrThrow<void>("rollback_mcp_client_install", { rollbackId });
+}
+
 export function listEntries(sourceId: string, path: string): Promise<Entry[]> {
   return invokeOrThrow<Entry[]>("list_entries", { sourceId, path });
 }
@@ -210,7 +240,7 @@ export function readFileRange(
   sourceId: string,
   path: string,
   offset: number,
-  maxBytes: number,
+  maxBytes?: number,
 ): Promise<ReadFileRangeResult> {
   return invokeOrThrow<ReadFileRangeResult>("read_file_range", {
     sourceId,
@@ -218,6 +248,18 @@ export function readFileRange(
     offset,
     maxBytes,
   });
+}
+
+export interface NativeDownloadResult {
+  fileName: string;
+  bytes: number;
+}
+
+export function downloadFileToDownloads(
+  sourceId: string,
+  path: string,
+): Promise<NativeDownloadResult> {
+  return invokeOrThrow<NativeDownloadResult>("download_file_to_downloads", { sourceId, path });
 }
 
 export function writeFile(
@@ -235,6 +277,49 @@ export function writeFile(
     args.userMetadata = userMetadata;
   }
   return invokeOrThrow<void>("write_file", args);
+}
+
+const UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
+
+export async function uploadFileStreaming(
+  sourceId: string,
+  targetPath: string,
+  file: {
+    size?: number;
+    arrayBuffer: () => Promise<ArrayBuffer>;
+    slice?: (start?: number, end?: number) => Blob;
+  },
+  options: {
+    isCancelled?: () => boolean;
+    onProgress?: (uploadedBytes: number, totalBytes: number) => void;
+  } = {},
+): Promise<void> {
+  if (!file.slice || file.size === undefined) {
+    throw new Error("This upload source does not support bounded chunk reads");
+  }
+  const uploadId = await invokeOrThrow<string>("begin_file_upload");
+  const totalBytes = file.size;
+  let finished = false;
+  try {
+    for (let offset = 0; offset < totalBytes; offset += UPLOAD_CHUNK_BYTES) {
+      if (options.isCancelled?.()) throw new DOMException("Upload cancelled", "AbortError");
+      const chunk = new Uint8Array(
+        await file.slice(offset, Math.min(totalBytes, offset + UPLOAD_CHUNK_BYTES)).arrayBuffer(),
+      );
+      await invokeOrThrow<void>("append_file_upload_chunk", {
+        uploadId,
+        data: Array.from(chunk),
+      });
+      options.onProgress?.(Math.min(totalBytes, offset + chunk.byteLength), totalBytes);
+    }
+    if (options.isCancelled?.()) throw new DOMException("Upload cancelled", "AbortError");
+    await invokeOrThrow<void>("finish_file_upload", { uploadId, sourceId, targetPath });
+    finished = true;
+  } finally {
+    if (!finished) {
+      await invokeOrThrow<void>("cancel_file_upload", { uploadId }).catch(() => undefined);
+    }
+  }
 }
 
 export function createDirectory(sourceId: string, path: string): Promise<void> {
@@ -297,6 +382,10 @@ export function cancelTransferJob(jobId: string): Promise<void> {
 
 export function listStorages(): Promise<StorageConfig[]> {
   return invokeOrThrow<StorageConfig[]>("list_storages");
+}
+
+export function createActivationDemoStorage(): Promise<StorageConfig> {
+  return invokeOrThrow<StorageConfig>("create_activation_demo_storage");
 }
 
 export function addStorage(storage: StorageDraft): Promise<StorageConfig> {
@@ -530,7 +619,11 @@ export interface RestorePreviewInput {
 }
 
 export interface RestorePreviewResult {
+  previewId: string;
   storageCount: number;
+  storageAdditions: number;
+  storageUpdates: number;
+  storageRemovals: number;
   hasMcpSettings: boolean;
   hasAppSettings: boolean;
   hasWorkspaces: boolean;
@@ -538,11 +631,11 @@ export interface RestorePreviewResult {
   createdAt: string;
   checksumValid: boolean;
   unsupportedVersion: boolean;
+  expiresInSeconds: number;
 }
 
 export interface ApplyRestoreInput {
-  passphrase: string;
-  armored: string;
+  previewId: string;
   restoreMcpSettings: boolean;
   restoreAppSettings: boolean;
   restoreWorkspaces: boolean;
@@ -580,39 +673,26 @@ export function getMcpSidecarInfo(): Promise<McpSidecarInfo> {
 
 export interface WorkspaceRecord {
   id: string;
+  schemaVersion?: number;
   storageId: string;
   name: string;
   rootPath: string;
   templateId: string;
+  accessProfile?: string;
+  policyRuleId?: string;
   createdAt: string;
   updatedAt: string;
   memoryFiles: string[];
   checkpointIds: string[];
 }
 
-export interface CreateWorkspaceInput {
-  id: string;
-  storageId: string;
-  name: string;
-  rootPath: string;
-  templateId: string;
-  memoryFiles: string[];
-}
-
-export interface TemplateFile {
-  path: string;
-  content: string;
-}
-
 export interface CreateWorkspaceAtomicInput {
-  id: string;
   storageId: string;
   name: string;
   rootPath: string;
   templateId: string;
-  memoryFiles: string[];
-  templateFiles: TemplateFile[];
-  updatePolicy?: McpStoragePolicy;
+  adoptExisting?: boolean;
+  accessProfile?: string;
 }
 
 export interface CreateWorkspaceAtomicOutput {
@@ -624,7 +704,7 @@ export interface CreateWorkspaceAtomicOutput {
 export interface UpdateWorkspaceInput {
   id: string;
   name?: string;
-  rootPath?: string;
+  accessProfile?: string;
   memoryFiles?: string[];
   checkpointIds?: string[];
 }
@@ -637,10 +717,6 @@ export function listWorkspaces(): Promise<WorkspaceRecord[]> {
   return invokeOrThrow<WorkspaceRecord[]>("list_workspaces");
 }
 
-export function createWorkspace(request: CreateWorkspaceInput): Promise<WorkspaceRecord> {
-  return invokeOrThrow<WorkspaceRecord>("create_workspace", { request });
-}
-
 export function createWorkspaceAtomic(request: CreateWorkspaceAtomicInput): Promise<CreateWorkspaceAtomicOutput> {
   return invokeOrThrow<CreateWorkspaceAtomicOutput>("create_workspace_atomic", { request });
 }
@@ -651,6 +727,12 @@ export function updateWorkspace(request: UpdateWorkspaceInput): Promise<Workspac
 
 export function deleteWorkspace(id: string): Promise<void> {
   return invokeOrThrow<void>("delete_workspace", { id });
+}
+
+export function deleteWorkspaceWithFiles(id: string, confirmDeleteFiles: boolean): Promise<void> {
+  return invokeOrThrow<void>("delete_workspace_with_files", {
+    request: { id, confirmDeleteFiles },
+  });
 }
 
 export function importLegacyWorkspaces(request: ImportLegacyWorkspacesInput): Promise<number> {
@@ -671,6 +753,14 @@ export function exportDiagnostics(): Promise<DiagnosticsExportResult> {
 
 export function getProductEvents(): Promise<ProductEvent[]> {
   return invokeOrThrow<ProductEvent[]>("get_product_events");
+}
+
+export function clearProductEvents(): Promise<void> {
+  return invokeOrThrow<void>("clear_product_events");
+}
+
+export function revealDiagnosticsExport(exportId: string): Promise<void> {
+  return invokeOrThrow<void>("reveal_diagnostics_export", { exportId });
 }
 
 export function getOsInfo(): Promise<OsInfo> {

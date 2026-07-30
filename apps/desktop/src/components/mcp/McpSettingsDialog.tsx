@@ -153,6 +153,23 @@ export function McpSettingsDialog({
     }
   };
 
+  const handleRotateAuthToken = async () => {
+    setIsSaving(true);
+    try {
+      await onSave({
+        ...toSettingsUpdate(settings, undefined, settings.enabled),
+        authTokenMutation: { action: "rotate" },
+      });
+      setAuthTokenDraft(undefined);
+      toast({
+        title: "Bearer token rotated",
+        description: "Existing clients must be updated with the new locally stored token.",
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handleHttpToggle = async () => {
     if (!status?.runningHttp && showNetworkWarning) {
       setShowNetworkConfirm(true);
@@ -388,6 +405,7 @@ export function McpSettingsDialog({
               primaryActionLabel={primaryActionLabel}
               endpointDisplay={endpointDisplay}
               onSave={handleSave}
+              onRotateAuthToken={() => void handleRotateAuthToken()}
               onHttpToggle={handleHttpToggle}
             />
 

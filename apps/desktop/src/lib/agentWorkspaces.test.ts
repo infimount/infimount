@@ -8,34 +8,23 @@ import {
   defaultWorkspacePath,
   listAgentWorkspaceCheckpoints,
   listAgentWorkspaces,
+  migrateLegacyWorkspaces,
   normalizeWorkspacePath,
   removeWorkspacePolicy,
   restoreWorkspaceMemoryCheckpoint,
 } from "./agentWorkspaces";
 import {
   listWorkspaces,
-  createWorkspace as apiCreateWorkspace,
+  createWorkspaceAtomic,
   updateWorkspace as apiUpdateWorkspace,
   createDirectory,
   readFile,
   writeFile,
+  importLegacyWorkspaces as apiImportLegacyWorkspaces,
   type WorkspaceRecord,
+  type CreateWorkspaceAtomicInput,
 } from "./api";
 import type { McpStoragePolicy } from "@/types/storage";
-
-vi.mock("./api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./api")>();
-  return {
-    ...actual,
-    listWorkspaces: vi.fn().mockResolvedValue([]),
-    createWorkspace: vi.fn().mockResolvedValue({}),
-    updateWorkspace: vi.fn().mockResolvedValue({}),
-    createDirectory: vi.fn().mockResolvedValue(undefined),
-    listEntries: vi.fn().mockResolvedValue([]),
-    readFile: vi.fn(),
-    writeFile: vi.fn(),
-  };
-});
 
 const policy: McpStoragePolicy = {
   version: 2,
@@ -53,6 +42,42 @@ const policy: McpStoragePolicy = {
   },
 };
 
+vi.mock("./api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./api")>();
+  return {
+    ...actual,
+    listWorkspaces: vi.fn().mockResolvedValue([]),
+    createWorkspaceAtomic: vi.fn().mockImplementation(
+      async (input: CreateWorkspaceAtomicInput) => {
+        const now = new Date().toISOString();
+        return {
+          workspace: {
+            id: `generated-${input.name.toLowerCase().replace(/ /g, "-")}`,
+            storageId: input.storageId,
+            name: input.name,
+            rootPath: input.rootPath,
+            templateId: input.templateId,
+            createdAt: now,
+            updatedAt: now,
+            memoryFiles: input.templateId === "coding"
+              ? ["memory/tasks.md", "memory/decisions.md", "memory/handoff.md"]
+              : [],
+            checkpointIds: [],
+          },
+          policyUpdated: !!input.accessProfile,
+          rollbackErrors: [],
+        };
+      },
+    ),
+    updateWorkspace: vi.fn().mockResolvedValue({}),
+    createDirectory: vi.fn().mockResolvedValue(undefined),
+    listEntries: vi.fn().mockResolvedValue([]),
+    readFile: vi.fn(),
+    writeFile: vi.fn(),
+    importLegacyWorkspaces: vi.fn(),
+  };
+});
+
 describe("agentWorkspaces", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -61,37 +86,41 @@ describe("agentWorkspaces", () => {
     vi.mocked(writeFile).mockResolvedValue(undefined);
     vi.mocked(readFile).mockResolvedValue(new TextEncoder().encode("# Tasks\n"));
     (listWorkspaces as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-    (apiCreateWorkspace as ReturnType<typeof vi.fn>).mockResolvedValue({});
     (apiUpdateWorkspace as ReturnType<typeof vi.fn>).mockResolvedValue({});
   });
 
   it("creates a workspace, template files, and scoped MCP policy", async () => {
-    const updatePolicy = vi.fn().mockResolvedValue(undefined);
-
     const workspace = await createAgentWorkspace({
       storageId: "local",
       name: "Coding Workspace",
       rootPath: "agent space",
       templateId: "coding",
-      currentPolicy: policy,
-      updatePolicy,
+      accessProfile: "read_only",
     });
 
     expect(workspace.rootPath).toBe("/agent space");
-    expect(writeFile).toHaveBeenCalledWith(
-      "local",
-      "/agent space/README.md",
-      expect.anything(),
-    );
-    expect(updatePolicy).toHaveBeenCalledWith(
-      expect.objectContaining({ default_access: "read_write", rules: expect.any(Array) }),
-    );
-    expect(apiCreateWorkspace).toHaveBeenCalledWith(
-      expect.objectContaining({ id: workspace.id, name: "Coding Workspace" }),
+    expect(createWorkspaceAtomic).toHaveBeenCalledWith(
+      expect.objectContaining({ accessProfile: "read_only" }),
     );
   });
 
   it("appends memory and checkpoints memory files", async () => {
+    (createWorkspaceAtomic as ReturnType<typeof vi.fn>).mockResolvedValue({
+      workspace: {
+        id: "research-ws",
+        storageId: "local",
+        name: "Research",
+        rootPath: "/research",
+        templateId: "research",
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+        memoryFiles: ["memory/questions.md", "memory/sources.md", "memory/summary.md"],
+        checkpointIds: [],
+      },
+      policyUpdated: false,
+      rollbackErrors: [],
+    });
+
     const workspace = await createAgentWorkspace({
       storageId: "local",
       name: "Research",
@@ -108,7 +137,14 @@ describe("agentWorkspaces", () => {
 
     const checkpoint = await createWorkspaceCheckpoint(workspace);
     expect(checkpoint.manifestPath).toMatch(/^\.infimount\/checkpoints\/checkpoint-/);
-    expect(listAgentWorkspaceCheckpoints(workspace.id)).toMatchObject([{ id: checkpoint.id }]);
+    const manifestCall = vi
+      .mocked(writeFile)
+      .mock.calls.find((call) => call[1] === `/research/${checkpoint.manifestPath}`);
+    expect(manifestCall).toBeTruthy();
+    vi.mocked(readFile).mockResolvedValue(manifestCall?.[2] as Uint8Array);
+    await expect(listAgentWorkspaceCheckpoints(workspace)).resolves.toMatchObject([
+      { id: checkpoint.id },
+    ]);
     expect(writeFile).toHaveBeenCalledWith(
       "local",
       `/research/${checkpoint.manifestPath}`,
@@ -124,6 +160,22 @@ describe("agentWorkspaces", () => {
   });
 
   it("restores a checkpoint from the OpenDAL workspace manifest when local state is missing", async () => {
+    (createWorkspaceAtomic as ReturnType<typeof vi.fn>).mockResolvedValue({
+      workspace: {
+        id: "research-ws-2",
+        storageId: "local",
+        name: "Research",
+        rootPath: "/research",
+        templateId: "research",
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+        memoryFiles: ["memory/questions.md", "memory/sources.md", "memory/summary.md"],
+        checkpointIds: [],
+      },
+      policyUpdated: false,
+      rollbackErrors: [],
+    });
+
     const workspace = await createAgentWorkspace({
       storageId: "local",
       name: "Research",
@@ -137,17 +189,41 @@ describe("agentWorkspaces", () => {
     expect(manifestCall).toBeTruthy();
     const manifestBytes = manifestCall?.[2] as Uint8Array;
 
-    window.localStorage.setItem("infimount:agent-workspace-checkpoints:v1", "[]");
+    window.localStorage.setItem(
+      "infimount:agent-workspace-checkpoints:v1",
+      JSON.stringify([{ id: checkpoint.id, content: "untrusted" }]),
+    );
     vi.mocked(readFile).mockResolvedValueOnce(manifestBytes);
 
     await restoreWorkspaceMemoryCheckpoint(workspace, checkpoint.id);
 
+    expect(window.localStorage.getItem("infimount:agent-workspace-checkpoints:v1")).toBeNull();
     expect(readFile).toHaveBeenCalledWith("local", `/research/${checkpoint.manifestPath}`);
     expect(writeFile).toHaveBeenCalledWith(
       "local",
       "/research/memory/questions.md",
       expect.anything(),
     );
+  });
+
+  it("rejects arbitrary memory paths before reading or writing storage", async () => {
+    const workspace: WorkspaceRecord = {
+      id: "unsafe",
+      storageId: "local",
+      name: "Unsafe",
+      rootPath: "/unsafe",
+      templateId: "coding",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      memoryFiles: ["../secret"],
+      checkpointIds: [],
+    };
+
+    await expect(createWorkspaceCheckpoint(workspace)).rejects.toThrow("trusted template");
+    await expect(appendWorkspaceMemory(workspace, "../secret", "overwrite")).rejects.toThrow(
+      "Unsafe workspace memory path",
+    );
+    expect(writeFile).not.toHaveBeenCalled();
   });
 
   it("normalizes paths and builds default workspace paths", () => {
@@ -261,17 +337,24 @@ describe("agentWorkspaces", () => {
   it("preserves other workspaces when creating a new one", async () => {
     const created: WorkspaceRecord[] = [];
     (listWorkspaces as ReturnType<typeof vi.fn>).mockImplementation(async () => created);
-    (apiCreateWorkspace as ReturnType<typeof vi.fn>).mockImplementation(
-      async (input: WorkspaceRecord) => {
+    (createWorkspaceAtomic as ReturnType<typeof vi.fn>).mockImplementation(
+      async (input: CreateWorkspaceAtomicInput) => {
         const now = new Date().toISOString();
         const record: WorkspaceRecord = {
-          ...input,
+          id: `generated-${input.name.toLowerCase().replace(/ /g, "-")}`,
+          storageId: input.storageId,
+          name: input.name,
+          rootPath: input.rootPath,
+          templateId: input.templateId,
           createdAt: now,
           updatedAt: now,
-          checkpointIds: input.checkpointIds ?? [],
+          memoryFiles: input.templateId === "coding"
+            ? ["memory/tasks.md", "memory/decisions.md", "memory/handoff.md"]
+            : [],
+          checkpointIds: [],
         };
         created.push(record);
-        return record;
+        return { workspace: record, policyUpdated: false, rollbackErrors: [] };
       },
     );
 
@@ -291,23 +374,55 @@ describe("agentWorkspaces", () => {
     expect(all).toHaveLength(2);
   });
 
-  it("generates ID before policy call", async () => {
-    const updatePolicy = vi.fn().mockResolvedValue(undefined);
+  it("migrates valid legacy workspaces independently and preserves failed or corrupt records", async () => {
+    const validOne = {
+      id: "legacy-1",
+      storageId: "local",
+      name: "Legacy one",
+      rootPath: "/legacy-one",
+      templateId: "coding",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      memoryFiles: [],
+      checkpointIds: [],
+    };
+    const validTwo = { ...validOne, id: "legacy-2", name: "Legacy two", rootPath: "/legacy-two" };
+    const corrupt = { unexpected: true };
+    window.localStorage.setItem(
+      "infimount:agent-workspaces:v1",
+      JSON.stringify([validOne, validTwo, corrupt]),
+    );
+    vi.mocked(apiImportLegacyWorkspaces)
+      .mockResolvedValueOnce(1)
+      .mockRejectedValueOnce(new Error("manifest mismatch"));
+
+    const result = await migrateLegacyWorkspaces();
+
+    expect(result.imported).toBe(1);
+    expect(result.outcomes.map((outcome) => outcome.status)).toEqual([
+      "imported",
+      "failed",
+      "invalid",
+    ]);
+    expect(JSON.parse(window.localStorage.getItem("infimount:agent-workspaces:v1")!)).toEqual([
+      validTwo,
+      corrupt,
+    ]);
+    expect(apiImportLegacyWorkspaces).toHaveBeenCalledTimes(2);
+  });
+
+  it("passes accessProfile to atomic command", async () => {
     const workspace = await createAgentWorkspace({
       storageId: "local",
-      name: "ID-First",
-      rootPath: "/id-first",
+      name: "Access-Test",
+      rootPath: "/access-test",
       templateId: "coding",
-      currentPolicy: policy,
-      updatePolicy,
+      accessProfile: "read_only",
     });
 
     expect(workspace.id).toBeTruthy();
-    const policyArg = updatePolicy.mock.calls[0][0] as McpStoragePolicy;
-    const rule = policyArg.rules.find((candidate) => candidate.source.kind === "workspace");
-    expect(rule).toBeDefined();
-    expect(rule?.source.kind === "workspace" ? rule.source.workspace_id : undefined).toBe(
-      workspace.id,
+    expect(createWorkspaceAtomic).toHaveBeenCalledWith(
+      expect.objectContaining({ accessProfile: "read_only" }),
     );
   });
 });

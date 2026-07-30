@@ -8,9 +8,20 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  Trash2,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -38,6 +49,8 @@ import {
   createAgentWorkspace,
   createWorkspaceCheckpoint,
   defaultWorkspacePath,
+  deleteAgentWorkspace,
+  deleteAgentWorkspaceWithFiles,
   listAgentWorkspaceCheckpoints,
   listAgentWorkspaces,
   listWorkspaceMemoryFiles,
@@ -49,7 +62,7 @@ import {
 } from "@/lib/agentWorkspaces";
 import { listActivityLogEvents, type ActivityLogEvent } from "@/lib/activityLog";
 import { cn } from "@/lib/utils";
-import type { McpAuditEvent, McpStoragePolicy, StorageConfig } from "@/types/storage";
+import type { McpAuditEvent, StorageConfig } from "@/types/storage";
 
 interface AgentWorkspacesDialogProps {
   open: boolean;
@@ -57,7 +70,6 @@ interface AgentWorkspacesDialogProps {
   auditEvents?: McpAuditEvent[];
   onOpenChange: (open: boolean) => void;
   onSelectStorage: (storageId: string) => void;
-  onUpdateStoragePolicy: (storageId: string, policy: McpStoragePolicy) => Promise<void>;
 }
 
 export function AgentWorkspacesDialog({
@@ -66,7 +78,6 @@ export function AgentWorkspacesDialog({
   auditEvents = [],
   onOpenChange,
   onSelectStorage,
-  onUpdateStoragePolicy,
 }: AgentWorkspacesDialogProps) {
   const [workspaces, setWorkspaces] = useState<AgentWorkspace[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
@@ -85,6 +96,8 @@ export function AgentWorkspacesDialog({
   const [isMemoryBusy, setIsMemoryBusy] = useState(false);
   const [isCheckpointBusy, setIsCheckpointBusy] = useState(false);
   const [activityEvents, setActivityEvents] = useState<ActivityLogEvent[]>([]);
+  const [deleteMode, setDeleteMode] = useState<"registration" | "files" | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const selectedWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,
@@ -131,7 +144,13 @@ export function AgentWorkspacesDialog({
     let active = true;
     setMemoryFiles(selectedWorkspace.memoryFiles);
     setSelectedMemoryFile((current) => current ?? selectedWorkspace.memoryFiles[0] ?? null);
-    setCheckpoints(listAgentWorkspaceCheckpoints(selectedWorkspace.id));
+    void listAgentWorkspaceCheckpoints(selectedWorkspace)
+      .then((items) => {
+        if (active) setCheckpoints(items);
+      })
+      .catch(() => {
+        if (active) setCheckpoints([]);
+      });
     void listWorkspaceMemoryFiles(selectedWorkspace)
       .then((files) => {
         if (!active) return;
@@ -180,10 +199,7 @@ export function AgentWorkspacesDialog({
         name,
         rootPath,
         templateId,
-        currentPolicy: selectedStorage.mcpPolicy,
-        updatePolicy: applyPolicy
-          ? (policy) => onUpdateStoragePolicy(selectedStorage.id, policy)
-          : undefined,
+        accessProfile: applyPolicy ? "read_only" : undefined,
       });
       const next = await listAgentWorkspaces();
       setWorkspaces(next);
@@ -235,14 +251,14 @@ export function AgentWorkspacesDialog({
     setIsCheckpointBusy(true);
     try {
       const checkpoint = await createWorkspaceCheckpoint(selectedWorkspace);
-      const nextCheckpoints = listAgentWorkspaceCheckpoints(selectedWorkspace.id);
+      const nextCheckpoints = await listAgentWorkspaceCheckpoints(selectedWorkspace);
       setCheckpoints(nextCheckpoints);
       setSelectedCheckpointId(checkpoint.id);
       setWorkspaces(await listAgentWorkspaces());
       refreshWorkspaceActivity();
       toast({
         title: "Checkpoint saved",
-        description: "Memory files were captured locally and in the workspace manifest.",
+        description: "Memory files were captured in the workspace checkpoint manifest.",
       });
     } catch (error) {
       toast({
@@ -273,6 +289,37 @@ export function AgentWorkspacesDialog({
       });
     } finally {
       setIsCheckpointBusy(false);
+    }
+  };
+
+  const handleDeleteWorkspace = async () => {
+    if (!selectedWorkspace || !deleteMode) return;
+    setIsDeleting(true);
+    try {
+      if (deleteMode === "files") {
+        await deleteAgentWorkspaceWithFiles(selectedWorkspace.id);
+      } else {
+        await deleteAgentWorkspace(selectedWorkspace.id);
+      }
+      const next = await listAgentWorkspaces();
+      setWorkspaces(next);
+      setSelectedWorkspaceId(next[0]?.id ?? null);
+      refreshWorkspaceActivity();
+      toast({
+        title: deleteMode === "files" ? "Workspace and files deleted" : "Workspace registration removed",
+        description: deleteMode === "files"
+          ? "The scoped policy, registration, and workspace root were removed."
+          : "The scoped policy and registration were removed. Storage files were preserved.",
+      });
+      setDeleteMode(null);
+    } catch (error) {
+      toast({
+        title: "Workspace deletion failed",
+        description: error instanceof Error ? error.message : String(error),
+        variant: "destructive",
+      });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -543,6 +590,25 @@ export function AgentWorkspacesDialog({
                       Restore memory
                     </Button>
 
+                    <div className="mt-5 space-y-2 border-t pt-4">
+                      <div className="text-sm font-medium text-destructive">Remove workspace</div>
+                      <Button
+                        className="w-full"
+                        variant="outline"
+                        onClick={() => setDeleteMode("registration")}
+                      >
+                        Remove registration only
+                      </Button>
+                      <Button
+                        className="w-full"
+                        variant="destructive"
+                        onClick={() => setDeleteMode("files")}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Delete registration and files
+                      </Button>
+                    </div>
+
                     <div className="mt-5 border-t pt-4">
                       <div className="flex items-center gap-2 text-sm font-medium">
                         <Clock3 className="h-4 w-4" />
@@ -576,6 +642,38 @@ export function AgentWorkspacesDialog({
             </div>
           </ScrollArea>
         </div>
+
+        <AlertDialog open={deleteMode !== null} onOpenChange={(next) => !next && setDeleteMode(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {deleteMode === "files" ? "Delete workspace files permanently?" : "Remove workspace registration?"}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                {deleteMode === "files"
+                  ? `This permanently deletes ${selectedWorkspace?.rootPath ?? "the workspace root"} and all files below it, then removes its policy and registration. This cannot be undone.`
+                  : "This removes the workspace policy and registration but preserves every storage file."}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={isDeleting}
+                className={deleteMode === "files" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : undefined}
+                onClick={(event) => {
+                  event.preventDefault();
+                  void handleDeleteWorkspace();
+                }}
+              >
+                {isDeleting
+                  ? "Deleting…"
+                  : deleteMode === "files"
+                    ? "Delete registration and files"
+                    : "Remove registration only"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   );

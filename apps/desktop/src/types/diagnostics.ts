@@ -35,7 +35,8 @@ export interface DiagnosticsBundle {
 }
 
 export interface DiagnosticsExportResult {
-  path: string;
+  exportId: string;
+  bundleName: string;
   files: string[];
   checksums: Record<string, string>;
 }

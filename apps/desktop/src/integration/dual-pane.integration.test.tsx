@@ -150,7 +150,7 @@ describe("dual-pane browsing", () => {
       onboardingSkippedAt: null,
       wizardStep: null,
       wizardCompletedSteps: [],
-      telemetryConsent: null,
+      telemetryConsent: "unknown",
     });
     vi.mocked(getMcpStatus).mockResolvedValue(mcpStatus);
     vi.mocked(getMcpClientSnippets).mockResolvedValue({ stdio: "{}", http: "{}" });

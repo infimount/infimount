@@ -151,6 +151,45 @@ export interface McpRuntimeStatus {
   authTokenConfigured: boolean;
 }
 
+export type McpClientKind =
+  | "generic_stdio"
+  | "claude_code"
+  | "cursor"
+  | "vs_code"
+  | "open_code"
+  | "claude_desktop";
+
+export interface McpClientAdapterInfo {
+  kind: McpClientKind;
+  name: string;
+  description: string;
+  detected: boolean;
+  detection: string;
+  writeCapable: boolean;
+  requiresExecutionConfirmation: boolean;
+  defaultTarget: string | null;
+  snippet: string;
+}
+
+export interface McpClientInstallPreview {
+  previewId: string;
+  kind: McpClientKind;
+  action: "copy" | "write" | "execute";
+  targetPath: string | null;
+  before: string | null;
+  after: string;
+  canApply: boolean;
+  requiresExecutionConfirmation: boolean;
+  expiresInSeconds: number;
+}
+
+export interface McpClientInstallResult {
+  applied: boolean;
+  targetPath: string | null;
+  backupPath: string | null;
+  rollbackId: string | null;
+}
+
 export interface McpClientSnippets {
   stdio: string;
   http: string;
@@ -193,7 +232,7 @@ export interface AppSettings {
   onboardingSkippedAt: string | null;
   wizardStep: string | null;
   wizardCompletedSteps: string[];
-  telemetryConsent: boolean | null;
+  telemetryConsent: "unknown" | "granted" | "denied";
 }
 
 export interface McpAuditExportManifest {
@@ -278,11 +317,11 @@ export interface Entry {
 
 export interface SidecarValidation {
   binaryFound: boolean;
-  binaryPath: string | null;
-  versionCheck: string | null;
+  executable: boolean;
+  version: string | null;
   versionMatch: boolean;
   doctorHealthy: boolean;
-  doctorReport: unknown;
+  errorCode: string | null;
 }
 
 export interface ActivationProbeOutput {
@@ -291,6 +330,5 @@ export interface ActivationProbeOutput {
   mcpAllowedOpOk: boolean;
   mcpDenialProven: boolean;
   overallOk: boolean;
-  endpointUsed: string | null;
-  error: string | null;
+  errorCode: string | null;
 }
