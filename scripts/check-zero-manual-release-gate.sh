@@ -22,8 +22,8 @@ require_file_contains() {
 
 extract_job_block() {
   local job=$1
-  awk -v job="  ${job}:" '
-    $0 == job { in_job = 1; print; next }
+  awk -v target="  ${job}:" '
+    $0 == target { in_job = 1; next }
     in_job && /^  [A-Za-z0-9_-]+:/ { exit }
     in_job { print }
   ' "$RELEASE_WORKFLOW"

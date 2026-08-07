@@ -52,7 +52,6 @@ jobs:
           security create-keychain -p rehearsal "$keychain"
           security unlock-keychain -p rehearsal "$keychain"
           openssl req -x509 -newkey rsa:2048 -nodes -subj '/CN=Infimount Rehearsal' \
-            -addext 'extendedKeyUsage=codeSigning' \
             -keyout "$work/key.pem" -out "$work/cert.pem" -days 1 >/dev/null 2>&1
           # Import the disposable PEM certificate and key separately. This
           # avoids PKCS#12 cipher/MAC differences between macOS security,
