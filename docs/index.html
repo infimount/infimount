@@ -1,54 +1,26 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Infimount - One Surface for Every Storage</title>
-    <meta
-      name="description"
-      content="Infimount is a local-first desktop app for browsing local files, S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, Google Cloud Storage, Google Drive, Microsoft OneDrive, WebDAV, SFTP, FTP, and MCP-enabled storage workflows."
-    />
-    <meta
-      name="keywords"
-      content="Infimount, storage browser, S3 browser, OSS browser, COS browser, OBS browser, Azure Blob browser, Google Cloud Storage browser, WebDAV client, SFTP browser, FTP browser, MCP server, OpenDAL, Tauri desktop app, local-first storage"
-    />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Infimount | One surface for every storage</title>
+    <meta name="description" content="Infimount is a local-first desktop file browser for local files, cloud storage, and explicit MCP access." />
+    <meta name="keywords" content="Infimount, storage browser, S3/S3-compatible, WebDAV, SFTP, FTP, MCP server, local-first storage" />
     <meta name="robots" content="index,follow,max-image-preview:large" />
-    <meta name="theme-color" content="#070a0d" />
+    <meta name="theme-color" content="#f0ede6" />
     <link rel="canonical" href="https://infimount.github.io/infimount/" />
-    <link
-      rel="sitemap"
-      type="application/xml"
-      href="https://infimount.github.io/infimount/sitemap.xml"
-    />
+    <link rel="sitemap" type="application/xml" href="https://infimount.github.io/infimount/sitemap.xml" />
     <link rel="icon" href="./assets/infimount-logo.png" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Infimount" />
-    <meta
-      property="og:title"
-      content="Infimount - One Surface for Every Storage"
-    />
-    <meta
-      property="og:description"
-      content="Browse local files, S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, Google Cloud Storage, Google Drive, Microsoft OneDrive, WebDAV, SFTP, FTP, and MCP-enabled storage workflows from one local-first desktop app."
-    />
+    <meta property="og:title" content="Infimount | One surface for every storage" />
+    <meta property="og:description" content="Browse, move, preview, and expose storage from one local-first desktop app." />
     <meta property="og:url" content="https://infimount.github.io/infimount/" />
-    <meta
-      property="og:image"
-      content="https://infimount.github.io/infimount/assets/infimount-banner.png"
-    />
+    <meta property="og:image" content="https://infimount.github.io/infimount/assets/infimount-banner.png" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta
-      name="twitter:title"
-      content="Infimount - One Surface for Every Storage"
-    />
-    <meta
-      name="twitter:description"
-      content="A local-first desktop app for local files, cloud storage, and MCP-enabled agent workflows."
-    />
-    <meta
-      name="twitter:image"
-      content="https://infimount.github.io/infimount/assets/infimount-banner.png"
-    />
+    <meta name="twitter:title" content="Infimount | One surface for every storage" />
+    <meta name="twitter:description" content="A local-first desktop file browser for storage and explicit agent access." />
+    <meta name="twitter:image" content="https://infimount.github.io/infimount/assets/infimount-banner.png" />
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
@@ -56,1492 +28,388 @@
         "name": "Infimount",
         "applicationCategory": "DeveloperApplication",
         "operatingSystem": "Linux, macOS, Windows",
-        "description": "Local-first desktop app for browsing local files, cloud storage, and MCP-enabled storage workflows.",
+        "description": "Local-first desktop app for browsing local files, cloud storage, and explicit MCP access.",
         "image": "https://infimount.github.io/infimount/assets/infimount-banner.png",
         "downloadUrl": "https://github.com/infimount/infimount/releases/latest",
         "softwareVersion": "0.7.1",
         "codeRepository": "https://github.com/infimount/infimount",
         "license": "https://github.com/infimount/infimount/blob/main/LICENSE",
-        "sameAs": [
-          "https://github.com/infimount/infimount",
-          "https://github.com/infimount/homebrew-infimount",
-          "https://www.linkedin.com/company/infimount"
-        ],
-        "offers": {
-          "@type": "Offer",
-          "price": "0",
-          "priceCurrency": "USD"
-        }
+        "sameAs": ["https://github.com/infimount/infimount", "https://github.com/infimount/homebrew-infimount", "https://www.linkedin.com/company/infimount"],
+        "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}
       }
     </script>
     <style>
-      @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
+      @import url("https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Inter+Tight:wght@400;500;600;700;800&display=swap");
 
       :root {
-        --bg: #070a0d;
-        --bg-soft: #0b1015;
-        --panel: rgba(18, 23, 29, 0.74);
-        --panel-strong: rgba(22, 27, 34, 0.92);
-        --line: rgba(214, 224, 238, 0.16);
-        --line-strong: rgba(232, 239, 250, 0.28);
-        --text: #f2f5f8;
-        --muted: #a8b0ba;
-        --muted-soft: #727b87;
-        --silver: #d7dce3;
-        --accent: #f3f6fa;
-        --accent-dark: #11161d;
-        --orange: #d39142;
-        --shadow: 0 30px 100px rgba(0, 0, 0, 0.48);
-        --radius-lg: 30px;
-        --radius-md: 18px;
-        --radius-sm: 12px;
+        --paper: #f0ede6;
+        --paper-deep: #e5e0d6;
+        --ink: #1d2421;
+        --muted: #626861;
+        --faint: #8b918a;
+        --rule: #c9c8bf;
+        --orange: #c96035;
+        --orange-dark: #914325;
+        --forest: #29433a;
+        --night: #1d2824;
+        --night-soft: #28352f;
+        --white: #f9f7f2;
+        --serif: "DM Serif Display", Georgia, serif;
+        --sans: "Inter Tight", Inter, ui-sans-serif, system-ui, sans-serif;
+        --measure: 72rem;
+        --ease: cubic-bezier(.22, 1, .36, 1);
       }
 
-      * {
-        box-sizing: border-box;
-      }
-
-      html {
-        scroll-behavior: smooth;
-      }
-
+      *, *::before, *::after { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
       body {
         margin: 0;
         min-width: 320px;
-        color: var(--text);
-        background:
-          radial-gradient(
-            circle at 72% 6%,
-            rgba(111, 123, 141, 0.2),
-            transparent 30rem
-          ),
-          radial-gradient(
-            circle at 18% 26%,
-            rgba(255, 255, 255, 0.08),
-            transparent 22rem
-          ),
-          linear-gradient(180deg, #080b0f 0%, #050709 46%, #07090b 100%);
-        font-family:
-          Inter,
-          system-ui,
-          -apple-system,
-          BlinkMacSystemFont,
-          "Segoe UI",
-          sans-serif;
-        letter-spacing: 0;
+        color: var(--ink);
+        background: var(--paper);
+        font-family: var(--sans);
+        font-size: 16px;
+        line-height: 1.5;
+        text-rendering: optimizeLegibility;
       }
-
       body::before {
-        content: "";
-        position: fixed;
-        inset: 0;
-        z-index: -2;
-        background-image: url("./assets/infimount-mountain-banner.png");
-        background-position: center 118px;
-        background-repeat: no-repeat;
-        background-size: min(1960px, 142vw) auto;
-        opacity: 0.38;
-      }
-
-      body::after {
         content: "";
         position: fixed;
         inset: 0;
         z-index: -1;
         pointer-events: none;
-        background:
-          linear-gradient(90deg, rgba(7, 10, 13, 0.08), rgba(7, 10, 13, 0.5)),
-          linear-gradient(180deg, rgba(7, 10, 13, 0.02), #07090b 94%);
-      }
-
-      a {
-        color: inherit;
-      }
-
-      .page {
-        width: min(1360px, calc(100% - 32px));
-        margin: 0 auto;
-      }
-
-      .topbar {
-        position: sticky;
-        top: 18px;
-        z-index: 20;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 24px;
-        min-height: 66px;
-        margin-top: 18px;
-        padding: 12px 16px;
-        border: 1px solid rgba(235, 241, 249, 0.12);
-        border-radius: 999px;
-        background: rgba(7, 10, 13, 0.72);
-        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
-        backdrop-filter: blur(18px);
-      }
-
-      .brand-lockup {
-        display: inline-flex;
-        align-items: center;
-        min-width: 184px;
-        text-decoration: none;
-      }
-
-      .brand-logo {
-        display: block;
-        width: 180px;
-        height: 52px;
-        object-fit: contain;
-        object-position: left center;
-      }
-
-      .nav {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 6px;
-      }
-
-      .nav a,
-      .social-button,
-      .btn {
-        border: 1px solid transparent;
-        border-radius: 999px;
-        text-decoration: none;
-        transition:
-          transform 160ms ease,
-          border-color 160ms ease,
-          background-color 160ms ease,
-          color 160ms ease;
-      }
-
-      .nav a {
-        padding: 10px 13px;
-        color: #d6dbe2;
-        font-size: 0.9rem;
-        font-weight: 500;
-      }
-
-      .nav a:hover {
-        color: var(--text);
-        background: rgba(255, 255, 255, 0.06);
-      }
-
-      .social-button {
-        display: inline-flex;
-        align-items: center;
-        gap: 9px;
-        min-height: 42px;
-        padding: 10px 15px;
-        border-color: rgba(235, 241, 249, 0.2);
-        color: var(--text);
-        background: rgba(255, 255, 255, 0.04);
-        font-size: 0.9rem;
-        font-weight: 700;
-      }
-
-      .social-button:hover,
-      .btn:hover {
-        transform: translateY(-1px);
-        border-color: rgba(255, 255, 255, 0.38);
-      }
-
-      .mobile-jumps {
-        display: none;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 10px;
-        margin-top: 12px;
-      }
-
-      .mobile-jumps a {
-        min-height: 42px;
-        padding: 11px 12px;
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        color: var(--muted);
-        background: rgba(255, 255, 255, 0.04);
-        font-size: 0.86rem;
-        font-weight: 700;
-        text-align: center;
-        text-decoration: none;
-      }
-
-      .hero {
-        position: relative;
-        min-height: 760px;
-        padding: 76px 0 44px;
-      }
-
-      .hero-grid {
-        display: grid;
-        grid-template-columns: minmax(360px, 0.75fr) minmax(620px, 1.25fr);
-        gap: 48px;
-        align-items: center;
-      }
-
-      .hero-copy {
-        padding-top: 24px;
-      }
-
-      .meta-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        margin-bottom: 26px;
-      }
-
-      .meta-pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        min-height: 32px;
-        padding: 7px 12px;
-        border: 1px solid rgba(235, 241, 249, 0.15);
-        border-radius: 999px;
-        color: #d4dae2;
-        background: rgba(255, 255, 255, 0.055);
-        font-size: 0.82rem;
-        font-weight: 600;
-      }
-
-      .hero h1 {
-        max-width: 9ch;
-        margin: 0;
-        color: var(--silver);
-        font-size: clamp(4.4rem, 8vw, 6.9rem);
-        line-height: 0.88;
-        letter-spacing: -0.06em;
-        text-shadow:
-          0 2px 0 rgba(255, 255, 255, 0.22),
-          0 18px 44px rgba(0, 0, 0, 0.42);
-      }
-
-      .hero-subtitle {
-        margin: 20px 0 0;
-        color: var(--text);
-        font-size: clamp(1.55rem, 3vw, 2.25rem);
-        line-height: 1.12;
-        font-weight: 500;
-        letter-spacing: -0.045em;
-      }
-
-      .lead {
-        max-width: 560px;
-        margin: 18px 0 0;
-        color: var(--muted);
-        font-size: clamp(1rem, 1.6vw, 1.15rem);
-        line-height: 1.7;
-      }
-
-      .cta-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 14px;
-        margin-top: 30px;
-      }
-
-      .btn {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 12px;
-        min-height: 54px;
-        padding: 15px 22px;
-        font-size: 0.98rem;
-        font-weight: 700;
-      }
-
-      .btn.primary {
-        border-color: rgba(255, 255, 255, 0.78);
-        color: #071015;
-        background:
-          linear-gradient(
-            180deg,
-            rgba(255, 255, 255, 0.96),
-            rgba(189, 198, 210, 0.9)
-          ),
-          var(--accent);
-        box-shadow: 0 18px 52px rgba(214, 224, 238, 0.22);
-      }
-
-      .btn.secondary {
-        border-color: rgba(235, 241, 249, 0.24);
-        color: var(--text);
-        background: rgba(255, 255, 255, 0.055);
-      }
-
-      .mini-stats {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        margin-top: 30px;
-      }
-
-      .mini-stat {
-        display: inline-flex;
-        align-items: center;
-        gap: 9px;
-        min-height: 34px;
-        padding: 8px 12px;
-        border: 1px solid rgba(235, 241, 249, 0.14);
-        border-radius: 10px;
-        color: #d6dce4;
-        background: rgba(255, 255, 255, 0.04);
-        font-size: 0.84rem;
-        font-weight: 700;
-      }
-
-      .hero-media {
-        position: relative;
-      }
-
-      .app-window {
-        position: relative;
-        overflow: hidden;
-        border: 1px solid rgba(235, 241, 249, 0.22);
-        border-radius: 22px;
-        background: rgba(10, 14, 18, 0.84);
-        box-shadow:
-          var(--shadow),
-          inset 0 1px 0 rgba(255, 255, 255, 0.08);
-      }
-
-      .hero-screenshot {
-        display: block;
-        width: 100%;
-        height: auto;
-        filter: saturate(0.72) brightness(0.82) contrast(1.05);
-      }
-
-      .privacy-panel {
-        position: absolute;
-        right: -12px;
-        bottom: -22px;
-        width: min(310px, 44%);
-        padding: 18px;
-        border: 1px solid rgba(235, 241, 249, 0.18);
-        border-radius: 18px;
-        color: #eaf0f7;
-        background: rgba(8, 12, 16, 0.9);
-        box-shadow: 0 22px 60px rgba(0, 0, 0, 0.4);
-        backdrop-filter: blur(12px);
-      }
-
-      .privacy-panel strong {
-        display: block;
-        font-size: 0.94rem;
-      }
-
-      .privacy-panel span {
-        display: block;
-        margin-top: 8px;
-        color: var(--muted);
-        font-size: 0.82rem;
-        line-height: 1.55;
-      }
-
-      .feature-strip,
-      .connector-band,
-      .agent-section,
-      .download-section,
-      .install-section,
-      .footer {
-        position: relative;
-        z-index: 2;
-      }
-
-      .feature-strip {
-        display: grid;
-        grid-template-columns: repeat(6, minmax(0, 1fr));
-        gap: 14px;
-        margin-top: -78px;
-      }
-
-      .feature-card,
-      .download-card,
-      .info-card,
-      .callout,
-      .footer {
-        border: 1px solid var(--line);
-        background:
-          linear-gradient(
-            180deg,
-            rgba(255, 255, 255, 0.065),
-            rgba(255, 255, 255, 0.028)
-          ),
-          var(--panel);
-        box-shadow:
-          0 20px 60px rgba(0, 0, 0, 0.22),
-          inset 0 1px 0 rgba(255, 255, 255, 0.06);
-        backdrop-filter: blur(12px);
-      }
-
-      .feature-card {
-        min-height: 154px;
-        padding: 24px 20px;
-        border-radius: 18px;
-        text-align: left;
-      }
-
-      .feature-card h2,
-      .download-card h3,
-      .info-card h3 {
-        margin: 0;
-        color: var(--text);
-        font-size: 1rem;
-        line-height: 1.25;
-        letter-spacing: -0.02em;
-      }
-
-      .feature-card p,
-      .download-card p,
-      .info-card p,
-      .callout p {
-        margin: 10px 0 0;
-        color: var(--muted);
-        font-size: 0.9rem;
-        line-height: 1.55;
-      }
-
-      .section-head {
-        margin: 72px auto 26px;
-        text-align: center;
-      }
-
-      .section-head h2 {
-        margin: 0;
-        color: var(--text);
-        font-size: clamp(1.9rem, 3.5vw, 3.1rem);
-        line-height: 1;
-        letter-spacing: -0.05em;
-      }
-
-      .section-head p {
-        max-width: 650px;
-        margin: 12px auto 0;
-        color: var(--muted);
-        font-size: 1rem;
-        line-height: 1.65;
-      }
-
-      .connector-band {
-        padding-top: 4px;
-      }
-
-      .install-section {
-        margin-top: 18px;
-      }
-
-      .connector-rail {
-        display: grid;
-        grid-template-columns: repeat(5, minmax(0, 1fr));
-        gap: 14px;
-        padding: 16px 0 8px;
-        border-top: 1px solid rgba(235, 241, 249, 0.12);
-        border-bottom: 1px solid rgba(235, 241, 249, 0.12);
-      }
-
-      .connector {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 12px;
-        min-height: 74px;
-        color: #e2e7ee;
-        font-weight: 700;
-      }
-
-      .connector img {
-        display: grid;
-        place-items: center;
-        width: 32px;
-        height: 32px;
-        object-fit: contain;
-      }
-
-      .connector-icon {
-        display: grid;
-        place-items: center;
-        width: 42px;
-        height: 42px;
-        border-radius: 10px;
-        background: rgba(255, 255, 255, 0.06);
-      }
-
-      .flow {
-        display: grid;
-        grid-template-columns: 1fr 34px 1.15fr 34px 1fr 1.4fr;
-        gap: 14px;
-        align-items: center;
-      }
-
-      .flow-node,
-      .tool-list {
-        min-height: 126px;
-        padding: 20px;
-        border: 1px solid var(--line);
-        border-radius: 18px;
-        background: rgba(255, 255, 255, 0.04);
-      }
-
-      .flow-node strong,
-      .tool-list strong {
-        display: block;
-        color: var(--text);
-        font-size: 1.05rem;
-      }
-
-      .flow-node span,
-      .tool-list span {
-        display: block;
-        margin-top: 8px;
-        color: var(--muted);
-        font-size: 0.88rem;
-        line-height: 1.5;
-      }
-
-      .flow-arrow {
-        color: rgba(235, 241, 249, 0.36);
-        font-size: 1.5rem;
-        text-align: center;
-      }
-
-      .tool-list {
-        min-height: 158px;
-        background: rgba(5, 8, 11, 0.52);
-      }
-
-      .tool-list code,
-      code {
-        border: 1px solid rgba(235, 241, 249, 0.14);
-        border-radius: 7px;
-        color: #eaf0f7;
-        background: rgba(255, 255, 255, 0.06);
-        font-family:
-          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-          "Liberation Mono", monospace;
-        font-size: 0.84rem;
-        padding: 0.1rem 0.35rem;
-      }
-
-      .tools-grid {
-        display: grid;
-        grid-template-columns: minmax(0, 0.86fr) minmax(0, 1fr);
-        gap: 8px 12px;
-        margin-top: 14px;
-        color: var(--muted);
-        font-family:
-          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-          "Liberation Mono", monospace;
-        font-size: 0.82rem;
-      }
-
-      .tools-grid span {
-        min-width: 0;
-        overflow-wrap: anywhere;
-      }
-
-      @media (max-width: 1240px) {
-        .flow {
-          grid-template-columns: minmax(0, 1fr) 34px minmax(0, 1fr) 34px minmax(
-              0,
-              1fr
-            );
-          align-items: stretch;
-        }
-
-        .tool-list {
-          grid-column: 1 / -1;
-        }
-
-        .tools-grid {
-          grid-template-columns: repeat(5, minmax(0, 1fr));
-        }
-      }
-
-      .download-grid {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(300px, 1fr));
-        gap: 16px;
-        align-items: stretch;
-      }
-
-      .download-card {
-        display: flex;
-        flex-direction: column;
-        gap: 18px;
-        min-height: 284px;
-        padding: 22px;
-        border-radius: 20px;
-      }
-
-      .download-actions {
-        display: grid;
-        gap: 10px;
-        margin-top: auto;
-      }
-
-      .download-actions a {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 14px;
-        min-height: 45px;
-        padding: 11px 13px;
-        border: 1px solid rgba(235, 241, 249, 0.14);
-        border-radius: 12px;
-        color: var(--text);
-        background: rgba(255, 255, 255, 0.045);
-        font-size: 0.9rem;
-        font-weight: 700;
-        text-decoration: none;
-        transition:
-          border-color 160ms ease,
-          background-color 160ms ease;
-      }
-
-      .download-actions a:hover {
-        border-color: rgba(235, 241, 249, 0.34);
-        background: rgba(255, 255, 255, 0.08);
-      }
-
-      .install-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 16px;
-      }
-
-      .install-card {
-        grid-column: 1 / -1;
-      }
-
-      .command-grid {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 12px;
-        margin-top: 16px;
-      }
-
-      .command-panel {
-        min-width: 0;
-        padding: 14px;
-        border: 1px solid rgba(235, 241, 249, 0.14);
-        border-radius: 14px;
-        background: rgba(0, 0, 0, 0.2);
-      }
-
-      .command-label {
-        display: block;
-        color: var(--text);
-        font-size: 0.82rem;
-        font-weight: 800;
-      }
-
-      .command-note {
-        display: block;
-        margin-top: 8px;
-        color: var(--muted-soft);
-        font-size: 0.78rem;
-        line-height: 1.45;
-      }
-
-      .info-card,
-      .callout {
-        padding: 24px;
-        border-radius: 20px;
-      }
-
-      .info-card ul,
-      .install-steps {
-        display: grid;
-        gap: 10px;
-        margin: 16px 0 0;
-        padding: 0;
-        list-style: none;
-      }
-
-      .info-card li,
-      .install-steps li {
-        color: var(--muted);
-        line-height: 1.5;
-      }
-
-      .info-card li {
-        display: flex;
-        gap: 10px;
-      }
-
-      .install-steps li {
-        display: block;
-      }
-
-      .info-card li::before {
-        content: "";
-        flex: 0 0 auto;
-        width: 7px;
-        height: 7px;
-        margin-top: 0.52em;
-        border-radius: 50%;
-        background: var(--orange);
-      }
-
-      .install-steps li::before {
-        display: none;
-      }
-
-      .install-steps code {
-        display: inline-block;
-        margin: 0 0.18rem;
-      }
-
-      .copyable-code {
-        position: relative;
-        min-width: 0;
-        margin-top: 12px;
-      }
-
-      .copyable-code .code-block {
-        margin-top: 0;
-        padding-right: 74px;
-      }
-
-      .copy-command {
-        position: absolute;
-        top: 8px;
-        right: 8px;
-        min-height: 30px;
-        padding: 6px 10px;
-        border: 1px solid rgba(235, 241, 249, 0.18);
-        border-radius: 9px;
-        color: #f0f4f8;
-        background: rgba(255, 255, 255, 0.08);
-        font: inherit;
-        font-size: 0.75rem;
-        font-weight: 800;
-        cursor: pointer;
-        transition:
-          border-color 160ms ease,
-          background-color 160ms ease,
-          color 160ms ease;
-      }
-
-      .copy-command:hover,
-      .copy-command:focus-visible {
-        border-color: rgba(235, 241, 249, 0.38);
-        background: rgba(255, 255, 255, 0.14);
-        outline: none;
-      }
-
-      .copy-command[data-copied="true"] {
-        color: #d6eadc;
-        border-color: rgba(169, 214, 179, 0.34);
-      }
-
-      .code-block {
-        max-width: 100%;
-        margin: 12px 0 0;
-        padding: 13px;
-        overflow: hidden;
-        border: 1px solid rgba(235, 241, 249, 0.14);
-        border-radius: 12px;
-        color: #e8edf5;
-        background: rgba(0, 0, 0, 0.28);
-        font-family:
-          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-          "Liberation Mono", monospace;
-        font-size: 0.8rem;
-        line-height: 1.55;
-        overflow-wrap: anywhere;
-        white-space: pre-wrap;
-      }
-
-      .callout {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 24px;
-        margin-top: 72px;
-        padding: 28px 34px;
-        background:
-          linear-gradient(
-            90deg,
-            rgba(255, 255, 255, 0.065),
-            rgba(255, 255, 255, 0.025)
-          ),
-          rgba(13, 18, 23, 0.84);
-      }
-
-      .callout h2 {
-        margin: 0;
-        font-size: clamp(1.6rem, 3vw, 2.3rem);
-        letter-spacing: -0.04em;
-      }
-
-      .footer {
-        display: grid;
-        grid-template-columns: 1.3fr repeat(4, minmax(0, 1fr));
-        gap: 34px;
-        margin: 72px 0 34px;
-        padding: 28px;
-        border-radius: 20px;
-      }
-
-      .footer-brand img {
-        width: 190px;
-        height: 64px;
-        object-fit: contain;
-        object-position: left center;
-      }
-
-      .footer p {
-        margin: 8px 0 0;
-        color: var(--muted);
-        font-size: 0.9rem;
-        line-height: 1.55;
-      }
-
-      .footer h3 {
-        margin: 0 0 12px;
-        color: var(--text);
-        font-size: 0.9rem;
-      }
-
-      .footer a {
-        display: block;
-        margin-top: 8px;
-        color: var(--muted);
-        font-size: 0.88rem;
-        text-decoration: none;
-      }
-
-      .footer a:hover {
-        color: var(--text);
-      }
-
-      @media (max-width: 1120px) {
-        .feature-strip {
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-          margin-top: 24px;
-        }
-
-        .hero {
-          min-height: auto;
-        }
-
-        .hero-grid {
-          grid-template-columns: 1fr;
-        }
-
-        .privacy-panel {
-          right: 16px;
-        }
-
-        .flow {
-          grid-template-columns: 1fr;
-        }
-
-        .flow-arrow {
-          display: none;
-        }
-
-        .footer {
-          grid-template-columns: 1fr 1fr;
-        }
-      }
-
-      @media (max-width: 980px) {
-        .connector-rail {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-
-        .download-grid,
-        .install-grid,
-        .command-grid {
-          grid-template-columns: 1fr;
-        }
-
-        .install-card {
-          grid-column: auto;
-        }
-
-        .download-card {
-          min-height: auto;
-        }
-
-        .callout {
-          display: block;
-        }
-
-        .callout .cta-row {
-          margin-top: 22px;
-        }
-      }
-
-      @media (max-width: 780px) {
-        .page {
-          width: min(100% - 24px, 1360px);
-        }
-
-        .topbar {
-          position: static;
-          align-items: flex-start;
-          border-radius: 22px;
-        }
-
-        .brand-lockup {
-          min-width: 0;
-        }
-
-        .brand-logo {
-          width: 154px;
-          height: 44px;
-        }
-
-        .nav,
-        .social-button {
-          display: none;
-        }
-
-        .mobile-jumps {
-          display: grid;
-        }
-
-        .hero {
-          padding-top: 44px;
-        }
-
-        .hero h1 {
-          font-size: clamp(4rem, 20vw, 5.6rem);
-        }
-
-        body::before {
-          background-image: url("./assets/infimount-mountain.png");
-          background-position: center 120px;
-          background-size: min(760px, 156vw) auto;
-          opacity: 0.3;
-        }
-
-        .hero-subtitle {
-          font-size: clamp(1.36rem, 7vw, 2rem);
-        }
-
-        .privacy-panel {
-          position: static;
-          width: auto;
-          margin-top: 14px;
-        }
-
-        .feature-strip,
-        .connector-rail,
-        .download-grid,
-        .install-grid,
-        .footer {
-          grid-template-columns: 1fr;
-        }
-
-        .tools-grid {
-          grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr);
-        }
-
-        .callout {
-          padding: 24px;
-        }
+        opacity: .28;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.12'/%3E%3C/svg%3E");
+        mix-blend-mode: multiply;
+      }
+      a { color: inherit; }
+      img { max-width: 100%; }
+      .skip-link { position: absolute; left: -999px; top: 8px; z-index: 20; padding: 10px 14px; background: var(--orange); color: var(--white); }
+      .skip-link:focus { left: 8px; }
+      .shell { width: min(var(--measure), calc(100% - 48px)); margin-inline: auto; }
+      .eyebrow { display: flex; align-items: center; gap: 9px; margin: 0; color: var(--orange-dark); font-size: .72rem; font-weight: 800; letter-spacing: .15em; text-transform: uppercase; }
+      .eyebrow::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--orange); }
+      .rule { height: 1px; margin: 0; border: 0; background: var(--rule); }
+      .serif { font-family: var(--serif); font-weight: 400; }
+      .display-dot::after { content: "·"; margin-left: .08em; color: var(--orange); font-family: var(--sans); font-weight: 800; }
+      .topbar { position: sticky; top: 0; z-index: 10; border-bottom: 1px solid rgba(201, 200, 191, .86); background: rgba(240, 237, 230, .92); backdrop-filter: blur(14px); }
+      .topbar-inner { display: flex; align-items: center; justify-content: space-between; min-height: 74px; gap: 24px; }
+      .wordmark { display: inline-flex; align-items: center; gap: 11px; color: var(--ink); font-size: 1.15rem; font-weight: 800; letter-spacing: -.055em; text-decoration: none; }
+      .mark { display: grid; width: 27px; height: 27px; place-items: center; border: 2px solid var(--ink); border-radius: 50% 50% 50% 12%; font-size: .78rem; line-height: 1; transform: rotate(-12deg); }
+      .wordmark span:last-child { transform: translateY(-1px); }
+      .nav { display: flex; align-items: center; gap: 22px; color: var(--muted); font-size: .84rem; font-weight: 600; }
+      .nav a { text-decoration: none; }
+      .nav a:hover, .nav a:focus-visible { color: var(--orange-dark); }
+      .nav-cta { padding: 9px 14px; border: 1px solid var(--ink); color: var(--white); background: var(--ink); }
+      .hero { padding: 76px 0 92px; }
+      .hero-grid { display: grid; grid-template-columns: minmax(0, .83fr) minmax(0, 1.17fr); gap: clamp(42px, 7vw, 112px); align-items: end; }
+      .hero h1 { max-width: 8.6ch; margin: 22px 0 0; font-size: clamp(4.2rem, 9vw, 8.7rem); line-height: .86; letter-spacing: -.075em; }
+      .hero h1 em { color: var(--forest); }
+      .hero-lead { max-width: 38rem; margin: 28px 0 0; color: var(--muted); font-size: clamp(1.1rem, 1.7vw, 1.35rem); line-height: 1.45; }
+      .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+      .button { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 12px 18px; border: 1px solid var(--ink); font: 700 .9rem var(--sans); text-decoration: none; transition: transform 180ms var(--ease), background-color 180ms ease, color 180ms ease; }
+      .button:hover, .button:focus-visible { transform: translateY(-2px); }
+      .button-primary { color: var(--white); background: var(--ink); }
+      .button-primary:hover, .button-primary:focus-visible { background: var(--orange-dark); }
+      .button-quiet { border-color: var(--rule); color: var(--ink); background: transparent; }
+      .button-quiet:hover, .button-quiet:focus-visible { background: var(--paper-deep); }
+      .hero-note { display: flex; gap: 20px; margin-top: 28px; color: var(--faint); font-size: .76rem; }
+      .hero-note span + span { padding-left: 20px; border-left: 1px solid var(--rule); }
+      .product-frame { position: relative; padding: 10px 10px 0; background: var(--night); box-shadow: 18px 22px 0 var(--paper-deep); }
+      .product-frame::before { content: "INFIMOUNT / WORKBENCH"; display: block; padding: 8px 10px 10px; color: #9ea9a0; font-size: .62rem; font-weight: 700; letter-spacing: .14em; }
+      .product-frame img { display: block; width: 100%; height: auto; border: 1px solid #536058; }
+      .frame-caption { display: flex; justify-content: space-between; gap: 18px; padding: 12px 10px 14px; color: #b5bdb5; font-size: .7rem; }
+      .frame-caption strong { color: var(--white); font-weight: 600; }
+      .index-strip { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--ink); border-bottom: 1px solid var(--ink); }
+      .index-item { display: flex; align-items: baseline; gap: 12px; min-height: 74px; padding: 18px 16px 16px 0; text-decoration: none; }
+      .index-item + .index-item { padding-left: 18px; border-left: 1px solid var(--rule); }
+      .index-number { color: var(--orange); font-size: .75rem; font-weight: 800; }
+      .index-label { font-size: .86rem; font-weight: 700; }
+      .section { padding: 120px 0; }
+      .section.compact { padding-top: 82px; padding-bottom: 82px; }
+      .section-heading { display: grid; grid-template-columns: minmax(150px, .36fr) minmax(0, 1fr); gap: 30px; align-items: start; margin-bottom: 54px; }
+      .section-heading h2 { max-width: 13ch; margin: 0; font-size: clamp(2.4rem, 5vw, 4.8rem); line-height: .93; letter-spacing: -.065em; }
+      .section-heading p { max-width: 36rem; margin: 4px 0 0; color: var(--muted); font-size: 1.06rem; }
+      .section-heading p strong { color: var(--ink); }
+      .capability-layout { display: grid; grid-template-columns: 1.25fr .75fr; gap: 24px; align-items: stretch; }
+      .capability-lead { min-height: 360px; padding: 36px; color: var(--white); background: var(--forest); }
+      .capability-lead h3 { max-width: 11ch; margin: 0; font-size: clamp(2.2rem, 4vw, 4rem); line-height: .94; letter-spacing: -.06em; }
+      .capability-lead p { max-width: 29rem; margin: 26px 0 0; color: #cbd5cc; font-size: 1.02rem; }
+      .capability-lead .small-link { display: inline-flex; margin-top: 42px; color: var(--white); font-size: .84rem; font-weight: 700; text-decoration: none; border-bottom: 1px solid #92a69a; }
+      .capability-list { display: grid; grid-template-rows: repeat(3, 1fr); border-top: 1px solid var(--rule); }
+      .capability-row { display: grid; grid-template-columns: 56px 1fr; gap: 16px; padding: 20px 0; border-bottom: 1px solid var(--rule); }
+      .capability-row b { color: var(--orange); font-size: .75rem; }
+      .capability-row h3 { margin: 0; font-size: 1.1rem; letter-spacing: -.02em; }
+      .capability-row p { margin: 7px 0 0; color: var(--muted); font-size: .9rem; }
+      .connectors { background: var(--paper-deep); }
+      .connector-layout { display: grid; grid-template-columns: .75fr 1.25fr; gap: 72px; align-items: start; }
+      .connector-intro { max-width: 26rem; }
+      .connector-intro h3 { margin: 0; font-size: 1.55rem; line-height: 1.08; letter-spacing: -.04em; }
+      .connector-intro p { margin: 18px 0 0; color: var(--muted); }
+      .connector-note { display: flex; gap: 12px; align-items: start; margin-top: 34px; padding-top: 14px; border-top: 1px solid var(--rule); color: var(--muted); font-size: .8rem; }
+      .connector-note::before { content: "↗"; color: var(--orange); font-weight: 800; }
+      .connector-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--ink); }
+      .connector { display: flex; align-items: center; gap: 12px; min-height: 67px; padding: 14px 0; border-bottom: 1px solid var(--rule); font-size: .92rem; font-weight: 600; }
+      .connector:nth-child(odd) { margin-right: 18px; }
+      .connector:nth-child(even) { padding-left: 18px; border-left: 1px solid var(--rule); }
+      .connector-icon { display: grid; flex: 0 0 27px; width: 27px; height: 27px; place-items: center; border: 1px solid var(--rule); background: var(--paper); }
+      .connector-icon img { width: 17px; height: 17px; object-fit: contain; }
+      .workbench-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 72px; align-items: center; }
+      .workbench-copy h3 { max-width: 12ch; margin: 0; font-size: clamp(2.2rem, 4vw, 4.1rem); line-height: .95; letter-spacing: -.06em; }
+      .workbench-copy > p { max-width: 31rem; margin: 22px 0 0; color: var(--muted); font-size: 1.03rem; }
+      .operation-list { margin: 34px 0 0; padding: 0; list-style: none; }
+      .operation-list li { display: grid; grid-template-columns: 28px 1fr; gap: 12px; padding: 13px 0; border-top: 1px solid var(--rule); font-size: .94rem; }
+      .operation-list li::before { content: "↳"; color: var(--orange); font-weight: 800; }
+      .operation-list strong { font-weight: 700; }
+      .operation-list span { color: var(--muted); }
+      .notes { position: relative; padding: 30px; border: 1px solid var(--rule); background: #eae6dc; }
+      .notes::before { content: "FIELD NOTE / 08"; display: block; margin-bottom: 80px; color: var(--orange-dark); font-size: .7rem; font-weight: 800; letter-spacing: .14em; }
+      .notes blockquote { margin: 0; font: 400 clamp(1.65rem, 3.1vw, 2.8rem)/1.03 var(--serif); letter-spacing: -.025em; }
+      .notes cite { display: block; margin-top: 28px; color: var(--muted); font-size: .78rem; font-style: normal; }
+      .agent { color: var(--white); background: var(--night); }
+      .agent .eyebrow { color: #d88a62; }
+      .agent .section-heading p { color: #b9c2ba; }
+      .agent-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 70px; align-items: start; }
+      .agent-copy h3 { max-width: 11ch; margin: 0; font: 400 clamp(2.5rem, 5vw, 5rem)/.91 var(--serif); letter-spacing: -.045em; }
+      .agent-copy h3 em { color: #d88a62; }
+      .agent-copy p { max-width: 28rem; margin: 24px 0 0; color: #b9c2ba; }
+      .policy-sheet { border-top: 1px solid #627068; }
+      .policy-row { display: grid; grid-template-columns: 110px 1fr; gap: 18px; padding: 16px 0; border-bottom: 1px solid #46554d; }
+      .policy-row dt { color: #d88a62; font-size: .72rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+      .policy-row dd { margin: 0; color: #e4e8e1; font-size: .92rem; }
+      .policy-row code { color: #d3dfd3; font: .82rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .tool-line { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 26px; }
+      .tool-line code { padding: 7px 9px; border: 1px solid #4b5b51; color: #d3dfd3; font: .74rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .backends-heading { display: flex; justify-content: space-between; gap: 24px; align-items: end; margin-bottom: 30px; }
+      .backends-heading h2 { max-width: 10ch; margin: 0; font-size: clamp(2.4rem, 4vw, 4rem); line-height: .93; letter-spacing: -.06em; }
+      .backends-heading p { max-width: 25rem; margin: 0; color: var(--muted); }
+      .backend-table { border-top: 1px solid var(--ink); }
+      .backend-row { display: grid; grid-template-columns: 58px 1.1fr 1fr .7fr; gap: 18px; align-items: center; min-height: 64px; border-bottom: 1px solid var(--rule); }
+      .backend-row span:first-child { color: var(--orange); font-size: .72rem; font-weight: 800; }
+      .backend-row strong { font-size: .96rem; }
+      .backend-row span:nth-child(3), .backend-row span:nth-child(4) { color: var(--muted); font-size: .84rem; }
+      .install { padding-bottom: 130px; }
+      .install-layout { display: grid; grid-template-columns: .72fr 1.28fr; gap: 70px; align-items: start; }
+      .install-copy h2 { max-width: 9ch; margin: 0; font-size: clamp(2.7rem, 5vw, 5rem); line-height: .9; letter-spacing: -.065em; }
+      .install-copy p { max-width: 24rem; margin: 22px 0 0; color: var(--muted); }
+      .install-links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+      .install-links a { color: var(--orange-dark); font-size: .82rem; font-weight: 700; }
+      .command-list { border-top: 1px solid var(--ink); }
+      .command { display: grid; grid-template-columns: 140px 1fr auto; gap: 16px; align-items: center; min-height: 76px; border-bottom: 1px solid var(--rule); }
+      .command-label { font-size: .8rem; font-weight: 800; }
+      .command code { overflow-wrap: anywhere; color: var(--muted); font: .76rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .copy-command { padding: 7px 9px; border: 1px solid var(--rule); color: var(--ink); background: transparent; cursor: pointer; font: 700 .72rem var(--sans); }
+      .copy-command:hover, .copy-command:focus-visible, .copy-command[data-copied="true"] { border-color: var(--orange); color: var(--orange-dark); }
+      .install-foot { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 32px; }
+      .install-foot > div { padding-top: 15px; border-top: 1px solid var(--rule); }
+      .install-foot strong { display: block; font-size: .84rem; }
+      .install-foot span { display: block; margin-top: 7px; color: var(--muted); font-size: .8rem; }
+      .closing { padding: 88px 0; color: var(--white); background: var(--orange-dark); }
+      .closing-layout { display: flex; align-items: end; justify-content: space-between; gap: 32px; }
+      .closing h2 { max-width: 10ch; margin: 0; font: 400 clamp(2.8rem, 6vw, 6rem)/.88 var(--serif); letter-spacing: -.045em; }
+      .closing p { max-width: 25rem; margin: 0; color: #f1d4c6; }
+      .closing .button-primary { border-color: var(--white); color: var(--orange-dark); background: var(--white); }
+      .closing .button-quiet { border-color: #e9b19b; color: var(--white); }
+      .footer { padding: 44px 0 26px; background: var(--ink); color: var(--white); }
+      .footer-grid { display: grid; grid-template-columns: 1.7fr repeat(3, 1fr); gap: 30px; }
+      .footer .wordmark { color: var(--white); }
+      .footer .mark { border-color: var(--white); }
+      .footer-brand p { max-width: 15rem; margin: 16px 0 0; color: #aeb8af; font-size: .84rem; }
+      .footer h3 { margin: 0 0 13px; color: #d88a62; font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; }
+      .footer a:not(.wordmark) { display: block; width: fit-content; margin: 7px 0; color: #e7ebe4; font-size: .82rem; text-decoration: none; }
+      .footer a:not(.wordmark):hover, .footer a:not(.wordmark):focus-visible { color: #f1a47f; }
+      .footer-bottom { display: flex; justify-content: space-between; gap: 20px; margin-top: 60px; padding-top: 16px; border-top: 1px solid #46524b; color: #9da89f; font-size: .72rem; }
+      [data-reveal] { opacity: 0; transform: translateY(16px); transition: opacity 700ms var(--ease), transform 700ms var(--ease); }
+      [data-reveal].is-visible { opacity: 1; transform: none; }
+      @media (max-width: 900px) {
+        .hero-grid, .capability-layout, .connector-layout, .workbench-layout, .agent-layout, .install-layout { grid-template-columns: 1fr; gap: 42px; }
+        .hero { padding-top: 58px; }
+        .hero h1 { max-width: 10ch; }
+        .product-frame { max-width: 760px; }
+        .capability-lead { min-height: 280px; }
+        .section-heading { grid-template-columns: 1fr; gap: 16px; }
+        .section-heading h2 { max-width: 16ch; }
+        .install-copy h2 { max-width: 12ch; }
+      }
+      @media (max-width: 650px) {
+        .shell { width: min(var(--measure), calc(100% - 32px)); }
+        .topbar-inner { min-height: 64px; }
+        .nav a:not(.nav-cta) { display: none; }
+        .nav { gap: 0; }
+        .hero { padding: 48px 0 64px; }
+        .hero h1 { font-size: clamp(3.8rem, 18vw, 6rem); }
+        .hero-note { flex-wrap: wrap; gap: 10px; }
+        .hero-note span + span { padding-left: 10px; }
+        .index-strip { grid-template-columns: repeat(2, 1fr); }
+        .index-item { min-height: 58px; padding: 14px 8px 14px 0; }
+        .index-item + .index-item { padding-left: 10px; }
+        .index-item:nth-child(3) { border-left: 0; padding-left: 0; }
+        .section { padding: 78px 0; }
+        .section.compact { padding: 64px 0; }
+        .capability-lead { padding: 26px; }
+        .connector-list { grid-template-columns: 1fr; }
+        .connector:nth-child(odd) { margin-right: 0; }
+        .connector:nth-child(even) { padding-left: 0; border-left: 0; }
+        .backend-row { grid-template-columns: 38px 1fr; gap: 10px; padding: 12px 0; }
+        .backend-row span:nth-child(3), .backend-row span:nth-child(4) { grid-column: 2; }
+        .command { grid-template-columns: 1fr auto; gap: 9px; padding: 14px 0; }
+        .command code { grid-column: 1 / -1; grid-row: 2; }
+        .install-foot, .footer-grid { grid-template-columns: 1fr 1fr; }
+        .footer-brand { grid-column: 1 / -1; }
+        .closing-layout { display: grid; }
+        .footer-bottom { display: block; }
+        .footer-bottom span { display: block; margin-top: 8px; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        html { scroll-behavior: auto; }
+        [data-reveal] { opacity: 1; transform: none; transition: none; }
+        .button { transition: none; }
       }
     </style>
   </head>
   <body>
-    <main class="page">
-      <header class="topbar">
-        <a
-          class="brand-lockup"
-          href="https://github.com/infimount/infimount"
-          aria-label="Infimount GitHub repository"
-        >
-          <img
-            class="brand-logo"
-            src="./assets/infimount-logo-text.png"
-            alt="Infimount"
-          />
-        </a>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="topbar">
+      <div class="shell topbar-inner">
+        <a class="wordmark" href="https://github.com/infimount/infimount" aria-label="Infimount GitHub repository"><span class="mark" aria-hidden="true">∞</span><span>infimount</span></a>
         <nav class="nav" aria-label="Primary navigation">
-          <a href="#features">Features</a>
+          <a href="#workbench">Workbench</a>
           <a href="#connectors">Connectors</a>
-          <a href="#mcp">MCP</a>
+          <a href="#agents">Agents</a>
           <a href="#install">Install</a>
-          <a href="https://github.com/infimount/infimount">GitHub</a>
+          <a class="nav-cta" href="https://github.com/infimount/infimount">View on GitHub</a>
         </nav>
-        <a class="social-button" href="https://github.com/infimount/infimount"
-          >Star on GitHub</a
-        >
-      </header>
+      </div>
+    </header>
 
-      <nav class="mobile-jumps" aria-label="Mobile navigation">
-        <a href="#features">Features</a>
-        <a href="#mcp">MCP</a>
-        <a href="#install">Install</a>
+    <main id="main">
+      <section class="hero shell" aria-labelledby="hero-title">
+        <div class="hero-grid">
+          <div data-reveal>
+            <p class="eyebrow">Infimount / field guide 08</p>
+            <h1 id="hero-title" class="display-dot">Storage, <em class="serif">without the maze</em></h1>
+            <p class="hero-lead">A native desktop surface for the places your files already live. Browse, preview, move, and expose them without giving up the keys.</p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="#install">Install Infimount</a>
+              <a class="button button-quiet" href="https://github.com/infimount/infimount">Read the source</a>
+            </div>
+            <div class="hero-note"><span>Open source</span><span>MIT license</span><span>v0.8.0 release candidate</span></div>
+          </div>
+          <figure class="product-frame" data-reveal>
+            <div class="product-frame-header"></div>
+            <img src="./assets/screenshot-infimount.png" alt="Infimount desktop workbench showing files, storage locations, and a preview panel" />
+            <figcaption class="frame-caption"><strong>The workbench</strong><span>One calm view across many backends</span></figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <nav class="shell index-strip" aria-label="Page sections" data-reveal>
+        <a class="index-item" href="#workbench"><span class="index-number">01</span><span class="index-label">Unify</span></a>
+        <a class="index-item" href="#connectors"><span class="index-number">02</span><span class="index-label">Connect</span></a>
+        <a class="index-item" href="#agents"><span class="index-number">03</span><span class="index-label">Govern</span></a>
+        <a class="index-item" href="#install"><span class="index-number">04</span><span class="index-label">Install</span></a>
       </nav>
 
-      <section class="hero" aria-labelledby="hero-title">
-        <div class="hero-grid">
-          <div class="hero-copy">
-            <div class="meta-row">
-              <span class="meta-pill">Open source</span>
-              <span class="meta-pill">v0.8.0 release candidate</span>
-              <span class="meta-pill">MIT licensed</span>
-            </div>
-            <h1 id="hero-title">Infimount</h1>
-            <p class="hero-subtitle">One surface for every storage.</p>
-            <p class="lead">
-              Infimount brings local files, S3/S3-compatible storage, Backblaze B2, OSS, COS, OBS, Azure Blob, GCS, Google Drive, Microsoft OneDrive, WebDAV, SFTP, and FTP into
-              one unified surface for humans and AI agents. Browse, search, validate capabilities, and expose storage with explicit local controls.
-            </p>
-            <div class="cta-row">
-              <a class="btn primary" href="#install">Install Infimount</a>
-              <a
-                class="btn secondary"
-                href="https://github.com/infimount/infimount"
-                >View on GitHub</a
-              >
-            </div>
-            <div class="mini-stats" aria-label="Project links">
-              <a class="mini-stat" href="https://github.com/infimount/infimount"
-                >GitHub</a
-              >
-              <a
-                class="mini-stat"
-                href="https://github.com/infimount/infimount/releases/tag/v0.8.0"
-                >v0.8.0 release page after publication</a
-              >
-            </div>
+      <section id="workbench" class="section shell" aria-labelledby="workbench-title">
+        <div class="section-heading" data-reveal>
+          <p class="eyebrow">01 / Unify</p>
+          <div><h2 id="workbench-title" class="display-dot">Your files, <span class="serif">in one room</span></h2><p><strong>Infimount is not another cloud console.</strong> It is a desktop workbench for real file operations, with the same steady habits whether the destination is a local folder or a remote bucket.</p></div>
+        </div>
+        <div class="capability-layout" data-reveal>
+          <article class="capability-lead"><h3>Move at the speed of a file manager.</h3><p>Preview before you act. Compare two locations. Queue a transfer, cancel it cleanly, and see what happened. The interface stays familiar while the backend changes underneath.</p><a class="small-link" href="https://github.com/infimount/infimount/blob/main/docs/backend-capabilities.md">See capability details ↗</a></article>
+          <div class="capability-list">
+            <article class="capability-row"><b>01</b><div><h3>Browse and preview</h3><p>Grid or list view, metadata, range reads, and previews that stay bounded.</p></div></article>
+            <article class="capability-row"><b>02</b><div><h3>Move and compare</h3><p>Dual-pane copy, move, update, and conflict handling across supported storage.</p></div></article>
+            <article class="capability-row"><b>03</b><div><h3>Keep control</h3><p>Local configuration, explicit exposure, confirmations, and recoverable actions.</p></div></article>
           </div>
+        </div>
+      </section>
 
-          <div class="hero-media">
-            <div class="app-window">
-              <img
-                class="hero-screenshot"
-                src="./assets/screenshot-infimount.png"
-                alt="Infimount desktop app showing a unified storage browser with file list and preview"
-              />
-            </div>
-            <div class="privacy-panel">
-              <strong>Your storage, your machine.</strong>
-              <span
-                >No hosted Infimount backend is required. Credentials and
-                registry files stay under <code>~/.infimount</code>.</span
-              >
+      <section id="connectors" class="section connectors" aria-labelledby="connectors-title">
+        <div class="shell">
+          <div class="section-heading" data-reveal><p class="eyebrow">02 / Connect</p><div><h2 id="connectors-title" class="display-dot">Many doors. <span class="serif">One rhythm.</span></h2><p>OpenDAL-first storage support keeps the surface consistent while respecting what each backend can actually do.</p></div></div>
+          <div class="connector-layout" data-reveal>
+            <div class="connector-intro"><h3>Bring the places you already use.</h3><p>Validate a connection before exposing it. See capability notes and useful fix hints instead of guessing why a backend behaved differently.</p><div class="connector-note">Credentials stay on your machine. OAuth drives use a local loopback connect.</div></div>
+            <div class="connector-list" aria-label="Supported storage backends">
+              <div class="connector"><span class="connector-icon"><img src="./assets/folder-network.svg" alt="" aria-hidden="true" /></span><span>Local filesystem</span></div>
+              <div class="connector"><span class="connector-icon"><img src="./assets/amazon-s3.svg" alt="" aria-hidden="true" /></span><span>S3/S3-compatible</span></div>
+              <div class="connector"><span class="connector-icon"><img src="./assets/folder-network.svg" alt="" aria-hidden="true" /></span><span>Backblaze B2</span></div>
+              <div class="connector"><span class="connector-icon"><img src="./assets/folder-network.svg" alt="" aria-hidden="true" /></span><span>Aliyun OSS</span></div>
+              <div class="connector"><span class="connector-icon"><img src="./assets/folder-network.svg" alt="" aria-hidden="true" /></span><span>Tencent COS</span></div>
+              <div class="connector"><span class="connector-icon"><img src="./assets/folder-network.svg" alt="" aria-hidden="true" /></span><span>Huawei OBS</span></div>
+              <div class="connector"><span class="connector-icon"><img src="./assets/azure-storage-blob.svg" alt="" aria-hidden="true" /></span><span>Azure Blob</span></div>
+              <div class="connector"><span class="connector-icon"><img src="./assets/google-cloud.svg" alt="" aria-hidden="true" /></span><span>Google Cloud Storage</span></div>
+              <div class="connector"><span class="connector-icon"><img src="./assets/google-cloud.svg" alt="" aria-hidden="true" /></span><span>Google Drive</span></div>
+              <div class="connector"><span class="connector-icon"><img src="./assets/folder-network.svg" alt="" aria-hidden="true" /></span><span>Microsoft OneDrive</span></div>
+              <div class="connector"><span class="connector-icon"><img src="./assets/webdav.svg" alt="" aria-hidden="true" /></span><span>WebDAV</span></div>
+              <div class="connector"><span class="connector-icon"><img src="./assets/folder-network.svg" alt="" aria-hidden="true" /></span><span>SFTP / FTP</span></div>
             </div>
           </div>
         </div>
       </section>
 
-      <section id="features" class="feature-strip" aria-label="Key features">
-        <article class="feature-card">
-          <h2>Multi-cloud access</h2>
-          <p>Connect to local files, S3/S3-compatible storage, Backblaze B2, OSS, COS, OBS, Azure Blob, GCS, Google Drive, Microsoft OneDrive, WebDAV, SFTP, and FTP.</p>
-        </article>
-        <article class="feature-card">
-          <h2>Local and cloud storage</h2>
-          <p>
-            Browse and manage local files alongside cloud backends seamlessly.
-          </p>
-        </article>
-        <article class="feature-card">
-          <h2>MCP and agent-ready</h2>
-          <p>Expose only selected storages through MCP, with tool controls, path policies, confirmations, and local audit logs.</p>
-        </article>
-        <article class="feature-card">
-          <h2>Validation clarity</h2>
-          <p>Validate reports grouped backend capabilities, fix hints, and MCP readiness notes before exposure.</p>
-        </article>
-        <article class="feature-card">
-          <h2>Unified browsing</h2>
-          <p>One consistent experience for all your storage and data.</p>
-        </article>
-        <article class="feature-card">
-          <h2>OpenDAL-first</h2>
-          <p>New backends stay behind OpenDAL operators, capability checks, tests, and docs.</p>
-        </article>
+      <section class="section shell" aria-labelledby="operations-title">
+        <div class="workbench-layout">
+          <div class="workbench-copy" data-reveal><p class="eyebrow">A quiet tool for busy work</p><h2 id="operations-title" class="display-dot">The details are <span class="serif">the product.</span></h2><p>Every feature is shaped around a file operation someone needs to finish, not a dashboard metric someone needs to admire.</p><ul class="operation-list"><li><span><strong>Transfer queue.</strong> <span>Progress, retry, cancellation, and keep-both conflict handling.</span></span></li><li><span><strong>Agent Workspaces.</strong> <span>Scoped roots, memory files, checkpoints, and grouped audit activity.</span></span></li><li><span><strong>Capability-aware storage.</strong> <span>Read-only states and unsupported operations are made visible before mutation.</span></span></li></ul></div>
+          <aside class="notes" data-reveal><blockquote>“What is exposed, what is read-only, and what is running should never be a mystery.”</blockquote><cite>Infimount design principle / local-first control</cite></aside>
+        </div>
       </section>
 
-      <section
-        id="connectors"
-        class="connector-band"
-        aria-labelledby="connectors-title"
-      >
-        <div class="section-head">
-          <h2 id="connectors-title">Connectors</h2>
-          <p>Use the latest stable release for local files, object storage, OAuth-backed cloud drives with local loopback PKCE connect, WebDAV, SFTP, FTP, and explicit MCP workflows.</p>
-        </div>
-        <div class="connector-rail">
-          <div class="connector">
-            <span class="connector-icon"
-              ><img src="./assets/amazon-s3.svg" alt="" aria-hidden="true"
-            /></span>
-            <span>S3/S3-compatible</span>
-          </div>
-          <div class="connector">
-            <span class="connector-icon"
-              ><img src="./assets/folder-network.svg" alt="" aria-hidden="true"
-            /></span>
-            <span>Backblaze B2</span>
-          </div>
-          <div class="connector">
-            <span class="connector-icon"
-              ><img src="./assets/folder-network.svg" alt="" aria-hidden="true"
-            /></span>
-            <span>Aliyun OSS</span>
-          </div>
-          <div class="connector">
-            <span class="connector-icon"
-              ><img src="./assets/folder-network.svg" alt="" aria-hidden="true"
-            /></span>
-            <span>Tencent COS</span>
-          </div>
-          <div class="connector">
-            <span class="connector-icon"
-              ><img src="./assets/folder-network.svg" alt="" aria-hidden="true"
-            /></span>
-            <span>Huawei OBS</span>
-          </div>
-          <div class="connector">
-            <span class="connector-icon"
-              ><img
-                src="./assets/azure-storage-blob.svg"
-                alt=""
-                aria-hidden="true"
-            /></span>
-            <span>Azure Blob</span>
-          </div>
-          <div class="connector">
-            <span class="connector-icon"
-              ><img src="./assets/google-cloud.svg" alt="" aria-hidden="true"
-            /></span>
-            <span>Google Cloud Storage</span>
-          </div>
-          <div class="connector">
-            <span class="connector-icon"
-              ><img src="./assets/webdav.svg" alt="" aria-hidden="true"
-            /></span>
-            <span>WebDAV</span>
-          </div>
-          <div class="connector">
-            <span class="connector-icon"
-              ><img src="./assets/folder-network.svg" alt="" aria-hidden="true"
-            /></span>
-            <span>SFTP</span>
-          </div>
-          <div class="connector">
-            <span class="connector-icon"
-              ><img src="./assets/folder-network.svg" alt="" aria-hidden="true"
-            /></span>
-            <span>FTP</span>
-          </div>
-          <div class="connector">
-            <span class="connector-icon"
-              ><img src="./assets/folder-network.svg" alt="" aria-hidden="true"
-            /></span>
-            <span>Local FS</span>
+      <section id="agents" class="section agent" aria-labelledby="agents-title">
+        <div class="shell">
+          <div class="section-heading" data-reveal><p class="eyebrow">03 / Govern</p><div><h2 id="agents-title" class="display-dot">Agents get an invitation, <span class="serif">not the keys.</span></h2><p>MCP access is useful because it is explicit. Choose the storage, choose the path, choose the tools, then keep the boundary visible.</p></div></div>
+          <div class="agent-layout" data-reveal>
+            <div class="agent-copy"><h3>Give an agent a room, <em>not the house.</em></h3><p>Infimount keeps the desktop control plane separate from the MCP data plane. Workspace-scoped policy, sessions, confirmations, and audit events make the boundary inspectable.</p><div class="tool-line" aria-label="Representative MCP tools"><code>list_dir</code><code>read_file</code><code>search_paths</code><code>stat_path</code><code>generate_download_link</code></div></div>
+            <dl class="policy-sheet"><div class="policy-row"><dt>Scope</dt><dd>Selected storages and workspace roots only</dd></div><div class="policy-row"><dt>Mode</dt><dd>Read-only by default, write access by explicit policy</dd></div><div class="policy-row"><dt>Transport</dt><dd><code>stdio</code> or authenticated local HTTP</dd></div><div class="policy-row"><dt>Evidence</dt><dd>Bounded audit events, redacted diagnostics, and confirmation records</dd></div></dl>
           </div>
         </div>
       </section>
 
-      <section class="install-section" aria-labelledby="workbench-title">
-        <div class="section-head">
-          <h2 id="workbench-title">Workbench for real file operations</h2>
-          <p>Infimount is built for day-to-day storage work, not just connection testing.</p>
-        </div>
-        <div class="install-grid">
-          <article class="info-card">
-            <h3>Desktop file-manager flows</h3>
-            <ul>
-              <li>Grid and list views with previews, bookmarks, recents, drag-and-drop upload, and keyboard navigation.</li>
-              <li>Dual-pane copy, move, compare, and update workflows across supported storages.</li>
-              <li>Transfer queue with progress, retry, active or queued cancellation, persisted history, and keep-both conflict handling.</li>
-              <li>Opt-in global search indexing with a Stop control for slow or cancelled storage responses.</li>
-            </ul>
-          </article>
-          <article class="info-card">
-            <h3>Agent Workspaces</h3>
-            <ul>
-              <li>Create coding, research, or data-analysis workspaces on OpenDAL-backed storage.</li>
-              <li>Apply workspace-scoped MCP policy so agents only see the workspace root you allow.</li>
-              <li>Keep visible memory files, checkpoint manifests, restoreable notes, and grouped workspace audit activity.</li>
-            </ul>
-          </article>
+      <section class="section compact shell" aria-labelledby="backend-title">
+        <div class="backends-heading" data-reveal><div><p class="eyebrow">A backend is not a promise</p><h2 id="backend-title" class="display-dot">Know what it can do.</h2></div><p>Capabilities vary by account, backend, and operation. Infimount makes that variation legible instead of hiding it behind a universal button.</p></div>
+        <div class="backend-table" data-reveal>
+          <div class="backend-row"><span>01</span><strong>Local files</strong><span>Native browse and mutation</span><span>Full control</span></div>
+          <div class="backend-row"><span>02</span><strong>S3/S3-compatible</strong><span>Objects, prefixes, transfers</span><span>Capability checked</span></div>
+          <div class="backend-row"><span>03</span><strong>Google Drive / OneDrive</strong><span>OAuth-backed remote files</span><span>Local PKCE connect</span></div>
+          <div class="backend-row"><span>04</span><strong>WebDAV / SFTP / FTP</strong><span>Remote file browsing</span><span>Backend dependent</span></div>
         </div>
       </section>
 
-      <section id="mcp" class="agent-section" aria-labelledby="mcp-title">
-        <div class="section-head">
-          <h2 id="mcp-title">Built for humans and AI agents</h2>
-          <p>Infimount speaks your language and your agent's.</p>
-        </div>
-        <div class="flow">
-          <article class="flow-node">
-            <strong>You</strong>
-            <span>Browse, search, and manage your data.</span>
-          </article>
-          <div class="flow-arrow" aria-hidden="true">→</div>
-          <article class="flow-node">
-            <strong>Infimount</strong>
-            <span>Unified surface with a consistent API.</span>
-          </article>
-          <div class="flow-arrow" aria-hidden="true">→</div>
-          <article class="flow-node">
-            <strong>AI agents</strong>
-            <span>MCP tools, automation, and data workflows.</span>
-          </article>
-          <article class="tool-list">
-            <strong>MCP tools</strong>
-            <div class="tools-grid" aria-label="Representative MCP tools">
-              <span>list_dir</span><span>List files and folders</span>
-              <span>read_file</span><span>Read file contents</span>
-              <span>search_paths</span><span>Search across storage</span>
-              <span>stat_path</span><span>Fetch metadata</span>
-              <span>generate_download_link</span><span>Create download links</span>
+      <section id="install" class="section install shell" aria-labelledby="install-title">
+        <div class="install-layout">
+          <div class="install-copy" data-reveal><p class="eyebrow">04 / Install</p><h2 id="install-title" class="display-dot">Start close to the metal.</h2><p>Install the current stable release from a verified package, then connect the storage you already trust.</p><div class="install-links"><a href="https://github.com/infimount/infimount/releases">All releases ↗</a><a href="https://github.com/infimount/infimount/blob/main/docs/security.md">Security model ↗</a><a href="https://github.com/infimount/infimount/blob/main/docs/mcp-client-setup.md">MCP setup ↗</a></div></div>
+          <div data-reveal>
+            <div class="command-list" aria-label="Install commands">
+              <div class="command"><span class="command-label">Linux / macOS</span><code class="code-block">curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh</code><button class="copy-command" type="button" aria-label="Copy Linux and macOS install command">Copy</button></div>
+              <div class="command"><span class="command-label">Windows PowerShell</span><code class="code-block">irm https://github.com/infimount/infimount/releases/latest/download/install.ps1 | iex</code><button class="copy-command" type="button" aria-label="Copy Windows install command">Copy</button></div>
+              <div class="command"><span class="command-label">Homebrew</span><code class="code-block">brew tap infimount/infimount && brew install infimount</code><button class="copy-command" type="button" aria-label="Copy Homebrew install command">Copy</button></div>
             </div>
-          </article>
+            <div class="install-foot"><div><strong>Linux</strong><span>DEB, RPM, or AppImage. Check the release checksum before launch.</span></div><div><strong>macOS and Windows</strong><span>Stable packages are platform-signed. Do not bypass an invalid signature.</span></div></div>
+          </div>
         </div>
       </section>
 
-      <section
-        id="install"
-        class="install-section"
-        aria-label="Install options"
-      >
-        <div class="install-grid">
-          <article class="info-card install-card">
-            <h3>Install with one command</h3>
-            <p>
-              Choose your platform. The scripts select the matching latest release asset and verify it against <code>SHA256SUMS.txt</code> before installing.
-            </p>
-            <div class="command-grid" aria-label="Single-command install options">
-              <div class="command-panel">
-                <span class="command-label">Linux</span>
-                <div class="copyable-code">
-                  <button class="copy-command" type="button" aria-label="Copy Linux install command">Copy</button>
-                  <pre class="code-block">curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh</pre>
-                </div>
-                <span class="command-note">Auto-selects DEB, RPM, or AppImage. Override with <code>INFIMOUNT_INSTALL_FORMAT</code>.</span>
-              </div>
-              <div class="command-panel">
-                <span class="command-label">macOS</span>
-                <div class="copyable-code">
-                  <button class="copy-command" type="button" aria-label="Copy macOS install command">Copy</button>
-                  <pre class="code-block">curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh</pre>
-                </div>
-                <span class="command-note">Installs the latest DMG release. Unsigned builds may require right-click then Open.</span>
-              </div>
-              <div class="command-panel">
-                <span class="command-label">Windows PowerShell</span>
-                <div class="copyable-code">
-                  <button class="copy-command" type="button" aria-label="Copy Windows PowerShell install command">Copy</button>
-                  <pre class="code-block">irm https://github.com/infimount/infimount/releases/latest/download/install.ps1 | iex</pre>
-                </div>
-                <span class="command-note">Run in PowerShell. Stable installers are Authenticode-signed; do not continue if Windows reports an invalid or missing signature.</span>
-              </div>
-            </div>
-            <p>
-              After the v0.8.0 release candidate is published, pin it with <code>INFIMOUNT_VERSION=v0.8.0</code>. Until then, the command installs the current stable release.
-            </p>
-          </article>
-          <article id="homebrew" class="info-card">
-            <h3>Install with Homebrew</h3>
-            <div class="copyable-code">
-              <button class="copy-command" type="button" aria-label="Copy Homebrew install commands">Copy</button>
-              <pre class="code-block">brew tap infimount/infimount
-# Linux formula
-brew install infimount
-
-# macOS cask
-brew install --cask infimount</pre>
-            </div>
-            <p>
-              Linux uses the formula. macOS can use the cask. The tap tracks published
-              stable releases after assets and checksums are available.
-            </p>
-          </article>
-          <article class="info-card">
-            <h3>First run notes</h3>
-            <ul class="install-steps">
-              <li>
-                <strong>Linux AppImage:</strong> run
-                <code>chmod +x Infimount-*.AppImage</code> before launch.
-              </li>
-              <li>
-                <strong>macOS:</strong> drag the app to Applications. Stable builds are signed and notarized; do not bypass a failed signature or notarization check.
-              </li>
-              <li>
-                <strong>Windows:</strong> stable installers are Authenticode-signed. Do not use an installer that Windows reports as unsigned or invalid.
-              </li>
-            </ul>
-          </article>
-        </div>
+      <section class="closing" aria-labelledby="closing-title">
+        <div class="shell closing-layout" data-reveal><div><p class="eyebrow">Make the storage layer boring again</p><h2 id="closing-title">The useful kind of <span class="serif">infrastructure.</span></h2></div><div><p>Open source, local-first, and designed around the work that happens after a connection succeeds.</p><div class="hero-actions"><a class="button button-primary" href="https://github.com/infimount/infimount/releases/latest">Download stable</a><a class="button button-quiet" href="https://github.com/infimount/infimount">Star on GitHub</a></div></div></div>
       </section>
-
-      <section
-        id="downloads"
-        class="download-section"
-        aria-labelledby="downloads-title"
-      >
-        <div class="section-head">
-          <h2 id="downloads-title">Manual downloads for the current stable release</h2>
-          <p>
-            Prefer the install script above, or choose a published package manually. Manual downloads for the v0.8.0 release candidate appear only after publication.
-          </p>
-        </div>
-        <div class="download-grid">
-          <article class="download-card">
-            <div>
-              <h3>Linux</h3>
-              <p>
-                Use a native package for your distro, or the AppImage for a
-                portable install.
-              </p>
-            </div>
-            <div class="download-actions">
-              <a
-                href="https://github.com/infimount/infimount/releases/latest/download/Infimount-amd64.deb"
-                ><span>Download DEB</span><span>.deb</span></a
-              >
-              <a
-                href="https://github.com/infimount/infimount/releases/latest/download/Infimount-x86_64.rpm"
-                ><span>Download RPM</span><span>.rpm</span></a
-              >
-              <a
-                href="https://github.com/infimount/infimount/releases/latest/download/Infimount-x86_64.AppImage"
-                ><span>Download AppImage</span><span>.AppImage</span></a
-              >
-            </div>
-          </article>
-          <article class="download-card">
-            <div>
-              <h3>macOS</h3>
-              <p>
-                Install using the DMG, or use the Homebrew cask if you prefer
-                terminal-based upgrades.
-              </p>
-            </div>
-            <div class="download-actions">
-              <a
-                href="https://github.com/infimount/infimount/releases/latest/download/Infimount.dmg"
-                ><span>Download DMG</span><span>.dmg</span></a
-              >
-              <a href="#homebrew"
-                ><span>Homebrew cask</span><span>brew</span></a
-              >
-            </div>
-          </article>
-          <article class="download-card">
-            <div>
-              <h3>Windows</h3>
-              <p>
-                Use the MSI installer or NSIS setup executable. Unsigned
-                releases can trigger SmartScreen.
-              </p>
-            </div>
-            <div class="download-actions">
-              <a
-                href="https://github.com/infimount/infimount/releases/latest/download/Infimount.msi"
-                ><span>Download MSI</span><span>.msi</span></a
-              >
-              <a
-                href="https://github.com/infimount/infimount/releases/latest/download/Infimount-setup.exe"
-                ><span>Download Setup</span><span>.exe</span></a
-              >
-            </div>
-          </article>
-        </div>
-      </section>
-
-      <section class="callout" aria-label="Ready to unify your storage">
-        <div>
-          <h2>Ready to unify your storage?</h2>
-          <p>
-            Join developers and teams simplifying how they access and interact
-            with data everywhere.
-          </p>
-        </div>
-        <div class="cta-row">
-          <a
-            class="btn primary"
-            href="https://github.com/infimount/infimount/blob/main/docs/mcp-client-setup.md"
-            >Explore docs</a
-          >
-          <a class="btn secondary" href="https://github.com/infimount/infimount"
-            >Star on GitHub</a
-          >
-        </div>
-      </section>
-
-      <footer class="footer">
-        <div class="footer-brand">
-          <img src="./assets/infimount-logo-text.png" alt="Infimount" />
-          <p>One surface for every storage.</p>
-          <p>MIT licensed. Integrity files ship with every release.</p>
-        </div>
-        <div>
-          <h3>Product</h3>
-          <a href="#features">Features</a>
-          <a href="#connectors">Connectors</a>
-          <a href="#mcp">MCP</a>
-        </div>
-        <div>
-          <h3>Resources</h3>
-          <a
-            href="https://github.com/infimount/infimount/blob/main/docs/mcp-client-setup.md"
-            >Docs</a
-          >
-          <a href="https://github.com/infimount/infimount/releases">Releases</a>
-          <a
-            href="https://github.com/infimount/infimount/blob/main/docs/backend-capabilities.md"
-            >Capabilities</a
-          >
-        </div>
-        <div>
-          <h3>Community</h3>
-          <a href="https://github.com/infimount/infimount">GitHub</a>
-          <a href="https://github.com/infimount/infimount/discussions"
-            >Discussions</a
-          >
-          <a href="https://www.linkedin.com/company/infimount">LinkedIn</a>
-        </div>
-        <div>
-          <h3>Legal</h3>
-          <a href="https://github.com/infimount/infimount/blob/main/LICENSE"
-            >MIT License</a
-          >
-          <a
-            href="https://github.com/infimount/infimount/blob/main/docs/security.md"
-            >Security</a
-          >
-        </div>
-      </footer>
     </main>
-    <script>
-      document.querySelectorAll(".copy-command").forEach((button) => {
-        button.addEventListener("click", async () => {
-          const wrapper = button.closest(".copyable-code");
-          const command = wrapper?.querySelector(".code-block")?.textContent?.trim();
-          if (!command) return;
 
-          try {
-            await navigator.clipboard.writeText(command);
-            button.textContent = "Copied";
-            button.dataset.copied = "true";
-            window.setTimeout(() => {
-              button.textContent = "Copy";
-              delete button.dataset.copied;
-            }, 1800);
-          } catch {
-            button.textContent = "Select";
-            window.setTimeout(() => {
-              button.textContent = "Copy";
-            }, 1800);
-          }
-        });
-      });
+    <footer class="footer">
+      <div class="shell">
+        <div class="footer-grid"><div class="footer-brand"><a class="wordmark" href="https://github.com/infimount/infimount"><span class="mark" aria-hidden="true">∞</span><span>infimount</span></a><p>One surface for every storage. Built with Tauri, Rust, React, and Apache OpenDAL.</p></div><div><h3>Product</h3><a href="#workbench">Workbench</a><a href="#connectors">Connectors</a><a href="#agents">Agent access</a></div><div><h3>Resources</h3><a href="https://github.com/infimount/infimount/blob/main/docs/backend-capabilities.md">Capabilities</a><a href="https://github.com/infimount/infimount/blob/main/docs/mcp-client-setup.md">MCP setup</a><a href="https://github.com/infimount/infimount/releases">Releases</a></div><div><h3>Project</h3><a href="https://github.com/infimount/infimount">GitHub</a><a href="https://github.com/infimount/infimount/blob/main/LICENSE">MIT license</a><a href="https://www.linkedin.com/company/infimount">LinkedIn</a></div></div>
+        <div class="footer-bottom"><span>© Infimount contributors</span><span>Storage configuration and credentials remain local by default.</span></div>
+      </div>
+    </footer>
+
+    <script>
+      const reveal = new IntersectionObserver((entries) => entries.forEach((entry) => { if (entry.isIntersecting) { entry.target.classList.add("is-visible"); reveal.unobserve(entry.target); } }), { rootMargin: "0px 0px -8%" });
+      document.querySelectorAll("[data-reveal]").forEach((element) => reveal.observe(element));
+      document.querySelectorAll(".copy-command").forEach((button) => button.addEventListener("click", async () => {
+        const command = button.parentElement?.querySelector(".code-block")?.textContent?.trim();
+        if (!command) return;
+        try { await navigator.clipboard.writeText(command); button.textContent = "Copied"; button.dataset.copied = "true"; window.setTimeout(() => { button.textContent = "Copy"; delete button.dataset.copied; }, 1600); }
+        catch { button.textContent = "Select"; window.setTimeout(() => { button.textContent = "Copy"; }, 1600); }
+      }));
     </script>
   </body>
 </html>

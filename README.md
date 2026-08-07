@@ -76,7 +76,7 @@ Manual downloads:
 
 ### Install notes
 
-Install scripts verify selected downloads against `SHA256SUMS.txt`. After v0.8.0 is published, pin it with `INFIMOUNT_VERSION=v0.8.0`; until then, `latest` installs the current stable release. Stable releases require signed macOS, Windows, and updater artifacts; prereleases may be unsigned and are marked prerelease.
+Install scripts verify selected downloads against `SHA256SUMS.txt`. After v0.8.0 is published, pin it with `INFIMOUNT_VERSION=v0.8.0`; until then, `latest` installs the current stable release. Every release requires signed updater artifacts. Stable releases additionally require signed macOS and Windows applications; clearly marked prereleases may omit platform app signing.
 
 ## What Infimount does
 
@@ -303,11 +303,11 @@ Your sponsorship helps:
 
 ### macOS
 
-Stable releases are signed and notarized. Open the `.dmg`, drag `Infimount.app` to Applications, and stop if Gatekeeper reports an invalid signature or missing notarization ticket. Clearly marked prereleases may be unsigned; verify checksums and the prerelease label before deciding whether to use one.
+Stable releases are signed and notarized. Open the `.dmg`, drag `Infimount.app` to Applications, and stop if Gatekeeper reports an invalid signature or missing notarization ticket. Clearly marked prereleases may omit Apple platform signing, but their updater artifacts remain cryptographically signed; verify checksums and the prerelease label before deciding whether to use one.
 
 ### Windows
 
-Stable MSI and EXE installers are Authenticode-signed. Check the Digital Signatures property and stop if Windows reports an invalid or missing signature. Clearly marked prereleases may be unsigned.
+Stable MSI and EXE installers are Authenticode-signed. Check the Digital Signatures property and stop if Windows reports an invalid or missing signature. Clearly marked prereleases may omit Authenticode platform signing, but their updater artifacts remain cryptographically signed.
 
 ### Linux
 

@@ -32,7 +32,7 @@ Required release preparation:
 2. Choose next version by impact:
    - patch (`X.Y.Z+1`) for fixes only
    - minor (`X.Y+1.0`) for new user-facing features
-3. Configure signing secrets before a stable tag. Stable tags fail before builds if any required signing material is absent; unsigned output is allowed only for a tag containing a prerelease suffix and is published as a prerelease.
+3. Configure the updater signing secrets before every release tag. Every release fails before builds if updater signing material is absent. Stable tags additionally require all Apple and Windows platform-signing material; clearly marked prereleases may omit only platform app signing and are published as prereleases.
    - macOS signing/notarization secrets:
      - `APPLE_CERTIFICATE`
      - `APPLE_CERTIFICATE_PASSWORD`
@@ -46,12 +46,29 @@ Required release preparation:
    - Tauri updater signing secrets:
      - `TAURI_SIGNING_PRIVATE_KEY`
      - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
-4. Update `CHANGELOG.md`.
+4. Prepare public release identity:
+   - For a prerelease such as `v0.8.0-rc.1`, add `docs/release-notes-0.8.0-rc.1.md`; README, Pages, and llms continue to identify the previous stable release.
+   - Before a stable tag, run `node scripts/prepare-stable-release-docs.mjs vX.Y.Z`, review and commit its README, CHANGELOG, Pages, and llms changes, then tag that prepared commit. Stable consistency validation rejects `not published yet` language.
+   - Release jobs derive manifest versions from the exact tag before running consistency checks. SemVer `+build` metadata is rejected.
 5. Confirm no secrets or local artifacts are staged:
    - `git status`
    - `git grep -nE "(AKIA|BEGIN PRIVATE KEY|AIza|SECRET|TOKEN)"` (quick heuristic)
 
-## 2. Create and push tag
+## 2. Hermetic release rehearsal
+
+Before requesting a signed prerelease, run the non-publishing rehearsal:
+
+```bash
+pnpm test:release:rehearsal
+# retain evidence for inspection:
+bash scripts/release-rehearsal.sh --version 0.8.0-rc.1 --work-dir /tmp/infimount-rehearsal --keep
+```
+
+This uses only temporary updater keys and deterministic local fixtures. It validates updater signatures and tamper rejection, exact-tag metadata, checksums, SBOM sidecar coverage, fake upload/download byte round-trips, package-sidecar extraction, fixture secret scans, and the prerelease/stable signing-policy matrix. It never invokes `gh`, publishes a release, contacts GitHub, or consumes production secrets. The `Release Rehearsal` workflow runs the Linux aggregate and native macOS/Windows tool checks with read-only permissions.
+
+The rehearsal proves signing **integrity** only. It does not prove Apple notarization/stapling or Gatekeeper trust, trusted Windows Authenticode/SmartScreen reputation, production updater-key correspondence, GitHub publication permissions, or real provider behavior. Those external checks remain required for the production prerelease/stable workflow.
+
+## 3. Create and push tag
 
 ```bash
 git checkout main
@@ -73,10 +90,10 @@ The `Release` workflow is triggered by `v*` tags and will:
   - feature-doc consistency checks for supported backend names, S3-compatible wording, representative MCP tool names, Workbench copy, and Agent Workspaces copy
   - install-script checksum smoke tests for Linux/macOS shell and Windows PowerShell installers
   - zero-manual release policy check (`scripts/check-zero-manual-release-gate.sh`)
-- sync app manifest versions from the pushed tag via `scripts/sync-release-version.mjs`
+- sync app manifest versions from the pushed tag via `scripts/sync-release-version.mjs` before consistency validation and every platform build
 - build Linux, macOS, Windows binaries
-- require and use macOS signing/notarization, Windows Authenticode signing configured before Tauri bundling, and updater signing for stable tags; the Windows app executable, bundled sidecar, installers, and executable updater payloads are verified as one signed chain
-- permit unsigned platform output only for clearly marked prerelease tags
+- require updater signing for every release tag; stable tags additionally require macOS signing/notarization and Windows Authenticode signing configured before Tauri bundling, with the Windows app executable, bundled sidecar, installers, and executable updater payloads verified as one signed chain
+- permit unsigned platform applications only for clearly marked prerelease tags; updater artifacts are always signed, and an unsigned prerelease sidecar is accepted at runtime only when its package-bound `mcp.sha256` matches (stable sidecars still require platform trust on macOS/Windows)
 - run artifact smoke checks, including Linux AppImage launch/migration, `.deb` install/launch/migration, and sidecar extraction/version checks for AppImage, DEB, RPM, DMG, MSI, and NSIS installers
 - validate release asset presence, updater metadata, checksum entries, and per-file `.sha256` files
 - generate `SHA256SUMS.txt` and per-file checksum files for every published payload, including updater archives, updater signatures, metadata, installers, scripts, and SBOM
@@ -131,7 +148,7 @@ Manual spot checks remain optional:
 
 1. Confirm GitHub Pages download page still works.
 2. Confirm release notes render as expected.
-3. Update Homebrew tap repo (`infimount/homebrew-infimount`) if the dispatch token is not configured:
+3. For stable releases only, update the Homebrew tap repo (`infimount/homebrew-infimount`) if the dispatch token is not configured. Prereleases never dispatch or update Homebrew:
    - bump Formula and Cask to the released tag
    - update checksums from release assets
    - validate locally:
@@ -139,7 +156,7 @@ Manual spot checks remain optional:
      - `brew install infimount`
      - `brew install --cask infimount` (macOS)
 4. Merge/publish Homebrew tap changes when not handled by automation.
-5. Merge the automated version-sync PR (workflow: `Sync Version After Release`) so `main` app manifests reflect the published tag when such a PR is opened.
+5. Merge the automated stable-release identity PR (workflow: `Sync Version After Release`) if the stable tag was not already cut from an identity-prepared commit. The workflow is intentionally skipped for prereleases.
 
 ## 5. Rollback strategy
 

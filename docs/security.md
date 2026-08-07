@@ -97,6 +97,10 @@ By default, confirmations are required for:
 
 Desktop notifications, when enabled by the user, are attention signals only. They do not approve or deny operations and do not include tokens, secrets, or presigned URLs.
 
+## Dependency audit policy
+
+The scheduled dependency audit fails on high-severity advisories. The only current RustSec exception is `RUSTSEC-2023-0071` (Marvin timing attack in `rsa`), which has no fixed release and is pulled transitively by reqsign's optional Azure client-certificate/JWT support. Infimount does not enable or expose that credential mode. The exact exception is passed to `cargo audit` in `.github/workflows/deps-audit.yml` and must be removed when a fixed `rsa` release is available. JavaScript production audits have no ignored advisories.
+
 ## MCP Audit Log
 
 Infimount stores a bounded local MCP audit log at `~/.infimount/mcp_audit.json`.

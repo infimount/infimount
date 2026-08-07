@@ -170,7 +170,19 @@ When generating or modifying code, agents MUST follow these rules:
 
 ---
 
-## 7. Things Agents MUST NOT Do
+## 7. Development Commands
+
+Always run these after making changes:
+
+```bash
+cargo fmt --all
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+---
+
+## 8. Things Agents MUST NOT Do
 
 - ❌ Do not reimplement OpenDAL logic.
 - ❌ Do not bypass infimount_core.
@@ -180,7 +192,7 @@ When generating or modifying code, agents MUST follow these rules:
 
 ---
 
-## 8. Future Directions (Context Only)
+## 9. Future Directions (Context Only)
 
 - Mobile client using same backend.
 - CLI version.

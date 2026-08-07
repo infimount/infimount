@@ -17,7 +17,7 @@ Release: <https://github.com/infimount/infimount/releases/tag/v0.8.0>
 
 The public MCP surface is data-plane-only. Storage administration stays in the desktop control plane. Fresh and migrated installations use a safe read-only tool baseline, and new storages are not exposed to MCP by default. Non-loopback HTTP requires a bearer token; native secret-store failure does not trigger plaintext fallback.
 
-Stable release tags require macOS signing/notarization material, Windows signing material, and the Tauri updater signing key. Prerelease artifacts may be unsigned only when marked prerelease.
+Every release tag requires the Tauri updater signing key. Stable tags additionally require macOS signing/notarization and Windows signing material. Clearly marked prereleases may omit platform app signing, but updater artifacts are always signed.
 
 ## Upgrade notes
 

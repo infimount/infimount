@@ -30,6 +30,8 @@ selected storages through MCP for local AI assistants and agent workflows.
 - Huawei OBS
 - Azure Blob Storage
 - Google Cloud Storage
+- Google Drive
+- Microsoft OneDrive
 - WebDAV
 - SFTP
 - FTP

@@ -45,4 +45,4 @@ Use **Diagnostics** to view local status and export a redacted support bundle. R
 
 ## Unsigned prerelease warning
 
-Stable releases require macOS, Windows, and updater signing. Prereleases may be unsigned and are marked prerelease. For unsigned test builds, operating-system warnings are expected. Do not treat an unsigned prerelease as a stable release.
+Every release requires signed updater artifacts. Stable releases additionally require macOS and Windows platform signing. Clearly marked prereleases may omit platform app signing, so operating-system warnings can occur. On an unsigned prerelease only, Infimount runs its bundled MCP sidecar only when the package-bound `mcp.sha256` matches; signed sidecars prefer platform signature verification. Stable builds never use this checksum as a substitute for macOS code signing or Windows Authenticode. An updater artifact without a valid cryptographic signature is never accepted. Do not treat an unsigned prerelease application as a stable release.
