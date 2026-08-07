@@ -51,8 +51,20 @@ jobs:
           trap 'security delete-keychain "$keychain" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
           security create-keychain -p rehearsal "$keychain"
           security unlock-keychain -p rehearsal "$keychain"
-          openssl req -x509 -newkey rsa:2048 -nodes -subj '/CN=Infimount Rehearsal' \
-            -keyout "$work/key.pem" -out "$work/cert.pem" -days 1
+          cat > "$work/openssl.cnf" <<'EOF'
+          [req]
+          distinguished_name = req_distinguished_name
+          x509_extensions = v3_req
+          prompt = no
+          [req_distinguished_name]
+          CN = Infimount Rehearsal
+          [v3_req]
+          basicConstraints = critical,CA:false
+          keyUsage = critical,digitalSignature
+          extendedKeyUsage = codeSigning
+          EOF
+          openssl req -x509 -newkey rsa:2048 -nodes -config "$work/openssl.cnf" \
+            -keyout "$work/key.pem" -out "$work/cert.pem" -days 1 >/dev/null 2>&1
           # Import the disposable PEM certificate and key separately. This
           # avoids PKCS#12 cipher/MAC differences between macOS security,
           # LibreSSL, and OpenSSL 3 on hosted runners.
