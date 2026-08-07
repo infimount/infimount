@@ -32,7 +32,7 @@ jobs:
           version: 10
           run_install: false
       - run: pnpm install --frozen-lockfile
-      - run: bash scripts/release-rehearsal.sh --version "${{ inputs.version || '0.8.0-rc.1' }}" --work-dir rehearsal-evidence
+      - run: bash scripts/release-rehearsal.sh --version "${{ inputs.version || '0.8.0-rc.1' }}" --work-dir rehearsal-evidence --keep
       - uses: actions/upload-artifact@v6
         with:
           name: release-rehearsal-linux
