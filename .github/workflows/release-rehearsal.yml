@@ -52,9 +52,10 @@ jobs:
           security create-keychain -p rehearsal "$keychain"
           security unlock-keychain -p rehearsal "$keychain"
           openssl req -x509 -newkey rsa:2048 -nodes -subj '/CN=Infimount Rehearsal' -keyout "$work/key.pem" -out "$work/cert.pem" -days 1 >/dev/null 2>&1
-          # macOS security still rejects some modern PBES2 PKCS#12 defaults;
-          # legacy mode keeps this disposable fixture importable across runners.
-          openssl pkcs12 -export -legacy -out "$work/cert.p12" -inkey "$work/key.pem" -in "$work/cert.pem" -passout pass:rehearsal >/dev/null 2>&1
+          # Use PKCS#12 algorithms accepted by the macOS security tool and by
+          # both LibreSSL and OpenSSL 3 runners; modern PBES2 defaults can fail
+          # macOS import with a misleading MAC-verification error.
+          openssl pkcs12 -export -out "$work/cert.p12" -inkey "$work/key.pem" -in "$work/cert.pem" -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 -passout pass:rehearsal >/dev/null 2>&1
           security import "$work/cert.p12" -k "$keychain" -P rehearsal -T /usr/bin/codesign >/dev/null
           security set-key-partition-list -S apple-tool:,apple: -s -k rehearsal "$keychain" >/dev/null
           printf 'rehearsal executable\n' > "$work/mcp"; chmod +x "$work/mcp"
