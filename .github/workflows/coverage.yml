@@ -67,6 +67,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
+      - name: Prepare packaged MCP sidecar for Tauri coverage build
+        run: bash scripts/build-mcp-sidecar.sh
+
       - name: Run Rust coverage
         run: ./scripts/coverage-rust.sh
 

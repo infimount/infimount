@@ -154,6 +154,9 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings -A clippy::result_large_err -A clippy::needless_borrows_for_generic_args
 
+      - name: Prepare packaged MCP sidecar for Tauri tests and coverage
+        run: bash scripts/build-mcp-sidecar.sh
+
       - name: Rust tests
         run: cargo test --workspace
 
