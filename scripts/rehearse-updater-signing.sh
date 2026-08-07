@@ -4,6 +4,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${1:-}"; KEEP="${KEEP_REHEARSAL:-0}"; OWN_OUT=0
 if [[ -z "$OUT" ]]; then OUT="$(mktemp -d)"; OWN_OUT=1; fi
 mkdir -p "$OUT/signing" "$OUT/payloads"
+# The pnpm --dir invocation changes cwd into apps/desktop. Normalize the
+# caller's evidence directory before passing paths to the Tauri CLI.
+OUT="$(cd "$OUT" && pwd)"
 cleanup(){
   local rc="${1:-0}"
   if [[ "$KEEP" != 1 && "$OWN_OUT" == 1 ]]; then rm -rf "$OUT"; fi
