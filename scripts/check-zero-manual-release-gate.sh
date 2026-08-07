@@ -32,24 +32,11 @@ extract_job_block() {
 require_job_needs() {
   local job=$1
   local dependency=$2
-  python3 - "$RELEASE_WORKFLOW" "$job" "$dependency" <<'PY' || fail "release job '$job' must depend on '$dependency' before building artifacts"
-from pathlib import Path
-import sys
-
-path, job, dependency = sys.argv[1:]
-lines = Path(path).read_text(encoding="utf-8").splitlines()
-target = f"  {job}:"
-found_job = False
-for line in lines:
-    if line == target:
-        found_job = True
-        continue
-    if found_job and line.startswith("  ") and not line.startswith("    "):
-        break
-    if found_job and line.strip() == f"- {dependency}":
-        raise SystemExit(0)
-raise SystemExit(1)
-PY
+  # Keep this deliberately shell-portable: the dependency list is the next
+  # block after each build job and is bounded well before the next job.
+  grep -F -A20 -- "  ${job}:" "$RELEASE_WORKFLOW" \
+    | grep -Fq -- "- $dependency" \
+    || fail "release job '$job' must depend on '$dependency' before building artifacts"
 }
 
 required_gates=(
