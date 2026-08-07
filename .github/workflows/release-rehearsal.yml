@@ -70,6 +70,7 @@ jobs:
           # LibreSSL, and OpenSSL 3 on hosted runners.
           security import "$work/cert.pem" -k "$keychain" -T /usr/bin/codesign
           security import "$work/key.pem" -k "$keychain" -T /usr/bin/codesign
+          security add-trusted-cert -d -r trustRoot -p codeSign -k "$keychain" "$work/cert.pem"
           printf 'rehearsal executable\n' > "$work/mcp"; chmod +x "$work/mcp"
           identity="$(security find-identity -v -p codesigning "$keychain" | awk -F'"' '/valid identities/{next} /1\)/{print $2; exit}')"
           test -n "$identity"
