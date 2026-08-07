@@ -56,11 +56,7 @@ done
 for build_job in build-linux build-macos build-windows; do
   require_job_needs "$build_job" "release-signing-preflight"
   for gate in "${required_gates[@]}"; do
-    if [[ "$gate" == "release-policy-gate" ]]; then
-      require_job_needs "$build_job" "$gate"
-    elif ! extract_job_block "$build_job" | grep -Fq -- "- $gate"; then
-      fail "release job '$build_job' must depend on '$gate' before building artifacts"
-    fi
+    require_job_needs "$build_job" "$gate"
   done
 done
 
