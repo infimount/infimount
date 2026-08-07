@@ -15,7 +15,10 @@ use tauri::tray::TrayIconBuilder;
 use tauri::Manager;
 
 fn main() {
-    let app_state = state::AppState::new().expect("failed to initialize desktop state");
+    let app_state = match state::AppState::new() {
+        Ok(s) => s,
+        Err(_) => state::AppState::degraded("ERR_STARTUP_RESTORE_RECOVERY"),
+    };
 
     tauri::Builder::default()
         .manage(app_state)
@@ -51,6 +54,9 @@ fn main() {
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     let app_state = app_handle.state::<state::AppState>();
+                    if !app_state.startup_health().operational {
+                        return;
+                    }
                     if let Ok(validation) = tauri::async_runtime::spawn_blocking(
                         activation_probe::validate_sidecar_binary,
                     )
@@ -77,6 +83,7 @@ fn main() {
             commands::read_file,
             commands::read_file_range,
             commands::download_file_to_downloads,
+            commands::download_file_version_to_downloads,
             commands::write_file,
             commands::begin_file_upload,
             commands::append_file_upload_chunk,
@@ -91,7 +98,6 @@ fn main() {
             commands::update_storage,
             commands::update_mcp_storage_policy,
             commands::verify_storage,
-            commands::import_storage_config,
             commands::export_shareable_config,
             commands::preview_storage_import_cmd,
             commands::apply_storage_import_cmd,
@@ -137,9 +143,13 @@ fn main() {
             commands::delete_workspace,
             commands::delete_workspace_with_files,
             commands::import_legacy_workspaces,
+            commands::list_workspace_checkpoints,
+            commands::create_workspace_checkpoint,
+            commands::restore_workspace_checkpoint,
             commands::save_wizard_state,
             commands::set_telemetry_consent,
             commands::export_diagnostics,
+            commands::get_startup_health,
             commands::get_product_events,
             commands::clear_product_events,
             commands::reveal_diagnostics_export,

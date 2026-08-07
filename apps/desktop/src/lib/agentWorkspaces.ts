@@ -1,11 +1,14 @@
-import { createDirectory, listEntries, readFile, writeFile } from "@/lib/api";
+import { listEntries, readFileRange, writeFile } from "@/lib/api";
 import {
   listWorkspaces,
   createWorkspaceAtomic,
-  updateWorkspace as apiUpdateWorkspace,
+  createWorkspaceCheckpointCommand,
+  listWorkspaceCheckpoints,
+  restoreWorkspaceCheckpointCommand,
   deleteWorkspace as apiDeleteWorkspace,
   deleteWorkspaceWithFiles as apiDeleteWorkspaceWithFiles,
   importLegacyWorkspaces as apiImportLegacy,
+  type WorkspaceCheckpoint,
   type WorkspaceRecord,
 } from "@/lib/api";
 import { appendActivityLogEvent } from "@/lib/activityLog";
@@ -23,14 +26,7 @@ export interface AgentWorkspaceTemplate {
 
 export type AgentWorkspace = WorkspaceRecord;
 
-export interface AgentWorkspaceCheckpoint {
-  id: string;
-  workspaceId: string;
-  createdAt: string;
-  label: string;
-  manifestPath: string;
-  memoryFiles: Array<{ path: string; content: string }>;
-}
+export type AgentWorkspaceCheckpoint = WorkspaceCheckpoint;
 
 export interface CreateAgentWorkspaceInput {
   storageId: string;
@@ -39,14 +35,12 @@ export interface CreateAgentWorkspaceInput {
   templateId: AgentWorkspaceTemplateId;
   adoptExisting?: boolean;
   accessProfile?: string;
+  applyPolicy?: boolean;
 }
 
 const LEGACY_STORAGE_KEY = "infimount:agent-workspaces:v1";
-const CHECKPOINTS_STORAGE_KEY = "infimount:agent-workspace-checkpoints:v1";
-const CHECKPOINTS_DIR = ".infimount/checkpoints";
-const MAX_CHECKPOINTS = 200;
+const LEGACY_CHECKPOINTS_STORAGE_KEY = "infimount:agent-workspace-checkpoints:v1";
 const MAX_CHECKPOINT_FILE_BYTES = 1024 * 1024;
-const MAX_CHECKPOINT_TOTAL_BYTES = 5 * 1024 * 1024;
 
 export const AGENT_WORKSPACE_TEMPLATES: AgentWorkspaceTemplate[] = [
   {
@@ -116,12 +110,7 @@ export async function listAgentWorkspaces(): Promise<AgentWorkspace[]> {
 export async function listAgentWorkspaceCheckpoints(
   workspace: AgentWorkspace,
 ): Promise<AgentWorkspaceCheckpoint[]> {
-  deleteLegacyCheckpointCache();
-  const ids = workspace.checkpointIds.slice(0, MAX_CHECKPOINTS).filter(isSafeCheckpointId);
-  const checkpoints = await Promise.all(ids.map((id) => loadCheckpoint(workspace, id)));
-  return checkpoints
-    .filter((checkpoint): checkpoint is AgentWorkspaceCheckpoint => checkpoint !== null)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return listWorkspaceCheckpoints(workspace.id);
 }
 
 export async function createAgentWorkspace({
@@ -131,6 +120,7 @@ export async function createAgentWorkspace({
   templateId,
   adoptExisting,
   accessProfile,
+  applyPolicy,
 }: CreateAgentWorkspaceInput): Promise<AgentWorkspace> {
   const rawRoot = rootPath || defaultWorkspacePath(name);
   const normalizedRoot = normalizeWorkspacePath(rawRoot);
@@ -145,6 +135,7 @@ export async function createAgentWorkspace({
     templateId,
     adoptExisting,
     accessProfile,
+    applyPolicy,
   });
 
   if (result.rollbackErrors.length > 0) {
@@ -185,11 +176,16 @@ export async function readWorkspaceMemoryFile(
     relativePath,
     getWorkspaceTemplate(workspace.templateId as AgentWorkspaceTemplateId).memoryFiles,
   );
-  const data = await readFile(workspace.storageId, joinWorkspacePath(workspace.rootPath, relativePath));
-  if (data.byteLength > MAX_CHECKPOINT_FILE_BYTES) {
+  const result = await readFileRange(
+    workspace.storageId,
+    joinWorkspacePath(workspace.rootPath, relativePath),
+    0,
+    MAX_CHECKPOINT_FILE_BYTES,
+  );
+  if (result.truncated || result.totalSize > MAX_CHECKPOINT_FILE_BYTES) {
     throw new Error("Workspace memory file exceeds the 1 MiB limit");
   }
-  return new TextDecoder().decode(data);
+  return new TextDecoder().decode(new Uint8Array(result.bytes));
 }
 
 export async function appendWorkspaceMemory(
@@ -227,52 +223,10 @@ export async function createWorkspaceCheckpoint(
   workspace: AgentWorkspace,
   label?: string,
 ): Promise<AgentWorkspaceCheckpoint> {
-  deleteLegacyCheckpointCache();
-  const checkpointId = `checkpoint-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-  const allowedMemoryFiles = getWorkspaceTemplate(
-    workspace.templateId as AgentWorkspaceTemplateId,
-  ).memoryFiles;
-  if (
-    workspace.memoryFiles.length !== allowedMemoryFiles.length ||
-    workspace.memoryFiles.some((path, index) => path !== allowedMemoryFiles[index])
-  ) {
-    throw new Error("Workspace memory file metadata does not match its trusted template");
+  const checkpoint = await createWorkspaceCheckpointCommand(workspace.id, label);
+  if (!workspace.checkpointIds.includes(checkpoint.id)) {
+    workspace.checkpointIds = [checkpoint.id, ...workspace.checkpointIds];
   }
-  const memoryFiles = await Promise.all(
-    workspace.memoryFiles.map(async (path) => {
-      assertSafeMemoryPath(path, allowedMemoryFiles);
-      const content = await readWorkspaceMemoryFile(workspace, path);
-      if (new TextEncoder().encode(content).byteLength > MAX_CHECKPOINT_FILE_BYTES) {
-        throw new Error(`Memory file is too large to checkpoint: ${path}`);
-      }
-      return { path, content };
-    }),
-  );
-  const totalBytes = memoryFiles.reduce(
-    (total, file) => total + new TextEncoder().encode(file.content).byteLength,
-    0,
-  );
-  if (totalBytes > MAX_CHECKPOINT_TOTAL_BYTES) {
-    throw new Error("Workspace memory checkpoint exceeds the 5 MiB limit");
-  }
-  const checkpoint: AgentWorkspaceCheckpoint = {
-    id: checkpointId,
-    workspaceId: workspace.id,
-    createdAt: new Date().toISOString(),
-    label: safeCheckpointLabel(label),
-    manifestPath: workspaceCheckpointManifestPath(checkpointId),
-    memoryFiles,
-  };
-
-  await writeCheckpointManifest(workspace, checkpoint);
-
-  const checkpointIds = [
-    checkpoint.id,
-    ...workspace.checkpointIds.filter((id) => id !== checkpoint.id && isSafeCheckpointId(id)),
-  ].slice(0, MAX_CHECKPOINTS);
-  await apiUpdateWorkspace({ id: workspace.id, checkpointIds });
-  workspace.checkpointIds = checkpointIds;
-
   appendActivityLogEvent({
     type: "workspace_checkpoint_created",
     operation: "workspace",
@@ -281,7 +235,7 @@ export async function createWorkspaceCheckpoint(
     message: `Checkpointed ${workspace.name}`,
     summary: {
       checkpointId: checkpoint.id,
-      fileCount: memoryFiles.length,
+      fileCount: checkpoint.fileCount,
       manifestPath: checkpoint.manifestPath,
     },
   });
@@ -291,29 +245,16 @@ export async function createWorkspaceCheckpoint(
 export async function restoreWorkspaceMemoryCheckpoint(
   workspace: AgentWorkspace,
   checkpointId: string,
+  confirmOverwrite: boolean,
 ): Promise<void> {
-  deleteLegacyCheckpointCache();
-  const checkpoint = await loadCheckpoint(workspace, checkpointId);
-  if (!checkpoint) throw new Error("Checkpoint not found");
-
-  const allowedMemoryFiles = getWorkspaceTemplate(
-    workspace.templateId as AgentWorkspaceTemplateId,
-  ).memoryFiles;
-  for (const file of checkpoint.memoryFiles) {
-    assertSafeMemoryPath(file.path, allowedMemoryFiles);
-    await writeTextFile(workspace.storageId, joinWorkspacePath(workspace.rootPath, file.path), file.content);
-  }
+  await restoreWorkspaceCheckpointCommand(workspace.id, checkpointId, confirmOverwrite);
   appendActivityLogEvent({
     type: "workspace_checkpoint_restored",
     operation: "workspace",
     sourceId: workspace.storageId,
     workspaceId: workspace.id,
-    message: `Restored ${checkpoint.label}`,
-    summary: {
-      checkpointId: checkpoint.id,
-      fileCount: checkpoint.memoryFiles.length,
-      manifestPath: checkpoint.manifestPath,
-    },
+    message: "Restored workspace checkpoint",
+    summary: { checkpointId },
   });
 }
 
@@ -368,12 +309,6 @@ export function joinWorkspacePath(rootPath: string, relativePath: string): strin
   return `${root}/${relative}`;
 }
 
-export function workspaceCheckpointManifestPath(checkpointId: string): string {
-  if (!isSafeCheckpointId(checkpointId)) {
-    throw new Error("Invalid workspace checkpoint ID");
-  }
-  return `${CHECKPOINTS_DIR}/${checkpointId}.json`;
-}
 
 export function buildWorkspacePolicy(
   rootPath: string,
@@ -463,7 +398,7 @@ export interface LegacyWorkspaceMigrationResult {
 export async function migrateLegacyWorkspaces(): Promise<LegacyWorkspaceMigrationResult> {
   const empty: LegacyWorkspaceMigrationResult = { imported: 0, outcomes: [] };
   if (typeof window === "undefined") return empty;
-  deleteLegacyCheckpointCache();
+  window.localStorage.removeItem(LEGACY_CHECKPOINTS_STORAGE_KEY);
   const raw = window.localStorage.getItem(LEGACY_STORAGE_KEY);
   if (!raw) return empty;
 
@@ -517,140 +452,14 @@ export async function migrateLegacyWorkspaces(): Promise<LegacyWorkspaceMigratio
   return { imported, outcomes };
 }
 
-async function writeCheckpointManifest(
-  workspace: AgentWorkspace,
-  checkpoint: AgentWorkspaceCheckpoint,
-): Promise<void> {
-  await createDirectory(workspace.storageId, joinWorkspacePath(workspace.rootPath, CHECKPOINTS_DIR)).catch(
-    () => undefined,
-  );
-  await writeJsonFile(
-    workspace.storageId,
-    joinWorkspacePath(workspace.rootPath, checkpoint.manifestPath),
-    {
-      kind: "infimount-agent-workspace-checkpoint",
-      version: 1,
-      checkpoint,
-    },
-  );
-}
-
-async function loadCheckpoint(
-  workspace: AgentWorkspace,
-  checkpointId: string,
-): Promise<AgentWorkspaceCheckpoint | null> {
-  if (!isSafeCheckpointId(checkpointId)) return null;
-  const manifestPath = workspaceCheckpointManifestPath(checkpointId);
-  try {
-    const raw = await readWorkspaceTextFile(workspace, manifestPath);
-    const parsed = JSON.parse(raw) as { checkpoint?: unknown };
-    if (
-      isCheckpoint(parsed.checkpoint) &&
-      parsed.checkpoint.id === checkpointId &&
-      parsed.checkpoint.workspaceId === workspace.id &&
-      parsed.checkpoint.manifestPath === manifestPath &&
-      isSafeCheckpointContents(parsed.checkpoint, workspace)
-    ) {
-      return parsed.checkpoint;
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-async function readWorkspaceTextFile(
-  workspace: AgentWorkspace,
-  relativePath: string,
-): Promise<string> {
-  const data = await readFile(workspace.storageId, joinWorkspacePath(workspace.rootPath, relativePath));
-  return new TextDecoder().decode(data);
-}
-
 async function writeTextFile(storageId: string, path: string, content: string): Promise<void> {
   await writeFile(storageId, path, new TextEncoder().encode(content));
-}
-
-async function writeJsonFile(
-  storageId: string,
-  path: string,
-  value: unknown,
-): Promise<void> {
-  await writeTextFile(storageId, path, `${JSON.stringify(value, null, 2)}\n`);
-}
-
-function deleteLegacyCheckpointCache(): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem(CHECKPOINTS_STORAGE_KEY);
-}
-
-function isSafeCheckpointId(id: string): boolean {
-  return id.length <= 128 && /^checkpoint-[A-Za-z0-9-]+$/.test(id);
-}
-
-function safeCheckpointLabel(label?: string): string {
-  const value = label?.trim() || "Memory checkpoint";
-  if (
-    value.length > 200 ||
-    [...value].some((character) => {
-      const code = character.charCodeAt(0);
-      return code <= 31 || code === 127;
-    })
-  ) {
-    throw new Error("Checkpoint label must be at most 200 characters without control characters");
-  }
-  return value;
 }
 
 function assertSafeMemoryPath(path: string, allowedPaths: string[]): void {
   if (!allowedPaths.includes(path) || !/^memory\/[A-Za-z0-9._-]+\.md$/.test(path)) {
     throw new Error(`Unsafe workspace memory path: ${path}`);
   }
-}
-
-function isSafeCheckpointContents(
-  checkpoint: AgentWorkspaceCheckpoint,
-  workspace: AgentWorkspace,
-): boolean {
-  const allowedPaths = getWorkspaceTemplate(
-    workspace.templateId as AgentWorkspaceTemplateId,
-  ).memoryFiles;
-  let totalBytes = 0;
-  const seen = new Set<string>();
-  for (const file of checkpoint.memoryFiles) {
-    if (
-      !file ||
-      typeof file.path !== "string" ||
-      typeof file.content !== "string" ||
-      seen.has(file.path)
-    ) {
-      return false;
-    }
-    try {
-      assertSafeMemoryPath(file.path, allowedPaths);
-    } catch {
-      return false;
-    }
-    seen.add(file.path);
-    const bytes = new TextEncoder().encode(file.content).byteLength;
-    if (bytes > MAX_CHECKPOINT_FILE_BYTES) return false;
-    totalBytes += bytes;
-    if (totalBytes > MAX_CHECKPOINT_TOTAL_BYTES) return false;
-  }
-  return checkpoint.memoryFiles.length <= allowedPaths.length;
-}
-
-function isCheckpoint(value: unknown): value is AgentWorkspaceCheckpoint {
-  if (!value || typeof value !== "object") return false;
-  const item = value as AgentWorkspaceCheckpoint;
-  return (
-    typeof item.id === "string" &&
-    typeof item.workspaceId === "string" &&
-    typeof item.createdAt === "string" &&
-    typeof item.label === "string" &&
-    typeof item.manifestPath === "string" &&
-    Array.isArray(item.memoryFiles)
-  );
 }
 
 function isLegacyWorkspace(value: unknown): value is WorkspaceRecord {

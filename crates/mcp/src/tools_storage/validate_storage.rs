@@ -60,7 +60,7 @@ async fn validate_with_operator(
     storage: &StorageRecord,
     op: opendal::Operator,
 ) -> McpResult<ValidateStorageOutput> {
-    let caps = op.info().full_capability();
+    let caps = op.info().capability();
     let capabilities = storage_capabilities(storage, &op);
     let warnings = validation_warnings(storage, &capabilities);
 
@@ -140,7 +140,7 @@ async fn validate_with_operator(
 }
 
 fn storage_capabilities(storage: &StorageRecord, op: &opendal::Operator) -> StorageCapabilities {
-    let caps = op.info().full_capability();
+    let caps = op.info().capability();
     let mut versioning_caps = opendal_adapter::get_capabilities(op);
     if opendal_adapter::check_versioning_disabled(storage) == Some(true) {
         versioning_caps.list_with_versions = false;

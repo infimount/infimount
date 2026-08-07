@@ -16,10 +16,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { FileTypeIcon } from "./FileIcon";
 import {
+  downloadFileVersionToDownloads,
   generateDownloadLink,
   getStorageCapabilities,
   readFileRange,
-  readFileVersion,
   statEntry,
   writeFile,
 } from "@/lib/api";
@@ -570,16 +570,11 @@ export function FilePreviewPanel({
                 path={file.id} 
                 onVersionDownload={async (version) => {
                   try {
-                    const data = await readFileVersion(sourceId, file.id, version);
-                    const blob = new Blob([data.buffer as ArrayBuffer]);
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = `${file.name}.v${version}`;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
+                    const result = await downloadFileVersionToDownloads(sourceId, file.id, version);
+                    toast({
+                      title: "Version downloaded",
+                      description: `${result.fileName} was saved to Downloads.`,
+                    });
                   } catch (err: unknown) {
                     toast({
                       title: "Download failed",

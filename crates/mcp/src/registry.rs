@@ -16,7 +16,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-use tracing::info;
 use uuid::Uuid;
 
 const REGISTRY_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
@@ -351,7 +350,7 @@ impl StorageRegistry {
                 self.rollback_secret_writes(rollback)?;
                 return Err(error);
             }
-            info!("migrated storage registry with backup at {:?}", backup_path);
+            crate::migration_cleanup::delete_plaintext_backup_or_journal(&backup_path)?;
         }
 
         Ok(storages)
@@ -1010,21 +1009,18 @@ mod tests {
 
         let _storages = load_registry(&dir);
 
-        // Check that backup was written to backups/
+        // After successful migration the plaintext backup is deleted
         let backups_dir = dir.path().join("backups");
-        assert!(backups_dir.exists(), "backups directory should exist");
-        let backup_files: Vec<_> = fs::read_dir(&backups_dir)
-            .expect("read backups dir")
-            .filter_map(|e| e.ok())
-            .collect();
-        assert!(!backup_files.is_empty(), "backup files should exist");
-
-        // Verify backup content matches original byte-for-byte
-        let backup_content = fs::read_to_string(backup_files[0].path()).expect("read backup");
-        assert_eq!(
-            backup_content, original_json,
-            "backup must match original byte-for-byte"
-        );
+        if backups_dir.exists() {
+            let count = fs::read_dir(&backups_dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .count();
+            assert_eq!(
+                count, 0,
+                "backup should be deleted after successful migration"
+            );
+        }
     }
 
     #[test]

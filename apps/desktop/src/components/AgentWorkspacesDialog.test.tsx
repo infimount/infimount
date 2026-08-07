@@ -6,9 +6,12 @@ import {
   listWorkspaces,
   createWorkspaceAtomic as apiCreateWorkspaceAtomic,
   updateWorkspace as apiUpdateWorkspace,
+  createWorkspaceCheckpointCommand,
+  listWorkspaceCheckpoints,
+  restoreWorkspaceCheckpointCommand,
   createDirectory,
   listEntries,
-  readFile,
+  readFileRange,
   writeFile,
   deleteWorkspace,
   deleteWorkspaceWithFiles,
@@ -26,9 +29,30 @@ vi.mock("@/lib/api", async (importOriginal) => {
       rollbackErrors: [],
     }),
     updateWorkspace: vi.fn().mockResolvedValue({}),
+    createWorkspaceCheckpointCommand: vi.fn().mockResolvedValue({
+      schemaVersion: 1,
+      id: "checkpoint-1",
+      workspaceId: "workspace-1",
+      label: "Checkpoint",
+      createdAt: "2026-01-01T00:00:00Z",
+      manifestPath: "/agent-workspaces/existing-workspace/.infimount/checkpoints/checkpoint-1.json",
+      fileCount: 3,
+    }),
+    listWorkspaceCheckpoints: vi.fn().mockResolvedValue([
+      {
+        schemaVersion: 1,
+        id: "checkpoint-1",
+        workspaceId: "workspace-1",
+        label: "Checkpoint",
+        createdAt: "2026-01-01T00:00:00Z",
+        manifestPath: "/agent-workspaces/existing-workspace/.infimount/checkpoints/checkpoint-1.json",
+        fileCount: 3,
+      },
+    ]),
+    restoreWorkspaceCheckpointCommand: vi.fn().mockResolvedValue(undefined),
     createDirectory: vi.fn(),
     listEntries: vi.fn(),
-    readFile: vi.fn(),
+    readFileRange: vi.fn(),
     writeFile: vi.fn(),
     deleteWorkspace: vi.fn(),
     deleteWorkspaceWithFiles: vi.fn(),
@@ -89,10 +113,26 @@ describe("AgentWorkspacesDialog", () => {
     window.localStorage.clear();
     vi.mocked(createDirectory).mockResolvedValue(undefined);
     vi.mocked(writeFile).mockResolvedValue(undefined);
-    vi.mocked(readFile).mockResolvedValue(new TextEncoder().encode("# Tasks\n"));
+    vi.mocked(readFileRange).mockResolvedValue({
+      totalSize: 8,
+      offset: 0,
+      bytes: Array.from(new TextEncoder().encode("# Tasks\n")),
+      truncated: false,
+    });
     vi.mocked(listEntries).mockResolvedValue([]);
     vi.mocked(deleteWorkspace).mockResolvedValue(undefined);
     vi.mocked(deleteWorkspaceWithFiles).mockResolvedValue(undefined);
+    vi.mocked(listWorkspaceCheckpoints).mockResolvedValue([
+      {
+        schemaVersion: 1,
+        id: "checkpoint-1",
+        workspaceId: "workspace-1",
+        label: "Checkpoint",
+        createdAt: "2026-01-01T00:00:00Z",
+        manifestPath: "/agent-workspaces/existing-workspace/.infimount/checkpoints/checkpoint-1.json",
+        fileCount: 3,
+      },
+    ]);
     (listWorkspaces as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (apiCreateWorkspaceAtomic as ReturnType<typeof vi.fn>).mockResolvedValue({
       workspace: {
@@ -201,13 +241,6 @@ describe("AgentWorkspacesDialog", () => {
         etag: null,
       },
     ]);
-    vi.mocked(readFile).mockImplementation(async (_storageId, path) => {
-      if (path.includes("/.infimount/checkpoints/")) {
-        const manifestWrite = vi.mocked(writeFile).mock.calls.find((call) => call[1] === path);
-        if (manifestWrite) return manifestWrite[2] as Uint8Array;
-      }
-      return new TextEncoder().encode("# Tasks\n");
-    });
 
     render(
       <AgentWorkspacesDialog
@@ -257,28 +290,18 @@ describe("AgentWorkspacesDialog", () => {
       );
     });
 
-    window.localStorage.setItem(
-      "infimount:agent-workspace-checkpoints:v1",
-      JSON.stringify([{ workspaceId: "untrusted" }]),
-    );
     fireEvent.click(screen.getByRole("button", { name: "Save checkpoint" }));
     await waitFor(() => {
-      expect(apiUpdateWorkspace).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: "workspace-1",
-          checkpointIds: [expect.stringMatching(/^checkpoint-/)],
-        }),
-      );
-      expect(window.localStorage.getItem("infimount:agent-workspace-checkpoints:v1")).toBeNull();
+      expect(createWorkspaceCheckpointCommand).toHaveBeenCalledWith("workspace-1", undefined);
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Restore memory" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("Overwrite workspace memory?");
+    expect(restoreWorkspaceCheckpointCommand).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Restore and overwrite" }));
     await waitFor(() => {
-      expect(writeFile).toHaveBeenCalledWith(
-        "local",
-        "/agent-workspaces/existing-workspace/memory/tasks.md",
-        expect.anything(),
-      );
+      expect(restoreWorkspaceCheckpointCommand).toHaveBeenCalledWith("workspace-1", "checkpoint-1", true);
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     });
   });
 });

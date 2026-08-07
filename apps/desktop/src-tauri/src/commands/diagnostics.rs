@@ -8,7 +8,12 @@ use crate::diagnostics::{
     export_diagnostics_bundle, reveal_diagnostics_export as reveal_export, DiagnosticsExportResult,
     DiagnosticsInput,
 };
-use crate::state::AppState;
+use crate::state::{AppState, StartupHealth};
+
+#[tauri::command]
+pub fn get_startup_health(state: State<'_, AppState>) -> StartupHealth {
+    state.startup_health()
+}
 
 #[tauri::command]
 pub async fn export_diagnostics(
@@ -32,6 +37,15 @@ pub async fn export_diagnostics(
         "not_found"
     } else if !sidecar.executable {
         "not_executable"
+    } else if matches!(
+        sidecar.error_code.as_deref(),
+        Some(
+            "ERR_SIDECAR_CHECKSUM_MISSING"
+                | "ERR_SIDECAR_CHECKSUM_MISMATCH"
+                | "ERR_SIDECAR_CHECKSUM_FAILED"
+        )
+    ) {
+        "checksum_failed"
     } else if !sidecar.version_match {
         "version_mismatch"
     } else {

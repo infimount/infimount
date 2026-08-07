@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::errors::{err_with_details, McpError, McpErrorCode};
+use crate::errors::{err, err_with_details, McpError, McpErrorCode};
 use crate::registry::StorageRecord;
 
 pub const MCP_POLICY_VERSION: u32 = 2;
@@ -214,10 +214,9 @@ fn decode_policy_path_controls(path: &str) -> String {
                 continue;
             }
         }
-        let ch = path[index..]
-            .chars()
-            .next()
-            .expect("index remains on a UTF-8 boundary");
+        let Some(ch) = path[index..].chars().next() else {
+            break;
+        };
         if ch == '\\' {
             out.push('/');
         } else if !ch.is_control() || matches!(ch, '\n' | '\r' | '\t') {
@@ -228,15 +227,12 @@ fn decode_policy_path_controls(path: &str) -> String {
     out
 }
 
-fn path_matches_prefix(path: &str, prefix: &str) -> bool {
-    let Ok(prefix) = normalize_policy_path(prefix) else {
-        return false;
-    };
-    if prefix.is_empty() {
-        return true;
-    }
-
-    path == prefix || path.strip_prefix(&(prefix + "/")).is_some()
+fn path_matches_normalized_prefix(path: &str, prefix: &str) -> bool {
+    prefix.is_empty()
+        || path == prefix
+        || path
+            .strip_prefix(prefix)
+            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 pub fn normalize_policy_rule(rule: &mut McpPathRule) -> Result<(), McpError> {
@@ -261,11 +257,19 @@ pub fn normalize_storage_policy(policy: &mut McpStoragePolicy) -> Result<(), Mcp
         }
     }
 
+    let mut seen_rule_ids = std::collections::HashSet::new();
     let mut seen_prefixes = std::collections::HashSet::new();
     for rule in &policy.rules {
+        if !seen_rule_ids.insert(&rule.id) {
+            return Err(err_with_details(
+                McpErrorCode::ERR_INVALID_POLICY,
+                format!("duplicate policy rule ID '{}'", rule.id),
+                serde_json::json!({ "rule_id": rule.id }),
+            ));
+        }
         if !seen_prefixes.insert(&rule.prefix) {
             return Err(err_with_details(
-                McpErrorCode::ERR_INTERNAL,
+                McpErrorCode::ERR_INVALID_POLICY,
                 format!(
                     "duplicate normalized rule prefix '{}' (rule '{}')",
                     rule.prefix, rule.id
@@ -280,55 +284,60 @@ pub fn normalize_storage_policy(policy: &mut McpStoragePolicy) -> Result<(), Mcp
     Ok(())
 }
 
-fn find_matching_rule<'a>(
-    rules: &'a [McpPathRule],
-    normalized_path: &str,
-) -> Result<Option<&'a McpPathRule>, McpError> {
-    let mut best: Option<(&McpPathRule, usize)> = None;
-
-    for rule in rules {
-        let normalized_prefix = normalize_policy_path(&rule.prefix)?;
-        if path_matches_prefix(normalized_path, &normalized_prefix) {
-            let prefix_len = normalized_prefix.len();
-            match best {
-                Some((_, best_len)) if prefix_len > best_len => {
-                    best = Some((rule, prefix_len));
-                }
-                None => {
-                    best = Some((rule, prefix_len));
-                }
-                _ => {}
-            }
+fn validate_persisted_policy(policy: &McpStoragePolicy) -> Result<(), McpError> {
+    let mut seen_rule_ids = std::collections::HashSet::with_capacity(policy.rules.len());
+    let mut seen_prefixes = std::collections::HashSet::with_capacity(policy.rules.len());
+    for rule in &policy.rules {
+        if !seen_rule_ids.insert(&rule.id) {
+            return Err(err_with_details(
+                McpErrorCode::ERR_INVALID_POLICY,
+                "storage policy contains a duplicate persisted rule ID",
+                serde_json::json!({ "rule_id": rule.id }),
+            ));
+        }
+        let normalized = normalize_policy_path(&rule.prefix).map_err(|_| {
+            err_with_details(
+                McpErrorCode::ERR_INVALID_POLICY,
+                "storage policy contains an invalid persisted rule prefix",
+                serde_json::json!({ "rule_id": rule.id }),
+            )
+        })?;
+        if normalized != rule.prefix
+            || rule.prefix.is_empty()
+            || !seen_prefixes.insert(&rule.prefix)
+        {
+            return Err(err_with_details(
+                McpErrorCode::ERR_INVALID_POLICY,
+                "storage policy contains a malformed or duplicate persisted rule prefix",
+                serde_json::json!({ "rule_id": rule.id }),
+            ));
         }
     }
-
-    Ok(best.map(|(rule, _)| rule))
-}
-
-pub fn has_duplicate_normalized_prefixes(rules: &[McpPathRule]) -> Result<(), McpError> {
-    for (i, a) in rules.iter().enumerate() {
-        for (j, b) in rules.iter().enumerate() {
-            if i != j {
-                let norm_a = normalize_policy_path(&a.prefix)?;
-                let norm_b = normalize_policy_path(&b.prefix)?;
-                if norm_a == norm_b {
-                    return Err(err_with_details(
-                        McpErrorCode::ERR_INTERNAL,
-                        format!(
-                            "duplicate normalized rule prefix '{}' (rules '{}' and '{}')",
-                            norm_a, a.id, b.id
-                        ),
-                        serde_json::json!({
-                            "prefix": norm_a,
-                            "rule_id_a": a.id,
-                            "rule_id_b": b.id
-                        }),
-                    ));
-                }
-            }
+    for prefix in &policy.denied_paths {
+        let normalized = normalize_policy_path(prefix).map_err(|_| {
+            err(
+                McpErrorCode::ERR_INVALID_POLICY,
+                "storage policy contains an invalid denied prefix",
+            )
+        })?;
+        if normalized != *prefix {
+            return Err(err(
+                McpErrorCode::ERR_INVALID_POLICY,
+                "storage policy contains a non-normalized denied prefix",
+            ));
         }
     }
     Ok(())
+}
+
+fn find_matching_rule<'a>(
+    rules: &'a [McpPathRule],
+    normalized_path: &str,
+) -> Option<&'a McpPathRule> {
+    rules
+        .iter()
+        .filter(|rule| path_matches_normalized_prefix(normalized_path, &rule.prefix))
+        .max_by_key(|rule| rule.prefix.len())
 }
 
 pub fn migrate_legacy_policy(policy: &mut McpStoragePolicy) -> Result<(), McpError> {
@@ -380,12 +389,14 @@ pub fn evaluate_storage_policy(
     let normalized_path = normalize_policy_path(backend_path)?;
     let policy = &storage.mcp_policy;
 
-    has_duplicate_normalized_prefixes(&policy.rules)?;
+    // Registry persistence normalizes policies once. This linear validation keeps
+    // evaluation fail-closed for legacy/corrupt files without O(n²) duplicate scans.
+    validate_persisted_policy(policy)?;
 
     if policy
         .denied_paths
         .iter()
-        .any(|prefix| path_matches_prefix(&normalized_path, prefix))
+        .any(|prefix| path_matches_normalized_prefix(&normalized_path, prefix))
     {
         return Err(policy_denied(
             storage,
@@ -396,7 +407,7 @@ pub fn evaluate_storage_policy(
         ));
     }
 
-    let matched_rule = find_matching_rule(&policy.rules, &normalized_path)?;
+    let matched_rule = find_matching_rule(&policy.rules, &normalized_path);
 
     let (effective_access, matched_rule_id, workspace_id) = if let Some(rule) = matched_rule {
         let ws_id = match &rule.source {
@@ -977,7 +988,7 @@ mod tests {
             false,
         )
         .unwrap_err();
-        assert_eq!(error.code, McpErrorCode::ERR_INTERNAL);
+        assert_eq!(error.code, McpErrorCode::ERR_INVALID_POLICY);
     }
 
     #[test]
@@ -1289,8 +1300,47 @@ mod tests {
         };
 
         let error = normalize_storage_policy(&mut policy).unwrap_err();
-        assert_eq!(error.code, McpErrorCode::ERR_INTERNAL);
+        assert_eq!(error.code, McpErrorCode::ERR_INVALID_POLICY);
         assert!(error.message.contains("duplicate normalized rule prefix"));
+    }
+
+    #[test]
+    fn duplicate_rule_ids_are_rejected_across_workspace_and_manual_rules() {
+        let mut policy = McpStoragePolicy {
+            rules: vec![
+                McpPathRule {
+                    id: "workspace:w-1".to_string(),
+                    prefix: "workspace".to_string(),
+                    access: McpAccessMode::ReadOnly,
+                    source: McpRuleSource::Workspace {
+                        workspace_id: "w-1".to_string(),
+                    },
+                    confirmation_rules: None,
+                },
+                McpPathRule {
+                    id: "workspace:w-1".to_string(),
+                    prefix: "manual".to_string(),
+                    access: McpAccessMode::ReadOnly,
+                    source: McpRuleSource::Manual,
+                    confirmation_rules: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let error = normalize_storage_policy(&mut policy).unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_INVALID_POLICY);
+        assert_eq!(error.message, "duplicate policy rule ID 'workspace:w-1'");
+
+        let storage = storage_with_policy(policy);
+        let error =
+            evaluate_storage_policy(&storage, "workspace/file", McpOperation::Read, false, false)
+                .unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_INVALID_POLICY);
+        assert_eq!(
+            error.message,
+            "storage policy contains a duplicate persisted rule ID"
+        );
     }
 
     #[test]

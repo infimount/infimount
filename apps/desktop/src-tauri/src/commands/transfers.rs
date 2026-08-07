@@ -53,19 +53,38 @@ pub async fn plan_transfer_entries(
     targetDir: String,
     operation: String,
     conflictPolicy: String,
+    jobId: Option<String>,
 ) -> Result<operations::TransferPlan, CoreError> {
     let from_op = state.operator_for_storage_id(&fromSourceId)?;
     let to_op = state.operator_for_storage_id(&toSourceId)?;
-    operations::plan_transfer_entries(
-        &from_op,
-        &to_op,
-        paths,
-        &targetDir,
-        parse_transfer_operation(&operation)?,
-        fromSourceId == toSourceId,
-        parse_transfer_conflict_policy(&conflictPolicy)?,
-    )
-    .await
+    if let Some(job_id) = jobId {
+        let cancel_job_id = job_id.clone();
+        let result = operations::plan_transfer_entries_cancellable(
+            &from_op,
+            &to_op,
+            paths,
+            &targetDir,
+            parse_transfer_operation(&operation)?,
+            fromSourceId == toSourceId,
+            parse_transfer_conflict_policy(&conflictPolicy)?,
+            || state.is_transfer_cancelled(&cancel_job_id),
+        )
+        .await;
+        // Do not clear a cancellation marker here: transfer execution checks it before
+        // starting, preventing a race between plan completion and the next command.
+        result
+    } else {
+        operations::plan_transfer_entries(
+            &from_op,
+            &to_op,
+            paths,
+            &targetDir,
+            parse_transfer_operation(&operation)?,
+            fromSourceId == toSourceId,
+            parse_transfer_conflict_policy(&conflictPolicy)?,
+        )
+        .await
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -88,7 +107,6 @@ pub async fn transfer_entries(
     let policy = parse_transfer_conflict_policy(&conflictPolicy)?;
 
     if let Some(job_id) = jobId {
-        state.clear_transfer_cancel(&job_id);
         let emit_app = app.clone();
         let emit_job_id = job_id.clone();
         let cancel_job_id = job_id.clone();

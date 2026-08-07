@@ -324,6 +324,11 @@ pub(super) fn core_error_to_mcp_error(err: infimount_core::CoreError) -> crate::
                 .to_string();
             err_with_details(McpErrorCode::ERR_MCP_POLICY_DENIED, message, json!({}))
         }
+        infimount_core::CoreError::Config(msg) if msg.contains("cursor") => err_with_details(
+            McpErrorCode::ERR_INVALID_PATH,
+            "invalid or stale list cursor",
+            json!({}),
+        ),
         _ => err_with_details(
             McpErrorCode::ERR_INTERNAL,
             "storage operation failed",

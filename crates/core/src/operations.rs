@@ -3,8 +3,10 @@ use futures::io::{AsyncReadExt, AsyncWriteExt};
 use futures::{StreamExt, TryStreamExt};
 use opendal::{ErrorKind, Metadata, Operator};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::OnceLock;
 use tokio::fs;
 
 use crate::models::{
@@ -18,6 +20,8 @@ pub enum TransferOperation {
     Copy,
     Move,
 }
+
+pub const MAX_TRANSFER_PLAN_ENTRIES: usize = 100_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -321,9 +325,72 @@ struct PageCursor {
     position: Option<String>,
 }
 
+const MAX_CURSOR_BYTES: usize = 8 * 1024;
+const MIN_PAGE_SCAN_BUDGET: usize = 256;
+const MAX_PAGE_SCAN_BUDGET: usize = 4_096;
+// Cursor replay on backends without `start_after` is bounded by this signed total.
+// Keep this aligned with the product's 10k traversal cap.
+const MAX_PAGE_TOTAL_SCANNED: usize = MAX_RECURSIVE_ITEMS as usize;
+const PAGE_SCAN_MULTIPLIER: usize = 32;
+
+fn page_scan_budget(limit: u32) -> usize {
+    (limit as usize)
+        .saturating_mul(PAGE_SCAN_MULTIPLIER)
+        .clamp(MIN_PAGE_SCAN_BUDGET, MAX_PAGE_SCAN_BUDGET)
+}
+
+fn cursor_signing_key() -> &'static [u8; 32] {
+    static KEY: OnceLock<[u8; 32]> = OnceLock::new();
+    KEY.get_or_init(|| {
+        let mut digest = Sha256::new();
+        digest.update(uuid::Uuid::new_v4().as_bytes());
+        digest.update(uuid::Uuid::new_v4().as_bytes());
+        digest.finalize().into()
+    })
+}
+
+fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+    const BLOCK_BYTES: usize = 64;
+    let mut normalized = [0u8; BLOCK_BYTES];
+    if key.len() > BLOCK_BYTES {
+        normalized[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        normalized[..key.len()].copy_from_slice(key);
+    }
+    let mut inner_pad = [0x36u8; BLOCK_BYTES];
+    let mut outer_pad = [0x5cu8; BLOCK_BYTES];
+    for index in 0..BLOCK_BYTES {
+        inner_pad[index] ^= normalized[index];
+        outer_pad[index] ^= normalized[index];
+    }
+    let mut inner = Sha256::new();
+    inner.update(inner_pad);
+    inner.update(message);
+    let inner_digest = inner.finalize();
+    let mut outer = Sha256::new();
+    outer.update(outer_pad);
+    outer.update(inner_digest);
+    outer.finalize().into()
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    left.iter()
+        .zip(right)
+        .fold(0u8, |difference, (a, b)| difference | (a ^ b))
+        == 0
+}
+
 fn encode_page_cursor(cursor: &PageCursor) -> Result<String> {
     let bytes = serde_json::to_vec(cursor)?;
-    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&bytes);
+    let signature = hmac_sha256(cursor_signing_key(), payload.as_bytes());
+    Ok(format!(
+        "{payload}.{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(signature)
+    ))
 }
 
 fn decode_page_cursor(
@@ -332,15 +399,44 @@ fn decode_page_cursor(
     recursive: bool,
     revision: u64,
 ) -> Result<PageCursor> {
+    if encoded.len() > MAX_CURSOR_BYTES {
+        return Err(crate::models::CoreError::Config(
+            "invalid list cursor".to_string(),
+        ));
+    }
+    let (payload, encoded_signature) = encoded
+        .split_once('.')
+        .ok_or_else(|| crate::models::CoreError::Config("invalid list cursor".to_string()))?;
+    let signature = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded_signature)
+        .map_err(|_| crate::models::CoreError::Config("invalid list cursor".to_string()))?;
+    let expected = hmac_sha256(cursor_signing_key(), payload.as_bytes());
+    if !constant_time_eq(&signature, &expected) {
+        return Err(crate::models::CoreError::Config(
+            "invalid list cursor".to_string(),
+        ));
+    }
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(encoded)
+        .decode(payload)
         .map_err(|_| crate::models::CoreError::Config("invalid list cursor".to_string()))?;
     let cursor: PageCursor = serde_json::from_slice(&bytes)
         .map_err(|_| crate::models::CoreError::Config("invalid list cursor".to_string()))?;
+    let normalized_path = normalize_list_path(path);
+    let valid_position = cursor.position.as_ref().is_none_or(|position| {
+        position.len() <= 4096
+            && (normalized_path.is_empty() || position.starts_with(&normalized_path))
+            && (recursive
+                || !position
+                    .trim_start_matches(&normalized_path)
+                    .trim_end_matches('/')
+                    .contains('/'))
+    });
     if cursor.version != 2
-        || cursor.path != normalize_list_path(path)
+        || cursor.path != normalized_path
         || cursor.recursive != recursive
         || cursor.revision != revision
+        || !valid_position
+        || cursor.scanned > MAX_PAGE_TOTAL_SCANNED
     {
         return Err(crate::models::CoreError::Config(
             "list cursor does not match the current query or storage revision".to_string(),
@@ -389,29 +485,36 @@ async fn page_lister(
     }
 }
 
-async fn entry_with_metadata(op: Operator, full_path: String) -> Result<Entry> {
-    let name = extract_filename(&full_path);
-    let (is_dir, size, modified_at, etag) = match op.stat(&full_path).await {
-        Ok(meta) => (
-            meta.is_dir(),
-            meta.content_length(),
-            meta.last_modified().map(|dt| dt.to_string()),
-            meta.etag().map(ToOwned::to_owned),
-        ),
-        Err(error) if error.kind() == ErrorKind::NotFound => (false, 0, None, None),
-        Err(error) => return Err(error.into()),
+async fn entry_from_listed(op: &Operator, object: opendal::Entry) -> Result<Entry> {
+    let (full_path, listed) = object.into_parts();
+    // OpenDAL list metadata is authoritative when it identifies the entry and gives a
+    // non-zero file length. A zero-length file is ambiguous (empty vs. unavailable list
+    // metadata), so stat only that narrow case to preserve exact sizes.
+    let needs_stat = listed.mode() == opendal::EntryMode::Unknown
+        || (listed.mode().is_file() && listed.content_length() == 0);
+    let metadata = if needs_stat {
+        match op.stat(&full_path).await {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                Metadata::new(opendal::EntryMode::from_path(&full_path))
+            }
+            Err(error) => return Err(error.into()),
+        }
+    } else {
+        listed
     };
+    let is_dir = metadata.is_dir();
     Ok(Entry {
         path: if is_dir {
             ensure_dir_path(&full_path)
         } else {
-            full_path
+            full_path.clone()
         },
-        name,
+        name: extract_filename(&full_path),
         is_dir,
-        size: if is_dir { 0 } else { size },
-        modified_at,
-        etag,
+        size: if is_dir { 0 } else { metadata.content_length() },
+        modified_at: metadata.last_modified().map(|dt| dt.to_string()),
+        etag: metadata.etag().map(ToOwned::to_owned),
     })
 }
 
@@ -424,12 +527,32 @@ pub async fn list_entries_page(
     recursive: bool,
     revision: u64,
 ) -> Result<ListEntriesPage> {
+    list_entries_page_with_filter(op, path, limit, cursor, recursive, revision, |_| Ok(true)).await
+}
+
+/// List a bounded page while applying a path filter before entries are exposed.
+///
+/// Cursor progress counts every examined backend entry, including filtered entries, so a
+/// denied object cannot be recovered by changing page size or replaying a cursor. The filter is
+/// evaluated before metadata is returned to the caller.
+pub async fn list_entries_page_with_filter<F>(
+    op: &Operator,
+    path: &str,
+    limit: u32,
+    encoded_cursor: Option<String>,
+    recursive: bool,
+    revision: u64,
+    filter: F,
+) -> Result<ListEntriesPage>
+where
+    F: Fn(&str) -> Result<bool>,
+{
     if limit == 0 || limit > MAX_LIST_LIMIT {
         return Err(crate::models::CoreError::Config(format!(
             "list limit must be between 1 and {MAX_LIST_LIMIT}"
         )));
     }
-    let cursor = match cursor.as_deref() {
+    let cursor = match encoded_cursor.as_deref() {
         Some(cursor) => decode_page_cursor(cursor, path, recursive, revision)?,
         None => PageCursor {
             version: 2,
@@ -440,7 +563,7 @@ pub async fn list_entries_page(
             position: None,
         },
     };
-    let supports_start_after = op.info().full_capability().list_with_start_after;
+    let supports_start_after = op.info().capability().list_with_start_after;
     let resume_position = supports_start_after
         .then_some(cursor.position.as_deref())
         .flatten();
@@ -449,65 +572,17 @@ pub async fn list_entries_page(
     } else {
         cursor.scanned
     };
-
-    if recursive {
-        let p = normalize_list_path(path);
-        let mut lister = page_lister(op, &p, true, resume_position).await?;
-        let mut logical_index = cursor.scanned.saturating_sub(skip_count);
-        let mut skipped = 0usize;
-        let mut paths = Vec::with_capacity(limit as usize + 1);
-        let mut capped = false;
-
-        while let Some(object) = lister.try_next().await? {
-            let full_path = object.path().to_string();
-            if full_path.trim_end_matches('/').is_empty() {
-                continue;
-            }
-            if skipped < skip_count {
-                skipped += 1;
-                logical_index += 1;
-                continue;
-            }
-            if logical_index >= MAX_RECURSIVE_ITEMS as usize {
-                capped = true;
-                break;
-            }
-            if paths.len() > limit as usize {
-                break;
-            }
-            paths.push(full_path);
-            logical_index += 1;
-        }
-        if skipped < skip_count {
-            return Err(crate::models::CoreError::Config(
-                "invalid list cursor position".to_string(),
-            ));
-        }
-        let has_more = paths.len() > limit as usize;
-        paths.truncate(limit as usize);
-        let entries = futures::stream::iter(
-            paths
-                .into_iter()
-                .map(|path| entry_with_metadata(op.clone(), path)),
-        )
-        .buffered(16)
-        .try_collect::<Vec<_>>()
-        .await?;
-        let next_position = entries.last().map(|entry| entry.path.clone());
-        let next_scanned = cursor.scanned.saturating_add(entries.len());
-        return Ok(ListEntriesPage {
-            entries,
-            next_cursor: has_more
-                .then(|| next_page_cursor(path, true, revision, next_scanned, next_position))
-                .transpose()?,
-            truncated: capped,
-        });
-    }
-
     let p = normalize_list_path(path);
-    let mut lister = page_lister(op, &p, false, resume_position).await?;
+    let mut lister = page_lister(op, &p, recursive, resume_position).await?;
     let mut skipped = 0usize;
-    let mut paths = Vec::with_capacity(limit as usize + 1);
+    let mut scanned = cursor.scanned;
+    let mut position = cursor.position.clone();
+    let mut objects = Vec::with_capacity(limit as usize);
+    let mut has_more = false;
+    let mut capped = false;
+    let scan_budget = page_scan_budget(limit);
+    let mut examined_this_page = 0usize;
+
     while let Some(object) = lister.try_next().await? {
         let full_path = object.path().to_string();
         if full_path.trim_end_matches('/').is_empty() {
@@ -517,34 +592,59 @@ pub async fn list_entries_page(
             skipped += 1;
             continue;
         }
-        if paths.len() > limit as usize {
+        // On backends without start-after, replayed cursor entries are unavoidable;
+        // budget only newly examined entries so forward progress remains possible.
+        examined_this_page = examined_this_page.saturating_add(1);
+        if examined_this_page > scan_budget {
+            capped = true;
+            has_more = true;
             break;
         }
-        paths.push(full_path);
+        if scanned >= MAX_PAGE_TOTAL_SCANNED {
+            capped = true;
+            // The signed cursor's cumulative scan ceiling also bounds replay on
+            // backends without start-after. Never issue a cursor beyond it.
+            has_more = false;
+            break;
+        }
+
+        let previous_scanned = scanned;
+        let previous_position = position.clone();
+        scanned = scanned.saturating_add(1);
+        position = Some(full_path.clone());
+        if !filter(full_path.trim_end_matches('/'))? {
+            continue;
+        }
+        if objects.len() == limit as usize {
+            // Leave this allowed object for the next page. Denied entries examined during the
+            // look-ahead are deliberately replayed; they remain filtered and never leak.
+            scanned = previous_scanned;
+            position = previous_position;
+            has_more = true;
+            break;
+        }
+        objects.push(object);
     }
     if skipped < skip_count {
         return Err(crate::models::CoreError::Config(
             "invalid list cursor position".to_string(),
         ));
     }
-    let has_more = paths.len() > limit as usize;
-    paths.truncate(limit as usize);
+
     let entries = futures::stream::iter(
-        paths
+        objects
             .into_iter()
-            .map(|path| entry_with_metadata(op.clone(), path)),
+            .map(|object| entry_from_listed(op, object)),
     )
     .buffered(16)
     .try_collect::<Vec<_>>()
     .await?;
-    let next_position = entries.last().map(|entry| entry.path.clone());
-    let next_scanned = cursor.scanned.saturating_add(entries.len());
     Ok(ListEntriesPage {
         entries,
         next_cursor: has_more
-            .then(|| next_page_cursor(path, false, revision, next_scanned, next_position))
+            .then(|| next_page_cursor(path, recursive, revision, scanned, position))
             .transpose()?,
-        truncated: false,
+        truncated: capped,
     })
 }
 
@@ -570,7 +670,7 @@ pub async fn write_full_with_user_metadata(
         return Ok(());
     };
 
-    if !op.info().full_capability().write_with_user_metadata {
+    if !op.info().capability().write_with_user_metadata {
         return Err(crate::models::CoreError::Config(
             "storage backend does not support user metadata writes".to_string(),
         ));
@@ -1014,7 +1114,7 @@ async fn plan_path_action(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn collect_transfer_plan_entries(
+async fn collect_transfer_plan_entries<C>(
     from_op: &Operator,
     to_op: &Operator,
     source_path: &str,
@@ -1023,7 +1123,17 @@ async fn collect_transfer_plan_entries(
     same_source: bool,
     conflict_policy: TransferConflictPolicy,
     entries: &mut Vec<TransferPlanEntry>,
-) -> Result<()> {
+    is_cancelled: &C,
+) -> Result<()>
+where
+    C: Fn() -> bool + ?Sized,
+{
+    ensure_not_cancelled(is_cancelled)?;
+    if entries.len() >= MAX_TRANSFER_PLAN_ENTRIES {
+        return Err(crate::models::CoreError::Config(format!(
+            "transfer plan exceeds the maximum of {MAX_TRANSFER_PLAN_ENTRIES} entries"
+        )));
+    }
     let meta = stat_for_transfer(from_op, source_path).await?;
     let is_dir = meta.is_dir();
     let size = if is_dir { 0 } else { meta.content_length() };
@@ -1059,8 +1169,15 @@ async fn collect_transfer_plan_entries(
     let to_root = ensure_dir_path(&planned_destination);
     let mut stack = vec![(from_root, to_root)];
     while let Some((from_base, to_base)) = stack.pop() {
+        ensure_not_cancelled(is_cancelled)?;
         let mut lister = from_op.lister(&from_base).await?;
         while let Some(obj) = lister.try_next().await? {
+            ensure_not_cancelled(is_cancelled)?;
+            if entries.len() >= MAX_TRANSFER_PLAN_ENTRIES {
+                return Err(crate::models::CoreError::Config(format!(
+                    "transfer plan exceeds the maximum of {MAX_TRANSFER_PLAN_ENTRIES} entries"
+                )));
+            }
             let child_path = obj.path().to_string();
             if is_current_dir_marker(&from_base, &child_path) {
                 continue;
@@ -1111,12 +1228,21 @@ async fn collect_transfer_plan_entries(
     Ok(())
 }
 
-async fn estimate_transfer_totals(op: &Operator, paths: &[String]) -> Result<(u64, u64)> {
+async fn estimate_transfer_totals<C>(
+    op: &Operator,
+    paths: &[String],
+    is_cancelled: &C,
+) -> Result<(u64, u64)>
+where
+    C: Fn() -> bool + ?Sized,
+{
     let mut total_items = 0_u64;
     let mut total_bytes = 0_u64;
 
     for path in paths {
-        let (items, bytes) = estimate_path_totals(op, path).await?;
+        ensure_not_cancelled(is_cancelled)?;
+        let remaining = MAX_TRANSFER_PLAN_ENTRIES.saturating_sub(total_items as usize);
+        let (items, bytes) = estimate_path_totals(op, path, remaining, is_cancelled).await?;
         total_items = total_items.saturating_add(items);
         total_bytes = total_bytes.saturating_add(bytes);
     }
@@ -1124,7 +1250,21 @@ async fn estimate_transfer_totals(op: &Operator, paths: &[String]) -> Result<(u6
     Ok((total_items, total_bytes))
 }
 
-async fn estimate_path_totals(op: &Operator, path: &str) -> Result<(u64, u64)> {
+async fn estimate_path_totals<C>(
+    op: &Operator,
+    path: &str,
+    max_entries: usize,
+    is_cancelled: &C,
+) -> Result<(u64, u64)>
+where
+    C: Fn() -> bool + ?Sized,
+{
+    ensure_not_cancelled(is_cancelled)?;
+    if max_entries == 0 {
+        return Err(crate::models::CoreError::Config(format!(
+            "transfer estimate exceeds the maximum of {MAX_TRANSFER_PLAN_ENTRIES} entries"
+        )));
+    }
     let meta = stat_for_transfer(op, path).await?;
     if !meta.is_dir() {
         return Ok((1, meta.content_length()));
@@ -1135,8 +1275,10 @@ async fn estimate_path_totals(op: &Operator, path: &str) -> Result<(u64, u64)> {
     let mut stack = vec![ensure_dir_path(path)];
 
     while let Some(dir) = stack.pop() {
+        ensure_not_cancelled(is_cancelled)?;
         let mut lister = op.lister(&dir).await?;
         while let Some(obj) = lister.try_next().await? {
+            ensure_not_cancelled(is_cancelled)?;
             let child_path = obj.path().to_string();
             if is_current_dir_marker(&dir, &child_path) {
                 continue;
@@ -1146,6 +1288,11 @@ async fn estimate_path_totals(op: &Operator, path: &str) -> Result<(u64, u64)> {
                 stack.push(ensure_dir_path(&child_path));
             } else {
                 total_items = total_items.saturating_add(1);
+                if total_items as usize > max_entries {
+                    return Err(crate::models::CoreError::Config(format!(
+                        "transfer estimate exceeds the maximum of {MAX_TRANSFER_PLAN_ENTRIES} entries"
+                    )));
+                }
                 total_bytes = total_bytes.saturating_add(child_meta.content_length());
             }
         }
@@ -1194,7 +1341,7 @@ async fn transfer_file(
         TransferOperation::Copy => {
             if same_source {
                 match from_op.copy(from_path, to_path).await {
-                    Ok(()) => {}
+                    Ok(_) => {}
                     Err(error) if error.kind() == ErrorKind::Unsupported => {
                         copy_file_across_operators(from_op, to_op, from_path, to_path).await?;
                     }
@@ -1250,7 +1397,7 @@ where
         TransferOperation::Copy => {
             if same_source {
                 match from_op.copy(from_path, to_path).await {
-                    Ok(()) => {
+                    Ok(_) => {
                         state.bytes_transferred = state.bytes_transferred.saturating_add(size);
                         emit_progress(progress, state, from_path);
                     }
@@ -1466,11 +1613,39 @@ pub async fn plan_transfer_entries(
     same_source: bool,
     conflict_policy: TransferConflictPolicy,
 ) -> Result<TransferPlan> {
+    plan_transfer_entries_cancellable(
+        from_op,
+        to_op,
+        paths,
+        target_dir,
+        operation,
+        same_source,
+        conflict_policy,
+        || false,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn plan_transfer_entries_cancellable<C>(
+    from_op: &Operator,
+    to_op: &Operator,
+    paths: Vec<String>,
+    target_dir: &str,
+    operation: TransferOperation,
+    same_source: bool,
+    conflict_policy: TransferConflictPolicy,
+    is_cancelled: C,
+) -> Result<TransferPlan>
+where
+    C: Fn() -> bool,
+{
     let (paths, target_dir) = normalize_transfer_inputs(paths, target_dir);
     let target_dir = target_dir.as_str();
     let mut entries = Vec::new();
 
     for source_path in &paths {
+        ensure_not_cancelled(&is_cancelled)?;
         let meta = stat_for_transfer(from_op, source_path).await?;
         let name = extract_filename(source_path);
         let destination = if meta.is_dir() {
@@ -1487,6 +1662,7 @@ pub async fn plan_transfer_entries(
             same_source,
             conflict_policy,
             &mut entries,
+            &is_cancelled,
         )
         .await?;
     }
@@ -1544,7 +1720,16 @@ pub async fn transfer_path(
                     .into())
                 }
                 TransferConflictPolicy::Overwrite => {
-                    delete_recursive(to_op, &normalized_dest).await?;
+                    return transactional_overwrite_transfer(
+                        from_op,
+                        to_op,
+                        &normalized_src,
+                        &normalized_dest,
+                        true,
+                        operation,
+                        &|| false,
+                    )
+                    .await;
                 }
                 TransferConflictPolicy::Skip => {
                     return Ok(());
@@ -1586,7 +1771,16 @@ pub async fn transfer_path(
                     .into())
                 }
                 TransferConflictPolicy::Overwrite => {
-                    delete_recursive(to_op, &destination_path).await?;
+                    return transactional_overwrite_transfer(
+                        from_op,
+                        to_op,
+                        &source_path,
+                        &destination_path,
+                        false,
+                        operation,
+                        &|| false,
+                    )
+                    .await;
                 }
                 TransferConflictPolicy::Skip => {
                     return Ok(());
@@ -1612,6 +1806,172 @@ pub async fn transfer_path(
         .await?;
     }
 
+    Ok(())
+}
+
+async fn stage_transfer_source<C>(
+    from_op: &Operator,
+    to_op: &Operator,
+    source_path: &str,
+    staged_path: &str,
+    is_dir: bool,
+    is_cancelled: &C,
+) -> Result<()>
+where
+    C: Fn() -> bool + Sync,
+{
+    ensure_not_cancelled(is_cancelled)?;
+    if !is_dir {
+        ensure_parent_dir(to_op, staged_path).await?;
+        return copy_file_across_operators_with_progress(
+            from_op,
+            to_op,
+            source_path,
+            staged_path,
+            None::<fn(u64)>,
+            Some(is_cancelled as &(dyn Fn() -> bool + Sync)),
+        )
+        .await;
+    }
+
+    let source_root = ensure_dir_path(source_path);
+    let staged_root = ensure_dir_path(staged_path);
+    to_op.create_dir(&staged_root).await?;
+    let mut stack = vec![(source_root, staged_root)];
+    while let Some((source_dir, target_dir)) = stack.pop() {
+        ensure_not_cancelled(is_cancelled)?;
+        let mut lister = from_op.lister(&source_dir).await?;
+        while let Some(entry) = lister.try_next().await? {
+            ensure_not_cancelled(is_cancelled)?;
+            let child = entry.path().to_string();
+            if is_current_dir_marker(&source_dir, &child) {
+                continue;
+            }
+            let metadata = stat_for_transfer(from_op, &child).await?;
+            let destination = join_target_dir(&target_dir, &extract_filename(&child));
+            if metadata.is_dir() {
+                let source_child = ensure_dir_path(&child);
+                let destination_child = ensure_dir_path(&destination);
+                to_op.create_dir(&destination_child).await?;
+                stack.push((source_child, destination_child));
+            } else {
+                copy_file_across_operators_with_progress(
+                    from_op,
+                    to_op,
+                    &child,
+                    &destination,
+                    None::<fn(u64)>,
+                    Some(is_cancelled as &(dyn Fn() -> bool + Sync)),
+                )
+                .await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn transactional_overwrite_transfer<C>(
+    from_op: &Operator,
+    to_op: &Operator,
+    source_path: &str,
+    destination_path: &str,
+    is_dir: bool,
+    operation: TransferOperation,
+    is_cancelled: &C,
+) -> Result<()>
+where
+    C: Fn() -> bool + Sync,
+{
+    let capabilities = to_op.info().capability();
+    if !capabilities.rename || !capabilities.delete {
+        return Err(crate::models::CoreError::Config(
+            "safe transactional overwrite is unsupported by this backend".to_string(),
+        ));
+    }
+    let normalized_destination = destination_path.trim_end_matches('/');
+    let suffix = uuid::Uuid::new_v4();
+    let staged = format!("{normalized_destination}.infimount-transfer-stage-{suffix}");
+    let backup = format!("{normalized_destination}.infimount-transfer-backup-{suffix}");
+    let staged_path = if is_dir {
+        ensure_dir_path(&staged)
+    } else {
+        staged
+    };
+    let backup_path = if is_dir {
+        ensure_dir_path(&backup)
+    } else {
+        backup
+    };
+
+    if let Err(error) = stage_transfer_source(
+        from_op,
+        to_op,
+        source_path,
+        &staged_path,
+        is_dir,
+        is_cancelled,
+    )
+    .await
+    {
+        let cleanup = delete_recursive(to_op, &staged_path).await;
+        return match cleanup {
+            Ok(()) => Err(error),
+            Err(cleanup_error) => Err(crate::models::CoreError::Config(format!(
+                "{error}; staged transfer cleanup failed at {staged_path}: {cleanup_error}"
+            ))),
+        };
+    }
+    if is_cancelled() {
+        delete_recursive(to_op, &staged_path)
+            .await
+            .map_err(|cleanup| {
+                crate::models::CoreError::Config(format!(
+                "transfer cancelled but staged destination is preserved at {staged_path}: {cleanup}"
+            ))
+            })?;
+        return Err(crate::models::CoreError::Config(
+            "transfer cancelled".to_string(),
+        ));
+    }
+    if let Err(error) = to_op.rename(destination_path, &backup_path).await {
+        delete_recursive(to_op, &staged_path).await.map_err(|cleanup| {
+            crate::models::CoreError::Config(format!(
+                "destination preservation failed ({error}); staged destination is preserved at {staged_path}: {cleanup}"
+            ))
+        })?;
+        return Err(error.into());
+    }
+    if let Err(error) = to_op.rename(&staged_path, destination_path).await {
+        to_op.rename(&backup_path, destination_path).await.map_err(|rollback| {
+            crate::models::CoreError::Config(format!(
+                "transfer commit failed ({error}); rollback failed and previous destination is preserved at {backup_path}: {rollback}"
+            ))
+        })?;
+        delete_recursive(to_op, &staged_path).await.map_err(|cleanup| {
+            crate::models::CoreError::Config(format!(
+                "transfer commit failed ({error}) and staged destination remains at {staged_path}: {cleanup}"
+            ))
+        })?;
+        return Err(error.into());
+    }
+
+    if let Err(error) = delete_recursive(to_op, &backup_path).await {
+        delete_recursive(to_op, destination_path).await.map_err(|rollback| {
+            crate::models::CoreError::Config(format!(
+                "transfer backup cleanup failed ({error}); new destination cleanup failed and previous destination remains at {backup_path}: {rollback}"
+            ))
+        })?;
+        to_op.rename(&backup_path, destination_path).await.map_err(|rollback| {
+            crate::models::CoreError::Config(format!(
+                "transfer backup cleanup failed ({error}); rollback failed and previous destination is preserved at {backup_path}: {rollback}"
+            ))
+        })?;
+        return Err(error);
+    }
+    if operation == TransferOperation::Move {
+        ensure_not_cancelled(is_cancelled)?;
+        delete_recursive(from_op, source_path).await?;
+    }
     Ok(())
 }
 
@@ -1739,7 +2099,17 @@ pub async fn transfer_entries(
                         .into())
                     }
                     TransferConflictPolicy::Overwrite => {
-                        delete_recursive(to_op, &dest_dir).await?;
+                        transactional_overwrite_transfer(
+                            from_op,
+                            to_op,
+                            &from_path,
+                            &dest_dir,
+                            true,
+                            operation,
+                            &|| false,
+                        )
+                        .await?;
+                        continue;
                     }
                     TransferConflictPolicy::Skip => {
                         continue;
@@ -1793,7 +2163,17 @@ pub async fn transfer_entries(
                         .into())
                     }
                     TransferConflictPolicy::Overwrite => {
-                        delete_recursive(to_op, &dest_file).await?;
+                        transactional_overwrite_transfer(
+                            from_op,
+                            to_op,
+                            &from_path,
+                            &dest_file,
+                            false,
+                            operation,
+                            &|| false,
+                        )
+                        .await?;
+                        continue;
                     }
                     TransferConflictPolicy::Skip => {
                         continue;
@@ -1843,7 +2223,8 @@ where
 {
     let (paths, target_dir) = normalize_transfer_inputs(paths, target_dir);
     let target_dir = target_dir.as_str();
-    let (total_items, total_bytes) = estimate_transfer_totals(from_op, &paths).await?;
+    let (total_items, total_bytes) =
+        estimate_transfer_totals(from_op, &paths, &is_cancelled).await?;
     let mut state = TransferProgressState {
         completed_items: 0,
         total_items,
@@ -1959,8 +2340,19 @@ where
                         .into())
                     }
                     TransferConflictPolicy::Overwrite => {
-                        ensure_not_cancelled(&is_cancelled)?;
-                        delete_recursive(to_op, &dest_dir).await?;
+                        transactional_overwrite_transfer(
+                            from_op,
+                            to_op,
+                            &from_path,
+                            &dest_dir,
+                            true,
+                            operation,
+                            &is_cancelled,
+                        )
+                        .await?;
+                        state.completed_items = state.completed_items.saturating_add(1);
+                        emit_progress(&mut progress, &state, &from_path);
+                        continue;
                     }
                     TransferConflictPolicy::Skip => {
                         continue;
@@ -2017,8 +2409,22 @@ where
                         .into())
                     }
                     TransferConflictPolicy::Overwrite => {
-                        ensure_not_cancelled(&is_cancelled)?;
-                        delete_recursive(to_op, &dest_file).await?;
+                        transactional_overwrite_transfer(
+                            from_op,
+                            to_op,
+                            &from_path,
+                            &dest_file,
+                            false,
+                            operation,
+                            &is_cancelled,
+                        )
+                        .await?;
+                        state.completed_items = state.completed_items.saturating_add(1);
+                        state.bytes_transferred = state
+                            .bytes_transferred
+                            .saturating_add(meta.content_length());
+                        emit_progress(&mut progress, &state, &from_path);
+                        continue;
                     }
                     TransferConflictPolicy::Skip => {
                         continue;
@@ -2110,42 +2516,290 @@ pub async fn download_file_to_local_path(
     result
 }
 
+/// Stream one historical object version to an exact local path without materializing it in IPC.
+pub async fn download_file_version_to_local_path(
+    op: &Operator,
+    source_path: &str,
+    version: &str,
+    local_path: &Path,
+) -> Result<u64> {
+    let metadata = op.stat_with(source_path).version(version).await?;
+    if metadata.is_dir() {
+        return Err(crate::models::CoreError::Config(
+            "cannot download a directory version as a file".to_string(),
+        ));
+    }
+    let expected_bytes = metadata.content_length();
+    let mut reader = op
+        .reader_with(source_path)
+        .version(version)
+        .await?
+        .into_futures_async_read(0..expected_bytes)
+        .await?;
+    let mut destination = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(local_path)
+        .await?;
+    let result = async {
+        let mut transferred = 0_u64;
+        let mut buffer = vec![0_u8; 256 * 1024];
+        loop {
+            let read = futures::AsyncReadExt::read(&mut reader, &mut buffer).await?;
+            if read == 0 {
+                break;
+            }
+            tokio::io::AsyncWriteExt::write_all(&mut destination, &buffer[..read]).await?;
+            transferred = transferred.saturating_add(read as u64);
+        }
+        tokio::io::AsyncWriteExt::flush(&mut destination).await?;
+        destination.sync_all().await?;
+        if transferred != expected_bytes || fs::metadata(local_path).await?.len() != expected_bytes
+        {
+            return Err(crate::models::CoreError::Config(
+                "version download byte verification failed".to_string(),
+            ));
+        }
+        Ok(transferred)
+    }
+    .await;
+    if result.is_err() {
+        let _ = fs::remove_file(local_path).await;
+    }
+    result
+}
+
 /// Stream one local staging file to an exact storage path without buffering the full file.
 pub async fn upload_local_file_to_path(
     op: &Operator,
     source_path: &Path,
     target_path: &str,
 ) -> Result<()> {
-    stream_local_file(op, source_path, target_path).await
+    upload_local_file_to_path_cancellable(op, source_path, target_path, || false).await
 }
 
-async fn stream_local_file(op: &Operator, source_path: &Path, target_path: &str) -> Result<()> {
+/// Stream a local staging file with periodic cancellation and failure-safe overwrite handling.
+///
+/// Backends with rename support receive the upload under a unique sibling name first. Existing
+/// destinations are moved aside until the staged object has been committed and verified. A
+/// backend that cannot rename may only create a previously absent destination; overwriting on
+/// such a backend is refused rather than risking irreversible loss of the old object.
+async fn restore_preserved_backup(
+    op: &Operator,
+    backup_path: &str,
+    target_path: &str,
+    remove_current: bool,
+    context: &str,
+) -> Result<()> {
+    if remove_current {
+        op.delete(target_path).await.map_err(|error| {
+            crate::models::CoreError::Config(format!(
+                "{context}; rollback could not remove the incomplete destination; previous object is preserved at {backup_path}: {error}"
+            ))
+        })?;
+    }
+    op.rename(backup_path, target_path).await.map_err(|error| {
+        crate::models::CoreError::Config(format!(
+            "{context}; rollback failed and the previous object is preserved at {backup_path}: {error}"
+        ))
+    })
+}
+
+pub async fn upload_local_file_to_path_cancellable<F>(
+    op: &Operator,
+    source_path: &Path,
+    target_path: &str,
+    cancelled: F,
+) -> Result<()>
+where
+    F: Fn() -> bool + Send + Sync,
+{
     let expected_bytes = fs::metadata(source_path).await?.len();
-    let mut source = fs::File::open(source_path).await?;
-    let mut destination = op.writer(target_path).await?.into_futures_async_write();
-    let mut buffer = vec![0u8; 256 * 1024];
-    let mut transferred_bytes = 0_u64;
-    loop {
-        let read = tokio::io::AsyncReadExt::read(&mut source, &mut buffer).await?;
-        if read == 0 {
-            break;
+    let target_exists = match op.stat(target_path).await {
+        Ok(metadata) => {
+            if metadata.is_dir() {
+                return Err(crate::models::CoreError::Config(
+                    "upload target is a directory".to_string(),
+                ));
+            }
+            true
         }
-        destination.write_all(&buffer[..read]).await?;
-        transferred_bytes = transferred_bytes.saturating_add(read as u64);
+        Err(error) if error.kind() == ErrorKind::NotFound => false,
+        Err(error) => return Err(error.into()),
+    };
+    let capabilities = op.info().capability();
+    if !capabilities.rename {
+        if target_exists {
+            return Err(crate::models::CoreError::Config(
+                "safe overwrite is unsupported by this backend".to_string(),
+            ));
+        }
+        return stream_local_file_cancellable(op, source_path, target_path, &cancelled, true).await;
     }
-    destination.close().await?;
-    if transferred_bytes != expected_bytes {
-        return Err(crate::models::CoreError::Config(format!(
-            "upload byte count mismatch: expected {expected_bytes}, transferred {transferred_bytes}"
-        )));
+
+    let suffix = uuid::Uuid::new_v4();
+    let staged_path = format!("{target_path}.infimount-upload-{suffix}");
+    let backup_path = format!("{target_path}.infimount-backup-{suffix}");
+    stream_local_file_cancellable(op, source_path, &staged_path, &cancelled, true).await?;
+    if cancelled() {
+        op.delete(&staged_path).await.map_err(|error| {
+            crate::models::CoreError::Config(format!(
+                "upload cancelled but staged object is preserved at {staged_path} because cleanup failed: {error}"
+            ))
+        })?;
+        return Err(crate::models::CoreError::Config(
+            "upload cancelled".to_string(),
+        ));
     }
-    let persisted_bytes = op.stat(target_path).await?.content_length();
-    if persisted_bytes != expected_bytes {
-        return Err(crate::models::CoreError::Config(format!(
-            "upload verification failed: expected {expected_bytes}, found {persisted_bytes}"
-        )));
+
+    let mut old_moved = false;
+    if target_exists {
+        if let Err(error) = op.rename(target_path, &backup_path).await {
+            let _ = op.delete(&staged_path).await;
+            return Err(error.into());
+        }
+        old_moved = true;
+    }
+
+    if cancelled() {
+        if old_moved {
+            restore_preserved_backup(
+                op,
+                &backup_path,
+                target_path,
+                false,
+                "upload cancelled after preserving the previous destination",
+            )
+            .await?;
+        }
+        op.delete(&staged_path).await.map_err(|error| {
+            crate::models::CoreError::Config(format!(
+                "upload cancelled but staged-object cleanup failed at {staged_path}: {error}"
+            ))
+        })?;
+        return Err(crate::models::CoreError::Config(
+            "upload cancelled".to_string(),
+        ));
+    }
+
+    if let Err(error) = op.rename(&staged_path, target_path).await {
+        if old_moved {
+            restore_preserved_backup(
+                op,
+                &backup_path,
+                target_path,
+                false,
+                "upload commit failed after preserving the previous destination",
+            )
+            .await?;
+        }
+        op.delete(&staged_path).await.map_err(|cleanup_error| {
+            crate::models::CoreError::Config(format!(
+                "upload commit failed ({error}); staged object is preserved at {staged_path} because cleanup failed: {cleanup_error}"
+            ))
+        })?;
+        return Err(error.into());
+    }
+
+    let verification = op.stat(target_path).await;
+    let verification_error = match verification {
+        Ok(metadata) if metadata.content_length() == expected_bytes => None,
+        Ok(metadata) => Some(crate::models::CoreError::Config(format!(
+            "upload verification failed: expected {expected_bytes}, found {}",
+            metadata.content_length()
+        ))),
+        Err(error) => Some(error.into()),
+    };
+    if cancelled() || verification_error.is_some() {
+        let failure = if cancelled() {
+            crate::models::CoreError::Config("upload cancelled".to_string())
+        } else {
+            verification_error.expect("verification error was checked")
+        };
+        if old_moved {
+            restore_preserved_backup(
+                op,
+                &backup_path,
+                target_path,
+                true,
+                "upload verification or cancellation failed",
+            )
+            .await?;
+        } else {
+            op.delete(target_path).await.map_err(|cleanup_error| {
+                crate::models::CoreError::Config(format!(
+                    "{failure}; incomplete destination cleanup failed at {target_path}: {cleanup_error}"
+                ))
+            })?;
+        }
+        return Err(failure);
+    }
+
+    if old_moved {
+        if let Err(error) = op.delete(&backup_path).await {
+            restore_preserved_backup(
+                op,
+                &backup_path,
+                target_path,
+                true,
+                "upload backup cleanup failed",
+            )
+            .await?;
+            return Err(error.into());
+        }
     }
     Ok(())
+}
+
+async fn stream_local_file_cancellable<F>(
+    op: &Operator,
+    source_path: &Path,
+    target_path: &str,
+    cancelled: &F,
+    cleanup_on_error: bool,
+) -> Result<()>
+where
+    F: Fn() -> bool + Send + Sync,
+{
+    let result = async {
+        let expected_bytes = fs::metadata(source_path).await?.len();
+        let mut source = fs::File::open(source_path).await?;
+        let mut destination = op.writer(target_path).await?.into_futures_async_write();
+        let mut buffer = vec![0u8; 256 * 1024];
+        let mut transferred_bytes = 0_u64;
+        loop {
+            if cancelled() {
+                return Err(crate::models::CoreError::Config("upload cancelled".to_string()));
+            }
+            let read = tokio::io::AsyncReadExt::read(&mut source, &mut buffer).await?;
+            if read == 0 {
+                break;
+            }
+            destination.write_all(&buffer[..read]).await?;
+            transferred_bytes = transferred_bytes.saturating_add(read as u64);
+        }
+        if cancelled() {
+            return Err(crate::models::CoreError::Config("upload cancelled".to_string()));
+        }
+        destination.close().await?;
+        if transferred_bytes != expected_bytes {
+            return Err(crate::models::CoreError::Config(format!(
+                "upload byte count mismatch: expected {expected_bytes}, transferred {transferred_bytes}"
+            )));
+        }
+        let persisted_bytes = op.stat(target_path).await?.content_length();
+        if persisted_bytes != expected_bytes {
+            return Err(crate::models::CoreError::Config(format!(
+                "upload verification failed: expected {expected_bytes}, found {persisted_bytes}"
+            )));
+        }
+        Ok(())
+    }
+    .await;
+    if result.is_err() && cleanup_on_error {
+        let _ = op.delete(target_path).await;
+    }
+    result
 }
 
 async fn upload_path_recursive(op: &Operator, src: &Path, target_dir: &str) -> Result<()> {
@@ -2166,7 +2820,7 @@ async fn upload_path_recursive(op: &Operator, src: &Path, target_dir: &str) -> R
 
         let target_path = join_target_dir(target_dir, &filename);
 
-        stream_local_file(op, src, &target_path).await?;
+        upload_local_file_to_path(op, src, &target_path).await?;
     } else if meta.is_dir() {
         let mut stack: Vec<(std::path::PathBuf, String)> =
             vec![(src.to_path_buf(), target_dir.to_string())];
@@ -2196,7 +2850,7 @@ async fn upload_path_recursive(op: &Operator, src: &Path, target_dir: &str) -> R
                 if child_meta.is_file() {
                     let filename = entry.file_name().to_string_lossy().to_string();
                     let target_path = join_target_dir(&dir_target, &filename);
-                    stream_local_file(op, &child_path, &target_path).await?;
+                    upload_local_file_to_path(op, &child_path, &target_path).await?;
                 } else if child_meta.is_dir() {
                     let dirname = entry.file_name().to_string_lossy().to_string();
                     let new_target = join_target_dir(&dir_target, &dirname);
@@ -2303,7 +2957,7 @@ mod tests {
 
     async fn create_test_operator() -> Operator {
         let builder = Memory::default();
-        Operator::new(builder).unwrap().finish()
+        Operator::new(builder).unwrap()
     }
 
     #[cfg(unix)]
@@ -2386,6 +3040,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn paginated_cursor_rejects_forged_scanned_and_position_state() {
+        let op = create_test_operator().await;
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            op.write(name, name.as_bytes()).await.unwrap();
+        }
+        let cursor = list_entries_page(&op, "/", 1, None, false, 9)
+            .await
+            .unwrap()
+            .next_cursor
+            .unwrap();
+        let (payload, signature) = cursor.split_once('.').unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(payload)
+                .unwrap(),
+        )
+        .unwrap();
+        value["scanned"] = serde_json::json!(50_000);
+        value["position"] = serde_json::json!("outside/forged.txt");
+        let forged_payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&value).unwrap());
+        let forged = format!("{forged_payload}.{signature}");
+        assert!(list_entries_page(&op, "/", 1, Some(forged), false, 9)
+            .await
+            .is_err());
+
+        let over_ceiling = encode_page_cursor(&PageCursor {
+            version: 2,
+            path: String::new(),
+            recursive: false,
+            revision: 9,
+            scanned: MAX_PAGE_TOTAL_SCANNED + 1,
+            position: Some("z.txt".to_string()),
+        })
+        .unwrap();
+        assert!(decode_page_cursor(&over_ceiling, "/", false, 9).is_err());
+    }
+
+    #[tokio::test]
     async fn recursive_pages_continue_into_skipped_directories() {
         let op = create_test_operator().await;
         op.write("dir/a.txt", b"a".as_slice()).await.unwrap();
@@ -2406,6 +3099,134 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn filtered_recursive_pages_are_bounded_and_do_not_expose_denied_paths() {
+        let op = create_test_operator().await;
+        for index in 0..40 {
+            op.write(
+                &format!("allowed/nested/{index:03}.txt"),
+                b"hello".as_slice(),
+            )
+            .await
+            .unwrap();
+            op.write(
+                &format!("denied/nested/{index:03}.txt"),
+                b"secret".as_slice(),
+            )
+            .await
+            .unwrap();
+        }
+        let mut cursor = None;
+        let mut paths = Vec::new();
+        let mut pages = 0usize;
+        loop {
+            let page = list_entries_page_with_filter(&op, "/", 7, cursor, true, 22, |path| {
+                Ok(!path.starts_with("denied"))
+            })
+            .await
+            .unwrap();
+            assert!(page.entries.len() <= 7);
+            assert!(page
+                .entries
+                .iter()
+                .all(|entry| !entry.path.starts_with("denied")));
+            paths.extend(page.entries.into_iter().map(|entry| entry.path));
+            cursor = page.next_cursor;
+            pages += 1;
+            assert!(pages < 20, "cursor did not make bounded progress");
+            if cursor.is_none() {
+                break;
+            }
+        }
+        assert!(paths.iter().any(|path| path == "allowed/nested/039.txt"));
+        let unique = paths.iter().collect::<HashSet<_>>();
+        assert_eq!(unique.len(), paths.len());
+    }
+
+    #[tokio::test]
+    async fn denied_heavy_pages_stop_at_scan_budget_and_resume() {
+        let op = create_test_operator().await;
+        for index in 0..300 {
+            op.write(&format!("a-denied-{index:03}.txt"), b"x".as_slice())
+                .await
+                .unwrap();
+        }
+        op.write("z-allowed.txt", b"ok".as_slice()).await.unwrap();
+
+        for recursive in [false, true] {
+            let first = list_entries_page_with_filter(&op, "/", 1, None, recursive, 44, |path| {
+                Ok(path == "z-allowed.txt")
+            })
+            .await
+            .unwrap();
+            assert!(first.entries.is_empty());
+            assert!(first.truncated, "scan budget exhaustion must be explicit");
+            if let Some(cursor) = first.next_cursor {
+                let second = list_entries_page_with_filter(
+                    &op,
+                    "/",
+                    1,
+                    Some(cursor),
+                    recursive,
+                    44,
+                    |path| Ok(path == "z-allowed.txt"),
+                )
+                .await
+                .unwrap();
+                assert_eq!(second.entries.len(), 1);
+                assert_eq!(second.entries[0].path, "z-allowed.txt");
+            } else {
+                assert!(first.truncated);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn filtered_pagination_stops_at_signed_total_scan_ceiling() {
+        let op = create_test_operator().await;
+        for index in 0..=MAX_PAGE_TOTAL_SCANNED {
+            op.write(&format!("denied-{index:05}.txt"), b"x".as_slice())
+                .await
+                .unwrap();
+        }
+
+        let mut cursor = None;
+        let mut pages = 0usize;
+        loop {
+            let page =
+                list_entries_page_with_filter(&op, "/", MAX_LIST_LIMIT, cursor, false, 45, |_| {
+                    Ok(false)
+                })
+                .await
+                .unwrap();
+            assert!(page.entries.is_empty());
+            assert!(page.truncated);
+            pages += 1;
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+            assert!(pages < 4, "scan ceiling did not bound cursor replay");
+        }
+        assert_eq!(pages, 3);
+    }
+
+    #[tokio::test]
+    async fn paged_listing_uses_metadata_returned_by_the_lister() {
+        let op = create_test_operator().await;
+        op.write("sized.txt", b"hello".as_slice()).await.unwrap();
+        let page = list_entries_page(&op, "/", 10, None, false, 1)
+            .await
+            .unwrap();
+        let entry = page
+            .entries
+            .iter()
+            .find(|entry| entry.name == "sized.txt")
+            .unwrap();
+        assert!(!entry.is_dir);
+        assert_eq!(entry.size, 5);
+    }
+
+    #[tokio::test]
     async fn range_read_rejects_oversize_and_out_of_bounds_requests() {
         let op = create_test_operator().await;
         op.write("file", b"hello".as_slice()).await.unwrap();
@@ -2417,6 +3238,13 @@ mod tests {
         );
         let result = read_file_range(&op, "file", 0, 0).await.unwrap();
         assert_eq!(result.bytes, b"hello");
+        assert!(!result.truncated);
+
+        let eof = read_file_range(&op, "file", 5, 1).await.unwrap();
+        assert!(eof.bytes.is_empty());
+        assert!(!eof.truncated);
+        assert!(read_file_range(&op, "file", u64::MAX, 1).await.is_err());
+        assert!(read_file_range(&op, "file", u64::MAX - 1, 0).await.is_err());
     }
 
     #[tokio::test]
@@ -2491,6 +3319,70 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn cancellable_staged_upload_removes_partial_objects_and_preserves_overwrite() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let root = unique_temp_dir("cancel-upload");
+        let source = root.join("source.bin");
+        tokio::fs::write(&source, vec![0x5a; 1024 * 1024])
+            .await
+            .unwrap();
+        let storage_root = root.join("storage");
+        std::fs::create_dir_all(&storage_root).unwrap();
+        let op = Operator::new(Fs::default().root(storage_root.to_str().unwrap())).unwrap();
+        op.write("target.bin", "original").await.unwrap();
+
+        let checks = AtomicUsize::new(0);
+        let error = upload_local_file_to_path_cancellable(&op, &source, "target.bin", || {
+            checks.fetch_add(1, Ordering::SeqCst) >= 2
+        })
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("cancelled"));
+        assert_eq!(op.read("target.bin").await.unwrap().to_vec(), b"original");
+        let names = op
+            .list("")
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.name().to_string())
+            .filter(|name| name != "/")
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["target.bin"]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn staged_upload_verifies_exact_bytes_without_orphans() {
+        let root = unique_temp_dir("exact-upload");
+        let source = root.join("source.bin");
+        let content = vec![0xa5; 768 * 1024 + 17];
+        tokio::fs::write(&source, &content).await.unwrap();
+        let storage_root = root.join("storage");
+        std::fs::create_dir_all(&storage_root).unwrap();
+        let op = Operator::new(Fs::default().root(storage_root.to_str().unwrap())).unwrap();
+
+        upload_local_file_to_path_cancellable(&op, &source, "target.bin", || false)
+            .await
+            .unwrap();
+        assert_eq!(
+            op.stat("target.bin").await.unwrap().content_length(),
+            content.len() as u64
+        );
+        assert_eq!(op.read("target.bin").await.unwrap().to_vec(), content);
+        let entries = op
+            .list("")
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|entry| entry.name() != "/")
+            .collect::<Vec<_>>();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name(), "target.bin");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     #[ignore = "writes a 1 GiB local streaming round trip; opt in via PR09_FULL=1"]
@@ -2508,9 +3400,7 @@ mod tests {
         drop(file);
         let storage_root = root.join("storage");
         std::fs::create_dir_all(&storage_root).unwrap();
-        let op = Operator::new(Fs::default().root(storage_root.to_str().unwrap()))
-            .unwrap()
-            .finish();
+        let op = Operator::new(Fs::default().root(storage_root.to_str().unwrap())).unwrap();
         let started = std::time::Instant::now();
         upload_local_file_to_path(&op, &source, "uploaded.bin")
             .await
@@ -2542,7 +3432,7 @@ mod tests {
     #[tokio::test]
     async fn write_full_with_user_metadata_rejects_unsupported_backends() {
         let op = create_test_operator().await;
-        assert!(!op.info().full_capability().write_with_user_metadata);
+        assert!(!op.info().capability().write_with_user_metadata);
 
         let err = write_full_with_user_metadata(
             &op,
@@ -2682,9 +3572,7 @@ mod tests {
         fs::create_dir_all(&target).unwrap();
         fs::set_permissions(&target, fs::Permissions::from_mode(0o500)).unwrap();
 
-        let to_op = Operator::new(Fs::default().root(root.to_str().unwrap()))
-            .unwrap()
-            .finish();
+        let to_op = Operator::new(Fs::default().root(root.to_str().unwrap())).unwrap();
 
         let result = transfer_entries(
             &from_op,
@@ -2811,6 +3699,50 @@ mod tests {
 
         assert!(result.is_err());
         assert!(!to_op.exists("target/source.bin").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn transfer_planning_is_cancellable_and_entry_bounded() {
+        let op = create_test_operator().await;
+        op.write("source.txt", b"data".as_slice()).await.unwrap();
+        let cancelled = plan_transfer_entries_cancellable(
+            &op,
+            &op,
+            vec!["source.txt".to_string()],
+            "target",
+            TransferOperation::Copy,
+            true,
+            TransferConflictPolicy::Fail,
+            || true,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(cancelled, crate::models::CoreError::Storage(_)));
+
+        let mut entries = vec![
+            TransferPlanEntry {
+                source_path: String::new(),
+                destination_path: String::new(),
+                is_dir: false,
+                size: 0,
+                action: TransferPlanAction::Create,
+            };
+            MAX_TRANSFER_PLAN_ENTRIES
+        ];
+        let bounded = collect_transfer_plan_entries(
+            &op,
+            &op,
+            "source.txt",
+            "target/source.txt",
+            TransferOperation::Copy,
+            true,
+            TransferConflictPolicy::Fail,
+            &mut entries,
+            &|| false,
+        )
+        .await
+        .unwrap_err();
+        assert!(bounded.to_string().contains("maximum"));
     }
 
     #[tokio::test]
@@ -2950,14 +3882,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_transfer_entries_overwrites_directory_and_removes_stale_children() {
+    async fn test_transfer_entries_refuses_unsafe_overwrite_without_rename() {
         let op = create_test_operator().await;
         op.write("docs/a.txt", "new".as_bytes()).await.unwrap();
         op.write("target/docs/stale.txt", "old".as_bytes())
             .await
             .unwrap();
 
-        transfer_entries(
+        let error = transfer_entries(
             &op,
             &op,
             vec!["docs".to_string()],
@@ -2967,10 +3899,77 @@ mod tests {
             TransferConflictPolicy::Overwrite,
         )
         .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("safe transactional overwrite"));
+        assert_eq!(
+            op.read("target/docs/stale.txt").await.unwrap().to_vec(),
+            b"old"
+        );
+        assert!(!op.exists("target/docs/a.txt").await.unwrap());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_transactional_overwrite_file_on_rename_backend() {
+        let root = unique_temp_dir("transactional-overwrite");
+        let op = Operator::new(Fs::default().root(root.to_str().unwrap())).unwrap();
+        op.write("source/a.txt", "new".as_bytes()).await.unwrap();
+        op.write("target/a.txt", "old".as_bytes()).await.unwrap();
+
+        transfer_entries(
+            &op,
+            &op,
+            vec!["source/a.txt".to_string()],
+            "target",
+            TransferOperation::Copy,
+            true,
+            TransferConflictPolicy::Overwrite,
+        )
+        .await
         .unwrap();
 
-        assert_eq!(op.read("target/docs/a.txt").await.unwrap().to_vec(), b"new");
-        assert!(!op.exists("target/docs/stale.txt").await.unwrap());
+        assert_eq!(op.read("target/a.txt").await.unwrap().to_vec(), b"new");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn transactional_overwrite_cancellation_preserves_original() {
+        let root = unique_temp_dir("transactional-overwrite-cancel");
+        let op = Operator::new(Fs::default().root(root.to_str().unwrap())).unwrap();
+        op.write("source.bin", vec![7u8; 1024 * 1024])
+            .await
+            .unwrap();
+        op.write("target.bin", b"original".as_slice())
+            .await
+            .unwrap();
+        let checks = std::sync::atomic::AtomicUsize::new(0);
+        let error = transactional_overwrite_transfer(
+            &op,
+            &op,
+            "source.bin",
+            "target.bin",
+            false,
+            TransferOperation::Copy,
+            &|| checks.fetch_add(1, Ordering::SeqCst) > 3,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, crate::models::CoreError::Storage(_)));
+        assert_eq!(op.read("target.bin").await.unwrap().to_vec(), b"original");
+        assert_eq!(
+            op.read("source.bin").await.unwrap().to_vec().len(),
+            1024 * 1024
+        );
+        let names = fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert!(names
+            .iter()
+            .all(|name| !name.contains("infimount-transfer")));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[tokio::test]

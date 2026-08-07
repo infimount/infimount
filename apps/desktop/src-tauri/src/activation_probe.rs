@@ -6,11 +6,13 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use infimount_core::workspaces::{WorkspaceRecord, WorkspaceRegistry};
+use infimount_mcp::audit::{AuditDecision, AuditStore};
 use infimount_mcp::policy::{McpAccessMode, McpRuleSource};
 use infimount_mcp::registry::{StorageRecord, StorageRegistry};
 use infimount_mcp::telemetry::{build_os_arch, ProductEvent, ProductEventName, ProductEventStore};
 use serde::Serialize;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
@@ -18,6 +20,7 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const TOTAL_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_millis(500);
+const AUDIT_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_COMMAND_OUTPUT: usize = 8 * 1024;
 const ADMIN_TOOLS: &[&str] = &[
     "list_storages",
@@ -34,9 +37,12 @@ const ADMIN_TOOLS: &[&str] = &[
 pub struct SidecarValidation {
     pub binary_found: bool,
     pub executable: bool,
+    pub canonical_path: Option<String>,
     pub version: Option<String>,
     pub version_match: bool,
     pub doctor_healthy: bool,
+    pub sha256: Option<String>,
+    pub checksum_verified: bool,
     pub error_code: Option<String>,
 }
 
@@ -47,6 +53,7 @@ pub struct ActivationProbeOutput {
     pub mcp_handshake_ok: bool,
     pub mcp_allowed_op_ok: bool,
     pub mcp_denial_proven: bool,
+    pub mcp_audit_ok: bool,
     pub overall_ok: bool,
     pub error_code: Option<String>,
 }
@@ -55,6 +62,8 @@ pub struct ActivationProbeOutput {
 struct LocatedSidecar {
     path: PathBuf,
     version: String,
+    sha256: String,
+    checksum_verified: bool,
 }
 
 #[derive(Debug)]
@@ -63,6 +72,9 @@ struct ProbeTarget {
     inside_path: String,
     outside_path: String,
     inside_expected: String,
+    storage_name: String,
+    workspace_id: String,
+    config_dir: PathBuf,
     config_home: Option<PathBuf>,
     config_appdata: Option<PathBuf>,
 }
@@ -121,6 +133,7 @@ impl Drop for ChildGuard {
     }
 }
 
+#[cfg(test)]
 fn target_triple() -> &'static str {
     if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
         "x86_64-unknown-linux-gnu"
@@ -151,6 +164,7 @@ fn installed_sidecar_filename() -> String {
     format!("mcp{}", executable_suffix())
 }
 
+#[cfg(test)]
 fn development_sidecar_filename() -> String {
     format!("mcp-{}{}", target_triple(), executable_suffix())
 }
@@ -173,36 +187,30 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
-fn sidecar_candidates() -> Vec<PathBuf> {
-    // The override exists only in test binaries so packaged production activation can
-    // never be redirected to an arbitrary executable outside the app bundle.
-    #[cfg(test)]
-    if let Some(path) = std::env::var_os("INFIMOUNT_MCP_PATH").map(PathBuf::from) {
-        if path.is_absolute() {
-            return vec![path];
-        }
-    }
-    let mut candidates = Vec::new();
-    let installed = installed_sidecar_filename();
-    let development = development_sidecar_filename();
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            for root in [
-                dir.to_path_buf(),
-                dir.join("binaries"),
-                dir.join("resources"),
-                dir.join("resources").join("binaries"),
-            ] {
-                candidates.push(root.join(&installed));
-                candidates.push(root.join(&development));
-            }
-        }
-    }
-    let manifest_binaries = Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries");
-    candidates.push(manifest_binaries.join(&development));
-    candidates.push(manifest_binaries.join(&installed));
-    candidates.dedup();
-    candidates
+fn production_sidecar_roots() -> Vec<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .into_iter()
+        .collect()
+}
+
+fn path_is_within_roots(path: &Path, roots: &[PathBuf]) -> bool {
+    let Ok(path) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    roots.iter().any(|root| {
+        std::fs::canonicalize(root)
+            .ok()
+            .is_some_and(|root| path.parent() == Some(root.as_path()))
+    })
+}
+
+fn production_sidecar_candidates(roots: &[PathBuf]) -> Vec<PathBuf> {
+    roots
+        .iter()
+        .map(|root| root.join(installed_sidecar_filename()))
+        .collect()
 }
 
 fn bounded_command(path: &Path, args: &[&str]) -> Result<(bool, String), &'static str> {
@@ -238,12 +246,153 @@ fn bounded_command(path: &Path, args: &[&str]) -> Result<(bool, String), &'stati
     ))
 }
 
-fn locate_same_version_sidecar() -> Result<LocatedSidecar, &'static str> {
-    locate_same_version_sidecar_from(sidecar_candidates())
+fn sidecar_sha256(path: &Path) -> Result<String, &'static str> {
+    let mut file = std::fs::File::open(path).map_err(|_| "ERR_SIDECAR_CHECKSUM_FAILED")?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher).map_err(|_| "ERR_SIDECAR_CHECKSUM_FAILED")?;
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
+fn expected_checksum_path_from(path: &Path, desktop_executable: &Path) -> Option<PathBuf> {
+    let executable_dir = desktop_executable.parent()?;
+    let installed = path.file_name().and_then(|name| name.to_str())
+        == Some(installed_sidecar_filename().as_str());
+    let mut candidates = vec![
+        executable_dir.join("binaries").join("mcp.sha256"),
+        executable_dir
+            .join("resources")
+            .join("binaries")
+            .join("mcp.sha256"),
+        executable_dir
+            .join("..")
+            .join("Resources")
+            .join("binaries")
+            .join("mcp.sha256"),
+        executable_dir
+            .join("..")
+            .join("lib")
+            .join("Infimount")
+            .join("binaries")
+            .join("mcp.sha256"),
+    ];
+    // Target-suffixed binaries and their adjacent digest are a test/development
+    // contract only. Installed `mcp` must bind to the separately packaged resource.
+    if !installed {
+        candidates.insert(0, PathBuf::from(format!("{}.sha256", path.display())));
+    }
+    candidates.dedup();
+    candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
+fn verify_sidecar_checksum_from(
+    path: &Path,
+    actual: &str,
+    desktop_executable: &Path,
+) -> Result<bool, &'static str> {
+    let Some(checksum_path) = expected_checksum_path_from(path, desktop_executable) else {
+        return Err("ERR_SIDECAR_CHECKSUM_MISSING");
+    };
+    let contents =
+        std::fs::read_to_string(checksum_path).map_err(|_| "ERR_SIDECAR_CHECKSUM_FAILED")?;
+    let expected = contents
+        .split_whitespace()
+        .next()
+        .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or("ERR_SIDECAR_CHECKSUM_FAILED")?;
+    if !actual.eq_ignore_ascii_case(expected) {
+        return Err("ERR_SIDECAR_CHECKSUM_MISMATCH");
+    }
+    Ok(true)
+}
+
+fn verify_sidecar_checksum(path: &Path, actual: &str) -> Result<bool, &'static str> {
+    let executable = std::env::current_exe().map_err(|_| "ERR_SIDECAR_CHECKSUM_MISSING")?;
+    verify_sidecar_checksum_from(path, actual, &executable)
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
+fn platform_trust_decision<F>(
+    signature_valid: bool,
+    prerelease: bool,
+    verify_packaged_checksum: F,
+) -> Result<bool, &'static str>
+where
+    F: FnOnce() -> Result<bool, &'static str>,
+{
+    if signature_valid {
+        // Platform identity is stronger and deliberately takes precedence.
+        return Ok(false);
+    }
+    if !prerelease {
+        return Err("ERR_SIDECAR_SIGNATURE_FAILED");
+    }
+    verify_packaged_checksum()
+}
+
+fn verify_platform_trust(path: &Path, actual: &str) -> Result<bool, &'static str> {
+    #[cfg(target_os = "macos")]
+    {
+        let signature_valid = bounded_command(
+            Path::new("/usr/bin/codesign"),
+            &[
+                "--verify",
+                "--strict",
+                path.to_str().ok_or("ERR_SIDECAR_SIGNATURE_FAILED")?,
+            ],
+        )
+        .is_ok_and(|(success, _)| success);
+        return platform_trust_decision(
+            signature_valid,
+            env!("CARGO_PKG_VERSION").contains('-'),
+            || verify_sidecar_checksum(path, actual),
+        );
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let escaped = path.to_string_lossy().replace('\'', "''");
+        let command = format!(
+            "$s=Get-AuthenticodeSignature -LiteralPath '{}'; if ($s.Status -ne 'Valid') {{ exit 1 }}",
+            escaped
+        );
+        let signature_valid = bounded_command(
+            Path::new("powershell.exe"),
+            &["-NoProfile", "-NonInteractive", "-Command", &command],
+        )
+        .is_ok_and(|(success, _)| success);
+        return platform_trust_decision(
+            signature_valid,
+            env!("CARGO_PKG_VERSION").contains('-'),
+            || verify_sidecar_checksum(path, actual),
+        );
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        verify_sidecar_checksum(path, actual)
+    }
+}
+
+fn locate_same_version_sidecar() -> Result<LocatedSidecar, &'static str> {
+    #[cfg(test)]
+    if let Some(path) = std::env::var_os("INFIMOUNT_MCP_PATH").map(PathBuf::from) {
+        if path.is_absolute() {
+            return locate_same_version_sidecar_from(vec![path]);
+        }
+    }
+    let roots = production_sidecar_roots();
+    let candidates = production_sidecar_candidates(&roots);
+    locate_same_version_sidecar_from_roots(candidates, Some(&roots))
+}
+
+#[cfg(test)]
 fn locate_same_version_sidecar_from(
     candidates: Vec<PathBuf>,
+) -> Result<LocatedSidecar, &'static str> {
+    locate_same_version_sidecar_from_roots(candidates, None)
+}
+
+fn locate_same_version_sidecar_from_roots(
+    candidates: Vec<PathBuf>,
+    allowed_roots: Option<&[PathBuf]>,
 ) -> Result<LocatedSidecar, &'static str> {
     let expected_version = env!("CARGO_PKG_VERSION");
     let mut saw_file = false;
@@ -254,6 +403,10 @@ fn locate_same_version_sidecar_from(
             continue;
         }
         saw_file = true;
+        if allowed_roots.is_some_and(|roots| !path_is_within_roots(&path, roots)) {
+            last_execution_error = Some("ERR_SIDECAR_UNTRUSTED_PATH");
+            continue;
+        }
         if !is_executable_file(&path) {
             continue;
         }
@@ -266,9 +419,13 @@ fn locate_same_version_sidecar_from(
                     .filter(|value| !value.is_empty());
                 if version == Some(expected_version) {
                     let path = std::fs::canonicalize(path).map_err(|_| "ERR_SIDECAR_NOT_FOUND")?;
+                    let sha256 = sidecar_sha256(&path)?;
+                    let checksum_verified = verify_platform_trust(&path, &sha256)?;
                     return Ok(LocatedSidecar {
                         path,
                         version: expected_version.to_string(),
+                        sha256,
+                        checksum_verified,
                     });
                 }
             }
@@ -291,9 +448,12 @@ fn validate_and_locate_sidecar() -> Result<LocatedSidecar, SidecarValidation> {
     let located = locate_same_version_sidecar().map_err(|code| SidecarValidation {
         binary_found: code != "ERR_SIDECAR_NOT_FOUND",
         executable: !matches!(code, "ERR_SIDECAR_NOT_FOUND" | "ERR_SIDECAR_NOT_EXECUTABLE"),
+        canonical_path: None,
         version: None,
         version_match: false,
         doctor_healthy: false,
+        sha256: None,
+        checksum_verified: false,
         error_code: Some(code.to_string()),
     })?;
     let doctor_healthy = bounded_command(&located.path, &["doctor", "--json"])
@@ -306,9 +466,12 @@ fn validate_and_locate_sidecar() -> Result<LocatedSidecar, SidecarValidation> {
         return Err(SidecarValidation {
             binary_found: true,
             executable: true,
+            canonical_path: Some(located.path.to_string_lossy().to_string()),
             version: Some(located.version.clone()),
             version_match: true,
             doctor_healthy: false,
+            sha256: Some(located.sha256.clone()),
+            checksum_verified: located.checksum_verified,
             error_code: Some("ERR_SIDECAR_DOCTOR_FAILED".to_string()),
         });
     }
@@ -323,6 +486,11 @@ pub(crate) fn verified_sidecar_path() -> Result<PathBuf, &'static str> {
             Some("ERR_SIDECAR_NOT_EXECUTABLE") => "ERR_SIDECAR_NOT_EXECUTABLE",
             Some("ERR_SIDECAR_VERSION_MISMATCH") => "ERR_SIDECAR_VERSION_MISMATCH",
             Some("ERR_SIDECAR_DOCTOR_FAILED") => "ERR_SIDECAR_DOCTOR_FAILED",
+            Some("ERR_SIDECAR_CHECKSUM_MISSING") => "ERR_SIDECAR_CHECKSUM_MISSING",
+            Some("ERR_SIDECAR_CHECKSUM_MISMATCH") => "ERR_SIDECAR_CHECKSUM_MISMATCH",
+            Some("ERR_SIDECAR_CHECKSUM_FAILED") => "ERR_SIDECAR_CHECKSUM_FAILED",
+            Some("ERR_SIDECAR_SIGNATURE_FAILED") => "ERR_SIDECAR_SIGNATURE_FAILED",
+            Some("ERR_SIDECAR_UNTRUSTED_PATH") => "ERR_SIDECAR_UNTRUSTED_PATH",
             Some("ERR_SIDECAR_TIMEOUT") => "ERR_SIDECAR_TIMEOUT",
             _ => "ERR_SIDECAR_EXECUTION_FAILED",
         })
@@ -333,9 +501,12 @@ pub fn validate_sidecar_binary() -> SidecarValidation {
         Ok(located) => SidecarValidation {
             binary_found: true,
             executable: true,
+            canonical_path: Some(located.path.to_string_lossy().to_string()),
             version: Some(located.version),
             version_match: true,
             doctor_healthy: true,
+            sha256: Some(located.sha256),
+            checksum_verified: located.checksum_verified,
             error_code: None,
         },
         Err(validation) => validation,
@@ -455,6 +626,9 @@ fn select_probe_target(registry: &StorageRegistry) -> Result<ProbeTarget, &'stat
             inside_path: format!("/{}/{}", storage.name, inside_relative),
             outside_path: format!("/{}/{}", storage.name, outside_relative),
             inside_expected,
+            storage_name: storage.name.clone(),
+            workspace_id: workspace.id.clone(),
+            config_dir: config_dir.to_path_buf(),
             config_home: if cfg!(windows) {
                 None
             } else {
@@ -505,12 +679,16 @@ pub async fn run_activation_probe(
                     | "ERR_ACTIVATION_ALLOWED_OP_FAILED"
                     | "ERR_ACTIVATION_DENIAL_CHECK_FAILED"
                     | "ERR_ACTIVATION_POLICY_NOT_ENFORCED"
+                    | "ERR_ACTIVATION_AUDIT_FAILED"
             );
             let allowed = matches!(
                 code,
-                "ERR_ACTIVATION_DENIAL_CHECK_FAILED" | "ERR_ACTIVATION_POLICY_NOT_ENFORCED"
+                "ERR_ACTIVATION_DENIAL_CHECK_FAILED"
+                    | "ERR_ACTIVATION_POLICY_NOT_ENFORCED"
+                    | "ERR_ACTIVATION_AUDIT_FAILED"
             );
-            (handshake, allowed, false, Some(code.to_string()))
+            let denied = code == "ERR_ACTIVATION_AUDIT_FAILED";
+            (handshake, allowed, denied, Some(code.to_string()))
         }
     };
     let overall_ok = sidecar.version_match && sidecar.doctor_healthy && probe_result.is_ok();
@@ -523,10 +701,11 @@ pub async fn run_activation_probe(
     );
 
     ActivationProbeOutput {
-        sidecar,
+        sidecar: sidecar.clone(),
         mcp_handshake_ok: handshake,
         mcp_allowed_op_ok: allowed,
         mcp_denial_proven: denied,
+        mcp_audit_ok: probe_result.is_ok(),
         overall_ok,
         error_code,
     }
@@ -654,8 +833,40 @@ fn run_sidecar_probe(path: &Path, target: &ProbeTarget) -> Result<(), &'static s
         return Err("ERR_ACTIVATION_POLICY_NOT_ENFORCED");
     }
 
+    verify_probe_audit(target)?;
     guard.stop();
     Ok(())
+}
+
+fn verify_probe_audit(target: &ProbeTarget) -> Result<(), &'static str> {
+    let store = AuditStore::new(Some(target.config_dir.join("mcp_audit.json")));
+    let deadline = Instant::now() + AUDIT_TIMEOUT;
+    loop {
+        if let Ok(events) = store.list_recent(50) {
+            let allowed = events.iter().any(|event| {
+                event.tool_name == "read_file"
+                    && event.path.as_deref() == Some(target.inside_path.as_str())
+                    && event.storage_name.as_deref() == Some(target.storage_name.as_str())
+                    && event.workspace_id.as_deref() == Some(target.workspace_id.as_str())
+                    && event.decision == AuditDecision::Allowed
+                    && event.error_code.is_none()
+            });
+            let denied = events.iter().any(|event| {
+                event.tool_name == "read_file"
+                    && event.path.as_deref() == Some(target.outside_path.as_str())
+                    && event.storage_name.as_deref() == Some(target.storage_name.as_str())
+                    && event.decision == AuditDecision::Denied
+                    && event.error_code.as_deref() == Some("ERR_MCP_POLICY_DENIED")
+            });
+            if allowed && denied {
+                return Ok(());
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err("ERR_ACTIVATION_AUDIT_FAILED");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn call_tool(
@@ -810,19 +1021,41 @@ mod tests {
 
     use infimount_core::secrets::MemorySecretStore;
     use infimount_core::workspaces::{WorkspaceRecord, WorkspaceRegistry};
-    use infimount_mcp::policy::{McpAccessMode, McpPathRule, McpRuleSource, McpStoragePolicy};
+    use infimount_mcp::audit::AuditEvent;
+    use infimount_mcp::policy::{
+        McpAccessMode, McpOperation, McpPathRule, McpRuleSource, McpStoragePolicy,
+    };
     use infimount_mcp::registry::{StorageRecord, StorageRegistry};
 
     use super::*;
 
     #[test]
-    fn locator_candidates_include_installed_and_development_names() {
-        let candidates = sidecar_candidates();
-        assert!(candidates.iter().any(|path| {
+    fn platform_trust_requires_signatures_for_stable_and_packaged_checksum_for_unsigned_rc() {
+        let signed = platform_trust_decision(true, false, || {
+            panic!("signed binaries must not depend on checksum fallback")
+        });
+        assert!(!signed.unwrap());
+
+        let stable = platform_trust_decision(false, false, || Ok(true));
+        assert_eq!(stable.unwrap_err(), "ERR_SIDECAR_SIGNATURE_FAILED");
+
+        let unsigned_rc = platform_trust_decision(false, true, || Ok(true));
+        assert!(unsigned_rc.unwrap());
+        let tampered_rc =
+            platform_trust_decision(false, true, || Err("ERR_SIDECAR_CHECKSUM_MISMATCH"));
+        assert_eq!(tampered_rc.unwrap_err(), "ERR_SIDECAR_CHECKSUM_MISMATCH");
+    }
+
+    #[test]
+    fn production_locator_only_uses_installed_name_in_desktop_binary_directory() {
+        let roots = production_sidecar_roots();
+        let candidates = production_sidecar_candidates(&roots);
+        assert_eq!(candidates.len(), roots.len());
+        assert!(candidates.iter().all(|path| {
             path.file_name().and_then(|name| name.to_str())
                 == Some(installed_sidecar_filename().as_str())
         }));
-        assert!(candidates.iter().any(|path| {
+        assert!(!candidates.iter().any(|path| {
             path.file_name().and_then(|name| name.to_str())
                 == Some(development_sidecar_filename().as_str())
         }));
@@ -876,6 +1109,93 @@ mod tests {
             find_structured_error_code(&json!({"message":"ERR_MCP_POLICY_DENIED"})),
             None
         );
+    }
+
+    #[test]
+    fn checksum_verification_accepts_expected_digest_and_rejects_tampering() {
+        let temp = tempfile::tempdir().unwrap();
+        let binary = temp.path().join("mcp-test-target");
+        std::fs::write(&binary, b"sidecar fixture").unwrap();
+        let digest = sidecar_sha256(&binary).unwrap();
+        std::fs::write(
+            format!("{}.sha256", binary.display()),
+            format!("{digest}  mcp-test-target\n"),
+        )
+        .unwrap();
+        assert_eq!(verify_sidecar_checksum(&binary, &digest), Ok(true));
+        assert_eq!(
+            verify_sidecar_checksum(&binary, &"0".repeat(64)),
+            Err("ERR_SIDECAR_CHECKSUM_MISMATCH")
+        );
+        std::fs::remove_file(format!("{}.sha256", binary.display())).unwrap();
+        assert_eq!(
+            verify_sidecar_checksum(&binary, &digest),
+            Err("ERR_SIDECAR_CHECKSUM_MISSING")
+        );
+    }
+
+    #[test]
+    fn installed_sidecar_does_not_trust_an_adjacent_development_checksum() {
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join("bin/infimount");
+        let sidecar = temp.path().join("bin/mcp");
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::write(&executable, b"desktop").unwrap();
+        std::fs::write(&sidecar, b"sidecar").unwrap();
+        let digest = sidecar_sha256(&sidecar).unwrap();
+        std::fs::write(format!("{}.sha256", sidecar.display()), &digest).unwrap();
+        assert_eq!(
+            verify_sidecar_checksum_from(&sidecar, &digest, &executable),
+            Err("ERR_SIDECAR_CHECKSUM_MISSING")
+        );
+    }
+
+    #[test]
+    fn linux_installed_resource_layout_finds_checksum_and_rejects_tampering() {
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join("usr/bin/infimount");
+        let sidecar = temp.path().join("usr/bin/mcp");
+        let checksum = temp.path().join("usr/lib/Infimount/binaries/mcp.sha256");
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(checksum.parent().unwrap()).unwrap();
+        std::fs::write(&executable, b"desktop").unwrap();
+        std::fs::write(&sidecar, b"sidecar").unwrap();
+        let digest = sidecar_sha256(&sidecar).unwrap();
+        std::fs::write(&checksum, format!("{digest}  mcp\n")).unwrap();
+        assert_eq!(
+            std::fs::canonicalize(expected_checksum_path_from(&sidecar, &executable).unwrap())
+                .unwrap(),
+            std::fs::canonicalize(&checksum).unwrap()
+        );
+        assert_eq!(
+            verify_sidecar_checksum_from(&sidecar, &digest, &executable),
+            Ok(true)
+        );
+        std::fs::write(&checksum, format!("{}  mcp\n", "0".repeat(64))).unwrap();
+        assert_eq!(
+            verify_sidecar_checksum_from(&sidecar, &digest, &executable),
+            Err("ERR_SIDECAR_CHECKSUM_MISMATCH")
+        );
+    }
+
+    #[test]
+    fn activation_audit_requires_allowed_workspace_attribution_and_exact_denial() {
+        let fixture = create_demo_fixture();
+        let target = select_probe_target(&fixture.registry).unwrap();
+        let store = AuditStore::new(Some(target.config_dir.join("mcp_audit.json")));
+        let mut allowed = AuditEvent::new("read_file", McpOperation::Read);
+        allowed.path = Some(target.inside_path.clone());
+        allowed.storage_name = Some(target.storage_name.clone());
+        allowed.workspace_id = Some(target.workspace_id.clone());
+        allowed.matched_rule_id = Some("rule-id".to_string());
+        store.append(allowed).unwrap();
+        let mut denied = AuditEvent::new("read_file", McpOperation::Read);
+        denied.path = Some(target.outside_path.clone());
+        denied.storage_name = Some(target.storage_name.clone());
+        denied.decision = AuditDecision::Denied;
+        denied.error_code = Some("ERR_MCP_POLICY_DENIED".to_string());
+        store.append(denied).unwrap();
+        verify_probe_audit(&target).unwrap();
     }
 
     #[test]

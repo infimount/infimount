@@ -349,6 +349,7 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
           nextJob.targetDir,
           nextJob.operation,
           effectiveConflictPolicy,
+          nextJob.id,
         );
         if (cancelledJobIdsRef.current.has(nextJob.id)) {
           throw new Error("Transfer cancelled");

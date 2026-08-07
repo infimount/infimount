@@ -780,6 +780,7 @@ function VerifyStep({
     { label: "MCP handshake completed", ok: probe?.mcpHandshakeOk === true },
     { label: "Workspace access allowed", ok: probe?.mcpAllowedOpOk === true },
     { label: "Outside-workspace access denied", ok: probe?.mcpDenialProven === true },
+    { label: "Allowed and denied operations audited", ok: probe?.mcpAuditOk === true },
   ];
 
   return (

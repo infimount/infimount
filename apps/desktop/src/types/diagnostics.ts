@@ -1,3 +1,10 @@
+export interface StartupHealth {
+  operational: boolean;
+  recoveryAvailable: boolean;
+  errorCode: string | null;
+  message: string | null;
+}
+
 export interface DiagnosticsSummary {
   appVersion: string;
   sidecarVersion: string | null;

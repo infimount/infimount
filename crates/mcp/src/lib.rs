@@ -1,6 +1,7 @@
 pub mod audit;
 pub mod confirmation;
 pub mod errors;
+pub mod migration_cleanup;
 pub mod opendal_adapter;
 pub mod path;
 pub mod policy;

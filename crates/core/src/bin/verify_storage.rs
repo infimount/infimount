@@ -297,11 +297,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let gcs = Gcs::default()
         .bucket("test-bucket")
         .endpoint("http://localhost:4443")
-        .allow_anonymous()
+        .skip_signature()
         .disable_vm_metadata()
         .disable_config_load();
 
-    let op_gcs = Operator::new(gcs)?.finish();
+    let op_gcs = Operator::new(gcs)?;
     verify_round_trip(&op_gcs, "GCS", "verify-gcs.txt").await?;
     println!("✅ GCS: read/write/list/stat/delete round-trip successful");
 
@@ -314,7 +314,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .access_key_id("admin")
         .secret_access_key("password123");
 
-    let op_s3 = Operator::new(s3)?.finish();
+    let op_s3 = Operator::new(s3)?;
     verify_round_trip(&op_s3, "S3", "verify-s3.txt").await?;
     println!("✅ S3: read/write/list/stat/delete round-trip successful");
 
@@ -326,7 +326,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .password("password123")
         .root("/");
 
-    let op_ftp = Operator::new(ftp)?.finish();
+    let op_ftp = Operator::new(ftp)?;
     verify_round_trip(&op_ftp, "FTP", "verify-ftp.txt").await?;
     println!("✅ FTP: read/write/list/stat/delete round-trip successful");
 
@@ -342,7 +342,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .root("/upload")
             .known_hosts_strategy("Accept");
 
-        let op_sftp = Operator::new(sftp)?.finish();
+        let op_sftp = Operator::new(sftp)?;
         verify_round_trip(&op_sftp, "SFTP", "verify-sftp.txt").await?;
         println!("✅ SFTP: read/write/list/stat/delete round-trip successful");
     }
@@ -355,7 +355,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .endpoint("http://127.0.0.1:10000/devstoreaccount1")
         .account_key("Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==");
 
-    let op_az = Operator::new(az)?.finish();
+    let op_az = Operator::new(az)?;
     verify_round_trip(&op_az, "Azure", "verify-azure.txt").await?;
     println!("✅ Azure: read/write/list/stat/delete round-trip successful");
 
@@ -365,7 +365,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .endpoint("http://localhost:7333")
         .root("/");
 
-    let op_webdav = Operator::new(webdav)?.finish();
+    let op_webdav = Operator::new(webdav)?;
     verify_list(&op_webdav, "WebDAV", "/").await?;
     println!("✅ WebDAV: list successful");
 

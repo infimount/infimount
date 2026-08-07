@@ -11,14 +11,16 @@ import {
   migrateLegacyWorkspaces,
   normalizeWorkspacePath,
   removeWorkspacePolicy,
+  readWorkspaceMemoryFile,
   restoreWorkspaceMemoryCheckpoint,
 } from "./agentWorkspaces";
 import {
   listWorkspaces,
   createWorkspaceAtomic,
-  updateWorkspace as apiUpdateWorkspace,
-  createDirectory,
-  readFile,
+  createWorkspaceCheckpointCommand,
+  listWorkspaceCheckpoints,
+  restoreWorkspaceCheckpointCommand,
+  readFileRange,
   writeFile,
   importLegacyWorkspaces as apiImportLegacyWorkspaces,
   type WorkspaceRecord,
@@ -69,10 +71,11 @@ vi.mock("./api", async (importOriginal) => {
         };
       },
     ),
-    updateWorkspace: vi.fn().mockResolvedValue({}),
-    createDirectory: vi.fn().mockResolvedValue(undefined),
+    createWorkspaceCheckpointCommand: vi.fn(),
+    listWorkspaceCheckpoints: vi.fn().mockResolvedValue([]),
+    restoreWorkspaceCheckpointCommand: vi.fn().mockResolvedValue(undefined),
     listEntries: vi.fn().mockResolvedValue([]),
-    readFile: vi.fn(),
+    readFileRange: vi.fn(),
     writeFile: vi.fn(),
     importLegacyWorkspaces: vi.fn(),
   };
@@ -82,11 +85,25 @@ describe("agentWorkspaces", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
-    vi.mocked(createDirectory).mockResolvedValue(undefined);
     vi.mocked(writeFile).mockResolvedValue(undefined);
-    vi.mocked(readFile).mockResolvedValue(new TextEncoder().encode("# Tasks\n"));
+    vi.mocked(readFileRange).mockResolvedValue({
+      totalSize: 8,
+      offset: 0,
+      bytes: Array.from(new TextEncoder().encode("# Tasks\n")),
+      truncated: false,
+    });
+    vi.mocked(createWorkspaceCheckpointCommand).mockImplementation(async (workspaceId, label) => ({
+      schemaVersion: 1,
+      id: "checkpoint-server-generated",
+      workspaceId,
+      createdAt: "2026-01-01T00:00:00Z",
+      label: label ?? "Checkpoint",
+      manifestPath: ".infimount/checkpoints/checkpoint-server-generated.json",
+      fileCount: 1,
+    }));
+    vi.mocked(listWorkspaceCheckpoints).mockResolvedValue([]);
+    vi.mocked(restoreWorkspaceCheckpointCommand).mockResolvedValue(undefined);
     (listWorkspaces as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-    (apiUpdateWorkspace as ReturnType<typeof vi.fn>).mockResolvedValue({});
   });
 
   it("creates a workspace, template files, and scoped MCP policy", async () => {
@@ -104,7 +121,7 @@ describe("agentWorkspaces", () => {
     );
   });
 
-  it("appends memory and checkpoints memory files", async () => {
+  it("appends memory and delegates checkpoint operations to Rust", async () => {
     (createWorkspaceAtomic as ReturnType<typeof vi.fn>).mockResolvedValue({
       workspace: {
         id: "research-ws",
@@ -120,7 +137,6 @@ describe("agentWorkspaces", () => {
       policyUpdated: false,
       rollbackErrors: [],
     });
-
     const workspace = await createAgentWorkspace({
       storageId: "local",
       name: "Research",
@@ -135,78 +151,26 @@ describe("agentWorkspaces", () => {
       expect.anything(),
     );
 
-    const checkpoint = await createWorkspaceCheckpoint(workspace);
-    expect(checkpoint.manifestPath).toMatch(/^\.infimount\/checkpoints\/checkpoint-/);
-    const manifestCall = vi
-      .mocked(writeFile)
-      .mock.calls.find((call) => call[1] === `/research/${checkpoint.manifestPath}`);
-    expect(manifestCall).toBeTruthy();
-    vi.mocked(readFile).mockResolvedValue(manifestCall?.[2] as Uint8Array);
-    await expect(listAgentWorkspaceCheckpoints(workspace)).resolves.toMatchObject([
-      { id: checkpoint.id },
-    ]);
-    expect(writeFile).toHaveBeenCalledWith(
-      "local",
-      `/research/${checkpoint.manifestPath}`,
-      expect.anything(),
-    );
+    const checkpoint = await createWorkspaceCheckpoint(workspace, "Before change");
+    expect(createWorkspaceCheckpointCommand).toHaveBeenCalledWith(workspace.id, "Before change");
+    vi.mocked(listWorkspaceCheckpoints).mockResolvedValue([checkpoint]);
+    await expect(listAgentWorkspaceCheckpoints(workspace)).resolves.toEqual([checkpoint]);
+    expect(listWorkspaceCheckpoints).toHaveBeenCalledWith(workspace.id);
 
-    await restoreWorkspaceMemoryCheckpoint(workspace, checkpoint.id);
-    expect(writeFile).toHaveBeenCalledWith(
-      "local",
-      "/research/memory/questions.md",
-      expect.anything(),
-    );
+    await restoreWorkspaceMemoryCheckpoint(workspace, checkpoint.id, true);
+    expect(restoreWorkspaceCheckpointCommand).toHaveBeenCalledWith(workspace.id, checkpoint.id, true);
   });
 
-  it("restores a checkpoint from the OpenDAL workspace manifest when local state is missing", async () => {
-    (createWorkspaceAtomic as ReturnType<typeof vi.fn>).mockResolvedValue({
-      workspace: {
-        id: "research-ws-2",
-        storageId: "local",
-        name: "Research",
-        rootPath: "/research",
-        templateId: "research",
-        createdAt: "2026-01-01T00:00:00Z",
-        updatedAt: "2026-01-01T00:00:00Z",
-        memoryFiles: ["memory/questions.md", "memory/sources.md", "memory/summary.md"],
-        checkpointIds: [],
-      },
-      policyUpdated: false,
-      rollbackErrors: [],
-    });
-
-    const workspace = await createAgentWorkspace({
-      storageId: "local",
-      name: "Research",
-      rootPath: "/research",
-      templateId: "research",
-    });
-    const checkpoint = await createWorkspaceCheckpoint(workspace);
-    const manifestCall = vi
-      .mocked(writeFile)
-      .mock.calls.find((call) => call[1] === `/research/${checkpoint.manifestPath}`);
-    expect(manifestCall).toBeTruthy();
-    const manifestBytes = manifestCall?.[2] as Uint8Array;
-
+  it("removes obsolete browser checkpoint cache during legacy migration", async () => {
     window.localStorage.setItem(
       "infimount:agent-workspace-checkpoints:v1",
-      JSON.stringify([{ id: checkpoint.id, content: "untrusted" }]),
+      JSON.stringify([{ id: "checkpoint-untrusted", content: "untrusted" }]),
     );
-    vi.mocked(readFile).mockResolvedValueOnce(manifestBytes);
-
-    await restoreWorkspaceMemoryCheckpoint(workspace, checkpoint.id);
-
+    await migrateLegacyWorkspaces();
     expect(window.localStorage.getItem("infimount:agent-workspace-checkpoints:v1")).toBeNull();
-    expect(readFile).toHaveBeenCalledWith("local", `/research/${checkpoint.manifestPath}`);
-    expect(writeFile).toHaveBeenCalledWith(
-      "local",
-      "/research/memory/questions.md",
-      expect.anything(),
-    );
   });
 
-  it("rejects arbitrary memory paths before reading or writing storage", async () => {
+  it("keeps memory path validation in the UI helper while checkpoint trust stays server-owned", async () => {
     const workspace: WorkspaceRecord = {
       id: "unsafe",
       storageId: "local",
@@ -219,7 +183,8 @@ describe("agentWorkspaces", () => {
       checkpointIds: [],
     };
 
-    await expect(createWorkspaceCheckpoint(workspace)).rejects.toThrow("trusted template");
+    await createWorkspaceCheckpoint(workspace);
+    expect(createWorkspaceCheckpointCommand).toHaveBeenCalledWith("unsafe", undefined);
     await expect(appendWorkspaceMemory(workspace, "../secret", "overwrite")).rejects.toThrow(
       "Unsafe workspace memory path",
     );
@@ -411,18 +376,49 @@ describe("agentWorkspaces", () => {
     expect(apiImportLegacyWorkspaces).toHaveBeenCalledTimes(2);
   });
 
-  it("passes accessProfile to atomic command", async () => {
+  it("rejects truncated workspace memory before decoding", async () => {
+    vi.mocked(readFileRange).mockResolvedValueOnce({
+      totalSize: 1024 * 1024 + 1,
+      offset: 0,
+      bytes: [35, 32, 84],
+      truncated: true,
+    });
+    const workspace = {
+      id: "bounded",
+      storageId: "local",
+      name: "Bounded",
+      rootPath: "/bounded",
+      templateId: "coding",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      memoryFiles: ["memory/tasks.md", "memory/decisions.md", "memory/handoff.md"],
+      checkpointIds: [],
+    };
+
+    await expect(readWorkspaceMemoryFile(workspace, "memory/tasks.md")).rejects.toThrow(
+      "exceeds the 1 MiB limit",
+    );
+    expect(readFileRange).toHaveBeenCalledWith(
+      "local",
+      "/bounded/memory/tasks.md",
+      0,
+      1024 * 1024,
+    );
+  });
+
+  it("passes access profile and explicit policy choice to atomic command", async () => {
     const workspace = await createAgentWorkspace({
       storageId: "local",
       name: "Access-Test",
       rootPath: "/access-test",
       templateId: "coding",
       accessProfile: "read_only",
+      applyPolicy: false,
     });
 
     expect(workspace.id).toBeTruthy();
     expect(createWorkspaceAtomic).toHaveBeenCalledWith(
-      expect.objectContaining({ accessProfile: "read_only" }),
+      expect.objectContaining({ accessProfile: "read_only", applyPolicy: false }),
     );
   });
 });

@@ -2,7 +2,9 @@ use base64::Engine;
 use chrono::{DateTime, Utc};
 use infimount_core::runtime::OperatorCache;
 use infimount_core::workspaces::WorkspaceRegistry;
-use infimount_core::{config, secrets, CoreError, SecretStore, Source, SourceKind};
+use infimount_core::{
+    config, secrets, CoreError, SecretStore, SecretStoreStatus, Source, SourceKind,
+};
 use infimount_mcp::confirmation::ConfirmationManager;
 use infimount_mcp::errors::{err, err_with_details, McpError, McpErrorCode, McpResult};
 use infimount_mcp::registry::{StorageRecord, StorageRegistry};
@@ -41,6 +43,18 @@ pub struct AppState {
     http_runtime: Mutex<Option<McpHttpServerHandle>>,
     pub(crate) lifecycle_mutation: Mutex<()>,
     transfer_cancellations: StdMutex<HashSet<String>>,
+    /// Sanitized machine-readable failure code. Raw keyring/config errors never cross
+    /// the Tauri boundary.
+    startup_error: StdMutex<Option<String>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartupHealth {
+    pub operational: bool,
+    pub recovery_available: bool,
+    pub error_code: Option<String>,
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -218,15 +232,42 @@ pub enum AuthTokenMutation {
 
 impl AppState {
     pub fn new() -> McpResult<Self> {
-        let secret_store = Arc::new(secrets::NativeSecretStore::new());
-        infimount_mcp::registry::retry_pending_secret_cleanup(secret_store.as_ref())?;
-        let registry = StorageRegistry::with_secret_store(None, secret_store.clone());
-        migrate_legacy_sources_if_needed(&registry)?;
-        registry.load_all()?;
-        let settings_store = McpSettingsStore::with_secret_store(None, secret_store.clone());
-        settings_store.load()?;
-
         let config_dir = infimount_mcp::registry::default_config_dir();
+        let mut startup_error: Option<String> = None;
+
+        let native_store = Arc::new(secrets::NativeSecretStore::new());
+        let native_available = matches!(native_store.status(), SecretStoreStatus::Available);
+        let secret_store: Arc<dyn SecretStore> = if native_available {
+            native_store
+        } else {
+            startup_error = Some("ERR_STARTUP_SECRET_STORE_UNAVAILABLE".to_string());
+            Arc::new(secrets::UnavailableSecretStore::new(
+                "desktop is in restricted recovery mode",
+            ))
+        };
+        let registry = StorageRegistry::with_secret_store(None, secret_store.clone());
+        let settings_store = McpSettingsStore::with_secret_store(None, secret_store.clone());
+
+        // Configuration parsing and migration failures must not discard an available
+        // native store: a valid encrypted recovery backup may be the only safe repair.
+        if native_available {
+            let initialization = (|| -> McpResult<()> {
+                infimount_mcp::migration_cleanup::retry_pending_plaintext_cleanup(&config_dir)?;
+                infimount_mcp::registry::retry_pending_secret_cleanup(secret_store.as_ref())?;
+                migrate_legacy_sources_if_needed(&registry)?;
+                registry.load_all()?;
+                settings_store.load()?;
+                Ok(())
+            })();
+            if let Err(error) = initialization {
+                startup_error = Some(if error.code == McpErrorCode::ERR_SECRET_MIGRATION_FAILED {
+                    "ERR_STARTUP_MIGRATION_CLEANUP".to_string()
+                } else {
+                    "ERR_STARTUP_INITIALIZATION".to_string()
+                });
+            }
+        }
+
         let workspaces = WorkspaceRegistry::new(&config_dir);
 
         let state = Self {
@@ -243,12 +284,70 @@ impl AppState {
             http_runtime: Mutex::new(None),
             lifecycle_mutation: Mutex::new(()),
             transfer_cancellations: StdMutex::new(HashSet::new()),
+            startup_error: StdMutex::new(startup_error),
         };
-        crate::commands::backup::recover_interrupted_restore(&state)?;
+        // Interrupted restore recovery is security-critical. Keep the initialized
+        // native store available so the restricted recovery UI can retry safely.
+        if crate::commands::backup::recover_interrupted_restore(&state).is_err() {
+            if let Ok(mut startup_error) = state.startup_error.lock() {
+                *startup_error = Some("ERR_STARTUP_RESTORE_RECOVERY".to_string());
+            }
+        }
         let mut event = ProductEvent::new(ProductEventName::AppLaunched);
-        event.success = Some(true);
+        event.success = Some(state.startup_error.lock().unwrap().is_none());
         let _ = state.product_events.record(event);
         Ok(state)
+    }
+
+    /// Create a degraded-but-functional AppState when keyring is unavailable.
+    /// The startup_error is set so the frontend can show a recovery UI.
+    pub fn degraded(error_code: impl Into<String>) -> Self {
+        let store: Arc<dyn SecretStore> = Arc::new(secrets::UnavailableSecretStore::new(
+            "desktop is in restricted recovery mode",
+        ));
+        Self {
+            registry: StorageRegistry::with_secret_store(None, store.clone()),
+            settings_store: McpSettingsStore::with_secret_store(None, store.clone()),
+            app_settings_store: AppSettingsStore::new(None),
+            confirmations: ConfirmationManager::new(),
+            sessions: SessionManager::new(),
+            secret_store: store,
+            pending_oauth: PendingOAuthStore::new(),
+            workspaces: WorkspaceRegistry::new(&infimount_mcp::registry::default_config_dir()),
+            product_events: ProductEventStore::new(None),
+            operator_cache: OperatorCache::new(),
+            http_runtime: Mutex::new(None),
+            lifecycle_mutation: Mutex::new(()),
+            transfer_cancellations: StdMutex::new(HashSet::new()),
+            startup_error: StdMutex::new(Some(error_code.into())),
+        }
+    }
+
+    pub fn startup_health(&self) -> StartupHealth {
+        let error_code = self
+            .startup_error
+            .lock()
+            .ok()
+            .and_then(|value| value.clone());
+        StartupHealth {
+            operational: error_code.is_none(),
+            recovery_available: matches!(self.secret_store.status(), SecretStoreStatus::Available),
+            message: error_code.as_ref().map(|_| {
+                "Infimount started in restricted recovery mode. Storage and MCP operations are disabled until the startup problem is resolved and the app is restarted.".to_string()
+            }),
+            error_code,
+        }
+    }
+
+    pub fn require_operational(&self) -> McpResult<()> {
+        if self.startup_health().operational {
+            Ok(())
+        } else {
+            Err(err(
+                McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                "desktop is in restricted recovery mode",
+            ))
+        }
     }
 
     #[cfg(test)]
@@ -276,10 +375,12 @@ impl AppState {
             http_runtime: Mutex::new(None),
             lifecycle_mutation: Mutex::new(()),
             transfer_cancellations: StdMutex::new(HashSet::new()),
+            startup_error: StdMutex::new(None),
         }
     }
 
     pub fn fs_context(&self) -> McpResult<FsToolsContext> {
+        self.require_operational()?;
         let settings = self.settings_store.load()?;
         let auth_token = resolve_auth_token(&settings.auth_token_ref, self.secret_store.as_ref())?;
         Ok(FsToolsContext {
@@ -292,10 +393,12 @@ impl AppState {
     }
 
     pub fn list_storages(&self) -> McpResult<Vec<StorageRecord>> {
+        self.require_operational()?;
         self.registry.load_all()
     }
 
     pub fn find_storage_by_id(&self, storage_id: &str) -> McpResult<StorageRecord> {
+        self.require_operational()?;
         self.registry
             .load_all()?
             .into_iter()
@@ -341,6 +444,9 @@ impl AppState {
             .find_storage_by_id(storage_id)
             .map_err(mcp_error_to_core_error)?;
         let revision = storage.revision;
+        if let Some(operator) = self.operator_cache.get_for_storage(storage_id, revision) {
+            return Ok((operator, revision));
+        }
         let resolved = self.registry.resolve_storage(&storage).map_err(|e| {
             CoreError::Config(format!("failed to resolve storage secrets: {}", e.message))
         })?;
@@ -359,6 +465,7 @@ impl AppState {
         settings: McpSettings,
         auth_mutation: AuthTokenMutation,
     ) -> McpResult<McpRuntimeStatus> {
+        self.require_operational()?;
         let _lifecycle = self.lifecycle_mutation.lock().await;
         let existing = self.settings_store.load()?;
         let old_was_running = self.http_runtime.lock().await.is_some();
@@ -568,6 +675,7 @@ impl AppState {
     }
 
     pub async fn start_http_server(&self) -> McpResult<McpRuntimeStatus> {
+        self.require_operational()?;
         let _lifecycle = self.lifecycle_mutation.lock().await;
         let settings = self.settings_store.load()?;
         if settings.transport != McpTransport::Http {
@@ -597,6 +705,7 @@ impl AppState {
     }
 
     pub async fn ensure_runtime_from_settings(&self) -> McpResult<()> {
+        self.require_operational()?;
         let _lifecycle = self.lifecycle_mutation.lock().await;
         self.ensure_runtime_from_settings_locked().await
     }
@@ -618,6 +727,7 @@ impl AppState {
     }
 
     pub async fn mcp_status(&self) -> McpResult<McpRuntimeStatus> {
+        self.require_operational()?;
         let settings = self.settings_store.load()?;
         let endpoint = self
             .http_runtime
@@ -1053,6 +1163,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn degraded_state_uses_unavailable_store_and_sanitized_health() {
+        let state = AppState::degraded("ERR_STARTUP_TEST");
+        let health = state.startup_health();
+        assert!(!health.operational);
+        assert_eq!(health.error_code.as_deref(), Some("ERR_STARTUP_TEST"));
+        assert!(!health.message.unwrap().contains("keyring"));
+        assert!(state.require_operational().is_err());
+        assert!(matches!(
+            state.secret_store.status(),
+            SecretStoreStatus::Unavailable { .. }
+        ));
+        assert!(state.secret_store.get_json("storage/private").is_err());
+    }
+
+    #[test]
     fn http_snippet_never_contains_stored_token() {
         let snippet = http_client_snippet("http://127.0.0.1:7331/mcp", true);
         let serialized = serde_json::to_string(&snippet).unwrap();
@@ -1184,7 +1309,41 @@ mod tests {
             http_runtime: Mutex::new(None),
             lifecycle_mutation: Mutex::new(()),
             transfer_cancellations: StdMutex::new(HashSet::new()),
+            startup_error: StdMutex::new(None),
         }
+    }
+
+    #[test]
+    fn desktop_operator_cache_resolves_secrets_only_on_revision_miss() {
+        let dir = tempfile::tempdir().unwrap();
+        let secret_store = Arc::new(infimount_core::secrets::MemorySecretStore::new());
+        let state = test_app_state(&dir, secret_store.clone());
+        let mut record = StorageRecord::new(
+            "Cached".to_string(),
+            "s3".to_string(),
+            json!({ "bucket": "example", "region": "us-east-1" }),
+        );
+        let account = format!("storage/{}", record.id);
+        secret_store
+            .put_json(
+                &account,
+                &json!({ "accessKeyId": "id", "secretAccessKey": "secret" }),
+            )
+            .unwrap();
+        record.secret_ref = Some(account.clone());
+        state.registry.save_all_atomic(&[record.clone()]).unwrap();
+
+        state
+            .operator_for_storage_id(&record.id)
+            .expect("initial operator build");
+        secret_store.delete(&account).unwrap();
+        state
+            .operator_for_storage_id(&record.id)
+            .expect("cache hit must not resolve secrets again");
+
+        record.revision += 1;
+        state.registry.save_all_atomic(&[record.clone()]).unwrap();
+        assert!(state.operator_for_storage_id(&record.id).is_err());
     }
 
     #[tokio::test]

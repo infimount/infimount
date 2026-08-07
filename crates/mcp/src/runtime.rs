@@ -148,10 +148,8 @@ pub async fn start_http_server(
     }
 
     let cancellation_token = CancellationToken::new();
-    let config = StreamableHttpServerConfig {
-        cancellation_token: cancellation_token.child_token(),
-        ..Default::default()
-    };
+    let config = StreamableHttpServerConfig::default()
+        .with_cancellation_token(cancellation_token.child_token());
     let registry_for_factory = registry.clone();
     let enabled_tools_for_factory = enabled_tools.clone();
     let allow_insecure_for_factory = allow_insecure;

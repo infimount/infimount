@@ -8,19 +8,24 @@ import {
   clearMcpAuditEvents,
   completeOnboarding,
   createDirectory,
+  createWorkspaceCheckpointCommand,
+  listWorkspaceCheckpoints,
+  restoreWorkspaceCheckpointCommand,
   deleteFileVersion,
   deletePath,
   deleteWorkspaceWithFiles,
   denyMcpConfirmation,
   downloadFileToDownloads,
+  downloadFileVersionToDownloads,
   exportMcpAuditBundle,
   exportShareableConfig,
   generateDownloadLink,
   getAppSettings,
+  getStartupHealth,
   getMcpClientSnippets,
   getMcpStatus,
   getStorageCapabilities,
-  importStorageConfig,
+  applyStorageImport,
   listActiveMcpSessions,
   listEntries,
   listEntriesRecursive,
@@ -31,6 +36,7 @@ import {
   listStorageSchemas,
   listStorages,
   planTransferEntries,
+  previewStorageImport,
   previewMcpClientInstall,
   applyMcpClientInstall,
   rollbackMcpClientInstall,
@@ -139,6 +145,7 @@ describe("api wrappers", () => {
     ["getStorageCapabilities", () => getStorageCapabilities("s1"), "get_storage_capabilities", { storageId: "s1" }],
     ["generateDownloadLink", () => generateDownloadLink("s1", "/file.txt", 60), "generate_download_link", { sourceId: "s1", path: "/file.txt", expiresSeconds: 60 }],
     ["getAppSettings", () => getAppSettings(), "get_app_settings", undefined],
+    ["getStartupHealth", () => getStartupHealth(), "get_startup_health", undefined],
     ["completeOnboarding", () => completeOnboarding(), "complete_onboarding", undefined],
     ["skipOnboarding", () => skipOnboarding(), "skip_onboarding", undefined],
     ["listMcpAuditEvents", () => listMcpAuditEvents(25), "list_mcp_audit_events", { limit: 25 }],
@@ -189,15 +196,17 @@ describe("api wrappers", () => {
     });
   });
 
-  it("serializes transfer, import, export, and version file reads", async () => {
+  it("serializes transfer, safe import, export, and version file reads", async () => {
     invokeMock
       .mockResolvedValueOnce(undefined)
-      .mockResolvedValueOnce({ imported: 1 })
+      .mockResolvedValueOnce({ previewId: "preview-1" })
+      .mockResolvedValueOnce({ applied: 1 })
       .mockResolvedValueOnce({ json: "[]" })
       .mockResolvedValueOnce([1, 2]);
 
     await transferEntries("from", "to", ["/a.txt"], "/target", "copy", "overwrite");
-    await importStorageConfig({ json: "[]", mode: "merge", onConflict: "rename" });
+    await previewStorageImport({ json: "[]", mode: "merge", onConflict: "rename" });
+    await applyStorageImport({ previewId: "preview-1", confirmed: false });
     await exportShareableConfig();
     await expect(readFileVersion("s1", "/file.txt", "v1")).resolves.toEqual(new Uint8Array([1, 2]));
 
@@ -209,11 +218,14 @@ describe("api wrappers", () => {
       operation: "copy",
       conflictPolicy: "overwrite",
     });
-    expect(invokeMock).toHaveBeenNthCalledWith(2, "import_storage_config", {
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "preview_storage_import_cmd", {
       request: { json: "[]", mode: "merge", onConflict: "rename" },
     });
-    expect(invokeMock).toHaveBeenNthCalledWith(3, "export_shareable_config");
-    expect(invokeMock).toHaveBeenNthCalledWith(4, "read_file_version", {
+    expect(invokeMock).toHaveBeenNthCalledWith(3, "apply_storage_import_cmd", {
+      request: { previewId: "preview-1", confirmed: false },
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(4, "export_shareable_config");
+    expect(invokeMock).toHaveBeenNthCalledWith(5, "read_file_version", {
       sourceId: "s1",
       path: "/file.txt",
       version: "v1",
@@ -282,6 +294,19 @@ describe("api wrappers", () => {
     });
   });
 
+  it("routes version downloads through native streaming without IPC bytes", async () => {
+    invokeMock.mockResolvedValue({ fileName: "report (2).txt", bytes: 12 });
+    await expect(downloadFileVersionToDownloads("s1", "/report.txt", "v2")).resolves.toEqual({
+      fileName: "report (2).txt",
+      bytes: 12,
+    });
+    expect(invokeMock).toHaveBeenCalledWith("download_file_version_to_downloads", {
+      sourceId: "s1",
+      path: "/report.txt",
+      version: "v2",
+    });
+  });
+
   it("defaults download link expiry and audit limit", async () => {
     invokeMock.mockResolvedValue("ok");
 
@@ -323,6 +348,38 @@ describe("api wrappers", () => {
     });
   });
 
+  it("cancels an active native finalization immediately", async () => {
+    let rejectFinish!: (error: Error) => void;
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "begin_file_upload") return Promise.resolve("upload-active");
+      if (command === "append_file_upload_chunk") return Promise.resolve(undefined);
+      if (command === "finish_file_upload") {
+        return new Promise((_, reject) => {
+          rejectFinish = reject;
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+    const bytes = new TextEncoder().encode("hello");
+    const controller = new AbortController();
+    const upload = uploadFileStreaming(
+      "s1",
+      "/file.txt",
+      {
+        size: bytes.byteLength,
+        arrayBuffer: async () => bytes.buffer,
+        slice: () => ({ arrayBuffer: async () => bytes.buffer }) as Blob,
+      },
+      { signal: controller.signal },
+    );
+    while (!rejectFinish) await Promise.resolve();
+    controller.abort();
+    await Promise.resolve();
+    expect(invokeMock).toHaveBeenCalledWith("cancel_file_upload", { uploadId: "upload-active" });
+    rejectFinish(new Error("upload cancelled"));
+    await expect(upload).rejects.toThrow("upload cancelled");
+  });
+
   it("cleans up a cancelled browser upload", async () => {
     invokeMock.mockResolvedValueOnce("upload-2").mockResolvedValueOnce(undefined);
     const bytes = new TextEncoder().encode("hello");
@@ -336,6 +393,26 @@ describe("api wrappers", () => {
       }),
     ).rejects.toMatchObject({ name: "AbortError" });
     expect(invokeMock).toHaveBeenLastCalledWith("cancel_file_upload", { uploadId: "upload-2" });
+  });
+
+  it("routes workspace checkpoints through authoritative backend commands", async () => {
+    invokeMock.mockResolvedValue([]);
+    await listWorkspaceCheckpoints("workspace-1");
+    expect(invokeMock).toHaveBeenLastCalledWith("list_workspace_checkpoints", {
+      workspaceId: "workspace-1",
+    });
+
+    invokeMock.mockResolvedValue({ id: "checkpoint-1" });
+    await createWorkspaceCheckpointCommand("workspace-1", "Before change");
+    expect(invokeMock).toHaveBeenLastCalledWith("create_workspace_checkpoint", {
+      request: { workspaceId: "workspace-1", label: "Before change" },
+    });
+
+    invokeMock.mockResolvedValue(undefined);
+    await restoreWorkspaceCheckpointCommand("workspace-1", "checkpoint-1", true);
+    expect(invokeMock).toHaveBeenLastCalledWith("restore_workspace_checkpoint", {
+      request: { workspaceId: "workspace-1", checkpointId: "checkpoint-1", confirmOverwrite: true },
+    });
   });
 
   it("requires an explicit backend confirmation flag for workspace file deletion", async () => {

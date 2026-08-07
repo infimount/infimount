@@ -168,6 +168,38 @@ describe("FilePreviewPanel", () => {
     createObjectURL.mockRestore();
   });
 
+  it("does not render a truncated PDF as a complete document", async () => {
+    const file: FileItem = {
+      id: "/large.pdf",
+      name: "large.pdf",
+      type: "file",
+      extension: "pdf",
+      size: 0,
+      modified: new Date(),
+    };
+    vi.mocked(readFileRange).mockResolvedValueOnce({
+      totalSize: 25 * 1024 * 1024,
+      offset: 0,
+      bytes: [37, 80, 68, 70],
+      truncated: true,
+    });
+    const createObjectURL = vi.spyOn(URL, "createObjectURL");
+
+    render(
+      <FilePreviewPanel
+        file={file}
+        sourceId="storage-1"
+        onClose={() => undefined}
+        onDownload={() => undefined}
+      />,
+    );
+
+    expect(await screen.findByText(/PDF is too large to preview completely/i)).toBeInTheDocument();
+    expect(document.querySelector('iframe[title="large.pdf"]')).not.toBeInTheDocument();
+    expect(createObjectURL).not.toHaveBeenCalled();
+    createObjectURL.mockRestore();
+  });
+
   it("shows unsupported state for known binary files", async () => {
     const file: FileItem = {
       id: "/archive.zip",

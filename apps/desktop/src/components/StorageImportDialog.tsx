@@ -32,15 +32,16 @@ interface StorageImportDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onImportComplete?: () => void;
+  initialJson?: string;
 }
 
 type Step = "input" | "preview" | "applying";
 
-export function StorageImportDialog({ open, onOpenChange, onImportComplete }: StorageImportDialogProps) {
+export function StorageImportDialog({ open, onOpenChange, onImportComplete, initialJson = "" }: StorageImportDialogProps) {
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState<Step>("input");
-  const [jsonInput, setJsonInput] = useState("");
+  const [jsonInput, setJsonInput] = useState(initialJson);
   const [preview, setPreview] = useState<StorageImportPreview | null>(null);
   const [, setResult] = useState<{ applied: number; warnings: string[] } | null>(null);
   const [mode, setMode] = useState<"merge" | "replace">("merge");
@@ -79,13 +80,13 @@ export function StorageImportDialog({ open, onOpenChange, onImportComplete }: St
     if (!jsonInput.trim()) return;
     setError(null);
     try {
-      const p = await previewStorageImport(jsonInput);
+      const p = await previewStorageImport({ json: jsonInput, mode, onConflict });
       setPreview(p);
       setStep("preview");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [jsonInput]);
+  }, [jsonInput, mode, onConflict]);
 
   const handleApply = useCallback(async () => {
     if (!preview) return;
@@ -94,9 +95,6 @@ export function StorageImportDialog({ open, onOpenChange, onImportComplete }: St
     try {
       const request: ApplyStorageImportRequest = {
         previewId: preview.previewId,
-        baseRegistryRevision: preview.baseRegistryRevision,
-        mode,
-        onConflict,
         confirmed,
       };
       const res = await applyStorageImport(request);
@@ -110,11 +108,14 @@ export function StorageImportDialog({ open, onOpenChange, onImportComplete }: St
       setError(err instanceof Error ? err.message : String(err));
       setStep("preview");
     }
-  }, [preview, mode, onConflict, confirmed, toast, onImportComplete]);
+  }, [preview, confirmed, toast, onImportComplete]);
 
   const changeCount = (preview?.additions.length ?? 0)
     + (preview?.updates.length ?? 0)
-    + (preview?.removals.length ?? 0);
+    + (preview?.renames.length ?? 0)
+    + (preview?.removals.length ?? 0)
+    + (preview?.policyChanges.length ?? 0)
+    + (preview?.exposureChanges.length ?? 0);
 
   const renderChangeList = (items: { name: string; backend: string; changeType: string }[], label: string, color: string) => {
     if (items.length === 0) return null;
@@ -164,6 +165,29 @@ export function StorageImportDialog({ open, onOpenChange, onImportComplete }: St
                 className="mt-1 font-mono text-xs min-h-[200px]"
               />
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="import-mode">Mode</Label>
+                <Select value={mode} onValueChange={(v: "merge" | "replace") => { setMode(v); setConfirmed(false); }}>
+                  <SelectTrigger id="import-mode" className="mt-1"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="merge">Merge</SelectItem>
+                    <SelectItem value="replace">Replace</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="import-conflict">On conflict</Label>
+                <Select value={onConflict} onValueChange={(v: "error" | "overwrite" | "rename") => setOnConflict(v)} disabled={mode === "replace"}>
+                  <SelectTrigger id="import-conflict" className="mt-1"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="error">Error</SelectItem>
+                    <SelectItem value="overwrite">Overwrite</SelectItem>
+                    <SelectItem value="rename">Rename</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
             {error && (
               <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 p-3 rounded">
                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
@@ -187,7 +211,10 @@ export function StorageImportDialog({ open, onOpenChange, onImportComplete }: St
               )}
               {renderChangeList(preview.additions, "Additions", "green")}
               {renderChangeList(preview.updates, "Updates", "blue")}
+              {renderChangeList(preview.renames, "Renames", "blue")}
               {renderChangeList(preview.removals, "Removals", "red")}
+              {renderChangeList(preview.policyChanges, "Policy changes", "amber")}
+              {renderChangeList(preview.exposureChanges, "Exposure changes", "amber")}
               {preview.warnings.map((w, i) => (
                 <div key={i} className="flex items-start gap-2 text-xs text-amber-600 bg-amber-50 p-2 rounded mb-1">
                   <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
@@ -204,33 +231,9 @@ export function StorageImportDialog({ open, onOpenChange, onImportComplete }: St
               )}
             </ScrollArea>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label htmlFor="import-mode">Mode</Label>
-                <Select value={mode} onValueChange={(v: "merge" | "replace") => { setMode(v); setConfirmed(false); }}>
-                  <SelectTrigger id="import-mode" className="mt-1">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="merge">Merge</SelectItem>
-                    <SelectItem value="replace">Replace</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="import-conflict">On conflict</Label>
-                <Select value={onConflict} onValueChange={(v: "error" | "overwrite" | "rename") => setOnConflict(v)}>
-                  <SelectTrigger id="import-conflict" className="mt-1">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="error">Error</SelectItem>
-                    <SelectItem value="overwrite">Overwrite</SelectItem>
-                    <SelectItem value="rename">Rename</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+            <p className="text-xs text-muted-foreground">
+              This preview is bound to {preview.mode} mode and the {preview.onConflict} conflict strategy.
+            </p>
 
             {mode === "replace" && (
               <div className="flex items-start gap-2 text-sm text-amber-600 bg-amber-50 p-3 rounded">
@@ -258,7 +261,7 @@ export function StorageImportDialog({ open, onOpenChange, onImportComplete }: St
               </Button>
               <Button
                 onClick={handleApply}
-                disabled={mode === "replace" && !confirmed}
+                disabled={(mode === "replace" && !confirmed) || preview.missingSecretFields.length > 0}
               >
                 <CheckCircle2 className="h-4 w-4 mr-1" /> Apply Import
               </Button>

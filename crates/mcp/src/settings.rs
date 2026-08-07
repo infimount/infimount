@@ -129,7 +129,7 @@ impl McpSettingsStore {
         let mut normalized = normalize_settings(settings);
         normalized.schema_version = MCP_SETTINGS_SCHEMA_VERSION;
         if requires_migration {
-            self.create_pre_migration_backup(data.as_bytes())?;
+            let _backup_path = self.create_pre_migration_backup(data.as_bytes())?;
             let previous = if legacy_token.is_some() {
                 self.secret_store
                     .get_json(MCP_AUTH_TOKEN_ACCOUNT)
@@ -209,6 +209,7 @@ impl McpSettingsStore {
                     "HTTP auth migration verification failed",
                 ));
             }
+            crate::migration_cleanup::delete_plaintext_backup_or_journal(&_backup_path)?;
         }
         Ok(normalized)
     }
@@ -670,29 +671,15 @@ mod tests {
             persisted.security_baseline_version,
             SECURITY_BASELINE_VERSION
         );
-        let backups = fs::read_dir(temp.path().join("backups"))
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .collect::<Vec<_>>();
-        assert_eq!(backups.len(), 1);
-        assert_eq!(fs::read(&backups[0]).unwrap(), payload);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                fs::metadata(&backups[0]).unwrap().permissions().mode() & 0o077,
-                0
-            );
+        // Plaintext pre-migration backup is deleted after successful migration
+        let backups_path = temp.path().join("backups");
+        if backups_path.exists() {
+            let count = fs::read_dir(&backups_path)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .count();
+            assert_eq!(count, 0, "backup file should be removed after success");
         }
-        assert!(backups[0]
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .starts_with(PRE_MIGRATION_PREFIX));
-        assert_eq!(
-            backups[0].extension().and_then(|value| value.to_str()),
-            Some("json")
-        );
     }
 
     #[test]

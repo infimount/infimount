@@ -95,6 +95,7 @@ export function AgentWorkspacesDialog({
   const [selectedCheckpointId, setSelectedCheckpointId] = useState<string>("");
   const [isMemoryBusy, setIsMemoryBusy] = useState(false);
   const [isCheckpointBusy, setIsCheckpointBusy] = useState(false);
+  const [restoreConfirmationOpen, setRestoreConfirmationOpen] = useState(false);
   const [activityEvents, setActivityEvents] = useState<ActivityLogEvent[]>([]);
   const [deleteMode, setDeleteMode] = useState<"registration" | "files" | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -199,7 +200,8 @@ export function AgentWorkspacesDialog({
         name,
         rootPath,
         templateId,
-        accessProfile: applyPolicy ? "read_only" : undefined,
+        accessProfile: "read_only",
+        applyPolicy,
       });
       const next = await listAgentWorkspaces();
       setWorkspaces(next);
@@ -275,11 +277,12 @@ export function AgentWorkspacesDialog({
     if (!selectedWorkspace || !selectedCheckpointId) return;
     setIsCheckpointBusy(true);
     try {
-      await restoreWorkspaceMemoryCheckpoint(selectedWorkspace, selectedCheckpointId);
+      await restoreWorkspaceMemoryCheckpoint(selectedWorkspace, selectedCheckpointId, true);
       if (selectedMemoryFile) {
         setMemoryContent(await readWorkspaceMemoryFile(selectedWorkspace, selectedMemoryFile));
       }
       refreshWorkspaceActivity();
+      setRestoreConfirmationOpen(false);
       toast({ title: "Checkpoint restored", description: "Memory files were restored." });
     } catch (error) {
       toast({
@@ -583,7 +586,7 @@ export function AgentWorkspacesDialog({
                     <Button
                       className="mt-3 w-full"
                       variant="secondary"
-                      onClick={handleRestore}
+                      onClick={() => setRestoreConfirmationOpen(true)}
                       disabled={isCheckpointBusy || !selectedCheckpointId}
                     >
                       <RotateCcw className="mr-2 h-4 w-4" />
@@ -642,6 +645,33 @@ export function AgentWorkspacesDialog({
             </div>
           </ScrollArea>
         </div>
+
+        <AlertDialog
+          open={restoreConfirmationOpen}
+          onOpenChange={(next) => !isCheckpointBusy && setRestoreConfirmationOpen(next)}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Overwrite workspace memory?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Restoring {selectedCheckpointId || "this checkpoint"} will replace every managed memory file in {selectedWorkspace?.name ?? "this workspace"}. Current contents will be lost.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isCheckpointBusy}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={isCheckpointBusy || !selectedWorkspace || !selectedCheckpointId}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={(event) => {
+                  event.preventDefault();
+                  void handleRestore();
+                }}
+              >
+                {isCheckpointBusy ? "Restoring…" : "Restore and overwrite"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         <AlertDialog open={deleteMode !== null} onOpenChange={(next) => !next && setDeleteMode(null)}>
           <AlertDialogContent>

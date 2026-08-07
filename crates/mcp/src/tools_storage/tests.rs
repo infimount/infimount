@@ -1,3 +1,4 @@
+use super::import_config::{import_config, ImportConfigInput};
 use super::*;
 use crate::errors::McpErrorCode;
 use crate::policy::McpAccessMode;
@@ -373,7 +374,13 @@ async fn export_config_is_shareable() {
         .contains("\"kind\": \"infimount-shareable-config\""));
     assert!(out.json.contains("\"mcpExposed\": false"));
     assert!(out.json.contains("requiredSecretFields"));
+    assert_eq!(
+        super::import_config::secret_field_to_pointer(r"nested.a\.b.c/d~e"),
+        "/nested/a.b/c~1d~0e"
+    );
     assert!(!out.json.contains("\"id\":"));
+    assert!(!out.json.contains("raw-service-account-json"));
+    assert!(!out.json.contains("\"token\": \"secret\""));
     assert!(!out.json.contains("secret_ref"));
     assert!(!out.json.contains("secret_fields"));
 }
@@ -516,13 +523,14 @@ async fn shareable_preview_and_apply_honor_policy_secrets_and_exposure() {
 
     let preview = preview_storage_import(
         &ctx,
-        serde_json::json!({
+        PreviewStorageImportInput {
+            json: serde_json::json!({
             "schemaVersion": 2,
             "kind": "infimount-shareable-config",
             "storages": [{
                 "name": "Docs",
                 "backend": "s3",
-                "config": {"bucket": "new"},
+                "config": {"bucket": "new", "secretAccessKey": "supplied-secret"},
                 "requiredSecretFields": ["/accessKeyId", "/secretAccessKey"],
                 "enabled": true,
                 "mcpExposed": true,
@@ -542,8 +550,11 @@ async fn shareable_preview_and_apply_honor_policy_secrets_and_exposure() {
                     }
                 }
             }]
-        })
-        .to_string(),
+            })
+            .to_string(),
+            mode: "merge".to_string(),
+            on_conflict: "overwrite".to_string(),
+        },
     )
     .await
     .unwrap();
@@ -551,17 +562,13 @@ async fn shareable_preview_and_apply_honor_policy_secrets_and_exposure() {
     assert_eq!(preview.updates.len(), 1);
     assert_eq!(preview.policy_changes.len(), 1);
     assert_eq!(preview.exposure_changes.len(), 1);
-    assert_eq!(preview.missing_secret_fields.len(), 1);
-    assert_eq!(preview.missing_secret_fields[0].name, "secretAccessKey");
+    assert!(preview.missing_secret_fields.is_empty());
     assert_eq!(preview.warnings.len(), 1);
 
     let result = apply_storage_import(
         &ctx,
         ApplyStorageImportInput {
             preview_id: preview.preview_id,
-            base_registry_revision: preview.base_registry_revision,
-            mode: "merge".to_string(),
-            on_conflict: "overwrite".to_string(),
             confirmed: false,
         },
     )
@@ -576,7 +583,21 @@ async fn shareable_preview_and_apply_honor_policy_secrets_and_exposure() {
     assert!(stored.read_only);
     assert_eq!(stored.mcp_policy.default_access, McpAccessMode::ReadOnly);
     assert_eq!(stored.mcp_policy.denied_paths, vec!["private"]);
-    assert_eq!(stored.secret_ref.as_deref(), Some("storage/docs"));
+    assert_ne!(stored.secret_ref.as_deref(), Some("storage/docs"));
+    let secret_bundle = ctx
+        .registry
+        .secret_store()
+        .get_json(stored.secret_ref.as_deref().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(secret_bundle["accessKeyId"], "stored-key");
+    assert_eq!(secret_bundle["secretAccessKey"], "supplied-secret");
+    assert!(ctx
+        .registry
+        .secret_store()
+        .get_json("storage/docs")
+        .unwrap()
+        .is_none());
     assert_eq!(
         stored.secret_fields,
         vec!["accessKeyId".to_string(), "secretAccessKey".to_string()]
@@ -586,8 +607,14 @@ async fn shareable_preview_and_apply_honor_policy_secrets_and_exposure() {
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    assert_eq!(backups.len(), 1);
-    assert_eq!(std::fs::read(backups[0].path()).unwrap(), original_registry);
+    assert!(
+        backups.is_empty(),
+        "successful imports must remove the pending rollback journal"
+    );
+    assert_ne!(
+        std::fs::read(ctx.registry.path()).unwrap(),
+        original_registry
+    );
 }
 
 #[tokio::test]
@@ -610,12 +637,16 @@ async fn full_registry_change_invalidates_shareable_preview() {
     };
     let preview = preview_storage_import(
         &ctx,
-        serde_json::json!({"storages": [{
-            "name": "Other",
-            "backend": "local",
-            "config": {"root": "/tmp/other"}
-        }]})
-        .to_string(),
+        PreviewStorageImportInput {
+            json: serde_json::json!({"storages": [{
+                "name": "Other",
+                "backend": "local",
+                "config": {"root": "/tmp/other"}
+            }]})
+            .to_string(),
+            mode: "merge".to_string(),
+            on_conflict: "error".to_string(),
+        },
     )
     .await
     .unwrap();
@@ -630,9 +661,6 @@ async fn full_registry_change_invalidates_shareable_preview() {
         &ctx,
         ApplyStorageImportInput {
             preview_id: preview.preview_id,
-            base_registry_revision: preview.base_registry_revision,
-            mode: "merge".to_string(),
-            on_conflict: "error".to_string(),
             confirmed: false,
         },
     )
@@ -653,8 +681,12 @@ async fn expired_shareable_preview_cannot_be_applied() {
     };
     let preview = preview_storage_import(
         &ctx,
-        serde_json::json!([{"name": "Local", "backend": "local", "config": {"root": "/tmp"}}])
-            .to_string(),
+        PreviewStorageImportInput {
+            json: serde_json::json!([{"name": "Local", "backend": "local", "config": {"root": "/tmp"}}])
+                .to_string(),
+            mode: "merge".to_string(),
+            on_conflict: "error".to_string(),
+        },
     )
     .await
     .unwrap();
@@ -664,9 +696,6 @@ async fn expired_shareable_preview_cannot_be_applied() {
         &ctx,
         ApplyStorageImportInput {
             preview_id: preview.preview_id,
-            base_registry_revision: preview.base_registry_revision,
-            mode: "merge".to_string(),
-            on_conflict: "error".to_string(),
             confirmed: false,
         },
     )
@@ -674,6 +703,145 @@ async fn expired_shareable_preview_cannot_be_applied() {
     .unwrap_err();
     assert_eq!(error.code, McpErrorCode::ERR_IMPORT_PREVIEW_EXPIRED);
     assert!(ctx.registry.load_all().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn missing_import_credentials_block_apply_without_consuming_preview() {
+    let dir = TempDir::new().unwrap();
+    let ctx = FsToolsContext {
+        registry: registry_in(&dir),
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+    let preview = preview_storage_import(
+        &ctx,
+        PreviewStorageImportInput {
+            json: serde_json::json!({"storages": [{
+                "name": "S3",
+                "backend": "s3",
+                "config": {"bucket": "docs"},
+                "requiredSecretFields": ["/secretAccessKey"]
+            }]})
+            .to_string(),
+            mode: "merge".to_string(),
+            on_conflict: "error".to_string(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(preview.missing_secret_fields[0].name, "/secretAccessKey");
+
+    for _ in 0..2 {
+        let error = apply_storage_import(
+            &ctx,
+            ApplyStorageImportInput {
+                preview_id: preview.preview_id.clone(),
+                confirmed: false,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_SECRET_NOT_FOUND);
+    }
+    assert!(ctx.registry.load_all().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn preview_is_bound_to_rename_strategy_and_replace_removals() {
+    let dir = TempDir::new().unwrap();
+    let registry = registry_in(&dir);
+    let existing = crate::registry::StorageRecord::new(
+        "Local".to_string(),
+        "local".to_string(),
+        serde_json::json!({"root": "/tmp/original"}),
+    );
+    registry.save_all_atomic(&[existing]).unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+    let json =
+        serde_json::json!([{"name": "Local", "backend": "local", "config": {"root": "/tmp/new"}}])
+            .to_string();
+    let rename = preview_storage_import(
+        &ctx,
+        PreviewStorageImportInput {
+            json: json.clone(),
+            mode: "merge".to_string(),
+            on_conflict: "rename".to_string(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(rename.mode, "merge");
+    assert_eq!(rename.on_conflict, "rename");
+    assert_eq!(rename.renames.len(), 1);
+    assert!(rename.removals.is_empty());
+
+    let replace = preview_storage_import(
+        &ctx,
+        PreviewStorageImportInput {
+            json: serde_json::json!([{"name": "Other", "backend": "local", "config": {"root": "/tmp/other"}}]).to_string(),
+            mode: "replace".to_string(),
+            on_conflict: "error".to_string(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(replace.removals.len(), 1);
+}
+
+#[tokio::test]
+async fn desktop_import_validator_runs_before_registry_or_secret_mutation() {
+    let dir = TempDir::new().unwrap();
+    let registry = registry_in(&dir);
+    let existing = crate::registry::StorageRecord::new(
+        "Original".to_string(),
+        "local".to_string(),
+        serde_json::json!({"root": "/tmp/original"}),
+    );
+    registry
+        .save_all_atomic(std::slice::from_ref(&existing))
+        .unwrap();
+    let original_bytes = std::fs::read(registry.path()).unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+    let preview = preview_storage_import(
+        &ctx,
+        PreviewStorageImportInput {
+            json: serde_json::json!([{"name": "Replacement", "backend": "local", "config": {"root": "/tmp/replacement"}}]).to_string(),
+            mode: "replace".to_string(),
+            on_conflict: "error".to_string(),
+        },
+    )
+    .await
+    .unwrap();
+
+    let error = super::import_config::apply_storage_import_with_validator(
+        &ctx,
+        ApplyStorageImportInput {
+            preview_id: preview.preview_id,
+            confirmed: true,
+        },
+        |_| {
+            Err(crate::errors::err(
+                McpErrorCode::ERR_IMPORT_PREVIEW_MISMATCH,
+                "workspace reference would be broken",
+            ))
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, McpErrorCode::ERR_IMPORT_PREVIEW_MISMATCH);
+    assert_eq!(std::fs::read(ctx.registry.path()).unwrap(), original_bytes);
+    assert!(!dir.path().join("backups").exists());
 }
 
 #[tokio::test]
@@ -697,8 +865,12 @@ async fn pre_import_backup_failure_preserves_registry() {
     };
     let preview = preview_storage_import(
         &ctx,
-        serde_json::json!([{"name": "Added", "backend": "local", "config": {"root": "/tmp/added"}}])
-            .to_string(),
+        PreviewStorageImportInput {
+            json: serde_json::json!([{"name": "Added", "backend": "local", "config": {"root": "/tmp/added"}}])
+                .to_string(),
+            mode: "merge".to_string(),
+            on_conflict: "error".to_string(),
+        },
     )
     .await
     .unwrap();
@@ -708,9 +880,6 @@ async fn pre_import_backup_failure_preserves_registry() {
         &ctx,
         ApplyStorageImportInput {
             preview_id: preview.preview_id,
-            base_registry_revision: preview.base_registry_revision,
-            mode: "merge".to_string(),
-            on_conflict: "error".to_string(),
             confirmed: false,
         },
     )

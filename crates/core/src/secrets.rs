@@ -252,6 +252,31 @@ pub fn discover_secret_field_names() -> Vec<String> {
     names
 }
 
+fn escape_key_for_path(key: &str) -> String {
+    key.replace('\\', "\\\\").replace('.', "\\.")
+}
+
+fn split_path(path: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut chars = path.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => {
+                if let Some(next) = chars.next() {
+                    current.push(next);
+                }
+            }
+            '.' => {
+                parts.push(std::mem::take(&mut current));
+            }
+            _ => current.push(ch),
+        }
+    }
+    parts.push(current);
+    parts
+}
+
 pub fn extract_secret_fields(
     config: &Value,
     schema_secret_names: &[String],
@@ -266,12 +291,14 @@ pub fn extract_secret_fields(
             Value::Object(map) => {
                 for (key, child) in map {
                     let child_path = if path.is_empty() {
-                        key.clone()
+                        escape_key_for_path(key)
                     } else {
-                        format!("{path}.{key}")
+                        format!("{}.{}", path, escape_key_for_path(key))
                     };
-                    let secret =
-                        schema_names.iter().any(|name| name == key) || is_secret_key_name(key);
+                    let schema_secret = schema_names.iter().any(|name| name == key);
+                    let fallback_secret =
+                        !child.is_object() && !child.is_array() && is_secret_key_name(key);
+                    let secret = schema_secret || fallback_secret;
                     if secret {
                         if !child.is_null() && !is_masked_value(child) {
                             output.push((child_path, child.clone()));
@@ -305,7 +332,11 @@ pub fn strip_secret_fields(config: &mut Value, schema_secret_names: &[String]) {
             Value::Object(map) => {
                 let keys = map.keys().cloned().collect::<Vec<_>>();
                 for key in keys {
-                    if schema_names.iter().any(|name| name == &key) || is_secret_key_name(&key) {
+                    let secret = map.get(&key).is_some_and(|child| {
+                        schema_names.iter().any(|name| name == &key)
+                            || (!child.is_object() && !child.is_array() && is_secret_key_name(&key))
+                    });
+                    if secret {
                         map.remove(&key);
                     } else if let Some(child) = map.get_mut(&key) {
                         visit(child, schema_names);
@@ -329,36 +360,37 @@ pub fn merge_secret_config(public: &Value, secret_bundle: &Value) -> Value {
             *target = value;
             return;
         };
-        if let Ok(index) = part.parse::<usize>() {
-            if !target.is_array() {
-                *target = Value::Array(Vec::new());
-            }
-            let array = target.as_array_mut().expect("array initialized above");
+        // Preserve the type of an existing container. This distinguishes an
+        // object key named "0" from array index 0; stripped public config keeps
+        // its parent containers specifically so secret paths remain typed.
+        if target.is_array() {
+            let Ok(index) = part.parse::<usize>() else {
+                return;
+            };
+            let array = target.as_array_mut().expect("array checked above");
             while array.len() <= index {
                 array.push(Value::Null);
             }
             insert_path(&mut array[index], rest, value);
-        } else {
-            if !target.is_object() {
-                *target = Value::Object(serde_json::Map::new());
-            }
-            let child = target
-                .as_object_mut()
-                .expect("object initialized above")
-                .entry((*part).to_string())
-                .or_insert(Value::Null);
-            insert_path(child, rest, value);
+            return;
         }
+        if !target.is_object() {
+            *target = Value::Object(serde_json::Map::new());
+        }
+        let child = target
+            .as_object_mut()
+            .expect("object initialized above")
+            .entry((*part).to_string())
+            .or_insert(Value::Null);
+        insert_path(child, rest, value);
     }
 
     let mut merged = public.clone();
     if let Some(secret_map) = secret_bundle.as_object() {
         for (path, value) in secret_map {
-            insert_path(
-                &mut merged,
-                &path.split('.').collect::<Vec<_>>(),
-                value.clone(),
-            );
+            let segment_strings = split_path(path);
+            let parts: Vec<_> = segment_strings.iter().map(|s| s.as_str()).collect();
+            insert_path(&mut merged, &parts, value.clone());
         }
     }
     merged
@@ -370,50 +402,53 @@ pub fn contains_plaintext_secrets(config: &Value, schema_secret_names: &[String]
 
 fn is_secret_key_name(key: &str) -> bool {
     let lowered = key.to_ascii_lowercase();
-    [
-        "secret",
-        "password",
-        "token",
-        "access_key",
-        "accesskey",
-        "accesskeyid",
-        "access_key_id",
-        "secret_key",
-        "secretkey",
-        "secretaccesskey",
-        "secret_access_key",
-        "client_secret",
-        "clientsecret",
-        "session_token",
-        "sessiontoken",
-        "applicationkey",
-        "applicationkeyid",
-        "application_key",
-        "application_key_id",
-        "credential",
-        "privatekey",
-        "privatekeypath",
-        "private_key",
-        "private_key_path",
-        "keypath",
-        "key_path",
-        "key",
-        "keyid",
-        "serviceaccountjson",
-        "service_account_json",
-        "codeverifier",
-        "code_verifier",
-        "devicecode",
-        "device_code",
-        "authcode",
-        "auth_code",
-        "refreshtoken",
-        "refresh_token",
-        "accesstoken",
-        "access_token",
-    ]
-    .iter()
-    .any(|needle| lowered.contains(needle))
+    // Exact (case-insensitive) match only. The caller also checks user-provided
+    // schema_secret_names, so broad substring matching is unnecessary and risks
+    // false positives (e.g. a key named "mytokenvalue" would match "token").
+    matches!(
+        lowered.as_str(),
+        "secret"
+            | "password"
+            | "token"
+            | "credential"
+            | "credentials"
+            | "key"
+            | "keyid"
+            | "access_key"
+            | "accesskey"
+            | "accesskeyid"
+            | "access_key_id"
+            | "secret_key"
+            | "secretkey"
+            | "secretaccesskey"
+            | "secret_access_key"
+            | "client_secret"
+            | "clientsecret"
+            | "session_token"
+            | "sessiontoken"
+            | "applicationkey"
+            | "applicationkeyid"
+            | "application_key"
+            | "application_key_id"
+            | "privatekey"
+            | "privatekeypath"
+            | "private_key"
+            | "private_key_path"
+            | "keypath"
+            | "key_path"
+            | "serviceaccountjson"
+            | "service_account_json"
+            | "codeverifier"
+            | "code_verifier"
+            | "devicecode"
+            | "device_code"
+            | "authcode"
+            | "auth_code"
+            | "refreshtoken"
+            | "refresh_token"
+            | "accesstoken"
+            | "access_token"
+    )
 }
 
 fn is_masked_value(value: &Value) -> bool {
@@ -522,7 +557,7 @@ mod tests {
         });
         let names = discover_secret_field_names();
         let extracted = extract_secret_fields(&config, &names);
-        assert_eq!(extracted[0].0, "advanced.credentials");
+        assert_eq!(extracted[0].0, "advanced.credentials.refreshToken");
         let mut public = config.clone();
         strip_secret_fields(&mut public, &names);
         assert!(public
@@ -549,13 +584,36 @@ mod tests {
         let extracted = extract_secret_fields(&config, &names);
         assert!(extracted
             .iter()
-            .any(|(path, _)| path == "profiles.0.credentials"));
+            .any(|(path, _)| path == "profiles.0.credentials.accessToken"));
         assert!(extracted
             .iter()
             .any(|(path, _)| path == "profiles.1.password"));
         let mut public = config.clone();
         strip_secret_fields(&mut public, &names);
         assert!(!contains_plaintext_secrets(&public, &names));
+        let bundle = Value::Object(extracted.into_iter().collect());
+        assert_eq!(merge_secret_config(&public, &bundle), config);
+    }
+
+    #[test]
+    fn escaped_and_numeric_object_keys_round_trip_without_array_confusion() {
+        let config = serde_json::json!({
+            "a.b": "root-secret",
+            "nested": { "0": "object-secret" },
+            "items": [{ "0": "array-object-secret" }]
+        });
+        let names = vec!["a.b".to_string(), "0".to_string()];
+        let extracted = extract_secret_fields(&config, &names);
+        let paths = extracted
+            .iter()
+            .map(|(path, _)| path.as_str())
+            .collect::<Vec<_>>();
+        assert!(paths.contains(&r"a\.b"));
+        assert!(paths.contains(&"nested.0"));
+        assert!(paths.contains(&"items.0.0"));
+
+        let mut public = config.clone();
+        strip_secret_fields(&mut public, &names);
         let bundle = Value::Object(extracted.into_iter().collect());
         assert_eq!(merge_secret_config(&public, &bundle), config);
     }
@@ -611,5 +669,10 @@ mod tests {
         assert!(!is_secret_key_name("bucket"));
         assert!(!is_secret_key_name("region"));
         assert!(!is_secret_key_name("endpoint"));
+        assert!(is_secret_key_name("key"));
+        assert!(is_secret_key_name("keyId"));
+        assert!(is_secret_key_name("credential"));
+        assert!(is_secret_key_name("credentials"));
+        assert!(is_secret_key_name("token"));
     }
 }

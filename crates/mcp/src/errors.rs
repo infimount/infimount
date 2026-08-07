@@ -5,6 +5,7 @@ use serde_json::json;
 #[allow(non_camel_case_types)]
 pub enum McpErrorCode {
     ERR_INVALID_PATH,
+    ERR_INVALID_POLICY,
     ERR_ROOT_OPERATION_NOT_ALLOWED,
     ERR_STORAGE_NOT_FOUND,
     ERR_STORAGE_DISABLED,

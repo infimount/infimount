@@ -10,25 +10,33 @@ use infimount_core::{
 };
 use infimount_mcp::errors::{err, err_with_details, McpError, McpErrorCode, McpResult};
 use infimount_mcp::opendal_adapter::{get_capabilities, StorageBackendCapabilities};
-use infimount_mcp::policy::{migrate_legacy_policy, normalize_storage_policy, McpStoragePolicy};
+use infimount_mcp::policy::{
+    migrate_legacy_policy, normalize_policy_path, normalize_storage_policy, McpAccessMode,
+    McpRuleSource, McpStoragePolicy,
+};
 use infimount_mcp::registry::{ensure_unique_name, validate_storage_name, StorageRecord};
 use infimount_mcp::tools_storage::{
-    apply_storage_import, export_config, import_config, preview_storage_import,
+    apply_storage_import_with_validator, export_config, preview_storage_import,
     validate_storage_record, ApplyStorageImportInput, ApplyStorageImportResult, ExportConfigOutput,
-    ImportConfigInput, ImportConfigOutput, StorageImportPreview, ValidateStorageOutput,
+    PreviewStorageImportInput, StorageImportPreview, ValidateStorageOutput,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex as StdMutex, OnceLock,
+};
 use std::time::Duration;
 use tauri::State;
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 use crate::state::{AppState, PendingOAuthClaim, PendingOAuthSession, SecretMutation};
+
+const MAX_LEGACY_IPC_READ_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -45,14 +53,6 @@ pub struct StorageDraft {
     pub secret_mutations: HashMap<String, SecretMutation>,
     #[serde(default)]
     pub oauth_session_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ImportStoragesRequest {
-    pub json: String,
-    pub mode: String,
-    pub on_conflict: String,
 }
 
 #[tauri::command]
@@ -131,7 +131,13 @@ pub async fn read_file(
     path: String,
 ) -> Result<Vec<u8>, CoreError> {
     let op = state.operator_for_storage_id(&sourceId)?;
-    operations::read_full(&op, &path).await
+    let result = operations::read_file_range(&op, &path, 0, MAX_LEGACY_IPC_READ_BYTES).await?;
+    if result.truncated || result.total_size > MAX_LEGACY_IPC_READ_BYTES {
+        return Err(CoreError::Config(format!(
+            "legacy IPC reads are limited to {MAX_LEGACY_IPC_READ_BYTES} bytes; use native download or ranged preview"
+        )));
+    }
+    Ok(result.bytes)
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -201,6 +207,49 @@ pub async fn download_file_to_downloads(
 }
 
 #[tauri::command]
+pub async fn download_file_version_to_downloads(
+    state: State<'_, AppState>,
+    sourceId: String,
+    path: String,
+    version: String,
+) -> Result<DownloadFileResult, CoreError> {
+    if version.trim().is_empty() {
+        return Err(CoreError::Config("version must not be empty".to_string()));
+    }
+    let file_name = std::path::Path::new(path.trim_end_matches('/'))
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty() && *value != "." && *value != "..")
+        .ok_or_else(|| CoreError::Config("download path has no valid file name".to_string()))?
+        .to_string();
+    let directory = dirs::download_dir().ok_or_else(|| {
+        CoreError::Config("the operating system Downloads directory is unavailable".to_string())
+    })?;
+    tokio::fs::create_dir_all(&directory).await?;
+    let destination = unique_download_path(&directory, &file_name);
+    let staging = directory.join(format!(
+        ".infimount-version-download-{}.part",
+        Uuid::new_v4()
+    ));
+    let op = state.operator_for_storage_id(&sourceId)?;
+    let bytes =
+        operations::download_file_version_to_local_path(&op, &path, &version, &staging).await?;
+    if let Err(error) = tokio::fs::hard_link(&staging, &destination).await {
+        let _ = tokio::fs::remove_file(&staging).await;
+        return Err(error.into());
+    }
+    tokio::fs::remove_file(&staging).await?;
+    Ok(DownloadFileResult {
+        file_name: destination
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or(&file_name)
+            .to_string(),
+        bytes,
+    })
+}
+
+#[tauri::command]
 pub async fn write_file(
     state: State<'_, AppState>,
     sourceId: String,
@@ -239,6 +288,20 @@ fn validate_upload_usage(
 fn upload_staging_lock() -> &'static tokio::sync::Mutex<()> {
     static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+fn active_uploads() -> &'static StdMutex<HashMap<String, Arc<AtomicBool>>> {
+    static UPLOADS: OnceLock<StdMutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+    UPLOADS.get_or_init(|| StdMutex::new(HashMap::new()))
+}
+
+fn upload_cancel_flag(upload_id: &str) -> Result<Arc<AtomicBool>, CoreError> {
+    active_uploads()
+        .lock()
+        .map_err(|_| CoreError::Config("upload session state is unavailable".to_string()))?
+        .get(upload_id)
+        .cloned()
+        .ok_or_else(|| CoreError::Config("upload session is not active".to_string()))
 }
 
 fn upload_staging_dir() -> PathBuf {
@@ -312,11 +375,20 @@ pub async fn begin_file_upload() -> Result<String, CoreError> {
         use std::os::unix::fs::PermissionsExt;
         tokio::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).await?;
     }
-    Ok(id.to_string())
+    let upload_id = id.to_string();
+    active_uploads()
+        .lock()
+        .map_err(|_| CoreError::Config("upload session state is unavailable".to_string()))?
+        .insert(upload_id.clone(), Arc::new(AtomicBool::new(false)));
+    Ok(upload_id)
 }
 
 #[tauri::command]
 pub async fn append_file_upload_chunk(uploadId: String, data: Vec<u8>) -> Result<(), CoreError> {
+    let cancel_flag = upload_cancel_flag(&uploadId)?;
+    if cancel_flag.load(Ordering::Acquire) {
+        return Err(CoreError::Config("upload cancelled".to_string()));
+    }
     if data.len() > MAX_UPLOAD_CHUNK_BYTES {
         return Err(CoreError::Config(format!(
             "upload chunk exceeds {MAX_UPLOAD_CHUNK_BYTES} bytes"
@@ -349,15 +421,40 @@ async fn finish_file_upload_inner(
 ) -> Result<(), CoreError> {
     let path = upload_staging_path(&uploadId)?;
     let transfer_path = path.with_extension("uploading");
+    let cancel_flag = upload_cancel_flag(&uploadId)?;
+    if cancel_flag.load(Ordering::Acquire) {
+        let _ = tokio::fs::remove_file(&path).await;
+        if let Ok(mut uploads) = active_uploads().lock() {
+            uploads.remove(&uploadId);
+        }
+        return Err(CoreError::Config("upload cancelled".to_string()));
+    }
     {
         let _guard = upload_staging_lock().lock().await;
-        tokio::fs::rename(&path, &transfer_path).await?;
+        if let Err(error) = tokio::fs::rename(&path, &transfer_path).await {
+            if let Ok(mut uploads) = active_uploads().lock() {
+                uploads.remove(&uploadId);
+            }
+            return Err(error.into());
+        }
     }
     let result = match state.operator_for_storage_id(&sourceId) {
-        Ok(op) => operations::upload_local_file_to_path(&op, &transfer_path, &targetPath).await,
+        Ok(op) => {
+            let flag = cancel_flag.clone();
+            operations::upload_local_file_to_path_cancellable(
+                &op,
+                &transfer_path,
+                &targetPath,
+                move || flag.load(Ordering::Acquire),
+            )
+            .await
+        }
         Err(error) => Err(error),
     };
     let cleanup = tokio::fs::remove_file(&transfer_path).await;
+    if let Ok(mut uploads) = active_uploads().lock() {
+        uploads.remove(&uploadId);
+    }
     match result {
         Err(error) => Err(error),
         Ok(()) => cleanup.map_err(CoreError::from),
@@ -376,11 +473,38 @@ pub async fn finish_file_upload(
 
 #[tauri::command]
 pub async fn cancel_file_upload(uploadId: String) -> Result<(), CoreError> {
+    let flag = active_uploads()
+        .lock()
+        .map_err(|_| CoreError::Config("upload session state is unavailable".to_string()))?
+        .get(&uploadId)
+        .cloned();
+    if let Some(flag) = flag {
+        flag.store(true, Ordering::Release);
+    }
+
     let _guard = upload_staging_lock().lock().await;
     let path = upload_staging_path(&uploadId)?;
-    match tokio::fs::remove_file(path).await {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+    let uploading = path.with_extension("uploading");
+    // The active finisher owns an `.uploading` file and observes the cancellation flag. Removing
+    // that file here is not portable (notably on Windows) and could race its reader.
+    let finishing = tokio::fs::metadata(&uploading).await.is_ok();
+    match tokio::fs::remove_file(&path).await {
+        Ok(()) => {
+            if !finishing {
+                if let Ok(mut uploads) = active_uploads().lock() {
+                    uploads.remove(&uploadId);
+                }
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if !finishing {
+                if let Ok(mut uploads) = active_uploads().lock() {
+                    uploads.remove(&uploadId);
+                }
+            }
+            Ok(())
+        }
         Err(error) => Err(error.into()),
     }
 }
@@ -393,6 +517,7 @@ fn new_activation_demo_root(config_dir: &std::path::Path) -> PathBuf {
 pub async fn create_activation_demo_storage(
     state: State<'_, AppState>,
 ) -> Result<StorageRecord, McpError> {
+    state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
     let config_dir = state
         .registry
@@ -552,6 +677,7 @@ pub async fn add_storage(
     state: State<'_, AppState>,
     storage: StorageDraft,
 ) -> Result<StorageRecord, McpError> {
+    state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
     validate_storage_draft(&storage)?;
     let name = validate_storage_name(&storage.name)?;
@@ -696,6 +822,7 @@ pub async fn update_storage(
     storageId: String,
     mut storage: StorageDraft,
 ) -> Result<UpdateStorageResult, McpError> {
+    state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
     let claimed = if let Some(oauth_id) = storage.oauth_session_id.as_deref() {
         let session = claim_oauth_session(&state, oauth_id)?;
@@ -874,6 +1001,7 @@ pub async fn remove_storage(
     state: State<'_, AppState>,
     storageId: String,
 ) -> Result<RemoveStorageResult, McpError> {
+    state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
     let secret_store = state.secret_store.clone();
     let mut secret_ref_to_delete: Option<String> = None;
@@ -992,6 +1120,7 @@ pub async fn update_mcp_storage_policy(
     storageId: String,
     policy: McpStoragePolicy,
 ) -> Result<StorageRecord, McpError> {
+    state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
     state.registry.with_locked_mutation(|storages| {
         let storage = storages
@@ -1022,6 +1151,7 @@ pub async fn verify_storage(
     state: State<'_, AppState>,
     storage: StorageDraft,
 ) -> Result<ValidateStorageOutput, McpError> {
+    state.require_operational()?;
     validate_storage_draft(&storage)?;
     let name = validate_storage_name(&storage.name)?;
     let mut config = storage.config.clone();
@@ -1093,27 +1223,6 @@ fn invalidate_operator_caches_after_import(state: &AppState) {
 }
 
 #[tauri::command]
-pub async fn import_storage_config(
-    state: State<'_, AppState>,
-    request: ImportStoragesRequest,
-) -> Result<ImportConfigOutput, McpError> {
-    let _lifecycle = state.lifecycle_mutation.lock().await;
-    let result = import_config(
-        &state.fs_context()?,
-        ImportConfigInput {
-            json: request.json,
-            mode: request.mode,
-            on_conflict: request.on_conflict,
-        },
-    )
-    .await;
-    if result.is_ok() {
-        invalidate_operator_caches_after_import(&state);
-    }
-    result
-}
-
-#[tauri::command]
 pub async fn export_shareable_config(
     state: State<'_, AppState>,
 ) -> Result<ExportConfigOutput, McpError> {
@@ -1123,9 +1232,168 @@ pub async fn export_shareable_config(
 #[tauri::command]
 pub async fn preview_storage_import_cmd(
     state: State<'_, AppState>,
-    json: String,
+    request: PreviewStorageImportInput,
 ) -> Result<StorageImportPreview, McpError> {
-    preview_storage_import(&state.fs_context()?, json).await
+    preview_storage_import(&state.fs_context()?, request).await
+}
+
+fn workspace_access_mode(profile: &str) -> Option<McpAccessMode> {
+    match profile {
+        "none" => Some(McpAccessMode::None),
+        "read_only" => Some(McpAccessMode::ReadOnly),
+        "read_write" => Some(McpAccessMode::ReadWrite),
+        _ => None,
+    }
+}
+
+fn validate_import_workspace_references(
+    workspaces: &[infimount_core::workspaces::WorkspaceRecord],
+    resulting_storages: &[StorageRecord],
+) -> McpResult<()> {
+    for workspace in workspaces {
+        let details = || {
+            json!({
+                "workspaceId": workspace.id,
+                "storageId": workspace.storage_id,
+                "policyRuleId": workspace.policy_rule_id,
+            })
+        };
+        let storage = resulting_storages
+            .iter()
+            .find(|storage| storage.id == workspace.storage_id)
+            .ok_or_else(|| {
+                err_with_details(
+                    McpErrorCode::ERR_IMPORT_PREVIEW_MISMATCH,
+                    "storage import would remove a storage referenced by a workspace",
+                    details(),
+                )
+            })?;
+        if !storage.enabled {
+            return Err(err_with_details(
+                McpErrorCode::ERR_IMPORT_PREVIEW_MISMATCH,
+                "storage import would disable a storage referenced by a workspace",
+                details(),
+            ));
+        }
+
+        let expected_access =
+            workspace_access_mode(&workspace.access_profile).ok_or_else(|| {
+                err_with_details(
+                    McpErrorCode::ERR_IMPORT_PREVIEW_MISMATCH,
+                    "workspace has an invalid access profile",
+                    details(),
+                )
+            })?;
+        let expected_prefix = normalize_policy_path(&workspace.root_path).map_err(|_| {
+            err_with_details(
+                McpErrorCode::ERR_IMPORT_PREVIEW_MISMATCH,
+                "workspace has an invalid root path",
+                details(),
+            )
+        })?;
+
+        let Some(rule_id) = workspace.policy_rule_id.as_deref() else {
+            if expected_access != McpAccessMode::None
+                || storage.mcp_policy.rules.iter().any(|rule| {
+                    matches!(
+                        &rule.source,
+                        McpRuleSource::Workspace { workspace_id }
+                            if workspace_id == &workspace.id
+                    )
+                })
+            {
+                return Err(err_with_details(
+                    McpErrorCode::ERR_IMPORT_PREVIEW_MISMATCH,
+                    "storage import would break a workspace policy binding",
+                    details(),
+                ));
+            }
+            continue;
+        };
+
+        let rule = storage
+            .mcp_policy
+            .rules
+            .iter()
+            .find(|rule| rule.id == rule_id)
+            .ok_or_else(|| {
+                err_with_details(
+                    McpErrorCode::ERR_IMPORT_PREVIEW_MISMATCH,
+                    "storage import would remove a workspace policy rule",
+                    details(),
+                )
+            })?;
+        if rule.prefix != expected_prefix
+            || rule.access != expected_access
+            || rule.confirmation_rules.is_some()
+            || !matches!(
+                &rule.source,
+                McpRuleSource::Workspace { workspace_id } if workspace_id == &workspace.id
+            )
+        {
+            return Err(err_with_details(
+                McpErrorCode::ERR_IMPORT_PREVIEW_MISMATCH,
+                "storage import would change a workspace policy binding",
+                details(),
+            ));
+        }
+    }
+
+    // Validate the reverse edge as well. An imported policy must not introduce an
+    // orphaned workspace source, bind a managed rule to another storage, or leave
+    // an extra rule that merely names an otherwise valid workspace.
+    for storage in resulting_storages {
+        for rule in &storage.mcp_policy.rules {
+            let McpRuleSource::Workspace { workspace_id } = &rule.source else {
+                continue;
+            };
+            let details = || {
+                json!({
+                    "workspaceId": workspace_id,
+                    "storageId": storage.id,
+                    "policyRuleId": rule.id,
+                })
+            };
+            let workspace = workspaces
+                .iter()
+                .find(|workspace| workspace.id == *workspace_id)
+                .ok_or_else(|| {
+                    err_with_details(
+                        McpErrorCode::ERR_IMPORT_PREVIEW_MISMATCH,
+                        "storage import would create an orphaned workspace policy rule",
+                        details(),
+                    )
+                })?;
+            let expected_access =
+                workspace_access_mode(&workspace.access_profile).ok_or_else(|| {
+                    err_with_details(
+                        McpErrorCode::ERR_IMPORT_PREVIEW_MISMATCH,
+                        "workspace has an invalid access profile",
+                        details(),
+                    )
+                })?;
+            let expected_prefix = normalize_policy_path(&workspace.root_path).map_err(|_| {
+                err_with_details(
+                    McpErrorCode::ERR_IMPORT_PREVIEW_MISMATCH,
+                    "workspace has an invalid root path",
+                    details(),
+                )
+            })?;
+            if workspace.storage_id != storage.id
+                || workspace.policy_rule_id.as_deref() != Some(rule.id.as_str())
+                || rule.prefix != expected_prefix
+                || rule.access != expected_access
+                || rule.confirmation_rules.is_some()
+            {
+                return Err(err_with_details(
+                    McpErrorCode::ERR_IMPORT_PREVIEW_MISMATCH,
+                    "storage import would create a mismatched workspace policy binding",
+                    details(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1134,7 +1402,16 @@ pub async fn apply_storage_import_cmd(
     request: ApplyStorageImportInput,
 ) -> Result<ApplyStorageImportResult, McpError> {
     let _lifecycle = state.lifecycle_mutation.lock().await;
-    let result = apply_storage_import(&state.fs_context()?, request).await;
+    let workspaces = state.workspaces.load_all().map_err(|_| {
+        err(
+            McpErrorCode::ERR_INTERNAL,
+            "failed to validate workspace references before storage import",
+        )
+    })?;
+    let result = apply_storage_import_with_validator(&state.fs_context()?, request, |storages| {
+        validate_import_workspace_references(&workspaces, storages)
+    })
+    .await;
     if result.is_ok() {
         invalidate_operator_caches_after_import(&state);
     }
@@ -1169,7 +1446,7 @@ pub async fn generate_download_link(
     }
 
     let op = state.operator_for_storage_id(&sourceId)?;
-    let caps = op.info().full_capability();
+    let caps = op.info().capability();
     if !caps.presign_read {
         return Err(CoreError::Config(
             "storage backend does not support presigned download links".to_string(),
@@ -1211,6 +1488,12 @@ pub async fn read_file_version(
     version: String,
 ) -> Result<Vec<u8>, CoreError> {
     let op = state.operator_for_storage_id(&sourceId)?;
+    let metadata = op.stat_with(&path).version(&version).await?;
+    if metadata.is_dir() || metadata.content_length() > MAX_LEGACY_IPC_READ_BYTES {
+        return Err(CoreError::Config(format!(
+            "version IPC reads are limited to {MAX_LEGACY_IPC_READ_BYTES} bytes; use native version download"
+        )));
+    }
     operations::read_file_version(&op, &path, &version).await
 }
 
@@ -1361,7 +1644,7 @@ mod tests {
 
         let result = finish_file_upload_inner(
             &state,
-            upload_id,
+            upload_id.clone(),
             "missing-storage".to_string(),
             "target.bin".to_string(),
         )
@@ -1370,6 +1653,7 @@ mod tests {
         assert!(result.is_err());
         assert!(!part.exists());
         assert!(!uploading.exists());
+        assert!(upload_cancel_flag(&upload_id).is_err());
     }
 
     #[test]
@@ -1384,11 +1668,148 @@ mod tests {
             storage_id: "storage-1".to_string(),
             revision: 1,
         };
-        let op = opendal::Operator::new(Memory::default()).unwrap().finish();
+        let op = opendal::Operator::new(Memory::default()).unwrap();
         state.operator_cache.insert(key.clone(), op);
         assert!(state.operator_cache.get(&key).is_some());
         invalidate_operator_caches_after_import(&state);
         assert!(state.operator_cache.get(&key).is_none());
+    }
+
+    #[test]
+    fn import_preserves_exact_workspace_storage_and_policy_binding() {
+        let mut storage = StorageRecord::new(
+            "Workspace storage".to_string(),
+            "local".to_string(),
+            json!({ "root": "/tmp" }),
+        );
+        let workspace = infimount_core::workspaces::WorkspaceRecord {
+            id: "workspace-1".to_string(),
+            schema_version: infimount_core::workspaces::WORKSPACE_RECORD_SCHEMA_VERSION,
+            storage_id: storage.id.clone(),
+            name: "Workspace".to_string(),
+            root_path: "workspace".to_string(),
+            template_id: "coding".to_string(),
+            access_profile: "read_only".to_string(),
+            policy_rule_id: Some("workspace:workspace-1".to_string()),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            memory_files: vec![
+                "memory/tasks.md".to_string(),
+                "memory/decisions.md".to_string(),
+                "memory/handoff.md".to_string(),
+            ],
+            checkpoint_ids: vec![],
+        };
+        storage
+            .mcp_policy
+            .rules
+            .push(infimount_mcp::policy::McpPathRule {
+                id: workspace.policy_rule_id.clone().unwrap(),
+                prefix: workspace.root_path.clone(),
+                access: McpAccessMode::ReadOnly,
+                source: McpRuleSource::Workspace {
+                    workspace_id: workspace.id.clone(),
+                },
+                confirmation_rules: None,
+            });
+
+        let assert_rejected = |candidate: Vec<StorageRecord>, reason: &str| {
+            let error =
+                validate_import_workspace_references(std::slice::from_ref(&workspace), &candidate)
+                    .expect_err(reason);
+            assert_eq!(error.code, McpErrorCode::ERR_IMPORT_PREVIEW_MISMATCH);
+        };
+        assert_rejected(vec![], "referenced storage removal must fail closed");
+
+        let mut disabled = storage.clone();
+        disabled.enabled = false;
+        assert_rejected(
+            vec![disabled],
+            "referenced storage disable must fail closed",
+        );
+
+        let mut missing_rule = storage.clone();
+        missing_rule.mcp_policy.rules.clear();
+        assert_rejected(vec![missing_rule], "managed rule removal must fail closed");
+
+        let mut changed_source = storage.clone();
+        changed_source.mcp_policy.rules[0].source = McpRuleSource::Manual;
+        assert_rejected(
+            vec![changed_source],
+            "managed rule source must remain exact",
+        );
+
+        let mut changed_prefix = storage.clone();
+        changed_prefix.mcp_policy.rules[0].prefix = "other".to_string();
+        assert_rejected(
+            vec![changed_prefix],
+            "managed rule prefix must remain exact",
+        );
+
+        let mut changed_access = storage.clone();
+        changed_access.mcp_policy.rules[0].access = McpAccessMode::ReadWrite;
+        assert_rejected(
+            vec![changed_access],
+            "managed rule access must remain exact",
+        );
+
+        let mut changed_confirmation = storage.clone();
+        changed_confirmation.mcp_policy.rules[0].confirmation_rules =
+            Some(infimount_mcp::policy::McpConfirmationRules {
+                require_for_write: false,
+                require_for_overwrite: false,
+                require_for_delete: false,
+                require_for_version_delete: false,
+                require_for_presign: false,
+                require_for_cross_storage_copy: false,
+            });
+        assert_rejected(
+            vec![changed_confirmation],
+            "managed rule confirmation override must remain absent",
+        );
+
+        let mut orphaned_rule = storage.clone();
+        orphaned_rule
+            .mcp_policy
+            .rules
+            .push(infimount_mcp::policy::McpPathRule {
+                id: "workspace:missing".to_string(),
+                prefix: "missing".to_string(),
+                access: McpAccessMode::ReadOnly,
+                source: McpRuleSource::Workspace {
+                    workspace_id: "missing".to_string(),
+                },
+                confirmation_rules: None,
+            });
+        assert_rejected(
+            vec![orphaned_rule],
+            "orphaned workspace policy source must fail closed",
+        );
+
+        let mut duplicate_binding = storage.clone();
+        let mut extra_rule = duplicate_binding.mcp_policy.rules[0].clone();
+        extra_rule.id = "workspace:workspace-1:extra".to_string();
+        duplicate_binding.mcp_policy.rules.push(extra_rule);
+        assert_rejected(
+            vec![duplicate_binding],
+            "extra workspace binding must fail closed",
+        );
+
+        let mut wrong_storage = StorageRecord::new(
+            "Other".to_string(),
+            "local".to_string(),
+            json!({ "root": "/tmp/other" }),
+        );
+        wrong_storage
+            .mcp_policy
+            .rules
+            .push(storage.mcp_policy.rules[0].clone());
+        assert_rejected(
+            vec![storage.clone(), wrong_storage],
+            "workspace rule on another storage must fail closed",
+        );
+
+        validate_import_workspace_references(&[workspace], &[storage]).unwrap();
     }
 
     #[test]

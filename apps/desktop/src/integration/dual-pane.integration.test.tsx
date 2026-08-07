@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import Index from "@/pages/Index";
 import type { McpRuntimeStatus } from "@/types/storage";
-import { getAppSettings, getMcpClientSnippets, getMcpStatus, listStorages } from "@/lib/api";
+import { getAppSettings, getMcpClientSnippets, getMcpStatus, getStartupHealth, listStorages } from "@/lib/api";
 
 vi.mock("@tauri-apps/api/app", () => ({
   getVersion: vi.fn().mockResolvedValue("0.3.0"),
@@ -76,6 +76,7 @@ vi.mock("@/lib/api", () => ({
   getAppSettings: vi.fn(),
   getMcpClientSnippets: vi.fn(),
   getMcpStatus: vi.fn(),
+  getStartupHealth: vi.fn(),
   importStorageConfig: vi.fn(),
   listEntries: vi.fn(),
   listMcpAuditEvents: vi.fn().mockResolvedValue([]),
@@ -152,6 +153,7 @@ describe("dual-pane browsing", () => {
       wizardCompletedSteps: [],
       telemetryConsent: "unknown",
     });
+    vi.mocked(getStartupHealth).mockResolvedValue({ operational: true, recoveryAvailable: true, errorCode: null, message: null });
     vi.mocked(getMcpStatus).mockResolvedValue(mcpStatus);
     vi.mocked(getMcpClientSnippets).mockResolvedValue({ stdio: "{}", http: "{}" });
     vi.mocked(listStorages).mockResolvedValue([

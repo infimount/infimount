@@ -318,9 +318,12 @@ export interface Entry {
 export interface SidecarValidation {
   binaryFound: boolean;
   executable: boolean;
+  canonicalPath: string | null;
   version: string | null;
   versionMatch: boolean;
   doctorHealthy: boolean;
+  sha256: string | null;
+  checksumVerified: boolean;
   errorCode: string | null;
 }
 
@@ -329,6 +332,7 @@ export interface ActivationProbeOutput {
   mcpHandshakeOk: boolean;
   mcpAllowedOpOk: boolean;
   mcpDenialProven: boolean;
+  mcpAuditOk: boolean;
   overallOk: boolean;
   errorCode: string | null;
 }

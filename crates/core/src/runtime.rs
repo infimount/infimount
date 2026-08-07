@@ -32,6 +32,16 @@ impl OperatorCache {
         cache.get(key).cloned()
     }
 
+    /// Look up a persisted storage operator before resolving its secret bundle.
+    /// Callers must supply the public record's current revision so credential or
+    /// configuration mutations cannot reuse an older operator.
+    pub fn get_for_storage(&self, storage_id: &str, revision: Revision) -> Option<Operator> {
+        self.get(&CacheKey {
+            storage_id: storage_id.to_string(),
+            revision,
+        })
+    }
+
     pub fn insert(&self, key: CacheKey, operator: Operator) {
         if let Ok(mut cache) = self.operators.lock() {
             cache.retain(|existing, _| existing.storage_id != key.storage_id);
@@ -137,11 +147,11 @@ mod tests {
         let cache = OperatorCache::new();
         let source = make_source("test", SourceKind::Local, "/tmp");
         let op = get_or_create_operator(&cache, &source, 7).unwrap();
-        assert!(op.info().full_capability().read);
+        assert!(op.info().capability().read);
 
         // Second call should return cached
         let op2 = get_or_create_operator(&cache, &source, 7).unwrap();
-        assert!(op2.info().full_capability().read);
+        assert!(op2.info().capability().read);
 
         // Invalidate
         invalidate_source(&cache, "test");

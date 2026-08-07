@@ -38,7 +38,7 @@ const entriesByPath: Record<string, Array<Record<string, unknown>>> = {
   "/empty": [],
 };
 
-const installTauriMocks = ({ entriesByPath, failRoot = false, transferConflict = false }: { entriesByPath: Record<string, Array<Record<string, unknown>>>; failRoot?: boolean; transferConflict?: boolean }) => {
+const installTauriMocks = ({ entriesByPath, failRoot = false, transferConflict = false, paginateRoot = false }: { entriesByPath: Record<string, Array<Record<string, unknown>>>; failRoot?: boolean; transferConflict?: boolean; paginateRoot?: boolean }) => {
   const defaultPlan = {
     operation: "copy",
     conflictPolicy: "fail",
@@ -82,6 +82,12 @@ const installTauriMocks = ({ entriesByPath, failRoot = false, transferConflict =
           }
           const path = typeof args?.path === "string" ? args.path : "/";
           const entries = entriesByPath[path] ?? [];
+          if (cmd === "list_entries_page" && paginateRoot && path === "/") {
+            const cursor = typeof args?.cursor === "string" ? args.cursor : null;
+            return cursor
+              ? { entries: entries.slice(1), nextCursor: null, truncated: false }
+              : { entries: entries.slice(0, 1), nextCursor: "signed-page-2", truncated: false };
+          }
           return cmd === "list_entries_page"
             ? { entries, nextCursor: null, truncated: false }
             : entries;
@@ -121,11 +127,12 @@ const installTauriMocks = ({ entriesByPath, failRoot = false, transferConflict =
   });
 };
 
-async function mountFileBrowser(mount: Parameters<Parameters<typeof test>[1]>[0]["mount"], page: Parameters<Parameters<typeof test>[1]>[0]["page"], options: { initialEntries?: typeof entriesByPath; failRoot?: boolean; transferConflict?: boolean } = {}) {
+async function mountFileBrowser(mount: Parameters<Parameters<typeof test>[1]>[0]["mount"], page: Parameters<Parameters<typeof test>[1]>[0]["page"], options: { initialEntries?: typeof entriesByPath; failRoot?: boolean; transferConflict?: boolean; paginateRoot?: boolean } = {}) {
   const mockOptions = {
     entriesByPath: options.initialEntries ?? entriesByPath,
     failRoot: options.failRoot ?? false,
     transferConflict: options.transferConflict ?? false,
+    paginateRoot: options.paginateRoot ?? false,
   };
   await page.addInitScript(installTauriMocks, mockOptions);
   await page.evaluate(installTauriMocks, mockOptions);
@@ -146,6 +153,17 @@ test("browses into a folder and updates the visible location", async ({ mount, p
   await expect(page.getByText("guide.md")).toBeVisible();
   await expect(page.getByText("docs").first()).toBeVisible();
   await expect(page.getByRole("option", { name: "report.txt" })).toHaveCount(0);
+});
+
+test("loads additional directory pages only when requested", async ({ mount, page }) => {
+  await mountFileBrowser(mount, page, { paginateRoot: true });
+
+  await expect(page.getByRole("option", { name: "docs" })).toBeVisible();
+  await expect(page.getByRole("option", { name: "report.txt" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Load more" }).click();
+  await expect(page.getByRole("option", { name: "report.txt" })).toBeVisible();
+  await expect(page.getByRole("option", { name: "photo.jpg" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Load more" })).toHaveCount(0);
 });
 
 test("filters files through search and switches to list view", async ({ mount, page }) => {

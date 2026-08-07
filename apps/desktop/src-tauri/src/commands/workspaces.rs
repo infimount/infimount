@@ -11,6 +11,96 @@ use tauri::State;
 
 use crate::state::AppState;
 
+const MAX_CHECKPOINT_FILE_BYTES: u64 = 1024 * 1024;
+const MAX_CHECKPOINT_TOTAL_BYTES: u64 = 5 * 1024 * 1024;
+const MAX_CHECKPOINT_MANIFEST_BYTES: u64 = 6 * 1024 * 1024;
+const MAX_CHECKPOINT_LABEL_BYTES: usize = 200;
+const MAX_LEGACY_MANIFEST_BYTES: u64 = 64 * 1024;
+
+async fn read_workspace_file_bounded(
+    op: &opendal::Operator,
+    path: &str,
+    max_bytes: u64,
+    missing_code: McpErrorCode,
+    read_message: &'static str,
+) -> McpResult<Vec<u8>> {
+    let before = op
+        .stat(path)
+        .await
+        .map_err(|_| err(missing_code, read_message))?;
+    if before.is_dir() || before.content_length() > max_bytes {
+        return Err(err(
+            McpErrorCode::ERR_INVALID_PATH,
+            "workspace file exceeds its bounded size",
+        ));
+    }
+    let result = infimount_core::operations::read_file_range(op, path, 0, max_bytes)
+        .await
+        .map_err(|_| err(McpErrorCode::ERR_INTERNAL, read_message))?;
+    let after = op
+        .stat(path)
+        .await
+        .map_err(|_| err(McpErrorCode::ERR_INTERNAL, read_message))?;
+    if after.is_dir()
+        || after.content_length() != before.content_length()
+        || result.truncated
+        || result.total_size != after.content_length()
+        || u64::try_from(result.bytes.len()).unwrap_or(u64::MAX) != after.content_length()
+    {
+        return Err(err(
+            McpErrorCode::ERR_INVALID_PATH,
+            "workspace file changed while being read or exceeds its bounded size",
+        ));
+    }
+    Ok(result.bytes)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceCheckpointFile {
+    pub path: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceCheckpoint {
+    #[serde(default = "default_checkpoint_schema_version")]
+    pub schema_version: u32,
+    pub id: String,
+    pub workspace_id: String,
+    pub created_at: String,
+    pub label: String,
+    pub manifest_path: String,
+    pub memory_files: Vec<WorkspaceCheckpointFile>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceCheckpointSummary {
+    pub schema_version: u32,
+    pub id: String,
+    pub workspace_id: String,
+    pub created_at: String,
+    pub label: String,
+    pub manifest_path: String,
+    pub file_count: usize,
+}
+
+impl From<&WorkspaceCheckpoint> for WorkspaceCheckpointSummary {
+    fn from(checkpoint: &WorkspaceCheckpoint) -> Self {
+        Self {
+            schema_version: checkpoint.schema_version,
+            id: checkpoint.id.clone(),
+            workspace_id: checkpoint.workspace_id.clone(),
+            created_at: checkpoint.created_at.clone(),
+            label: checkpoint.label.clone(),
+            manifest_path: checkpoint.manifest_path.clone(),
+            file_count: checkpoint.memory_files.len(),
+        }
+    }
+}
+
 #[derive(Debug)]
 enum Mutation {
     CreatedDirectory(String),
@@ -36,6 +126,12 @@ pub struct CreateWorkspaceAtomicInput {
     pub template_id: String,
     pub adopt_existing: Option<bool>,
     pub access_profile: Option<String>,
+    #[serde(default = "default_true")]
+    pub apply_policy: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Serialize)]
@@ -51,6 +147,7 @@ pub async fn create_workspace_atomic(
     state: State<'_, AppState>,
     request: CreateWorkspaceAtomicInput,
 ) -> Result<CreateWorkspaceAtomicOutput, McpError> {
+    state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
     let _transaction = state.workspaces.acquire_mutation_lock().map_err(|e| {
         err(
@@ -109,7 +206,7 @@ pub async fn create_workspace_atomic(
             )
         })?;
 
-    let caps = op.info().full_capability();
+    let caps = op.info().capability();
     if !caps.stat || !caps.read || !caps.write || !caps.create_dir || !caps.list {
         return Err(err_with_details(
             McpErrorCode::ERR_BACKEND_UNSUPPORTED,
@@ -197,7 +294,9 @@ pub async fn create_workspace_atomic(
     }
 
     let workspace_id = generate_workspace_id();
-    let policy_rule_id = Some(format!("workspace:{workspace_id}"));
+    let policy_rule_id = request
+        .apply_policy
+        .then(|| format!("workspace:{workspace_id}"));
 
     let workspace = WorkspaceRecord {
         id: workspace_id.clone(),
@@ -206,7 +305,11 @@ pub async fn create_workspace_atomic(
         name: workspace_name.to_string(),
         root_path: normalized_root.clone(),
         template_id: request.template_id.clone(),
-        access_profile: access_profile.to_string(),
+        access_profile: if request.apply_policy {
+            access_profile.to_string()
+        } else {
+            "none".to_string()
+        },
         policy_rule_id: policy_rule_id.clone(),
         created_at: now.clone(),
         updated_at: now,
@@ -224,6 +327,7 @@ pub async fn create_workspace_atomic(
         &normalized_root,
         &workspace,
         access_mode,
+        request.apply_policy,
         &mut mutations,
     )
     .await;
@@ -270,6 +374,7 @@ async fn try_create_workspace(
     normalized_root: &str,
     workspace: &WorkspaceRecord,
     access_mode: McpAccessMode,
+    apply_policy: bool,
     mutations: &mut Vec<Mutation>,
 ) -> Result<(), McpError> {
     let dirs = required_directories(normalized_root, &workspace.template_id);
@@ -355,13 +460,15 @@ async fn try_create_workspace(
     })?;
     mutations.push(Mutation::RegisteredWorkspace);
 
-    apply_workspace_policy_rule(
-        storage_registry,
-        storage_id,
-        workspace,
-        access_mode,
-        mutations,
-    )?;
+    if apply_policy {
+        apply_workspace_policy_rule(
+            storage_registry,
+            storage_id,
+            workspace,
+            access_mode,
+            mutations,
+        )?;
+    }
 
     Ok(())
 }
@@ -771,6 +878,7 @@ fn join_path(root: &str, relative: &str) -> String {
 
 #[tauri::command]
 pub fn list_workspaces(state: State<'_, AppState>) -> Result<Vec<WorkspaceRecord>, McpError> {
+    state.require_operational()?;
     state.workspaces.load_all().map_err(|e| {
         err_with_details(
             McpErrorCode::ERR_INTERNAL,
@@ -786,8 +894,6 @@ pub struct UpdateWorkspaceRequest {
     pub id: String,
     pub name: Option<String>,
     pub access_profile: Option<String>,
-    pub memory_files: Option<Vec<String>>,
-    pub checkpoint_ids: Option<Vec<String>>,
 }
 
 #[tauri::command]
@@ -795,6 +901,7 @@ pub async fn update_workspace(
     state: State<'_, AppState>,
     request: UpdateWorkspaceRequest,
 ) -> Result<WorkspaceRecord, McpError> {
+    state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
     let registry = &state.workspaces;
     let _transaction = registry.acquire_mutation_lock().map_err(|e| {
@@ -847,18 +954,6 @@ pub async fn update_workspace(
     if let Some(ref profile) = request.access_profile {
         workspace.access_profile = profile.clone();
     }
-    if let Some(memory_files) = request.memory_files {
-        workspace.memory_files = memory_files;
-    }
-    if let Some(checkpoint_ids) = request.checkpoint_ids {
-        if checkpoint_ids.len() > MAX_CHECKPOINT_IDS {
-            return Err(err(
-                McpErrorCode::ERR_INVALID_PATH,
-                format!("workspace may contain at most {MAX_CHECKPOINT_IDS} checkpoints"),
-            ));
-        }
-        workspace.checkpoint_ids = checkpoint_ids;
-    }
     validate_workspace_metadata(&workspace).map_err(|e| {
         err(
             McpErrorCode::ERR_INVALID_PATH,
@@ -906,6 +1001,7 @@ pub async fn update_workspace(
 
 #[tauri::command]
 pub async fn delete_workspace(state: State<'_, AppState>, id: String) -> Result<(), McpError> {
+    state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
     let _transaction = state.workspaces.acquire_mutation_lock().map_err(|e| {
         err(
@@ -983,6 +1079,7 @@ pub async fn delete_workspace_with_files(
     state: State<'_, AppState>,
     request: DeleteWorkspaceWithFilesRequest,
 ) -> Result<(), McpError> {
+    state.require_operational()?;
     require_delete_files_confirmation(request.confirm_delete_files)?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
     let _transaction = state.workspaces.acquire_mutation_lock().map_err(|e| {
@@ -1087,6 +1184,7 @@ pub async fn import_legacy_workspaces(
     state: State<'_, AppState>,
     request: ImportLegacyWorkspacesRequest,
 ) -> Result<usize, McpError> {
+    state.require_operational()?;
     require_per_workspace_legacy_import(request.workspaces.len())?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
     let _transaction = state.workspaces.acquire_mutation_lock().map_err(|e| {
@@ -1253,27 +1351,14 @@ async fn verify_legacy_workspace_manifest(
     }
 
     let manifest_path = join_path(&workspace.root_path, ".infimount/workspace.json");
-    let metadata = op.stat(&manifest_path).await.map_err(|_| {
-        err_with_details(
-            McpErrorCode::ERR_INVALID_PATH,
-            "legacy workspace manifest is missing or inaccessible",
-            serde_json::json!({ "manifestPath": manifest_path }),
-        )
-    })?;
-    if metadata.is_dir() || metadata.content_length() > 64 * 1024 {
-        return Err(err(
-            McpErrorCode::ERR_INVALID_PATH,
-            "legacy workspace manifest is invalid",
-        ));
-    }
-    let bytes = infimount_core::operations::read_full(&op, &manifest_path)
-        .await
-        .map_err(|_| {
-            err(
-                McpErrorCode::ERR_INVALID_PATH,
-                "failed to read legacy workspace manifest",
-            )
-        })?;
+    let bytes = read_workspace_file_bounded(
+        &op,
+        &manifest_path,
+        MAX_LEGACY_MANIFEST_BYTES,
+        McpErrorCode::ERR_INVALID_PATH,
+        "legacy workspace manifest is missing, inaccessible, or changed while being read",
+    )
+    .await?;
     let manifest: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| {
         err(
             McpErrorCode::ERR_INVALID_PATH,
@@ -1308,6 +1393,533 @@ fn manifest_matches_workspace(manifest: &serde_json::Value, workspace: &Workspac
             == Some(workspace.template_id.as_str())
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateWorkspaceCheckpointRequest {
+    pub workspace_id: String,
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreWorkspaceCheckpointRequest {
+    pub workspace_id: String,
+    pub checkpoint_id: String,
+    pub confirm_overwrite: bool,
+}
+
+fn require_checkpoint_restore_confirmation(
+    request: &RestoreWorkspaceCheckpointRequest,
+) -> McpResult<()> {
+    if request.confirm_overwrite {
+        return Ok(());
+    }
+    Err(err_with_details(
+        McpErrorCode::ERR_CONFIRMATION_REQUIRED,
+        "restoring a checkpoint overwrites workspace memory files and requires explicit confirmation",
+        serde_json::json!({
+            "workspaceId": request.workspace_id,
+            "checkpointId": request.checkpoint_id,
+            "operation": "restore_workspace_checkpoint",
+        }),
+    ))
+}
+
+fn find_workspace_or_error(
+    registry: &WorkspaceRegistry,
+    workspace_id: &str,
+) -> McpResult<WorkspaceRecord> {
+    registry
+        .find_by_id(workspace_id)
+        .map_err(|e| {
+            err(
+                McpErrorCode::ERR_INTERNAL,
+                format!("failed to load workspace registry: {e}"),
+            )
+        })?
+        .ok_or_else(|| {
+            err_with_details(
+                McpErrorCode::ERR_STORAGE_NOT_FOUND,
+                "workspace was not found",
+                serde_json::json!({ "workspaceId": workspace_id }),
+            )
+        })
+}
+
+fn validate_checkpoint_label(label: Option<&str>) -> McpResult<String> {
+    let label = label.unwrap_or("Checkpoint").trim();
+    if label.is_empty()
+        || label.len() > MAX_CHECKPOINT_LABEL_BYTES
+        || label.chars().any(char::is_control)
+    {
+        return Err(err(
+            McpErrorCode::ERR_INVALID_PATH,
+            format!(
+                "checkpoint label must be 1-{MAX_CHECKPOINT_LABEL_BYTES} bytes without control characters"
+            ),
+        ));
+    }
+    Ok(label.to_string())
+}
+
+fn default_checkpoint_schema_version() -> u32 {
+    1
+}
+
+fn valid_checkpoint_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id.starts_with("checkpoint-")
+        && id.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+}
+
+fn checkpoint_manifest_relative_path(checkpoint_id: &str) -> McpResult<String> {
+    if !valid_checkpoint_id(checkpoint_id) {
+        return Err(err(
+            McpErrorCode::ERR_INVALID_PATH,
+            "invalid workspace checkpoint ID",
+        ));
+    }
+    Ok(format!(".infimount/checkpoints/{checkpoint_id}.json"))
+}
+
+fn validate_checkpoint_context(
+    op: &opendal::Operator,
+    storage: &StorageRecord,
+    workspace: &WorkspaceRecord,
+    require_write: bool,
+) -> McpResult<()> {
+    validate_workspace_metadata(workspace).map_err(|e| {
+        err(
+            McpErrorCode::ERR_INVALID_PATH,
+            format!("invalid workspace metadata: {e}"),
+        )
+    })?;
+    let normalized_root = validate_workspace_root(&workspace.root_path)?;
+    if normalized_root != workspace.root_path || workspace.storage_id != storage.id {
+        return Err(err(
+            McpErrorCode::ERR_INVALID_PATH,
+            "workspace registry contains an invalid storage or root binding",
+        ));
+    }
+    if !storage.enabled {
+        return Err(err(
+            McpErrorCode::ERR_STORAGE_DISABLED,
+            "workspace storage is disabled",
+        ));
+    }
+    if require_write && storage.read_only {
+        return Err(err(
+            McpErrorCode::ERR_STORAGE_READ_ONLY,
+            "workspace storage is read-only",
+        ));
+    }
+    let capabilities = op.info().capability();
+    let supported = capabilities.stat
+        && capabilities.read
+        && (!require_write || (capabilities.write && capabilities.delete));
+    if !supported {
+        return Err(err(
+            McpErrorCode::ERR_BACKEND_UNSUPPORTED,
+            "workspace storage does not support the bounded checkpoint transaction",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_checkpoint_manifest(
+    checkpoint: &WorkspaceCheckpoint,
+    workspace: &WorkspaceRecord,
+) -> McpResult<()> {
+    if checkpoint.schema_version != 1
+        || checkpoint.workspace_id != workspace.id
+        || !valid_checkpoint_id(&checkpoint.id)
+        || checkpoint.manifest_path != checkpoint_manifest_relative_path(&checkpoint.id)?
+    {
+        return Err(err(
+            McpErrorCode::ERR_INVALID_PATH,
+            "workspace checkpoint manifest identity is invalid",
+        ));
+    }
+    validate_checkpoint_label(Some(&checkpoint.label))?;
+    if checkpoint.memory_files.len() != workspace.memory_files.len() {
+        return Err(err(
+            McpErrorCode::ERR_INVALID_PATH,
+            "workspace checkpoint does not contain the trusted memory-file set",
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    let expected = workspace
+        .memory_files
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::HashSet<_>>();
+    let mut total = 0_u64;
+    for file in &checkpoint.memory_files {
+        if !expected.contains(file.path.as_str()) || !seen.insert(file.path.as_str()) {
+            return Err(err(
+                McpErrorCode::ERR_INVALID_PATH,
+                "workspace checkpoint contains an untrusted or duplicate memory path",
+            ));
+        }
+        let len = u64::try_from(file.content.len()).unwrap_or(u64::MAX);
+        if len > MAX_CHECKPOINT_FILE_BYTES {
+            return Err(err(
+                McpErrorCode::ERR_INVALID_PATH,
+                "workspace checkpoint file exceeds the 1 MiB limit",
+            ));
+        }
+        total = total.checked_add(len).ok_or_else(|| {
+            err(
+                McpErrorCode::ERR_INVALID_PATH,
+                "workspace checkpoint size overflow",
+            )
+        })?;
+    }
+    if total > MAX_CHECKPOINT_TOTAL_BYTES {
+        return Err(err(
+            McpErrorCode::ERR_INVALID_PATH,
+            "workspace checkpoint exceeds the 5 MiB total limit",
+        ));
+    }
+    Ok(())
+}
+
+async fn read_checkpoint_manifest(
+    op: &opendal::Operator,
+    workspace: &WorkspaceRecord,
+    checkpoint_id: &str,
+) -> McpResult<WorkspaceCheckpoint> {
+    if !workspace
+        .checkpoint_ids
+        .iter()
+        .any(|id| id == checkpoint_id)
+    {
+        return Err(err_with_details(
+            McpErrorCode::ERR_STORAGE_NOT_FOUND,
+            "workspace checkpoint was not found",
+            serde_json::json!({ "workspaceId": workspace.id, "checkpointId": checkpoint_id }),
+        ));
+    }
+    let relative = checkpoint_manifest_relative_path(checkpoint_id)?;
+    let path = join_path(&workspace.root_path, &relative);
+    let bytes = read_workspace_file_bounded(
+        op,
+        &path,
+        MAX_CHECKPOINT_MANIFEST_BYTES,
+        McpErrorCode::ERR_STORAGE_NOT_FOUND,
+        "workspace checkpoint manifest is missing, inaccessible, or changed while being read",
+    )
+    .await?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| {
+        err(
+            McpErrorCode::ERR_INVALID_PATH,
+            "workspace checkpoint manifest is malformed",
+        )
+    })?;
+    // v0.8 development builds wrote an envelope around the checkpoint. Accept it
+    // as a one-way compatibility input while keeping all validation server-side.
+    let checkpoint_value = value.get("checkpoint").cloned().unwrap_or(value);
+    let checkpoint: WorkspaceCheckpoint =
+        serde_json::from_value(checkpoint_value).map_err(|_| {
+            err(
+                McpErrorCode::ERR_INVALID_PATH,
+                "workspace checkpoint manifest is malformed",
+            )
+        })?;
+    validate_checkpoint_manifest(&checkpoint, workspace)?;
+    Ok(checkpoint)
+}
+
+async fn create_checkpoint_transaction(
+    op: &opendal::Operator,
+    registry: &WorkspaceRegistry,
+    storage: &StorageRecord,
+    mut workspace: WorkspaceRecord,
+    label: Option<&str>,
+    fail_before_registry_update: bool,
+) -> McpResult<WorkspaceCheckpoint> {
+    validate_checkpoint_context(op, storage, &workspace, true)?;
+    if workspace.checkpoint_ids.len() >= MAX_CHECKPOINT_IDS {
+        return Err(err(
+            McpErrorCode::ERR_INVALID_PATH,
+            format!("workspace may contain at most {MAX_CHECKPOINT_IDS} checkpoints"),
+        ));
+    }
+
+    let checkpoint_id = format!("checkpoint-{}", uuid::Uuid::new_v4());
+    let relative_manifest = checkpoint_manifest_relative_path(&checkpoint_id)?;
+    let manifest_path = join_path(&workspace.root_path, &relative_manifest);
+
+    let mut memory_files = Vec::with_capacity(workspace.memory_files.len());
+    let mut total_bytes = 0_u64;
+    for relative in &workspace.memory_files {
+        let path = join_path(&workspace.root_path, relative);
+        let bytes = read_workspace_file_bounded(
+            op,
+            &path,
+            MAX_CHECKPOINT_FILE_BYTES,
+            McpErrorCode::ERR_STORAGE_NOT_FOUND,
+            "workspace memory file is missing, inaccessible, or changed while being read",
+        )
+        .await?;
+        let len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        total_bytes = total_bytes.checked_add(len).ok_or_else(|| {
+            err(
+                McpErrorCode::ERR_INVALID_PATH,
+                "workspace checkpoint size overflow",
+            )
+        })?;
+        if total_bytes > MAX_CHECKPOINT_TOTAL_BYTES {
+            return Err(err(
+                McpErrorCode::ERR_INVALID_PATH,
+                "workspace checkpoint exceeds the 5 MiB total limit",
+            ));
+        }
+        let content = String::from_utf8(bytes.to_vec()).map_err(|_| {
+            err(
+                McpErrorCode::ERR_INVALID_PATH,
+                "workspace memory files must contain valid UTF-8 text",
+            )
+        })?;
+        memory_files.push(WorkspaceCheckpointFile {
+            path: relative.clone(),
+            content,
+        });
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let checkpoint = WorkspaceCheckpoint {
+        schema_version: 1,
+        id: checkpoint_id.clone(),
+        workspace_id: workspace.id.clone(),
+        created_at: now.clone(),
+        label: validate_checkpoint_label(label)?,
+        manifest_path: relative_manifest,
+        memory_files,
+    };
+    validate_checkpoint_manifest(&checkpoint, &workspace)?;
+    let manifest = serde_json::to_vec_pretty(&checkpoint).map_err(|_| {
+        err(
+            McpErrorCode::ERR_INTERNAL,
+            "failed to serialize workspace checkpoint",
+        )
+    })?;
+    if u64::try_from(manifest.len()).unwrap_or(u64::MAX) > MAX_CHECKPOINT_MANIFEST_BYTES {
+        return Err(err(
+            McpErrorCode::ERR_INVALID_PATH,
+            "workspace checkpoint manifest exceeds its bounded size",
+        ));
+    }
+
+    if let Err(error) = infimount_core::operations::write_full(op, &manifest_path, &manifest).await
+    {
+        let _ = infimount_core::operations::delete(op, &manifest_path).await;
+        return Err(err(
+            McpErrorCode::ERR_INTERNAL,
+            format!("failed to write workspace checkpoint: {error}"),
+        ));
+    }
+
+    workspace.checkpoint_ids.insert(0, checkpoint_id);
+    workspace.updated_at = now;
+    let registry_result = if fail_before_registry_update {
+        Err(infimount_core::CoreError::Config(
+            "injected checkpoint registry failure".to_string(),
+        ))
+    } else {
+        registry.update(&workspace)
+    };
+    if let Err(error) = registry_result {
+        let rollback_error = infimount_core::operations::delete(op, &manifest_path)
+            .await
+            .err()
+            .map(|_| "ERR_WORKSPACE_CHECKPOINT_ROLLBACK_MANIFEST");
+        return Err(err_with_details(
+            McpErrorCode::ERR_INTERNAL,
+            format!("failed to register workspace checkpoint: {error}"),
+            serde_json::json!({ "rollbackError": rollback_error }),
+        ));
+    }
+    Ok(checkpoint)
+}
+
+async fn restore_checkpoint_transaction(
+    op: &opendal::Operator,
+    storage: &StorageRecord,
+    workspace: &WorkspaceRecord,
+    checkpoint_id: &str,
+    fail_before_write_index: Option<usize>,
+) -> McpResult<()> {
+    validate_checkpoint_context(op, storage, workspace, true)?;
+    let checkpoint = read_checkpoint_manifest(op, workspace, checkpoint_id).await?;
+
+    let mut snapshots: Vec<(String, Option<Vec<u8>>)> = Vec::new();
+    for file in &checkpoint.memory_files {
+        let target = join_path(&workspace.root_path, &file.path);
+        let previous = match op.stat(&target).await {
+            Ok(metadata) => {
+                if metadata.is_dir() || metadata.content_length() > MAX_CHECKPOINT_FILE_BYTES {
+                    return Err(err(
+                        McpErrorCode::ERR_INVALID_PATH,
+                        "workspace target file exceeds the rollback snapshot limit",
+                    ));
+                }
+                let bytes = read_workspace_file_bounded(
+                    op,
+                    &target,
+                    MAX_CHECKPOINT_FILE_BYTES,
+                    McpErrorCode::ERR_INTERNAL,
+                    "failed to snapshot workspace target before restore",
+                )
+                .await?;
+                Some(bytes)
+            }
+            Err(error) if error.kind() == opendal::ErrorKind::NotFound => None,
+            Err(_) => {
+                return Err(err(
+                    McpErrorCode::ERR_INTERNAL,
+                    "failed to inspect workspace target before restore",
+                ));
+            }
+        };
+        snapshots.push((target, previous));
+    }
+
+    for (index, file) in checkpoint.memory_files.iter().enumerate() {
+        let target = &snapshots[index].0;
+        let write_result = if fail_before_write_index == Some(index) {
+            Err(infimount_core::CoreError::Config(
+                "injected checkpoint restore failure".to_string(),
+            ))
+        } else {
+            infimount_core::operations::write_full(op, target, file.content.as_bytes()).await
+        };
+        if let Err(error) = write_result {
+            let mut rollback_errors = Vec::new();
+            // A backend may have partially committed the failing write, so restore
+            // the current target as well as every previously completed target.
+            for (rollback_path, previous) in snapshots[..=index].iter().rev() {
+                let rollback = match previous {
+                    Some(data) => {
+                        infimount_core::operations::write_full(op, rollback_path, data).await
+                    }
+                    None => infimount_core::operations::delete(op, rollback_path).await,
+                };
+                if rollback.is_err() {
+                    rollback_errors.push("ERR_WORKSPACE_CHECKPOINT_ROLLBACK_FILE");
+                }
+            }
+            return Err(err_with_details(
+                McpErrorCode::ERR_INTERNAL,
+                format!("failed to restore workspace checkpoint: {error}"),
+                serde_json::json!({ "rollbackErrors": rollback_errors }),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn workspace_storage(state: &AppState, workspace: &WorkspaceRecord) -> McpResult<StorageRecord> {
+    let storage = state.find_storage_by_id(&workspace.storage_id)?;
+    if !storage.enabled {
+        return Err(err(
+            McpErrorCode::ERR_STORAGE_DISABLED,
+            "workspace storage is disabled",
+        ));
+    }
+    Ok(storage)
+}
+
+#[tauri::command]
+pub async fn list_workspace_checkpoints(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> Result<Vec<WorkspaceCheckpointSummary>, McpError> {
+    state.require_operational()?;
+    let _lifecycle = state.lifecycle_mutation.lock().await;
+    let _transaction = state.workspaces.acquire_mutation_lock().map_err(|e| {
+        err(
+            McpErrorCode::ERR_INTERNAL,
+            format!("failed to lock workspace mutation: {e}"),
+        )
+    })?;
+    let workspace = find_workspace_or_error(&state.workspaces, &workspace_id)?;
+    let storage = workspace_storage(&state, &workspace)?;
+    let op = state.operator_for_storage_id(&storage.id).map_err(|_| {
+        err(
+            McpErrorCode::ERR_STORAGE_NOT_FOUND,
+            "workspace storage is inaccessible",
+        )
+    })?;
+    validate_checkpoint_context(&op, &storage, &workspace, false)?;
+    let mut checkpoints = Vec::with_capacity(workspace.checkpoint_ids.len());
+    for checkpoint_id in &workspace.checkpoint_ids {
+        let checkpoint = read_checkpoint_manifest(&op, &workspace, checkpoint_id).await?;
+        checkpoints.push(WorkspaceCheckpointSummary::from(&checkpoint));
+    }
+    checkpoints.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    Ok(checkpoints)
+}
+
+#[tauri::command]
+pub async fn create_workspace_checkpoint(
+    state: State<'_, AppState>,
+    request: CreateWorkspaceCheckpointRequest,
+) -> Result<WorkspaceCheckpointSummary, McpError> {
+    state.require_operational()?;
+    let _lifecycle = state.lifecycle_mutation.lock().await;
+    let _transaction = state.workspaces.acquire_mutation_lock().map_err(|e| {
+        err(
+            McpErrorCode::ERR_INTERNAL,
+            format!("failed to lock workspace mutation: {e}"),
+        )
+    })?;
+    let workspace = find_workspace_or_error(&state.workspaces, &request.workspace_id)?;
+    let storage = workspace_storage(&state, &workspace)?;
+    let op = state.operator_for_storage_id(&storage.id).map_err(|_| {
+        err(
+            McpErrorCode::ERR_STORAGE_NOT_FOUND,
+            "workspace storage is inaccessible",
+        )
+    })?;
+    let checkpoint = create_checkpoint_transaction(
+        &op,
+        &state.workspaces,
+        &storage,
+        workspace,
+        request.label.as_deref(),
+        false,
+    )
+    .await?;
+    Ok(WorkspaceCheckpointSummary::from(&checkpoint))
+}
+
+#[tauri::command]
+pub async fn restore_workspace_checkpoint(
+    state: State<'_, AppState>,
+    request: RestoreWorkspaceCheckpointRequest,
+) -> Result<(), McpError> {
+    state.require_operational()?;
+    require_checkpoint_restore_confirmation(&request)?;
+    let _lifecycle = state.lifecycle_mutation.lock().await;
+    let _transaction = state.workspaces.acquire_mutation_lock().map_err(|e| {
+        err(
+            McpErrorCode::ERR_INTERNAL,
+            format!("failed to lock workspace mutation: {e}"),
+        )
+    })?;
+    let workspace = find_workspace_or_error(&state.workspaces, &request.workspace_id)?;
+    let storage = workspace_storage(&state, &workspace)?;
+    let op = state.operator_for_storage_id(&storage.id).map_err(|_| {
+        err(
+            McpErrorCode::ERR_STORAGE_NOT_FOUND,
+            "workspace storage is inaccessible",
+        )
+    })?;
+    restore_checkpoint_transaction(&op, &storage, &workspace, &request.checkpoint_id, None).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1316,10 +1928,29 @@ mod tests {
     use std::sync::Arc;
     use tempfile::tempdir;
 
+    #[test]
+    fn checkpoint_restore_requires_confirmation_bound_to_exact_request() {
+        let denied = RestoreWorkspaceCheckpointRequest {
+            workspace_id: "workspace-a".to_string(),
+            checkpoint_id: "checkpoint-a".to_string(),
+            confirm_overwrite: false,
+        };
+        let error = require_checkpoint_restore_confirmation(&denied).unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_CONFIRMATION_REQUIRED);
+        assert_eq!(error.details["workspaceId"], "workspace-a");
+        assert_eq!(error.details["checkpointId"], "checkpoint-a");
+
+        let confirmed = RestoreWorkspaceCheckpointRequest {
+            confirm_overwrite: true,
+            ..denied
+        };
+        require_checkpoint_restore_confirmation(&confirmed).unwrap();
+    }
+
     fn create_test_op() -> (tempfile::TempDir, opendal::Operator) {
         let dir = tempdir().unwrap();
         let builder = opendal::services::Fs::default().root(dir.path().to_str().unwrap());
-        let op = opendal::Operator::new(builder).unwrap().finish();
+        let op = opendal::Operator::new(builder).unwrap();
         (dir, op)
     }
 
@@ -1391,6 +2022,7 @@ mod tests {
             root_path,
             &ws,
             McpAccessMode::ReadWrite,
+            true,
             &mut mutations,
         )
         .await;
@@ -1667,5 +2299,289 @@ mod tests {
             .unwrap();
         assert_eq!(storage.mcp_policy.rules[0].access, McpAccessMode::ReadWrite);
         assert_eq!(storage.revision, 3);
+    }
+
+    async fn prepare_checkpoint_workspace(
+        op: &opendal::Operator,
+        workspace_registry: &WorkspaceRegistry,
+        storage_registry: &StorageRegistry,
+        workspace: &WorkspaceRecord,
+    ) -> StorageRecord {
+        for relative in &workspace.memory_files {
+            let path = join_path(&workspace.root_path, relative);
+            if let Some(parent) = path.rsplit_once('/').map(|value| value.0) {
+                infimount_core::operations::create_directory(op, parent)
+                    .await
+                    .unwrap();
+            }
+            infimount_core::operations::write_full(
+                op,
+                &path,
+                format!("current:{relative}").as_bytes(),
+            )
+            .await
+            .unwrap();
+        }
+        infimount_core::operations::create_directory(
+            op,
+            &join_path(&workspace.root_path, ".infimount/checkpoints"),
+        )
+        .await
+        .unwrap();
+        workspace_registry.create(workspace).unwrap();
+        let mut mutations = Vec::new();
+        apply_workspace_policy_rule(
+            storage_registry,
+            &workspace.storage_id,
+            workspace,
+            McpAccessMode::ReadWrite,
+            &mut mutations,
+        )
+        .unwrap();
+        storage_registry
+            .load_all()
+            .unwrap()
+            .into_iter()
+            .find(|storage| storage.id == workspace.storage_id)
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn checkpoint_creation_writes_manifest_then_registry_metadata() {
+        let temp_config = tempdir().unwrap();
+        let (temp_storage, op) = create_test_op();
+        let (workspace_registry, storage_registry) = create_test_registries(&temp_config);
+        let storage_id = create_test_storage(&storage_registry, &temp_storage);
+        let workspace =
+            make_workspace_record("checkpoint-success", &storage_id, "/checkpoint-success");
+        let storage =
+            prepare_checkpoint_workspace(&op, &workspace_registry, &storage_registry, &workspace)
+                .await;
+
+        let checkpoint = create_checkpoint_transaction(
+            &op,
+            &workspace_registry,
+            &storage,
+            workspace.clone(),
+            Some("Before refactor"),
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(checkpoint.memory_files.len(), workspace.memory_files.len());
+        assert!(op
+            .stat(&join_path(&workspace.root_path, &checkpoint.manifest_path))
+            .await
+            .is_ok());
+        let persisted = workspace_registry
+            .find_by_id(&workspace.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(persisted.checkpoint_ids, vec![checkpoint.id]);
+    }
+
+    #[tokio::test]
+    async fn checkpoint_creation_rolls_back_manifest_when_registry_update_fails() {
+        let temp_config = tempdir().unwrap();
+        let (temp_storage, op) = create_test_op();
+        let (workspace_registry, storage_registry) = create_test_registries(&temp_config);
+        let storage_id = create_test_storage(&storage_registry, &temp_storage);
+        let workspace = make_workspace_record(
+            "checkpoint-create-rollback",
+            &storage_id,
+            "/create-rollback",
+        );
+        let storage =
+            prepare_checkpoint_workspace(&op, &workspace_registry, &storage_registry, &workspace)
+                .await;
+
+        let error = create_checkpoint_transaction(
+            &op,
+            &workspace_registry,
+            &storage,
+            workspace.clone(),
+            None,
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_INTERNAL);
+        let entries = infimount_core::operations::list_entries(
+            &op,
+            &join_path(&workspace.root_path, ".infimount/checkpoints"),
+        )
+        .await
+        .unwrap();
+        assert!(
+            entries.iter().all(|entry| entry.is_dir),
+            "checkpoint manifest must be removed: {entries:?}"
+        );
+        assert!(workspace_registry
+            .find_by_id(&workspace.id)
+            .unwrap()
+            .unwrap()
+            .checkpoint_ids
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn checkpoint_restore_rolls_back_files_after_injected_failure() {
+        let temp_config = tempdir().unwrap();
+        let (temp_storage, op) = create_test_op();
+        let (workspace_registry, storage_registry) = create_test_registries(&temp_config);
+        let storage_id = create_test_storage(&storage_registry, &temp_storage);
+        let workspace = make_workspace_record(
+            "checkpoint-restore-rollback",
+            &storage_id,
+            "/restore-rollback",
+        );
+        let storage =
+            prepare_checkpoint_workspace(&op, &workspace_registry, &storage_registry, &workspace)
+                .await;
+        let checkpoint = create_checkpoint_transaction(
+            &op,
+            &workspace_registry,
+            &storage,
+            workspace.clone(),
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+        let persisted = workspace_registry
+            .find_by_id(&workspace.id)
+            .unwrap()
+            .unwrap();
+        for relative in &workspace.memory_files {
+            infimount_core::operations::write_full(
+                &op,
+                &join_path(&workspace.root_path, relative),
+                format!("after:{relative}").as_bytes(),
+            )
+            .await
+            .unwrap();
+        }
+
+        let error =
+            restore_checkpoint_transaction(&op, &storage, &persisted, &checkpoint.id, Some(1))
+                .await
+                .unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_INTERNAL);
+        for relative in &workspace.memory_files {
+            let bytes = infimount_core::operations::read_full(
+                &op,
+                &join_path(&workspace.root_path, relative),
+            )
+            .await
+            .unwrap();
+            assert_eq!(bytes.to_vec(), format!("after:{relative}").into_bytes());
+        }
+    }
+
+    #[tokio::test]
+    async fn checkpoint_missing_workspace_and_checkpoint_fail_closed() {
+        let temp_config = tempdir().unwrap();
+        let (temp_storage, op) = create_test_op();
+        let (workspace_registry, storage_registry) = create_test_registries(&temp_config);
+        let storage_id = create_test_storage(&storage_registry, &temp_storage);
+        assert_eq!(
+            find_workspace_or_error(&workspace_registry, "missing")
+                .unwrap_err()
+                .code,
+            McpErrorCode::ERR_STORAGE_NOT_FOUND
+        );
+        let workspace = make_workspace_record("checkpoint-missing", &storage_id, "/missing");
+        let storage =
+            prepare_checkpoint_workspace(&op, &workspace_registry, &storage_registry, &workspace)
+                .await;
+        let error = restore_checkpoint_transaction(
+            &op,
+            &storage,
+            &workspace,
+            "checkpoint-not-present",
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_STORAGE_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn checkpoint_control_plane_ignores_mcp_policy_but_honors_storage_read_only() {
+        let temp_config = tempdir().unwrap();
+        let (temp_storage, op) = create_test_op();
+        let (workspace_registry, storage_registry) = create_test_registries(&temp_config);
+        let storage_id = create_test_storage(&storage_registry, &temp_storage);
+        let workspace = make_workspace_record("checkpoint-denied", &storage_id, "/denied");
+        for relative in &workspace.memory_files {
+            let path = join_path(&workspace.root_path, relative);
+            infimount_core::operations::create_directory(&op, path.rsplit_once('/').unwrap().0)
+                .await
+                .unwrap();
+            infimount_core::operations::write_full(&op, &path, b"safe")
+                .await
+                .unwrap();
+        }
+        workspace_registry.create(&workspace).unwrap();
+        let mut storage = storage_registry.load_all().unwrap().remove(0);
+        let checkpoint = create_checkpoint_transaction(
+            &op,
+            &workspace_registry,
+            &storage,
+            workspace.clone(),
+            None,
+            false,
+        )
+        .await
+        .expect("desktop checkpoint management must not require MCP exposure or policy");
+        assert_eq!(checkpoint.workspace_id, workspace.id);
+
+        storage.read_only = true;
+        let error = validate_checkpoint_context(&op, &storage, &workspace, true).unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_STORAGE_READ_ONLY);
+    }
+
+    #[tokio::test]
+    async fn checkpoint_bounds_reject_oversized_file_and_full_index() {
+        let temp_config = tempdir().unwrap();
+        let (temp_storage, op) = create_test_op();
+        let (workspace_registry, storage_registry) = create_test_registries(&temp_config);
+        let storage_id = create_test_storage(&storage_registry, &temp_storage);
+        let workspace = make_workspace_record("checkpoint-bounds", &storage_id, "/bounds");
+        let storage =
+            prepare_checkpoint_workspace(&op, &workspace_registry, &storage_registry, &workspace)
+                .await;
+        infimount_core::operations::write_full(
+            &op,
+            &join_path(&workspace.root_path, &workspace.memory_files[0]),
+            &vec![b'x'; usize::try_from(MAX_CHECKPOINT_FILE_BYTES).unwrap() + 1],
+        )
+        .await
+        .unwrap();
+        let error = create_checkpoint_transaction(
+            &op,
+            &workspace_registry,
+            &storage,
+            workspace.clone(),
+            None,
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_INVALID_PATH);
+
+        let mut full = workspace;
+        full.checkpoint_ids = (0..MAX_CHECKPOINT_IDS)
+            .map(|index| format!("checkpoint-{index}"))
+            .collect();
+        let error =
+            create_checkpoint_transaction(&op, &workspace_registry, &storage, full, None, false)
+                .await
+                .unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_INVALID_PATH);
+        assert!(
+            validate_checkpoint_label(Some(&"x".repeat(MAX_CHECKPOINT_LABEL_BYTES + 1))).is_err()
+        );
     }
 }

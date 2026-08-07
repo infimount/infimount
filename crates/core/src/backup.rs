@@ -160,7 +160,7 @@ pub fn decrypt_backup(passphrase: &str, armored: &str) -> Result<BackupPayload, 
     })?);
 
     let payload: BackupPayload = serde_json::from_slice(plaintext.as_slice())?;
-    if payload.schema_version == 0 || payload.schema_version > BACKUP_SCHEMA_VERSION {
+    if payload.schema_version != BACKUP_SCHEMA_VERSION {
         return Err(BackupError::Serialization(format!(
             "unsupported backup format version: {}",
             payload.schema_version
@@ -298,10 +298,12 @@ mod tests {
 
     #[test]
     fn test_unsupported_version() {
-        let mut payload = sample_payload();
-        payload.schema_version = 999;
-        let armored = encrypt_backup("p", &payload).unwrap();
-        let result = decrypt_backup("p", &armored);
-        assert!(matches!(result, Err(BackupError::Serialization(_))));
+        for unsupported in [0, 1, BACKUP_SCHEMA_VERSION + 1] {
+            let mut payload = sample_payload();
+            payload.schema_version = unsupported;
+            let armored = encrypt_backup("p", &payload).unwrap();
+            let result = decrypt_backup("p", &armored);
+            assert!(matches!(result, Err(BackupError::Serialization(_))));
+        }
     }
 }

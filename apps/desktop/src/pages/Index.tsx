@@ -20,6 +20,7 @@ import {
   exportMcpAuditBundle,
   exportShareableConfig,
   getAppSettings,
+  getStartupHealth,
   getMcpClientSnippets,
   getMcpStatus,
   listActiveMcpSessions,
@@ -27,7 +28,6 @@ import {
   listPendingMcpConfirmations,
   listMcpAuditEvents,
   listMcpTools,
-  importStorageConfig,
   listStorages,
   listWorkspaces,
   removeStorage as apiRemoveStorage,
@@ -49,6 +49,7 @@ import {
   requestMcpNotificationPermission,
   type McpNotificationPermission,
 } from "@/lib/mcpNotifications";
+import type { StartupHealth } from "@/types/diagnostics";
 import type {
   ActiveMcpSession,
   AppSettings,
@@ -287,6 +288,7 @@ interface McpRuntimeStatusWire {
 }
 
 const Index = () => {
+  const [startupHealth, setStartupHealth] = useState<StartupHealth | null>(null);
   const [storages, setStorages] = useState<StorageConfig[]>([]);
   const [isStoragesLoading, setIsStoragesLoading] = useState(true);
   const [storageRefreshTick, setStorageRefreshTick] = useState<Record<string, number>>({});
@@ -302,6 +304,7 @@ const Index = () => {
   const [workspaceCount, setWorkspaceCount] = useState(0);
   const [isMcpDialogOpen, setIsMcpDialogOpen] = useState(false);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
+  const [pendingImportJson, setPendingImportJson] = useState("");
   const [isBackupDialogOpen, setIsBackupDialogOpen] = useState(false);
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
   const [isPrivacyOpen, setIsPrivacyOpen] = useState(false);
@@ -324,7 +327,21 @@ const Index = () => {
   const [primaryPaneState, setPrimaryPaneState] = useState<FileBrowserPaneState | null>(null);
   const [secondaryPaneState, setSecondaryPaneState] = useState<FileBrowserPaneState | null>(null);
 
+  useEffect(() => {
+    void getStartupHealth()
+      .then(setStartupHealth)
+      .catch(() =>
+        setStartupHealth({
+          operational: false,
+          recoveryAvailable: false,
+          errorCode: "ERR_STARTUP_HEALTH_UNAVAILABLE",
+          message: "Infimount could not verify startup health. Storage and MCP operations are disabled.",
+        }),
+      );
+  }, []);
+
   const reloadMcpStatus = useCallback(async () => {
+    if (!startupHealth?.operational) return;
     try {
       const [status, snippets, tools] = await Promise.all([
         getMcpStatus().then(mapStatusWire),
@@ -345,9 +362,13 @@ const Index = () => {
     } catch {
       // The settings dialog renders its unavailable state without exposing backend details.
     }
-  }, []);
+  }, [startupHealth?.operational]);
 
   const reloadStorages = useCallback(async () => {
+    if (!startupHealth?.operational) {
+      setIsStoragesLoading(false);
+      return;
+    }
     setIsStoragesLoading(true);
     try {
       const items = await listStorages();
@@ -374,13 +395,14 @@ const Index = () => {
     } finally {
       setIsStoragesLoading(false);
     }
-  }, []);
+  }, [startupHealth?.operational]);
 
   useEffect(() => {
     void reloadStorages();
   }, [reloadStorages]);
 
   useEffect(() => {
+    if (!startupHealth?.operational) return;
     void import("@/lib/agentWorkspaces")
       .then(({ migrateLegacyWorkspaces }) => migrateLegacyWorkspaces())
       .then((result) => {
@@ -389,7 +411,7 @@ const Index = () => {
       .catch(() => {
         // Preserve legacy browser state for a later retry.
       });
-  }, [reloadStorages]);
+  }, [reloadStorages, startupHealth?.operational]);
 
   useEffect(() => {
     void (async () => {
@@ -402,9 +424,9 @@ const Index = () => {
   }, []);
 
   useEffect(() => {
-    if (isStoragesLoading || !appSettings) return;
+    if (!startupHealth?.operational || isStoragesLoading || !appSettings) return;
     setIsOnboardingOpen(!appSettings.onboardingCompleted && !appSettings.onboardingSkipped);
-  }, [appSettings, isStoragesLoading, storages.length]);
+  }, [appSettings, isStoragesLoading, startupHealth?.operational, storages.length]);
 
   useEffect(() => {
     if (!isMcpDialogOpen && !isOnboardingOpen) return;
@@ -578,6 +600,7 @@ const Index = () => {
   };
 
   const handleImportStorages = () => {
+    setPendingImportJson("");
     setIsImportDialogOpen(true);
   };
 
@@ -591,27 +614,11 @@ const Index = () => {
   };
 
   const handleSaveStorageConfigJson = async (json: string) => {
-    try {
-      const result = await importStorageConfig({
-        json,
-        mode: "replace",
-        onConflict: "overwrite",
-      });
-      await reloadStorages();
-      toast({
-        title: "Storage config updated",
-        description: result.warnings?.length
-          ? `Applied ${result.imported} storage configuration(s). ${result.warnings.join(" ")}`
-          : `Applied ${result.imported} storage configuration(s) from JSON.`,
-      });
-    } catch (error: unknown) {
-      toast({
-        title: "Failed to apply storage config",
-        description: error instanceof Error ? error.message : String(error),
-        variant: "destructive",
-      });
-      throw error;
-    }
+    // Advanced JSON edits use the same server-authoritative preview and apply
+    // transaction as file imports; there is no direct registry replacement path.
+    setPendingImportJson(json);
+    setIsStorageConfigEditorOpen(false);
+    setIsImportDialogOpen(true);
   };
 
   const handleSaveMcpSettings = async (settings: McpSettingsUpdate) => {
@@ -817,6 +824,67 @@ const Index = () => {
       setIsSidebarOpen(false);
     }
   };
+
+  if (!startupHealth) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background" role="status">
+        <p className="text-sm text-muted-foreground">Checking local security state…</p>
+      </div>
+    );
+  }
+
+  if (!startupHealth.operational) {
+    return (
+      <div className="flex h-screen flex-col bg-background">
+        <div className="flex h-12 items-center justify-end border-b border-border/60 px-3" data-tauri-drag-region>
+          <WindowControls />
+        </div>
+        <main className="flex flex-1 items-center justify-center p-6">
+          <section
+            className="w-full max-w-xl rounded-xl border border-destructive/30 bg-card p-6 shadow-sm"
+            role="alert"
+            aria-labelledby="restricted-mode-title"
+          >
+            <p className="text-xs font-semibold uppercase tracking-wide text-destructive">Restricted recovery mode</p>
+            <h1 id="restricted-mode-title" className="mt-2 text-xl font-semibold">
+              Storage and MCP access are disabled
+            </h1>
+            <p className="mt-3 text-sm text-muted-foreground">
+              {startupHealth.message ?? "Infimount could not safely initialize local security state."}
+            </p>
+            <p className="mt-2 text-xs text-muted-foreground">Reference: {startupHealth.errorCode ?? "ERR_STARTUP_INITIALIZATION"}</p>
+            <div className="mt-6 flex flex-wrap gap-2">
+              {startupHealth.recoveryAvailable ? (
+                <Button type="button" onClick={() => setIsBackupDialogOpen(true)}>
+                  Open recovery
+                </Button>
+              ) : null}
+              <Button type="button" variant="outline" onClick={() => setIsDiagnosticsOpen(true)}>
+                Export diagnostics
+              </Button>
+            </div>
+            <p className="mt-4 text-xs text-muted-foreground">
+              {startupHealth.recoveryAvailable
+                ? "Complete the recovery action, then restart Infimount."
+                : "Unlock or repair the system credential store, then restart Infimount before restoring a backup."}
+            </p>
+          </section>
+        </main>
+        <Suspense fallback={null}>
+          {isBackupDialogOpen ? (
+            <RecoveryBackupDialog
+              open={isBackupDialogOpen}
+              onOpenChange={setIsBackupDialogOpen}
+              onRestoreComplete={() => undefined}
+            />
+          ) : null}
+          {isDiagnosticsOpen ? (
+            <DiagnosticsDialog open={isDiagnosticsOpen} onOpenChange={setIsDiagnosticsOpen} />
+          ) : null}
+        </Suspense>
+      </div>
+    );
+  }
 
   return (
     <TransferQueueProvider>
@@ -1146,6 +1214,7 @@ const Index = () => {
             open={isImportDialogOpen}
             onOpenChange={setIsImportDialogOpen}
             onImportComplete={reloadStorages}
+            initialJson={pendingImportJson}
           />
         ) : null}
 

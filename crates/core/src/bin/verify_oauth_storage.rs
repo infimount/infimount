@@ -62,7 +62,7 @@ fn build_gdrive() -> Result<Option<OAuthBackend>, Box<dyn Error>> {
 
     Ok(Some(OAuthBackend {
         name: "Google Drive",
-        op: Operator::new(builder)?.finish(),
+        op: Operator::new(builder)?,
     }))
 }
 
@@ -71,10 +71,6 @@ fn build_onedrive() -> Result<Option<OAuthBackend>, Box<dyn Error>> {
     if let Some(root) = env_var("INFIMOUNT_ONEDRIVE_ROOT") {
         builder = builder.root(&root);
     }
-    if env_var("INFIMOUNT_ONEDRIVE_VERSIONING").as_deref() == Some("true") {
-        builder = builder.enable_versioning(true);
-    }
-
     if let Some(access_token) = env_var("INFIMOUNT_ONEDRIVE_ACCESS_TOKEN") {
         builder = builder.access_token(&access_token);
     } else if let Some(refresh_token) = env_var("INFIMOUNT_ONEDRIVE_REFRESH_TOKEN") {
@@ -94,7 +90,7 @@ fn build_onedrive() -> Result<Option<OAuthBackend>, Box<dyn Error>> {
 
     Ok(Some(OAuthBackend {
         name: "Microsoft OneDrive",
-        op: Operator::new(builder)?.finish(),
+        op: Operator::new(builder)?,
     }))
 }
 

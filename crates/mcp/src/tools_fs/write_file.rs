@@ -157,7 +157,7 @@ pub async fn write_file(ctx: &FsToolsContext, input: WriteFileInput) -> McpResul
     }
 
     let user_metadata = sanitize_user_metadata(input.user_metadata);
-    if user_metadata.is_some() && !op.info().full_capability().write_with_user_metadata {
+    if user_metadata.is_some() && !op.info().capability().write_with_user_metadata {
         return Err(err_with_details(
             McpErrorCode::ERR_BACKEND_UNSUPPORTED,
             "storage backend does not support user metadata writes",

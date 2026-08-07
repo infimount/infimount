@@ -109,14 +109,18 @@ mod tests {
             sidecar: SidecarValidation {
                 binary_found: true,
                 executable: true,
+                canonical_path: Some("/opt/infimount/mcp".to_string()),
                 version: Some("0.8.0".to_string()),
                 version_match: overall_ok,
                 doctor_healthy: overall_ok,
+                sha256: Some("a".repeat(64)),
+                checksum_verified: overall_ok,
                 error_code: (!overall_ok).then(|| "ERR_SIDECAR_VERSION_MISMATCH".to_string()),
             },
             mcp_handshake_ok: overall_ok,
             mcp_allowed_op_ok: overall_ok,
             mcp_denial_proven: overall_ok,
+            mcp_audit_ok: overall_ok,
             overall_ok,
             error_code: (!overall_ok).then(|| "ERR_ACTIVATION_PROBE_FAILED".to_string()),
         }

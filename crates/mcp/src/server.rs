@@ -35,8 +35,8 @@ use crate::tools_fs::{
 // tools_storage functions remain available for desktop-internal calls
 use crate::tools_storage::{
     self, AddStorageInput, AddStorageOutput, EditStorageInput, EditStorageOutput,
-    ExportConfigOutput, ImportConfigInput, ImportConfigOutput, ListStoragesOutput,
-    RemoveStorageInput, RemoveStorageOutput, ValidateStorageInput, ValidateStorageOutput,
+    ExportConfigOutput, ListStoragesOutput, RemoveStorageInput, RemoveStorageOutput,
+    ValidateStorageInput, ValidateStorageOutput,
 };
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -869,33 +869,91 @@ pub async fn invoke_session_create_json(
                     ));
                 }
 
-                for prefix in &prefixes {
-                    evaluate_storage_policy(
-                        storage,
-                        prefix,
-                        McpOperation::Read,
-                        false,
-                        false,
-                    )?;
-
-                    if !session_read_only {
-                        let write_result = evaluate_storage_policy(
+                if prefixes.is_empty() {
+                    let mut candidates = vec![String::new()];
+                    candidates.extend(
+                        storage
+                            .mcp_policy
+                            .rules
+                            .iter()
+                            .map(|rule| rule.prefix.clone()),
+                    );
+                    candidates.sort();
+                    candidates.dedup();
+                    let has_useful_access = candidates.iter().any(|prefix| {
+                        let readable = evaluate_storage_policy(
                             storage,
                             prefix,
-                            McpOperation::Write,
+                            McpOperation::Read,
                             false,
                             false,
-                        );
-                        match write_result {
-                            Ok(eval) if matches!(eval.decision, PolicyDecision::Allow | PolicyDecision::RequireConfirmation { .. }) => {}
-                            _ => {
-                                return Err(err_with_details(
-                                    McpErrorCode::ERR_SESSION_FORBIDDEN,
-                                    format!(
-                                        "Cannot create writable session for '{prefix}': effective access is read-only"
-                                    ),
-                                    json!({ "storage_name": storage_name, "prefix": prefix }),
-                                ));
+                        )
+                        .is_ok_and(|evaluation| {
+                            matches!(
+                                evaluation.decision,
+                                PolicyDecision::Allow
+                                    | PolicyDecision::RequireConfirmation { .. }
+                            )
+                        });
+                        let writable = session_read_only
+                            || evaluate_storage_policy(
+                                storage,
+                                prefix,
+                                McpOperation::Write,
+                                false,
+                                false,
+                            )
+                            .is_ok_and(|evaluation| {
+                                matches!(
+                                    evaluation.decision,
+                                    PolicyDecision::Allow
+                                        | PolicyDecision::RequireConfirmation { .. }
+                                )
+                            });
+                        readable && writable
+                    });
+                    if !has_useful_access {
+                        return Err(err_with_details(
+                            McpErrorCode::ERR_SESSION_FORBIDDEN,
+                            format!(
+                                "Cannot create session for '{storage_name}': no effective {} grant exists",
+                                if session_read_only { "readable" } else { "writable" }
+                            ),
+                            json!({
+                                "storage_name": storage_name,
+                                "requested_access": if session_read_only { "read_only" } else { "read_write" },
+                            }),
+                        ));
+                    }
+                } else {
+                    for prefix in &prefixes {
+                        evaluate_storage_policy(
+                            storage,
+                            prefix,
+                            McpOperation::Read,
+                            false,
+                            false,
+                        )?;
+
+                        if !session_read_only {
+                            let write_result = evaluate_storage_policy(
+                                storage,
+                                prefix,
+                                McpOperation::Write,
+                                false,
+                                false,
+                            );
+                            match write_result {
+                                Ok(eval) if matches!(eval.decision, PolicyDecision::Allow | PolicyDecision::RequireConfirmation { .. }) => {}
+                                _ => {
+                                    return Err(err_with_details(
+                                        McpErrorCode::ERR_SESSION_FORBIDDEN,
+                                        format!(
+                                            "Cannot create writable session for '{prefix}': effective access is read-only"
+                                        ),
+                                        json!({ "storage_name": storage_name, "prefix": prefix }),
+                                    ));
+                                }
                             }
                         }
                     }
@@ -1103,13 +1161,6 @@ pub async fn invoke_remove_storage_typed(
     input: RemoveStorageInput,
 ) -> McpResult<RemoveStorageOutput> {
     tools_storage::remove_storage(ctx, input).await
-}
-
-pub async fn invoke_import_config_typed(
-    ctx: &FsToolsContext,
-    input: ImportConfigInput,
-) -> McpResult<ImportConfigOutput> {
-    tools_storage::import_config(ctx, input).await
 }
 
 pub async fn invoke_export_config_typed(ctx: &FsToolsContext) -> McpResult<ExportConfigOutput> {
@@ -1871,7 +1922,46 @@ mod tests {
             Some(true)
         );
 
+        let prefixless_read = invoke_session_create_json(
+            &ctx,
+            json!({ "allowed_storages": ["Local"], "read_only": true }),
+        )
+        .await;
+        assert_eq!(
+            prefixless_read.get("ok").and_then(|value| value.as_bool()),
+            Some(true),
+            "a prefixless session may use an effective workspace grant"
+        );
+        let prefixless_write = invoke_session_create_json(
+            &ctx,
+            json!({ "allowed_storages": ["Local"], "read_only": false }),
+        )
+        .await;
+        assert_eq!(
+            prefixless_write
+                .pointer("/error/code")
+                .and_then(|value| value.as_str()),
+            Some("ERR_SESSION_FORBIDDEN")
+        );
+
         let mut saved = ctx.registry.load_all().expect("load storage");
+        saved[0].mcp_policy.rules.clear();
+        ctx.registry
+            .save_all_atomic(&saved)
+            .expect("remove effective grants");
+        let useless = invoke_session_create_json(
+            &ctx,
+            json!({ "allowed_storages": ["Local"], "read_only": true }),
+        )
+        .await;
+        assert_eq!(
+            useless
+                .pointer("/error/code")
+                .and_then(|value| value.as_str()),
+            Some("ERR_SESSION_FORBIDDEN")
+        );
+
+        saved[0].mcp_policy.default_access = McpAccessMode::ReadOnly;
         saved[0].mcp_exposed = false;
         ctx.registry.save_all_atomic(&saved).expect("hide storage");
         let hidden = invoke_session_create_json(

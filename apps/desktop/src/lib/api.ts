@@ -24,6 +24,7 @@ import type {
   DiagnosticsExportResult,
   OsInfo,
   ProductEvent,
+  StartupHealth,
 } from "@/types/diagnostics";
 import type {
   ListEntriesPage,
@@ -92,17 +93,6 @@ export interface TransferPlan {
   conflictPolicy: TransferConflictPolicy;
   entries: TransferPlanEntry[];
   summary: TransferPlanSummary;
-}
-
-export interface ImportStoragesRequest {
-  json: string;
-  mode: "merge" | "replace";
-  onConflict: "error" | "overwrite" | "rename";
-}
-
-export interface ImportStoragesResult {
-  imported: number;
-  warnings?: string[];
 }
 
 export interface ExportStoragesResult {
@@ -262,6 +252,18 @@ export function downloadFileToDownloads(
   return invokeOrThrow<NativeDownloadResult>("download_file_to_downloads", { sourceId, path });
 }
 
+export function downloadFileVersionToDownloads(
+  sourceId: string,
+  path: string,
+  version: string,
+): Promise<NativeDownloadResult> {
+  return invokeOrThrow<NativeDownloadResult>("download_file_version_to_downloads", {
+    sourceId,
+    path,
+    version,
+  });
+}
+
 export function writeFile(
   sourceId: string,
   path: string,
@@ -291,6 +293,7 @@ export async function uploadFileStreaming(
   },
   options: {
     isCancelled?: () => boolean;
+    signal?: AbortSignal;
     onProgress?: (uploadedBytes: number, totalBytes: number) => void;
   } = {},
 ): Promise<void> {
@@ -300,9 +303,14 @@ export async function uploadFileStreaming(
   const uploadId = await invokeOrThrow<string>("begin_file_upload");
   const totalBytes = file.size;
   let finished = false;
+  const isCancelled = () => options.signal?.aborted || options.isCancelled?.() === true;
+  const cancelActiveUpload = () => {
+    void invokeOrThrow<void>("cancel_file_upload", { uploadId }).catch(() => undefined);
+  };
+  options.signal?.addEventListener("abort", cancelActiveUpload, { once: true });
   try {
     for (let offset = 0; offset < totalBytes; offset += UPLOAD_CHUNK_BYTES) {
-      if (options.isCancelled?.()) throw new DOMException("Upload cancelled", "AbortError");
+      if (isCancelled()) throw new DOMException("Upload cancelled", "AbortError");
       const chunk = new Uint8Array(
         await file.slice(offset, Math.min(totalBytes, offset + UPLOAD_CHUNK_BYTES)).arrayBuffer(),
       );
@@ -312,10 +320,12 @@ export async function uploadFileStreaming(
       });
       options.onProgress?.(Math.min(totalBytes, offset + chunk.byteLength), totalBytes);
     }
-    if (options.isCancelled?.()) throw new DOMException("Upload cancelled", "AbortError");
+    if (isCancelled()) throw new DOMException("Upload cancelled", "AbortError");
     await invokeOrThrow<void>("finish_file_upload", { uploadId, sourceId, targetPath });
+    if (isCancelled()) throw new DOMException("Upload cancelled", "AbortError");
     finished = true;
   } finally {
+    options.signal?.removeEventListener("abort", cancelActiveUpload);
     if (!finished) {
       await invokeOrThrow<void>("cancel_file_upload", { uploadId }).catch(() => undefined);
     }
@@ -345,15 +355,18 @@ export function planTransferEntries(
   targetDir: string,
   operation: TransferOperation,
   conflictPolicy: TransferConflictPolicy,
+  jobId?: string,
 ): Promise<TransferPlan> {
-  return invokeOrThrow<TransferPlan>("plan_transfer_entries", {
+  const args: Record<string, unknown> = {
     fromSourceId,
     toSourceId,
     paths,
     targetDir,
     operation,
     conflictPolicy,
-  });
+  };
+  if (jobId) args.jobId = jobId;
+  return invokeOrThrow<TransferPlan>("plan_transfer_entries", args);
 }
 
 export function transferEntries(
@@ -421,16 +434,6 @@ export function verifyStorage(storage: StorageDraft): Promise<StorageValidationR
   return invokeOrThrow<StorageValidationResult>("verify_storage", { storage });
 }
 
-export function importStorageConfig(request: ImportStoragesRequest): Promise<ImportStoragesResult> {
-  return invokeOrThrow<ImportStoragesResult>("import_storage_config", {
-    request: {
-      json: request.json,
-      mode: request.mode,
-      onConflict: request.onConflict,
-    },
-  });
-}
-
 export function exportShareableConfig(): Promise<ExportStoragesResult> {
   return invokeOrThrow<ExportStoragesResult>("export_shareable_config");
 }
@@ -448,7 +451,8 @@ export interface MissingSecretField {
 
 export interface StorageImportPreview {
   previewId: string;
-  baseRegistryRevision: string;
+  mode: "merge" | "replace";
+  onConflict: "error" | "overwrite" | "rename";
   additions: StorageImportChange[];
   updates: StorageImportChange[];
   renames: StorageImportChange[];
@@ -459,11 +463,14 @@ export interface StorageImportPreview {
   warnings: string[];
 }
 
-export interface ApplyStorageImportRequest {
-  previewId: string;
-  baseRegistryRevision: string;
+export interface PreviewStorageImportRequest {
+  json: string;
   mode: "merge" | "replace";
   onConflict: "error" | "overwrite" | "rename";
+}
+
+export interface ApplyStorageImportRequest {
+  previewId: string;
   confirmed: boolean;
 }
 
@@ -472,8 +479,8 @@ export interface ApplyStorageImportResult {
   warnings: string[];
 }
 
-export function previewStorageImport(json: string): Promise<StorageImportPreview> {
-  return invokeOrThrow<StorageImportPreview>("preview_storage_import_cmd", { json });
+export function previewStorageImport(request: PreviewStorageImportRequest): Promise<StorageImportPreview> {
+  return invokeOrThrow<StorageImportPreview>("preview_storage_import_cmd", { request });
 }
 
 export function applyStorageImport(request: ApplyStorageImportRequest): Promise<ApplyStorageImportResult> {
@@ -665,6 +672,14 @@ export function applyRecoveryRestore(request: ApplyRestoreInput): Promise<ApplyR
 export interface McpSidecarInfo {
   bundledPath: string | null;
   available: boolean;
+  executable: boolean;
+  desktopVersion: string;
+  sidecarVersion: string | null;
+  compatible: boolean;
+  sha256: string | null;
+  checksumVerified: boolean;
+  doctorHealthy: boolean;
+  errorCode: string | null;
 }
 
 export function getMcpSidecarInfo(): Promise<McpSidecarInfo> {
@@ -686,6 +701,16 @@ export interface WorkspaceRecord {
   checkpointIds: string[];
 }
 
+export interface WorkspaceCheckpoint {
+  schemaVersion: number;
+  id: string;
+  workspaceId: string;
+  createdAt: string;
+  label: string;
+  manifestPath: string;
+  fileCount: number;
+}
+
 export interface CreateWorkspaceAtomicInput {
   storageId: string;
   name: string;
@@ -693,6 +718,7 @@ export interface CreateWorkspaceAtomicInput {
   templateId: string;
   adoptExisting?: boolean;
   accessProfile?: string;
+  applyPolicy?: boolean;
 }
 
 export interface CreateWorkspaceAtomicOutput {
@@ -705,8 +731,6 @@ export interface UpdateWorkspaceInput {
   id: string;
   name?: string;
   accessProfile?: string;
-  memoryFiles?: string[];
-  checkpointIds?: string[];
 }
 
 export interface ImportLegacyWorkspacesInput {
@@ -739,6 +763,29 @@ export function importLegacyWorkspaces(request: ImportLegacyWorkspacesInput): Pr
   return invokeOrThrow<number>("import_legacy_workspaces", { request });
 }
 
+export function listWorkspaceCheckpoints(workspaceId: string): Promise<WorkspaceCheckpoint[]> {
+  return invokeOrThrow<WorkspaceCheckpoint[]>("list_workspace_checkpoints", { workspaceId });
+}
+
+export function createWorkspaceCheckpointCommand(
+  workspaceId: string,
+  label?: string,
+): Promise<WorkspaceCheckpoint> {
+  return invokeOrThrow<WorkspaceCheckpoint>("create_workspace_checkpoint", {
+    request: { workspaceId, label },
+  });
+}
+
+export function restoreWorkspaceCheckpointCommand(
+  workspaceId: string,
+  checkpointId: string,
+  confirmOverwrite: boolean,
+): Promise<void> {
+  return invokeOrThrow<void>("restore_workspace_checkpoint", {
+    request: { workspaceId, checkpointId, confirmOverwrite },
+  });
+}
+
 export function deleteFileVersion(
   sourceId: string,
   path: string,
@@ -749,6 +796,10 @@ export function deleteFileVersion(
 
 export function exportDiagnostics(): Promise<DiagnosticsExportResult> {
   return invokeOrThrow<DiagnosticsExportResult>("export_diagnostics");
+}
+
+export function getStartupHealth(): Promise<StartupHealth> {
+  return invokeOrThrow<StartupHealth>("get_startup_health");
 }
 
 export function getProductEvents(): Promise<ProductEvent[]> {

@@ -1,12 +1,9 @@
-import { useLocation } from "react-router-dom";
 import { useEffect } from "react";
 
 const NotFound = () => {
-  const location = useLocation();
-
   useEffect(() => {
     document.title = "Not found — Infimount";
-  }, [location.pathname]);
+  }, []);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted">

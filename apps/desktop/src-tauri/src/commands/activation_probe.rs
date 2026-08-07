@@ -8,5 +8,6 @@ use crate::state::AppState;
 pub async fn run_activation_probe(
     state: State<'_, AppState>,
 ) -> Result<probe_logic::ActivationProbeOutput, McpError> {
+    state.require_operational()?;
     Ok(probe_logic::run_activation_probe(state.registry.clone(), &state.product_events).await)
 }
