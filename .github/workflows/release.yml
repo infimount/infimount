@@ -266,7 +266,9 @@ jobs:
   build-linux:
     name: Build Linux
     runs-on: ubuntu-22.04
+    # Every platform build is blocked on signing policy before compilation.
     needs:
+      - release-signing-preflight
       - release-frontend-gate
       - release-ui-gate
       - release-rust-gate
@@ -274,7 +276,6 @@ jobs:
       - release-storage-simulator
       - release-consistency-gate
       - release-policy-gate
-      - release-signing-preflight
 
     steps:
       - uses: actions/checkout@v6
@@ -418,7 +419,9 @@ jobs:
   build-macos:
     name: Build macOS
     runs-on: macos-latest
+    # Every platform build is blocked on signing policy before compilation.
     needs:
+      - release-signing-preflight
       - release-frontend-gate
       - release-ui-gate
       - release-rust-gate
@@ -426,7 +429,6 @@ jobs:
       - release-storage-simulator
       - release-consistency-gate
       - release-policy-gate
-      - release-signing-preflight
 
     steps:
       - uses: actions/checkout@v6
@@ -627,7 +629,9 @@ jobs:
   build-windows:
     name: Build Windows
     runs-on: windows-latest
+    # Every platform build is blocked on signing policy before compilation.
     needs:
+      - release-signing-preflight
       - release-frontend-gate
       - release-ui-gate
       - release-rust-gate
@@ -635,7 +639,6 @@ jobs:
       - release-storage-simulator
       - release-consistency-gate
       - release-policy-gate
-      - release-signing-preflight
 
     steps:
       - uses: actions/checkout@v6

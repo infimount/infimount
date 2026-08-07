@@ -27,6 +27,11 @@ EOF
 
 pnpm --dir "$ROOT_DIR/apps/desktop" build
 
+# Tauri validates bundled external binaries before compiling the desktop crate.
+# Clean CI checkouts do not contain the generated MCP sidecar, so prepare the
+# host-target sidecar explicitly rather than weakening that package validation.
+bash "$ROOT_DIR/scripts/build-mcp-sidecar.sh"
+
 # Build desktop binary outside runtime timeout so CI cold builds do not get killed.
 cargo +stable build --manifest-path "$ROOT_DIR/apps/desktop/src-tauri/Cargo.toml"
 

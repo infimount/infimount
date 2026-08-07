@@ -25,9 +25,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
-        with: { node-version: 20 }
+        with:
+          node-version: 20
       - uses: pnpm/action-setup@v4
-        with: { version: 10, run_install: false }
+        with:
+          version: 10
+          run_install: false
       - run: pnpm install --frozen-lockfile
       - run: bash scripts/release-rehearsal.sh --version "${{ inputs.version || '0.8.0-rc.1' }}" --work-dir rehearsal-evidence
       - uses: actions/upload-artifact@v6
@@ -49,7 +52,9 @@ jobs:
           security create-keychain -p rehearsal "$keychain"
           security unlock-keychain -p rehearsal "$keychain"
           openssl req -x509 -newkey rsa:2048 -nodes -subj '/CN=Infimount Rehearsal' -keyout "$work/key.pem" -out "$work/cert.pem" -days 1 >/dev/null 2>&1
-          openssl pkcs12 -export -out "$work/cert.p12" -inkey "$work/key.pem" -in "$work/cert.pem" -passout pass:rehearsal >/dev/null 2>&1
+          # macOS security still rejects some modern PBES2 PKCS#12 defaults;
+          # legacy mode keeps this disposable fixture importable across runners.
+          openssl pkcs12 -export -legacy -out "$work/cert.p12" -inkey "$work/key.pem" -in "$work/cert.pem" -passout pass:rehearsal >/dev/null 2>&1
           security import "$work/cert.p12" -k "$keychain" -P rehearsal -T /usr/bin/codesign >/dev/null
           security set-key-partition-list -S apple-tool:,apple: -s -k rehearsal "$keychain" >/dev/null
           printf 'rehearsal executable\n' > "$work/mcp"; chmod +x "$work/mcp"

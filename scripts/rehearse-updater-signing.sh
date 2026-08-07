@@ -12,8 +12,32 @@ cleanup(){
 trap 'cleanup $?' EXIT
 key="$OUT/signing/rehearsal-key"
 payloads=(linux-x86_64 darwin-x86_64 windows-x86_64)
-CI=true pnpm --dir "$ROOT_DIR/apps/desktop" tauri signer generate --ci -p rehearsal -w "$key" -f >/dev/null
-pub=$(cat "$key.pub")
+# Tauri CLI versions have differed in whether they print the generated public-key
+# path. Always use an isolated output directory and discover the resulting key;
+# never echo the private key or include it in rehearsal evidence.
+generate_log="$OUT/signing/generate.log"
+if ! CI=true pnpm --dir "$ROOT_DIR/apps/desktop" tauri signer generate --ci -p rehearsal -w "$key" -f >"$generate_log" 2>&1; then
+  echo "updater rehearsal: Tauri signer key generation failed" >&2
+  grep -vE '^[A-Za-z0-9+/=]{40,}$' "$generate_log" | sed -E 's/(rehearsal-key|private key|secret)[^[:space:]]*/[redacted]/Ig' >&2 || true
+  exit 1
+fi
+pub_file=""
+for candidate in "$key.pub" "$OUT/signing/rehearsal-key.pub"; do
+  if [[ -s "$candidate" ]]; then pub_file="$candidate"; break; fi
+done
+if [[ -z "$pub_file" ]]; then
+  pub_file="$(find "$OUT/signing" -maxdepth 1 -type f -name '*.pub' -size +0c -print -quit)"
+fi
+if [[ -z "$pub_file" || ! -s "$pub_file" ]]; then
+  echo "updater rehearsal: Tauri signer generated no public key" >&2
+  echo "expected a .pub file beside the requested private-key path: $key" >&2
+  echo "signer output (private material omitted):" >&2
+  grep -vE '^[A-Za-z0-9+/=]{40,}$' "$generate_log" | sed -E 's/(rehearsal-key|private key|secret)[^[:space:]]*/[redacted]/Ig' >&2 || true
+  exit 1
+fi
+pub="$(cat "$pub_file")"
+[[ "$pub" != *PRIVATE* ]] || { echo 'updater rehearsal: public key output looked private' >&2; exit 1; }
+rm -f "$generate_log"
 for platform in "${payloads[@]}"; do
   file="$OUT/payloads/Infimount-${platform}.tar.gz"
   printf 'Infimount rehearsal %s\n' "$platform" > "$file"
