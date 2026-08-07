@@ -29,7 +29,7 @@ fi
 run pnpm --dir "$DESKTOP_DIR" build
 
 cd "$ROOT_DIR"
-run node "$ROOT_DIR/scripts/check-release-consistency.mjs" "$(node -p 'require("./apps/desktop/package.json").version')"
+run env INFIMOUNT_UNPUBLISHED_CANDIDATE=1 node "$ROOT_DIR/scripts/check-release-consistency.mjs" "$(node -p 'require("./apps/desktop/package.json").version')"
 run node "$ROOT_DIR/scripts/check-feature-docs.mjs"
 run node "$ROOT_DIR/scripts/check-upgrade-fixtures.mjs"
 run "$ROOT_DIR/scripts/smoke-install-scripts.sh"

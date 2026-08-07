@@ -114,16 +114,7 @@ if [[ -z "$EXPECTED_VERSION" ]]; then
 fi
 assert_bundled_sidecar() {
   local tree=$1
-  local sidecar
-  sidecar="$(find "$tree" -type f -name 'mcp*' -perm -111 | sort | head -n 1)"
-  if [ -z "$sidecar" ]; then
-    echo "Linux artifact smoke failed: bundled MCP sidecar not found in $tree" >&2
-    exit 1
-  fi
-  if [ "$("$sidecar" --version)" != "infimount_mcp $EXPECTED_VERSION" ]; then
-    echo "Linux artifact smoke failed: bundled MCP sidecar version mismatch" >&2
-    exit 1
-  fi
+  "$ROOT_DIR/scripts/verify-packaged-sidecar.sh" "$tree" "$EXPECTED_VERSION"
 }
 
 if ! command -v xvfb-run >/dev/null 2>&1; then

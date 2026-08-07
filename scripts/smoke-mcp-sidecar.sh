@@ -33,10 +33,14 @@ const run = (args, env = process.env) => execFileSync(binary, args, {
 const version = run(["--version"]);
 if (version !== `infimount_mcp ${expected}`) throw new Error(`unexpected sidecar version: ${version}`);
 const checksumPath = `${binary}.sha256`;
-if (fs.existsSync(checksumPath)) {
-  const expectedChecksum = fs.readFileSync(checksumPath, "utf8").trim().split(/\s+/)[0];
-  const actualChecksum = crypto.createHash("sha256").update(fs.readFileSync(binary)).digest("hex");
-  if (actualChecksum !== expectedChecksum) throw new Error("sidecar checksum mismatch");
+if (!fs.existsSync(checksumPath)) throw new Error("prepared sidecar checksum is missing");
+const expectedChecksum = fs.readFileSync(checksumPath, "utf8").trim().split(/\s+/)[0];
+const actualChecksum = crypto.createHash("sha256").update(fs.readFileSync(binary)).digest("hex");
+if (actualChecksum !== expectedChecksum) throw new Error("sidecar checksum mismatch");
+const packagedChecksum = path.join(path.dirname(binary), "mcp.sha256");
+if (!fs.existsSync(packagedChecksum)) throw new Error("packaged checksum resource is missing");
+if (fs.readFileSync(packagedChecksum, "utf8").trim().split(/\s+/)[0] !== actualChecksum) {
+  throw new Error("packaged checksum resource mismatch");
 }
 const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "infimount-sidecar-smoke-"));
 try {

@@ -65,6 +65,11 @@ if (reportedVersion !== `infimount_mcp ${expectedVersion}`) {
   throw new Error(`sidecar version mismatch: expected ${expectedVersion}, got ${reportedVersion}`);
 }
 const sha256 = crypto.createHash("sha256").update(fs.readFileSync(destination)).digest("hex");
-fs.writeFileSync(`${destination}.sha256`, `${sha256}  ${path.basename(destination)}\n`, "utf8");
+const checksumLine = `${sha256}  ${path.basename(destination)}\n`;
+fs.writeFileSync(`${destination}.sha256`, checksumLine, "utf8");
+// Tauri packages this target-independent resource next to the external binary.
+// It is regenerated for each single-target build job and is never trusted as a
+// substitute for the signed release-level checksums.
+fs.writeFileSync(path.join(destinationDir, "mcp.sha256"), checksumLine, "utf8");
 console.log(`Prepared ${path.relative(root, destination)}`);
 console.log(`SHA-256 ${sha256}`);

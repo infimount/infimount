@@ -20,7 +20,8 @@ env:
 
 jobs:
   sync-version:
-    name: Sync app manifests from release tag
+    name: Sync stable release identity from release tag
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false }}
     runs-on: ubuntu-latest
 
     steps:
@@ -37,8 +38,8 @@ jobs:
           else
             TAG="${{ github.event.release.tag_name }}"
           fi
-          if [ -z "${TAG}" ]; then
-            echo "Tag is empty." >&2
+          if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Only stable SemVer tags can update stable public identity: ${TAG}" >&2
             exit 1
           fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
@@ -52,6 +53,14 @@ jobs:
       - name: Sync versions from tag
         run: node scripts/sync-release-version.mjs
 
+      - name: Promote public documentation to stable identity
+        run: |
+          if grep -Fq 'Release candidate under validation' README.md; then
+            node scripts/prepare-stable-release-docs.mjs "${{ steps.resolve_tag.outputs.tag }}"
+          else
+            echo "Public documentation is already promoted to a stable identity."
+          fi
+
       - name: Create pull request
         uses: peter-evans/create-pull-request@v7
         with:
@@ -63,10 +72,7 @@ jobs:
 
             Source tag: `${{ steps.resolve_tag.outputs.tag }}`
 
-            Updated files:
-            - `apps/desktop/package.json`
-            - `apps/desktop/src-tauri/tauri.conf.json`
-            - `apps/desktop/src-tauri/Cargo.toml`
+            Updated files include the root/frontend/Tauri manifest versions and, when needed, stable-release identity in README, CHANGELOG, GitHub Pages, and docs/llms.txt.
           labels: |
             chore
             release

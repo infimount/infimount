@@ -13,7 +13,7 @@ fail() {
 [ -s "$ASSET_DIR/latest.json" ] || fail "latest.json is missing or empty"
 [ -n "$EXPECTED_VERSION" ] || fail "expected version is empty"
 
-jq -e --arg version "$EXPECTED_VERSION" '
+jq -e --arg version "$EXPECTED_VERSION" --arg tag "v$EXPECTED_VERSION" '
   .version == $version and
   (.platforms | type == "object" and length >= 3) and
   ([.platforms | keys[] | startswith("linux-")] | any) and
@@ -21,7 +21,8 @@ jq -e --arg version "$EXPECTED_VERSION" '
   ([.platforms | keys[] | startswith("windows-")] | any) and
   ([.platforms[] |
     (.signature | type == "string" and length > 0) and
-    (.url | type == "string" and test("^https://github\\.com/infimount/infimount/releases/(latest/download|download/v[^/]+)/[^/?#]+$"))
+    (.url | type == "string" and startswith("https://github.com/infimount/infimount/releases/download/" + $tag + "/")) and
+    (.url | test("/[^/?#]+$"))
   ] | all)
 ' "$ASSET_DIR/latest.json" >/dev/null || fail "latest.json schema, version, platform coverage, signature, or URL is invalid"
 

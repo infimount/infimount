@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,7 +18,8 @@ jobs:
     outputs:
       stable: ${{ steps.policy.outputs.stable }}
     steps:
-      - name: Require signing material for stable tags
+      - uses: actions/checkout@v6
+      - name: Require updater signing for every release and platform signing for stable tags
         id: policy
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -34,20 +34,11 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "stable=true" >> "$GITHUB_OUTPUT"
-            missing=()
-            for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID WINDOWS_CERTIFICATE_BASE64 WINDOWS_CERTIFICATE_PASSWORD TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
-              if [ -z "${!name:-}" ]; then missing+=("$name"); fi
-            done
-            if [ "${#missing[@]}" -ne 0 ]; then
-              printf 'Stable releases require signing; missing: %s\n' "${missing[*]}" >&2
-              exit 1
-            fi
-          else
-            echo "stable=false" >> "$GITHUB_OUTPUT"
-            echo "Prerelease/manual build: unsigned platform output is permitted and must remain prerelease."
-          fi
+          # Every release requires updater signing; policy is implemented by the shared checker.
+          result="$(bash scripts/check-signing-policy-rehearsal.sh)"
+          printf '%s\n' "$result"
+          stable="$(printf '%s\n' "$result" | awk -F= '/^stable=/{print $2}')"
+          printf 'stable=%s\n' "$stable" >> "$GITHUB_OUTPUT"
 
   release-frontend-gate:
     name: Release Gate / Frontend
@@ -141,8 +132,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install exact release MSRV (Rust 1.94)
+        uses: dtolnay/rust-toolchain@1.94
         with:
           components: rustfmt, clippy
 
@@ -241,6 +232,9 @@ jobs:
         with:
           node-version: 20
 
+      - name: Apply tag version before consistency validation
+        run: node scripts/sync-release-version.mjs
+
       - name: Verify version, docs, changelog, and release notes
         run: node scripts/check-release-consistency.mjs "${GITHUB_REF_NAME}"
 
@@ -262,6 +256,12 @@ jobs:
 
       - name: Verify zero-manual release gate policy
         run: ./scripts/check-zero-manual-release-gate.sh
+
+      - name: Verify canonical and Windows installer release versions
+        run: node scripts/check-release-version-model.mjs
+
+      - name: Verify packaged-sidecar checksum smoke fixtures
+        run: ./scripts/test-packaged-sidecar-checksum.sh
 
   build-linux:
     name: Build Linux
@@ -391,7 +391,7 @@ jobs:
               --arg pub_date "$PUB_DATE" \
               --arg platform "$PLATFORM_KEY" \
               --arg signature "$SIG_VALUE" \
-              --arg url "https://github.com/infimount/infimount/releases/latest/download/${UPDATER_ARTIFACT_NAME}" \
+              --arg url "https://github.com/infimount/infimount/releases/download/${GITHUB_REF_NAME}/${UPDATER_ARTIFACT_NAME}" \
               '{
                 version: $version,
                 notes: $notes,
@@ -562,7 +562,7 @@ jobs:
               --arg pub_date "$PUB_DATE" \
               --arg platform "$PLATFORM_KEY" \
               --arg signature "$SIG_VALUE" \
-              --arg url "https://github.com/infimount/infimount/releases/latest/download/${UPDATER_ARTIFACT_NAME}" \
+              --arg url "https://github.com/infimount/infimount/releases/download/${GITHUB_REF_NAME}/${UPDATER_ARTIFACT_NAME}" \
               '{
                 version: $version,
                 notes: $notes,
@@ -645,8 +645,11 @@ jobs:
         with:
           node-version: 20
 
-      - name: Apply tag version to app manifests
-        run: node scripts/sync-release-version.mjs --msi-safe
+      - name: Apply canonical tag version to app and sidecar manifests
+        run: node scripts/sync-release-version.mjs
+
+      - name: Apply MSI-safe numeric version only to the WiX bundle
+        run: node scripts/set-windows-installer-version.mjs
 
       - uses: pnpm/action-setup@v4
         name: Install pnpm
@@ -720,6 +723,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "packaged Windows MCP sidecar signature verification failed" }
           $hash = (Get-FileHash -Algorithm SHA256 $sidecar.FullName).Hash.ToLowerInvariant()
           "$hash  $($sidecar.Name)" | Set-Content -Encoding ascii "$($sidecar.FullName).sha256"
+          "$hash  mcp" | Set-Content -Encoding ascii "apps/desktop/src-tauri/binaries/mcp.sha256"
 
       - name: Build signed Tauri app and updater chain
         if: ${{ steps.windows_signing.outputs.enabled == 'true' }}
@@ -849,7 +853,7 @@ jobs:
 
             $sigValue = (Get-Content $updaterSig.FullName -Raw).Trim()
             $artifactName = Split-Path -Leaf $updaterArtifact
-            $url = "https://github.com/infimount/infimount/releases/latest/download/$artifactName"
+            $url = "https://github.com/infimount/infimount/releases/download/$env:GITHUB_REF_NAME/$artifactName"
             $latestObject = [ordered]@{
               version = $version
               notes = "See release notes."
@@ -1089,19 +1093,19 @@ jobs:
             Linux:
 
             ```bash
-            curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh
+            curl -fsSL https://github.com/infimount/infimount/releases/download/${{ github.ref_name }}/install.sh | INFIMOUNT_VERSION=${{ github.ref_name }} sh
             ```
 
             macOS:
 
             ```bash
-            curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh
+            curl -fsSL https://github.com/infimount/infimount/releases/download/${{ github.ref_name }}/install.sh | INFIMOUNT_VERSION=${{ github.ref_name }} sh
             ```
 
             Windows PowerShell:
 
             ```powershell
-            irm https://github.com/infimount/infimount/releases/latest/download/install.ps1 | iex
+            $env:INFIMOUNT_VERSION='${{ github.ref_name }}'; irm https://github.com/infimount/infimount/releases/download/${{ github.ref_name }}/install.ps1 | iex
             ```
 
             ### Manual downloads
@@ -1133,9 +1137,9 @@ jobs:
 
             ### Signing status
 
-            **${{ needs.release-signing-preflight.outputs.stable == 'true' && 'SIGNED STABLE RELEASE' || 'UNSIGNED MAY BE PRESENT — PRERELEASE ONLY' }}**
+            **${{ needs.release-signing-preflight.outputs.stable == 'true' && 'SIGNED STABLE RELEASE' || 'SIGNED UPDATER; PLATFORM SIGNING MAY BE OMITTED — PRERELEASE ONLY' }}**
 
-            Stable tags pass a mandatory macOS, Windows, and updater signing preflight. Prerelease artifacts may be unsigned; verify the release is marked prerelease before using any unsigned build.
+            Every release passes mandatory updater-signing preflight. Stable tags additionally require macOS and Windows platform signing. Prerelease applications may omit platform signing; verify the release is marked prerelease before using one.
 
             See [CHANGELOG.md](https://github.com/infimount/infimount/blob/main/CHANGELOG.md) for details.
 
@@ -1184,3 +1188,38 @@ jobs:
           else
             gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease=true
           fi
+
+      - name: Re-download and validate published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf published-release-assets
+          mkdir published-release-assets
+          for attempt in 1 2 3 4 5; do
+            rm -f published-release-assets/*
+            if gh release download "$GITHUB_REF_NAME" --dir published-release-assets; then
+              break
+            fi
+            if [ "$attempt" = 5 ]; then exit 1; fi
+            sleep $((attempt * 5))
+          done
+          ./scripts/check-release-assets.sh published-release-assets
+          ./scripts/check-updater-assets.sh published-release-assets "${GITHUB_REF#refs/tags/v}"
+          node scripts/check-upgrade-fixtures.mjs published-release-assets
+
+          public_key="$(jq -r '.plugins.updater.pubkey' apps/desktop/src-tauri/tauri.conf.json)"
+          while IFS= read -r signature; do
+            artifact="${signature%.sig}"
+            test -s "$artifact"
+            cargo run --quiet -p infimount_core --bin verify_updater_signature -- \
+              "$public_key" "$artifact" "$signature"
+          done < <(find published-release-assets -maxdepth 1 -type f -name '*.sig' | sort)
+
+          while IFS= read -r url; do
+            case "$url" in
+              "https://github.com/infimount/infimount/releases/download/${GITHUB_REF_NAME}/"*) ;;
+              *) echo "Updater URL is not pinned to ${GITHUB_REF_NAME}: $url" >&2; exit 1 ;;
+            esac
+            curl --fail --silent --show-error --location --head --retry 5 "$url" >/dev/null
+          done < <(jq -r '.platforms[].url' published-release-assets/latest.json)
