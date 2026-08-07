@@ -484,8 +484,10 @@ fn data_dir_inner() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
+
+    static DATA_DIR_LOCK: Mutex<()> = Mutex::new(());
 
     fn dummy_bundle(
         registry: &StorageRegistry,
@@ -507,6 +509,7 @@ mod tests {
 
     #[test]
     fn test_bundle_structure() {
+        let _data_dir_guard = DATA_DIR_LOCK.lock().unwrap();
         let dir = tempdir().unwrap();
         std::env::set_var(
             "INFIMOUNT_DATA_DIR",
@@ -532,6 +535,7 @@ mod tests {
 
     #[test]
     fn bundle_summarizes_sidecar_events_and_audit_without_resource_metadata() {
+        let _data_dir_guard = DATA_DIR_LOCK.lock().unwrap();
         let dir = tempdir().unwrap();
         let registry_dir = dir.path().join("config");
         let registry = StorageRegistry::with_secret_store(
@@ -591,6 +595,7 @@ mod tests {
 
     #[test]
     fn generated_file_validation_rejects_seeded_corpus() {
+        let _data_dir_guard = DATA_DIR_LOCK.lock().unwrap();
         let dir = tempdir().unwrap();
         fs::write(
             dir.path().join("summary.json"),
@@ -603,6 +608,7 @@ mod tests {
 
     #[test]
     fn exported_bundle_is_bounded_and_passes_post_generation_corpus_validation() {
+        let _data_dir_guard = DATA_DIR_LOCK.lock().unwrap();
         let dir = tempdir().unwrap();
         std::env::set_var("INFIMOUNT_DATA_DIR", dir.path());
         let registry_dir = dir.path().join("config");
@@ -666,6 +672,7 @@ mod tests {
 
     #[test]
     fn test_bundle_no_secrets() {
+        let _data_dir_guard = DATA_DIR_LOCK.lock().unwrap();
         let dir = tempdir().unwrap();
         std::env::set_var(
             "INFIMOUNT_DATA_DIR",
