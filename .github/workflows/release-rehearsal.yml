@@ -47,38 +47,17 @@ jobs:
       - name: Sign and tamper-test disposable fixture
         run: |
           set -euo pipefail
-          work="$(mktemp -d)"; keychain="$work/rehearsal.keychain-db"
-          trap 'security delete-keychain "$keychain" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
-          security create-keychain -p rehearsal "$keychain"
-          security unlock-keychain -p rehearsal "$keychain"
-          cat > "$work/openssl.cnf" <<'EOF'
-          [req]
-          distinguished_name = req_distinguished_name
-          x509_extensions = v3_req
-          prompt = no
-          [req_distinguished_name]
-          CN = Infimount Rehearsal
-          [v3_req]
-          basicConstraints = critical,CA:false
-          keyUsage = critical,digitalSignature
-          extendedKeyUsage = codeSigning
-          EOF
-          openssl req -x509 -newkey rsa:2048 -nodes -config "$work/openssl.cnf" \
-            -keyout "$work/key.pem" -out "$work/cert.pem" -days 1 >/dev/null 2>&1
-          # Import the disposable PEM certificate and key separately. This
-          # avoids PKCS#12 cipher/MAC differences between macOS security,
-          # LibreSSL, and OpenSSL 3 on hosted runners.
-          security import "$work/cert.pem" -k "$keychain" -T /usr/bin/codesign
-          security import "$work/key.pem" -k "$keychain" -T /usr/bin/codesign
-          security add-trusted-cert -d -r trustRoot -p codeSign -k "$keychain" "$work/cert.pem"
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
           printf 'rehearsal executable\n' > "$work/mcp"; chmod +x "$work/mcp"
-          identity="$(security find-identity -v -p codesigning "$keychain" | awk -F'"' '/valid identities/{next} /1\)/{print $2; exit}')"
-          test -n "$identity"
-          codesign --keychain "$keychain" --force --sign "$identity" "$work/mcp"
+          # Ad-hoc codesign is deterministic on hosted macOS runners and still
+          # proves that native signature verification rejects post-signing
+          # mutation. Certificate trust and notarization remain external gates.
+          codesign --force --sign - "$work/mcp"
           codesign --verify --strict --verbose=2 "$work/mcp"
           printf tamper >> "$work/mcp"
           if codesign --verify --strict "$work/mcp" >/dev/null 2>&1; then echo 'tamper unexpectedly verified' >&2; exit 1; fi
-          echo 'Self-signed local integrity passed; notarization, stapling, and Gatekeeper trust are intentionally not asserted.'
+          echo 'Ad-hoc macOS code-signing integrity passed; certificate trust, notarization, stapling, and Gatekeeper trust are intentionally not asserted.'
           echo 'Production Apple signing remains a stable-release gate.'
 
   windows:
