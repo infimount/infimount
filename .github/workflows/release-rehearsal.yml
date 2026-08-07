@@ -71,7 +71,7 @@ jobs:
           security import "$work/cert.pem" -k "$keychain" -T /usr/bin/codesign
           security import "$work/key.pem" -k "$keychain" -T /usr/bin/codesign
           printf 'rehearsal executable\n' > "$work/mcp"; chmod +x "$work/mcp"
-          identity="$(security find-identity -v "$keychain" | awk -F'"' '/valid identities/{next} /1\)/{print $2; exit}')"
+          identity="$(security find-identity -v -p codesigning "$keychain" | awk -F'"' '/valid identities/{next} /1\)/{print $2; exit}')"
           test -n "$identity"
           codesign --keychain "$keychain" --force --sign "$identity" "$work/mcp"
           codesign --verify --strict --verbose=2 "$work/mcp"
