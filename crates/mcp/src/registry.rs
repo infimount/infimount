@@ -11,15 +11,23 @@ use infimount_core::secrets::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+#[cfg(test)]
+use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::{LazyLock, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 const REGISTRY_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 pub const STORAGE_RECORD_SCHEMA_VERSION: u32 = 2;
+
+#[cfg(test)]
+static FAIL_NEXT_IMPORT_READBACK: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageRecord {
@@ -144,15 +152,7 @@ impl StorageRegistry {
     ) -> McpResult<()> {
         self.with_file_lock(REGISTRY_LOCK_TIMEOUT, || {
             let current = self.load_all_unlocked()?;
-            let unchanged = current.len() == expected.len()
-                && current.iter().all(|record| {
-                    expected.iter().any(|old| {
-                        old.id == record.id
-                            && old.revision == record.revision
-                            && old.updated_at == record.updated_at
-                    })
-                });
-            if !unchanged {
+            if !records_match_exact(&current, expected) {
                 return Err(err(
                     McpErrorCode::ERR_INTERNAL,
                     "storage registry changed during transaction; retry the operation",
@@ -160,6 +160,87 @@ impl StorageRegistry {
             }
             self.save_all_atomic_unlocked(replacement)
         })
+    }
+
+    /// Replace a registry while holding the disk lock through write and readback.
+    /// If readback fails, restore only when the on-disk bytes still represent the
+    /// exact imported state; a later process mutation is never overwritten.
+    pub fn replace_all_atomic_verified(
+        &self,
+        expected: &[StorageRecord],
+        replacement: &[StorageRecord],
+    ) -> McpResult<()> {
+        self.with_file_lock(REGISTRY_LOCK_TIMEOUT, || {
+            let current = self.load_all_unlocked()?;
+            if !records_match_exact(&current, expected) {
+                return Err(err(
+                    McpErrorCode::ERR_INTERNAL,
+                    "storage registry changed during transaction; retry the operation",
+                ));
+            }
+            if let Err(error) = self.save_all_atomic_unlocked(replacement) {
+                let _ = self.restore_all_if_matches_unlocked(replacement, expected);
+                return Err(error);
+            }
+            #[cfg(test)]
+            let fail_readback = FAIL_NEXT_IMPORT_READBACK.lock().unwrap().remove(&self.path);
+            #[cfg(test)]
+            if fail_readback {
+                self.restore_all_if_matches_unlocked(replacement, expected)?;
+                return Err(err(
+                    McpErrorCode::ERR_INTERNAL,
+                    "storage registry readback failed; original registry was restored",
+                ));
+            }
+            let persisted = match self.load_all_unlocked() {
+                Ok(persisted) => persisted,
+                Err(error) => {
+                    self.restore_all_if_matches_unlocked(replacement, expected)?;
+                    return Err(error);
+                }
+            };
+            if !records_match_exact(&persisted, replacement) {
+                self.restore_all_if_matches_unlocked(replacement, expected)?;
+                return Err(err(
+                    McpErrorCode::ERR_INTERNAL,
+                    "storage registry readback failed; original registry was restored",
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    /// Restore an imported registry only when no later process has changed it.
+    /// Returns false when the compare-and-restore precondition no longer holds.
+    pub fn restore_all_if_matches(
+        &self,
+        expected_current: &[StorageRecord],
+        replacement: &[StorageRecord],
+    ) -> McpResult<bool> {
+        self.with_file_lock(REGISTRY_LOCK_TIMEOUT, || {
+            self.restore_all_if_matches_unlocked(expected_current, replacement)
+        })
+    }
+
+    #[cfg(test)]
+    pub fn fail_next_import_readback(&self) {
+        FAIL_NEXT_IMPORT_READBACK
+            .lock()
+            .unwrap()
+            .insert(self.path.clone());
+    }
+
+    fn restore_all_if_matches_unlocked(
+        &self,
+        expected_current: &[StorageRecord],
+        replacement: &[StorageRecord],
+    ) -> McpResult<bool> {
+        let current = self.load_all_unlocked()?;
+        if !records_match_exact(&current, expected_current) {
+            return Ok(false);
+        }
+        self.save_all_atomic_unlocked(replacement)?;
+        Ok(true)
     }
 
     pub fn save_legacy_records_secure(&self, mut storages: Vec<StorageRecord>) -> McpResult<()> {
@@ -754,6 +835,10 @@ pub fn default_config_dir() -> PathBuf {
 
 pub fn default_registry_path() -> PathBuf {
     default_config_dir().join("storages.json")
+}
+
+fn records_match_exact(left: &[StorageRecord], right: &[StorageRecord]) -> bool {
+    serde_json::to_vec(left).ok() == serde_json::to_vec(right).ok()
 }
 
 #[cfg(test)]

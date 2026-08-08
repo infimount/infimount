@@ -991,17 +991,20 @@ fn remove_pending_backup(path: &std::path::Path) -> McpResult<()> {
     })
 }
 
-fn rollback_registry_if_changed(ctx: &FsToolsContext, expected: &[StorageRecord]) -> McpResult<()> {
-    let current = ctx.registry.load_all()?;
-    if registry_snapshot(&current)? != registry_snapshot(expected)? {
-        ctx.registry.save_all_atomic(expected).map_err(|_| {
+fn rollback_registry_if_matches(
+    ctx: &FsToolsContext,
+    imported: &[StorageRecord],
+    original: &[StorageRecord],
+) -> McpResult<()> {
+    ctx.registry
+        .restore_all_if_matches(imported, original)
+        .map(|_| ())
+        .map_err(|_| {
             err(
                 McpErrorCode::ERR_INTERNAL,
                 "import failed and storage registry rollback failed",
             )
-        })?;
-    }
-    Ok(())
+        })
 }
 
 pub async fn apply_storage_import(
@@ -1120,24 +1123,11 @@ where
         let _ = remove_pending_backup(&pending_backup);
         return Err(error);
     }
-    if let Err(error) = ctx
-        .registry
-        .save_all_atomic_if_unchanged(&existing, &merged)
-    {
+    if let Err(error) = ctx.registry.replace_all_atomic_verified(&existing, &merged) {
         rollback_import_secrets(ctx.registry.secret_store().as_ref(), rollback)?;
-        let _ = rollback_registry_if_changed(ctx, &existing);
+        let _ = rollback_registry_if_matches(ctx, &merged, &existing);
         let _ = remove_pending_backup(&pending_backup);
         return Err(error);
-    }
-    let persisted = ctx.registry.load_all()?;
-    if registry_snapshot(&persisted)? != registry_snapshot(&merged)? {
-        rollback_registry_if_changed(ctx, &existing)?;
-        rollback_import_secrets(ctx.registry.secret_store().as_ref(), rollback)?;
-        let _ = remove_pending_backup(&pending_backup);
-        return Err(err(
-            McpErrorCode::ERR_INTERNAL,
-            "import verification failed; original registry was restored",
-        ));
     }
 
     let retained_refs = merged

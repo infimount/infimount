@@ -890,6 +890,93 @@ async fn pre_import_backup_failure_preserves_registry() {
 }
 
 #[tokio::test]
+async fn import_readback_failure_restores_registry_and_keeps_preview_recoverable() {
+    let dir = TempDir::new().unwrap();
+    let registry = registry_in(&dir);
+    let original = crate::registry::StorageRecord::new(
+        "Original".to_string(),
+        "local".to_string(),
+        serde_json::json!({"root": "/tmp/original"}),
+    );
+    registry
+        .save_all_atomic(std::slice::from_ref(&original))
+        .unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+    let preview = preview_storage_import(
+        &ctx,
+        PreviewStorageImportInput {
+            json: serde_json::json!([{"name": "Replacement", "backend": "local", "config": {"root": "/tmp/replacement"}}]).to_string(),
+            mode: "replace".to_string(),
+            on_conflict: "error".to_string(),
+        },
+    )
+    .await
+    .unwrap();
+    ctx.registry.fail_next_import_readback();
+    let error = apply_storage_import(
+        &ctx,
+        ApplyStorageImportInput {
+            preview_id: preview.preview_id,
+            confirmed: true,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, McpErrorCode::ERR_INTERNAL);
+    assert_eq!(ctx.registry.load_all().unwrap()[0].name, original.name);
+}
+
+#[test]
+fn conditional_import_rollback_preserves_later_process_mutation() {
+    let dir = TempDir::new().unwrap();
+    let first = registry_in(&dir);
+    let second = registry_in(&dir);
+    let original = crate::registry::StorageRecord::new(
+        "Original".to_string(),
+        "local".to_string(),
+        serde_json::json!({"root": "/tmp/original"}),
+    );
+    first
+        .save_all_atomic(std::slice::from_ref(&original))
+        .unwrap();
+    let mut imported = original.clone();
+    imported.name = "Imported".to_string();
+    imported.revision += 1;
+    let mut later = imported.clone();
+    later.name = "Later process mutation".to_string();
+    later.revision += 1;
+    first
+        .save_all_atomic_if_unchanged(
+            std::slice::from_ref(&original),
+            std::slice::from_ref(&imported),
+        )
+        .unwrap();
+    let later_name = later.name.clone();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let writer_barrier = barrier.clone();
+    let writer = std::thread::spawn(move || {
+        writer_barrier.wait();
+        second
+            .save_all_atomic(std::slice::from_ref(&later))
+            .unwrap();
+    });
+    barrier.wait();
+    writer.join().unwrap();
+    assert!(!first
+        .restore_all_if_matches(
+            std::slice::from_ref(&imported),
+            std::slice::from_ref(&original)
+        )
+        .unwrap());
+    assert_eq!(first.load_all().unwrap()[0].name, later_name);
+}
+
+#[tokio::test]
 async fn validate_storage_local_root_succeeds() {
     let dir = TempDir::new().unwrap();
     let local_root = dir.path().join("local");
