@@ -497,6 +497,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          INFIMOUNT_EXPECTED_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: pnpm tauri build
 
       - name: Build Tauri app (unsigned prerelease fallback)
@@ -735,6 +736,8 @@ jobs:
         if: ${{ steps.windows_signing.outputs.enabled == 'true' }}
         working-directory: apps/desktop
         shell: pwsh
+        env:
+          INFIMOUNT_EXPECTED_WINDOWS_PUBLISHER: ${{ steps.windows_signing.outputs.thumbprint }}
         run: |
           $config = @{
             build = @{
