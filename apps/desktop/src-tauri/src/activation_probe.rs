@@ -311,63 +311,107 @@ fn verify_sidecar_checksum(path: &Path, actual: &str) -> Result<bool, &'static s
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows", test))]
-fn platform_trust_decision<F>(
+fn enforce_platform_trust(
+    checksum: Result<bool, &'static str>,
     signature_valid: bool,
+    identity_valid: bool,
     prerelease: bool,
-    verify_packaged_checksum: F,
-) -> Result<bool, &'static str>
-where
-    F: FnOnce() -> Result<bool, &'static str>,
-{
-    if signature_valid {
-        // Platform identity is stronger and deliberately takes precedence.
-        return Ok(false);
+) -> Result<bool, &'static str> {
+    if !checksum? {
+        return Err("ERR_SIDECAR_CHECKSUM_MISMATCH");
     }
-    if !prerelease {
+    if prerelease {
+        return Ok(true);
+    }
+    if !signature_valid {
         return Err("ERR_SIDECAR_SIGNATURE_FAILED");
     }
-    verify_packaged_checksum()
+    if !identity_valid {
+        return Err("ERR_SIDECAR_PUBLISHER_MISMATCH");
+    }
+    Ok(true)
 }
 
 fn verify_platform_trust(path: &Path, actual: &str) -> Result<bool, &'static str> {
+    let checksum = verify_sidecar_checksum(path, actual);
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    let prerelease = env!("CARGO_PKG_VERSION").contains('-');
     #[cfg(target_os = "macos")]
     {
+        if prerelease {
+            return enforce_platform_trust(checksum, true, true, true);
+        }
+        let Some(team_id) = option_env!("INFIMOUNT_EXPECTED_APPLE_TEAM_ID")
+            .filter(|value| !value.trim().is_empty())
+        else {
+            return Err("ERR_SIDECAR_TEAM_ID_MISSING");
+        };
+        let sidecar = path.to_str().ok_or("ERR_SIDECAR_SIGNATURE_FAILED")?;
         let signature_valid = bounded_command(
+            Path::new("/usr/bin/codesign"),
+            &["--verify", "--strict", sidecar],
+        )
+        .is_ok_and(|(success, _)| success);
+        let requirement =
+            format!("=anchor apple generic and certificate leaf[subject.OU] = \\\"{team_id}\\\"");
+        let identity_valid = bounded_command(
             Path::new("/usr/bin/codesign"),
             &[
                 "--verify",
                 "--strict",
-                path.to_str().ok_or("ERR_SIDECAR_SIGNATURE_FAILED")?,
+                "--requirements",
+                &requirement,
+                sidecar,
             ],
         )
         .is_ok_and(|(success, _)| success);
-        return platform_trust_decision(
-            signature_valid,
-            env!("CARGO_PKG_VERSION").contains('-'),
-            || verify_sidecar_checksum(path, actual),
-        );
+        return enforce_platform_trust(checksum, signature_valid, identity_valid, false);
     }
     #[cfg(target_os = "windows")]
     {
+        if prerelease {
+            return enforce_platform_trust(checksum, true, true, true);
+        }
+        let Some(expected_publisher) = option_env!("INFIMOUNT_EXPECTED_WINDOWS_PUBLISHER")
+            .filter(|value| !value.trim().is_empty())
+        else {
+            return Err("ERR_SIDECAR_PUBLISHER_MISSING");
+        };
         let escaped = path.to_string_lossy().replace('\'', "''");
-        let command = format!(
+        let signature_command = format!(
             "$s=Get-AuthenticodeSignature -LiteralPath '{}'; if ($s.Status -ne 'Valid') {{ exit 1 }}",
             escaped
         );
         let signature_valid = bounded_command(
             Path::new("powershell.exe"),
-            &["-NoProfile", "-NonInteractive", "-Command", &command],
+            &[
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &signature_command,
+            ],
         )
         .is_ok_and(|(success, _)| success);
-        return platform_trust_decision(
-            signature_valid,
-            env!("CARGO_PKG_VERSION").contains('-'),
-            || verify_sidecar_checksum(path, actual),
+        let publisher = expected_publisher.replace('\'', "''");
+        let identity_command = format!(
+            "$s=Get-AuthenticodeSignature -LiteralPath '{}'; if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Thumbprint -ne '{}') {{ exit 1 }}",
+            escaped, publisher
         );
+        let identity_valid = bounded_command(
+            Path::new("powershell.exe"),
+            &[
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &identity_command,
+            ],
+        )
+        .is_ok_and(|(success, _)| success);
+        return enforce_platform_trust(checksum, signature_valid, identity_valid, false);
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        verify_sidecar_checksum(path, actual)
+        checksum
     }
 }
 
@@ -411,6 +455,10 @@ fn locate_same_version_sidecar_from_roots(
             continue;
         }
         saw_executable = true;
+        // Verify package digest and platform trust before invoking even --version.
+        let path = std::fs::canonicalize(path).map_err(|_| "ERR_SIDECAR_NOT_FOUND")?;
+        let sha256 = sidecar_sha256(&path)?;
+        let checksum_verified = verify_platform_trust(&path, &sha256)?;
         match bounded_command(&path, &["--version"]) {
             Ok((true, output)) => {
                 let version = output
@@ -418,9 +466,6 @@ fn locate_same_version_sidecar_from_roots(
                     .map(str::trim)
                     .filter(|value| !value.is_empty());
                 if version == Some(expected_version) {
-                    let path = std::fs::canonicalize(path).map_err(|_| "ERR_SIDECAR_NOT_FOUND")?;
-                    let sha256 = sidecar_sha256(&path)?;
-                    let checksum_verified = verify_platform_trust(&path, &sha256)?;
                     return Ok(LocatedSidecar {
                         path,
                         version: expected_version.to_string(),
@@ -490,6 +535,9 @@ pub(crate) fn verified_sidecar_path() -> Result<PathBuf, &'static str> {
             Some("ERR_SIDECAR_CHECKSUM_MISMATCH") => "ERR_SIDECAR_CHECKSUM_MISMATCH",
             Some("ERR_SIDECAR_CHECKSUM_FAILED") => "ERR_SIDECAR_CHECKSUM_FAILED",
             Some("ERR_SIDECAR_SIGNATURE_FAILED") => "ERR_SIDECAR_SIGNATURE_FAILED",
+            Some("ERR_SIDECAR_TEAM_ID_MISSING") => "ERR_SIDECAR_TEAM_ID_MISSING",
+            Some("ERR_SIDECAR_PUBLISHER_MISSING") => "ERR_SIDECAR_PUBLISHER_MISSING",
+            Some("ERR_SIDECAR_PUBLISHER_MISMATCH") => "ERR_SIDECAR_PUBLISHER_MISMATCH",
             Some("ERR_SIDECAR_UNTRUSTED_PATH") => "ERR_SIDECAR_UNTRUSTED_PATH",
             Some("ERR_SIDECAR_TIMEOUT") => "ERR_SIDECAR_TIMEOUT",
             _ => "ERR_SIDECAR_EXECUTION_FAILED",
@@ -1030,20 +1078,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn platform_trust_requires_signatures_for_stable_and_packaged_checksum_for_unsigned_rc() {
-        let signed = platform_trust_decision(true, false, || {
-            panic!("signed binaries must not depend on checksum fallback")
-        });
-        assert!(!signed.unwrap());
-
-        let stable = platform_trust_decision(false, false, || Ok(true));
-        assert_eq!(stable.unwrap_err(), "ERR_SIDECAR_SIGNATURE_FAILED");
-
-        let unsigned_rc = platform_trust_decision(false, true, || Ok(true));
-        assert!(unsigned_rc.unwrap());
-        let tampered_rc =
-            platform_trust_decision(false, true, || Err("ERR_SIDECAR_CHECKSUM_MISMATCH"));
-        assert_eq!(tampered_rc.unwrap_err(), "ERR_SIDECAR_CHECKSUM_MISMATCH");
+    fn platform_trust_requires_checksum_then_signature_and_identity_for_stable() {
+        assert!(enforce_platform_trust(Ok(true), true, true, false).unwrap());
+        assert_eq!(
+            enforce_platform_trust(Err("ERR_SIDECAR_CHECKSUM_MISMATCH"), true, true, false)
+                .unwrap_err(),
+            "ERR_SIDECAR_CHECKSUM_MISMATCH"
+        );
+        assert_eq!(
+            enforce_platform_trust(Ok(true), false, true, false).unwrap_err(),
+            "ERR_SIDECAR_SIGNATURE_FAILED"
+        );
+        assert_eq!(
+            enforce_platform_trust(Ok(true), true, false, false).unwrap_err(),
+            "ERR_SIDECAR_PUBLISHER_MISMATCH"
+        );
+        assert!(enforce_platform_trust(Ok(true), false, false, true).unwrap());
     }
 
     #[test]
@@ -1082,7 +1132,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let temp = tempfile::tempdir().expect("temp dir");
-        let path = temp.path().join("mcp");
+        let path = temp.path().join("mcp-test-target");
         std::fs::write(&path, "#!/bin/sh\necho 'infimount_mcp 0.0.0'\n")
             .expect("write sidecar fixture");
         assert_eq!(
@@ -1092,10 +1142,49 @@ mod tests {
         let mut permissions = std::fs::metadata(&path).unwrap().permissions();
         permissions.set_mode(0o700);
         std::fs::set_permissions(&path, permissions).unwrap();
+        let digest = sidecar_sha256(&path).unwrap();
+        std::fs::write(
+            format!("{}.sha256", path.display()),
+            format!("{digest}  mcp\n"),
+        )
+        .unwrap();
         assert_eq!(
             locate_same_version_sidecar_from(vec![path]).unwrap_err(),
             "ERR_SIDECAR_VERSION_MISMATCH"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_checksum_trust_does_not_execute_malicious_marker_fixture() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("temp dir");
+        let path = temp.path().join("mcp-test-target");
+        let marker = temp.path().join("executed");
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\nprintf executed > '{}'\nprintf 'infimount_mcp {}\\n'\n",
+                marker.display(),
+                env!("CARGO_PKG_VERSION")
+            ),
+        )
+        .expect("write malicious fixture");
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        std::fs::write(
+            format!("{}.sha256", path.display()),
+            format!("{}  mcp\n", "0".repeat(64)),
+        )
+        .unwrap();
+
+        assert_eq!(
+            locate_same_version_sidecar_from(vec![path]).unwrap_err(),
+            "ERR_SIDECAR_CHECKSUM_MISMATCH"
+        );
+        assert!(!marker.exists(), "untrusted sidecar was executed");
     }
 
     #[test]
