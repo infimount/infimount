@@ -979,6 +979,10 @@ pub async fn update_workspace(
 
     let mut policy_snapshot: Option<PolicySnapshot> = None;
     if let Some(access_mode) = new_access_mode {
+        if workspace.policy_rule_id.is_none() {
+            let storage = state.find_storage_by_id(&workspace.storage_id)?;
+            workspace.policy_rule_id = Some(resolve_legacy_policy_rule_id(&storage, &workspace));
+        }
         let mut mutations = Vec::new();
         apply_workspace_policy_rule(
             &state.registry,
@@ -1940,6 +1944,7 @@ mod tests {
     use super::*;
     use infimount_core::workspaces::WorkspaceRegistry;
     use infimount_mcp::registry::{StorageRecord, StorageRegistry};
+    use infimount_mcp::McpStoragePolicy;
     use std::sync::Arc;
     use tempfile::tempdir;
 
@@ -2176,6 +2181,58 @@ mod tests {
             }
         });
         assert!(!manifest_matches_workspace(&mismatched, &workspace));
+    }
+
+    #[test]
+    fn v071_fixture_migration_adopts_exact_manual_rule_identity() {
+        let workspaces: Vec<WorkspaceRecord> = serde_json::from_str(include_str!(
+            "../../../../../tests/fixtures/v0.7.1/workspaces-localstorage.json"
+        ))
+        .unwrap();
+        let manifest: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../../tests/fixtures/v0.7.1/workspace-manifest.json"
+        ))
+        .unwrap();
+        let policy: McpStoragePolicy = serde_json::from_str(include_str!(
+            "../../../../../tests/fixtures/v0.7.1/storage-policy-legacy.json"
+        ))
+        .unwrap();
+        let workspace = &workspaces[0];
+        assert!(manifest_matches_workspace(&manifest, workspace));
+        let mut storage = StorageRecord::new(
+            "Fixture storage".into(),
+            "local".into(),
+            serde_json::json!({"root": "/tmp"}),
+        );
+        storage.id = workspace.storage_id.clone();
+        storage.mcp_policy = policy;
+        assert_eq!(
+            resolve_legacy_policy_rule_id(
+                &storage,
+                &WorkspaceRecord {
+                    policy_rule_id: None,
+                    ..workspace.clone()
+                }
+            ),
+            "legacy-allowed-workspace"
+        );
+    }
+
+    #[test]
+    fn unscoped_workspace_update_can_bind_an_exact_policy_rule_id() {
+        let storage = StorageRecord::new(
+            "Workspace storage".into(),
+            "local".into(),
+            serde_json::json!({"root": "/tmp"}),
+        );
+        let workspace = WorkspaceRecord {
+            policy_rule_id: None,
+            ..make_workspace_record("legacy", &storage.id, "/workspace")
+        };
+        assert_eq!(
+            resolve_legacy_policy_rule_id(&storage, &workspace),
+            "workspace:legacy"
+        );
     }
 
     #[test]

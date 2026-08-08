@@ -38,6 +38,10 @@ const legacyWorkspace = legacyWorkspaces[0];
 if (legacyPolicy.version !== 1 || !legacyPolicy.allowed_paths.includes(legacyWorkspace.rootPath.replace(/^\//, ""))) {
   throw new Error("v0.7.1 fixture must contain a legacy allowed_paths policy for the workspace");
 }
+const adoptedRule = legacyPolicy.rules.find(
+  (rule) => rule.source?.kind === "manual" && rule.prefix === legacyWorkspace.rootPath.replace(/^\//, ""),
+);
+if (!adoptedRule) throw new Error("v0.7.1 fixture must contain an adoptable migrated manual rule");
 if (legacyManifest.workspace.id !== legacyWorkspace.id || legacyManifest.workspace.rootPath !== legacyWorkspace.rootPath) {
   throw new Error("v0.7.1 workspace manifest does not match localStorage identity");
 }

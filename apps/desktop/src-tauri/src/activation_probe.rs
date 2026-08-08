@@ -489,6 +489,15 @@ fn locate_same_version_sidecar_from_roots(
     }
 }
 
+fn revalidate_sidecar(path: &Path, expected_sha256: &str) -> Result<(), &'static str> {
+    let actual_sha256 = sidecar_sha256(path)?;
+    if actual_sha256 != expected_sha256 {
+        return Err("ERR_SIDECAR_CHECKSUM_MISMATCH");
+    }
+    verify_platform_trust(path, &actual_sha256)?;
+    Ok(())
+}
+
 fn validate_and_locate_sidecar() -> Result<LocatedSidecar, SidecarValidation> {
     let located = locate_same_version_sidecar().map_err(|code| SidecarValidation {
         binary_found: code != "ERR_SIDECAR_NOT_FOUND",
@@ -498,6 +507,17 @@ fn validate_and_locate_sidecar() -> Result<LocatedSidecar, SidecarValidation> {
         version_match: false,
         doctor_healthy: false,
         sha256: None,
+        checksum_verified: false,
+        error_code: Some(code.to_string()),
+    })?;
+    revalidate_sidecar(&located.path, &located.sha256).map_err(|code| SidecarValidation {
+        binary_found: true,
+        executable: true,
+        canonical_path: Some(located.path.to_string_lossy().to_string()),
+        version: Some(located.version.clone()),
+        version_match: true,
+        doctor_healthy: false,
+        sha256: Some(located.sha256.clone()),
         checksum_verified: false,
         error_code: Some(code.to_string()),
     })?;
@@ -700,9 +720,11 @@ pub async fn run_activation_probe(
             select_probe_target(&registry),
         ) {
             (Ok(located), Ok(target)) => tokio::time::timeout(TOTAL_PROBE_TIMEOUT, async move {
-                tokio::task::spawn_blocking(move || run_sidecar_probe(&located.path, &target))
-                    .await
-                    .map_err(|_| "ERR_ACTIVATION_PROBE_FAILED")?
+                tokio::task::spawn_blocking(move || {
+                    run_sidecar_probe(&located.path, &located.sha256, &target)
+                })
+                .await
+                .map_err(|_| "ERR_ACTIVATION_PROBE_FAILED")?
             })
             .await
             .map_err(|_| "ERR_ACTIVATION_TIMEOUT")
@@ -759,7 +781,12 @@ pub async fn run_activation_probe(
     }
 }
 
-fn run_sidecar_probe(path: &Path, target: &ProbeTarget) -> Result<(), &'static str> {
+fn run_sidecar_probe(
+    path: &Path,
+    expected_sha256: &str,
+    target: &ProbeTarget,
+) -> Result<(), &'static str> {
+    revalidate_sidecar(path, expected_sha256)?;
     let mut command = Command::new(path);
     command
         .args(["serve", "--transport", "stdio"])
@@ -1315,7 +1342,8 @@ mod tests {
         assert!(is_executable_file(&binary));
         let fixture = create_demo_fixture();
         let target = select_probe_target(&fixture.registry).expect("valid activation target");
-        run_sidecar_probe(&binary, &target).expect("complete stdio activation proof");
+        let digest = sidecar_sha256(&binary).unwrap();
+        run_sidecar_probe(&binary, &digest, &target).expect("complete stdio activation proof");
     }
 
     struct DemoFixture {

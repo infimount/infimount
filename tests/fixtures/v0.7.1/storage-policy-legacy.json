@@ -1,7 +1,12 @@
 {
   "version": 1,
   "default_access": "read_only",
-  "rules": [],
+  "rules": [{
+    "id": "legacy-allowed-workspace",
+    "prefix": "workspace",
+    "access": "read_only",
+    "source": {"kind": "manual"}
+  }],
   "denied_paths": [],
   "confirmation_rules": {
     "require_for_write": true,
