@@ -1410,6 +1410,19 @@ fn validate_restore_relationships(
             .ok_or_else(|| malformed("backup workspace has an invalid access profile"))?;
         let expected_prefix = normalize_policy_path(&workspace.root_path)
             .map_err(|_| malformed("backup workspace has an invalid root path"))?;
+        for other in workspaces
+            .iter()
+            .filter(|other| other.id != workspace.id && other.storage_id == workspace.storage_id)
+        {
+            let other_prefix = normalize_policy_path(&other.root_path)
+                .map_err(|_| malformed("backup workspace has an invalid root path"))?;
+            if expected_prefix == other_prefix
+                || expected_prefix.starts_with(&format!("{other_prefix}/"))
+                || other_prefix.starts_with(&format!("{expected_prefix}/"))
+            {
+                return Err(malformed("backup contains overlapping workspace roots"));
+            }
+        }
         match workspace.policy_rule_id.as_deref() {
             Some(rule_id) => {
                 let rule = storage
@@ -1862,6 +1875,24 @@ mod tests {
                 confirmation_rules: None,
             });
         (storage, workspace)
+    }
+
+    #[test]
+    fn strict_validation_rejects_overlapping_workspace_roots() {
+        let (storage, workspace) = workspace_bound_restore_fixture();
+        let nested = WorkspaceRecord {
+            id: "workspace-2".into(),
+            root_path: "workspace/nested".into(),
+            policy_rule_id: Some("workspace:workspace-2".into()),
+            ..workspace.clone()
+        };
+        assert!(validate_effective_restore_relationships(
+            std::slice::from_ref(&storage),
+            Some(&[workspace, nested]),
+            &[],
+            true,
+        )
+        .is_err());
     }
 
     #[test]

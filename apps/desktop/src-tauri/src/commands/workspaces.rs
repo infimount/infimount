@@ -565,6 +565,22 @@ fn validate_workspace_root(raw: &str) -> McpResult<String> {
     Ok(normalized)
 }
 
+fn resolve_legacy_policy_rule_id(storage: &StorageRecord, workspace: &WorkspaceRecord) -> String {
+    if let Some(rule_id) = workspace.policy_rule_id.as_deref() {
+        return rule_id.to_string();
+    }
+    storage
+        .mcp_policy
+        .rules
+        .iter()
+        .find(|rule| {
+            rule.prefix.trim_matches('/') == workspace.root_path.trim_matches('/')
+                && matches!(rule.source, McpRuleSource::Manual)
+        })
+        .map(|rule| rule.id.clone())
+        .unwrap_or_else(|| format!("workspace:{}", workspace.id))
+}
+
 fn apply_workspace_policy_rule(
     storage_registry: &StorageRegistry,
     storage_id: &str,
@@ -649,9 +665,8 @@ fn apply_workspace_policy_rule(
 fn remove_workspace_policy_rule(
     storage_registry: &StorageRegistry,
     storage_id: &str,
-    workspace_id: &str,
+    rule_id: &str,
 ) -> McpResult<PolicySnapshot> {
-    let rule_id = format!("workspace:{workspace_id}");
     let mut snapshot = None;
     storage_registry
         .with_locked_mutation(|storages: &mut Vec<StorageRecord>| {
@@ -1032,7 +1047,7 @@ pub async fn delete_workspace(state: State<'_, AppState>, id: String) -> Result<
         .clone()
         .unwrap_or_else(|| format!("workspace:{id}"));
     let policy_snapshot =
-        remove_workspace_policy_rule(&state.registry, &workspace.storage_id, &id)?;
+        remove_workspace_policy_rule(&state.registry, &workspace.storage_id, &rule_id)?;
 
     if let Err(error) = state.workspaces.delete(&id) {
         let rollback_error = restore_policy_rule(
@@ -1117,7 +1132,7 @@ pub async fn delete_workspace_with_files(
         .clone()
         .unwrap_or_else(|| format!("workspace:{}", workspace.id));
     let policy_snapshot =
-        remove_workspace_policy_rule(&state.registry, &workspace.storage_id, &workspace.id)?;
+        remove_workspace_policy_rule(&state.registry, &workspace.storage_id, &rule_id)?;
     if let Err(error) = state.workspaces.delete(&workspace.id) {
         let rollback_error = restore_policy_rule(
             &state.registry,
@@ -1237,8 +1252,8 @@ pub async fn import_legacy_workspaces(
             ));
         }
         workspace.schema_version = WORKSPACE_RECORD_SCHEMA_VERSION;
-        workspace.policy_rule_id = Some(format!("workspace:{}", workspace.id));
         workspace.memory_files = memory_files_for(&workspace.template_id);
+        workspace.policy_rule_id = Some(resolve_legacy_policy_rule_id(&storage, &workspace));
         validate_workspace_metadata(&workspace).map_err(|e| {
             err(
                 McpErrorCode::ERR_INVALID_PATH,
@@ -2163,6 +2178,35 @@ mod tests {
         assert!(!manifest_matches_workspace(&mismatched, &workspace));
     }
 
+    #[test]
+    fn legacy_workspace_adopts_manual_rule_and_preserves_prior_rule_id() {
+        let mut storage = StorageRecord::new(
+            "Workspace storage".into(),
+            "local".into(),
+            serde_json::json!({"root": "/tmp"}),
+        );
+        storage.mcp_policy.rules.push(McpPathRule {
+            id: "migrated-0".into(),
+            prefix: "workspace".into(),
+            access: McpAccessMode::ReadOnly,
+            source: McpRuleSource::Manual,
+            confirmation_rules: None,
+        });
+        let workspace = WorkspaceRecord {
+            policy_rule_id: None,
+            ..make_workspace_record("legacy", &storage.id, "/workspace")
+        };
+        assert_eq!(
+            resolve_legacy_policy_rule_id(&storage, &workspace),
+            "migrated-0"
+        );
+        let prior = WorkspaceRecord {
+            policy_rule_id: Some("ws:legacy".into()),
+            ..workspace
+        };
+        assert_eq!(resolve_legacy_policy_rule_id(&storage, &prior), "ws:legacy");
+    }
+
     #[tokio::test]
     async fn test_policy_rule_applied_and_removed() {
         let temp_config = tempdir().unwrap();
@@ -2171,7 +2215,10 @@ mod tests {
         let storage_id = create_test_storage(&storage_registry, &temp_storage);
 
         let ws_id = "ws-policy-test";
-        let ws = make_workspace_record(ws_id, &storage_id, "/policy-test");
+        let ws = WorkspaceRecord {
+            policy_rule_id: Some("ws:ws-policy-test".into()),
+            ..make_workspace_record(ws_id, &storage_id, "/policy-test")
+        };
 
         let mut mutations = Vec::new();
         apply_workspace_policy_rule(
@@ -2186,11 +2233,15 @@ mod tests {
         let storages = storage_registry.load_all().unwrap();
         let storage = storages.iter().find(|s| s.id == storage_id).unwrap();
         assert_eq!(storage.mcp_policy.rules.len(), 1);
-        assert_eq!(storage.mcp_policy.rules[0].id, "workspace:ws-policy-test");
+        assert_eq!(storage.mcp_policy.rules[0].id, "ws:ws-policy-test");
         assert_eq!(storage.revision, 2);
 
-        remove_workspace_policy_rule(&storage_registry, &storage_id, ws_id)
-            .expect("remove policy rule");
+        remove_workspace_policy_rule(
+            &storage_registry,
+            &storage_id,
+            ws.policy_rule_id.as_deref().unwrap(),
+        )
+        .expect("remove policy rule");
 
         let storages = storage_registry.load_all().unwrap();
         let storage = storages.iter().find(|s| s.id == storage_id).unwrap();

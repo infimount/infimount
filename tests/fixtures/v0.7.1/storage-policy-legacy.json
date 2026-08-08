@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "default_access": "read_only",
+  "rules": [],
+  "denied_paths": [],
+  "confirmation_rules": {
+    "require_for_write": true,
+    "require_for_overwrite": true,
+    "require_for_delete": true,
+    "require_for_version_delete": true,
+    "require_for_presign": true,
+    "require_for_cross_storage_copy": true
+  },
+  "allowed_paths": ["workspace"]
+}
