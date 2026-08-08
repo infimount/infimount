@@ -932,10 +932,24 @@ async fn import_readback_failure_restores_registry_and_keeps_preview_recoverable
 }
 
 #[test]
+fn import_race_child() {
+    let Some(path) = std::env::var_os("INFIMOUNT_IMPORT_RACE_PATH") else {
+        return;
+    };
+    let registry = crate::registry::StorageRegistry::with_secret_store(
+        Some(path.into()),
+        std::sync::Arc::new(infimount_core::secrets::MemorySecretStore::new()),
+    );
+    let mut current = registry.load_all().unwrap();
+    current[0].name = "Later process mutation".to_string();
+    current[0].revision += 1;
+    registry.save_all_atomic(&current).unwrap();
+}
+
+#[test]
 fn conditional_import_rollback_preserves_later_process_mutation() {
     let dir = TempDir::new().unwrap();
     let first = registry_in(&dir);
-    let second = registry_in(&dir);
     let original = crate::registry::StorageRecord::new(
         "Original".to_string(),
         "local".to_string(),
@@ -947,33 +961,30 @@ fn conditional_import_rollback_preserves_later_process_mutation() {
     let mut imported = original.clone();
     imported.name = "Imported".to_string();
     imported.revision += 1;
-    let mut later = imported.clone();
-    later.name = "Later process mutation".to_string();
-    later.revision += 1;
     first
         .save_all_atomic_if_unchanged(
             std::slice::from_ref(&original),
             std::slice::from_ref(&imported),
         )
         .unwrap();
-    let later_name = later.name.clone();
-    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
-    let writer_barrier = barrier.clone();
-    let writer = std::thread::spawn(move || {
-        writer_barrier.wait();
-        second
-            .save_all_atomic(std::slice::from_ref(&later))
-            .unwrap();
-    });
-    barrier.wait();
-    writer.join().unwrap();
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg("tools_storage::tests::import_race_child")
+        .arg("--nocapture")
+        .env("INFIMOUNT_IMPORT_RACE_PATH", first.path())
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "later-process mutation child failed: {status}"
+    );
     assert!(!first
         .restore_all_if_matches(
             std::slice::from_ref(&imported),
             std::slice::from_ref(&original)
         )
         .unwrap());
-    assert_eq!(first.load_all().unwrap()[0].name, later_name);
+    assert_eq!(first.load_all().unwrap()[0].name, "Later process mutation");
 }
 
 #[tokio::test]
