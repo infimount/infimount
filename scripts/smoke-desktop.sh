@@ -41,25 +41,15 @@ if [ ! -x "$DESKTOP_BIN" ]; then
   exit 1
 fi
 
-if command -v dbus-run-session >/dev/null 2>&1 && command -v gnome-keyring-daemon >/dev/null 2>&1; then
-  # Keep the desktop smoke on the same native-secret-store path as a real
-  # Linux session; otherwise AppState intentionally enters restricted recovery.
-  timeout 60s env \
-    HOME="$TMP_HOME" \
-    XDG_CONFIG_HOME="$TMP_HOME/.config" \
-    CARGO_HOME="$CARGO_HOME_PATH" \
-    RUSTUP_HOME="$RUSTUP_HOME_PATH" \
-    dbus-run-session -- bash -c \
-      'eval "$(gnome-keyring-daemon --start --components=secrets)"; exec xvfb-run -a "$@"' \
-      -- "$DESKTOP_BIN" >/tmp/infimount-smoke.log 2>&1 || true
-else
-  timeout 60s xvfb-run -a env \
-    HOME="$TMP_HOME" \
-    XDG_CONFIG_HOME="$TMP_HOME/.config" \
-    CARGO_HOME="$CARGO_HOME_PATH" \
-    RUSTUP_HOME="$RUSTUP_HOME_PATH" \
-    "$DESKTOP_BIN" >/tmp/infimount-smoke.log 2>&1 || true
-fi
+# Keep the desktop smoke on the same native-secret-store path as a real
+# Linux session; the gnome-keyring package makes the Secret Service backend
+# available without weakening AppState's restricted-recovery behavior.
+timeout 60s xvfb-run -a env \
+  HOME="$TMP_HOME" \
+  XDG_CONFIG_HOME="$TMP_HOME/.config" \
+  CARGO_HOME="$CARGO_HOME_PATH" \
+  RUSTUP_HOME="$RUSTUP_HOME_PATH" \
+  "$DESKTOP_BIN" >/tmp/infimount-smoke.log 2>&1 || true
 
 STORAGES_FILE="$TMP_HOME/.infimount/storages.json"
 
