@@ -9,12 +9,6 @@ on:
         required: true
         default: 0.8.0-rc.1
         type: string
-      build_real_artifacts:
-        description: Build native artifacts when toolchains are available
-        required: true
-        default: false
-        type: boolean
-
 permissions:
   contents: read
 
@@ -78,7 +72,8 @@ jobs:
               & $signtool.Source sign /fd SHA256 /a /sha1 $cert.Thumbprint $file
               & $signtool.Source verify /pa $file
               Add-Content -Path $file -Value 'tamper'
-              if ((& $signtool.Source verify /pa $file 2>&1) -eq $null) { throw 'tampered file unexpectedly verified' }
+              & $signtool.Source verify /pa $file *> $null
+              if ($LASTEXITCODE -eq 0) { throw 'tampered file unexpectedly verified' }
             }
           } finally { Remove-Item "Cert:\CurrentUser\My\$($cert.Thumbprint)" -Force -ErrorAction SilentlyContinue; Remove-Item $file -Force -ErrorAction SilentlyContinue }
           Write-Host 'Self-signed local integrity only; trusted Authenticode and SmartScreen are intentionally not asserted.'

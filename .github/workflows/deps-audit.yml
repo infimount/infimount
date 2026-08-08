@@ -1,6 +1,10 @@
 name: Dependency Audit
 
 on:
+  pull_request:
+  push:
+    tags:
+      - 'v*'
   schedule:
     - cron: "0 4 * * 1"
   workflow_dispatch:
@@ -21,11 +25,15 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
+      - name: Verify documented rsa exception dependency tree
+        run: |
+          set -euo pipefail
+          cargo tree --workspace --invert rsa@0.9.10 | tee /tmp/rsa-tree.txt
+          grep -Fq 'rsa v0.9.10' /tmp/rsa-tree.txt
+          grep -Fq 'reqsign-azure-storage v3.2.0' /tmp/rsa-tree.txt
       - name: Run cargo audit
-        # RUSTSEC-2023-0071 has no fixed rsa release. It is only pulled by
-        # reqsign's optional Azure client-certificate/JWT support, which
-        # Infimount does not enable or expose. Keep this exact exception
-        # visible and re-evaluate it when RustSec publishes a fix.
+        # RUSTSEC-2023-0071 has no fixed rsa release. Keep this exact exception
+        # visible and re-evaluate it when a fixed `rsa` release is available.
         run: cargo audit --ignore RUSTSEC-2023-0071
 
   js-audit:
