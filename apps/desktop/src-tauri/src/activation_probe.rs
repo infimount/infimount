@@ -337,14 +337,20 @@ fn enforce_platform_trust(
     Ok(true)
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn official_signed_build() -> bool {
+    option_env!("INFIMOUNT_OFFICIAL_SIGNED_BUILD") == Some("1")
+}
+
 fn verify_platform_trust(path: &Path, actual: &str) -> Result<bool, &'static str> {
     let checksum = verify_sidecar_checksum(path, actual);
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    let prerelease = env!("CARGO_PKG_VERSION").contains('-');
     #[cfg(target_os = "macos")]
     {
-        if prerelease {
-            return enforce_platform_trust(checksum, true, true, true);
+        if !official_signed_build() {
+            // Local/source builds and explicitly unsigned prereleases use the
+            // digest resource. Only release jobs embedding the official build
+            // identity may rely on platform signature trust.
+            return checksum;
         }
         let Some(team_id) = option_env!("INFIMOUNT_EXPECTED_APPLE_TEAM_ID")
             .filter(|value| !value.trim().is_empty())
@@ -377,8 +383,8 @@ fn verify_platform_trust(path: &Path, actual: &str) -> Result<bool, &'static str
     }
     #[cfg(target_os = "windows")]
     {
-        if prerelease {
-            return enforce_platform_trust(checksum, true, true, true);
+        if !official_signed_build() {
+            return checksum;
         }
         let Some(expected_publisher) = option_env!("INFIMOUNT_EXPECTED_WINDOWS_PUBLISHER")
             .filter(|value| !value.trim().is_empty())

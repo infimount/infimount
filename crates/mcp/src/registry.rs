@@ -23,13 +23,35 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 const REGISTRY_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
+const MAX_IMPORT_JOURNAL_BYTES: usize = 2 * 1024 * 1024;
 pub const STORAGE_RECORD_SCHEMA_VERSION: u32 = 2;
 pub const IMPORT_JOURNAL_VERSION: u32 = 1;
 
+fn valid_import_secret_account(account: &str) -> bool {
+    let parts = account.split('/').collect::<Vec<_>>();
+    account.starts_with("storage/")
+        && (parts.len() == 2 || (parts.len() == 4 && parts[2] == "import"))
+        && parts.iter().skip(1).all(|part| {
+            !part.is_empty()
+                && part.len() <= 128
+                && part
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+        })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportTransactionState {
+    Staging,
+    Committed,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ImportTransactionJournal {
     pub version: u32,
-    pub state: String,
+    pub state: ImportTransactionState,
     pub original_present: bool,
     pub original_bytes: Vec<u8>,
     pub replacement_bytes: Vec<u8>,
@@ -124,7 +146,18 @@ impl StorageRecord {
 pub struct StorageRegistry {
     path: PathBuf,
     lock_path: PathBuf,
+    transaction_lock_path: PathBuf,
     secret_store: Arc<dyn SecretStore>,
+}
+
+pub struct ConfigurationTransaction {
+    file: std::fs::File,
+}
+
+impl Drop for ConfigurationTransaction {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.file);
+    }
 }
 
 impl StorageRegistry {
@@ -135,9 +168,14 @@ impl StorageRegistry {
     pub fn with_secret_store(path: Option<PathBuf>, secret_store: Arc<dyn SecretStore>) -> Self {
         let path = path.unwrap_or_else(default_registry_path);
         let lock_path = path.with_extension("lock");
+        let transaction_lock_path = path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("configuration-transaction.lock");
         Self {
             path,
             lock_path,
+            transaction_lock_path,
             secret_store,
         }
     }
@@ -148,6 +186,30 @@ impl StorageRegistry {
 
     pub fn secret_store(&self) -> &Arc<dyn SecretStore> {
         &self.secret_store
+    }
+
+    pub fn acquire_configuration_transaction(&self) -> McpResult<ConfigurationTransaction> {
+        ensure_parent(&self.transaction_lock_path).map_err(|error| map_core_error(&error))?;
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&self.transaction_lock_path)
+            .map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))?;
+        let start = Instant::now();
+        loop {
+            match file.try_lock_exclusive() {
+                Ok(()) => return Ok(ConfigurationTransaction { file }),
+                Err(_) if start.elapsed() >= REGISTRY_LOCK_TIMEOUT => {
+                    return Err(err(
+                        McpErrorCode::ERR_REGISTRY_LOCK_TIMEOUT,
+                        "timed out acquiring configuration transaction lock",
+                    ));
+                }
+                Err(_) => thread::sleep(Duration::from_millis(50)),
+            }
+        }
     }
 
     pub fn registry_bytes(&self) -> McpResult<(bool, Vec<u8>)> {
@@ -188,6 +250,11 @@ impl StorageRegistry {
     }
 
     pub fn recover_pending_imports(&self) -> McpResult<()> {
+        let _transaction = self.acquire_configuration_transaction()?;
+        self.recover_pending_imports_locked()
+    }
+
+    fn recover_pending_imports_locked(&self) -> McpResult<()> {
         let Some(parent) = self.path.parent() else {
             return Ok(());
         };
@@ -211,6 +278,12 @@ impl StorageRegistry {
         for journal_path in journals {
             let bytes = fs::read(&journal_path)
                 .map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))?;
+            if bytes.len() > MAX_IMPORT_JOURNAL_BYTES {
+                return Err(err(
+                    McpErrorCode::ERR_INTERNAL,
+                    "pending import journal exceeds the recovery size limit",
+                ));
+            }
             let journal: ImportTransactionJournal =
                 serde_json::from_slice(&bytes).map_err(|_| {
                     err(
@@ -219,8 +292,36 @@ impl StorageRegistry {
                     )
                 })?;
             if journal.version != IMPORT_JOURNAL_VERSION
-                || !matches!(journal.state.as_str(), "staging" | "committed")
-                || (journal.state == "committed" && journal.replacement_bytes.is_empty())
+                || (journal.state == ImportTransactionState::Committed
+                    && journal.replacement_bytes.is_empty())
+                || journal.original_bytes.len() > 16 * 1024 * 1024
+                || journal.replacement_bytes.len() > 16 * 1024 * 1024
+                || journal.staged_secret_accounts.len() > 1024
+                || journal.obsolete_secret_accounts.len() > 1024
+                || journal.staged_secret_accounts.iter().any(|account| {
+                    !valid_import_secret_account(account)
+                        || account.split('/').nth(2) != Some("import")
+                })
+                || journal
+                    .obsolete_secret_accounts
+                    .iter()
+                    .any(|account| !valid_import_secret_account(account))
+                || journal.staged_secret_accounts.iter().any(|account| {
+                    journal
+                        .staged_secret_accounts
+                        .iter()
+                        .filter(|other| *other == account)
+                        .count()
+                        > 1
+                })
+                || journal.obsolete_secret_accounts.iter().any(|account| {
+                    journal
+                        .obsolete_secret_accounts
+                        .iter()
+                        .filter(|other| *other == account)
+                        .count()
+                        > 1
+                })
             {
                 return Err(err(
                     McpErrorCode::ERR_INTERNAL,
@@ -237,28 +338,97 @@ impl StorageRegistry {
                 };
                 let is_original = current_present == journal.original_present
                     && current == journal.original_bytes;
+                let is_committed = journal.state == ImportTransactionState::Committed;
                 let is_replacement = current == journal.replacement_bytes;
-                if !is_original && !is_replacement {
+                if !is_committed && !is_original && !is_replacement {
                     return Err(err(
                         McpErrorCode::ERR_INTERNAL,
                         "pending import recovery found an unexpected registry state",
                     ));
                 }
-                let active = if is_replacement {
-                    serde_json::from_slice::<Vec<StorageRecord>>(&current)
+                if is_committed && !current_present {
+                    return Err(err(
+                        McpErrorCode::ERR_INTERNAL,
+                        "committed import registry is missing",
+                    ));
+                }
+                let current_records = if current_present {
+                    serde_json::from_slice::<Vec<StorageRecord>>(&current).map_err(|_| {
+                        err(
+                            McpErrorCode::ERR_INTERNAL,
+                            "pending import registry is invalid",
+                        )
+                    })?
+                } else {
+                    Vec::new()
+                };
+                if is_committed
+                    && journal.obsolete_secret_accounts.iter().any(|account| {
+                        journal
+                            .staged_secret_accounts
+                            .iter()
+                            .any(|staged| staged == account)
+                    })
+                {
+                    return Err(err(
+                        McpErrorCode::ERR_INTERNAL,
+                        "pending import journal contains overlapping secret transitions",
+                    ));
+                }
+                let original_records = if journal.original_present {
+                    serde_json::from_slice::<Vec<StorageRecord>>(&journal.original_bytes).map_err(
+                        |_| {
+                            err(
+                                McpErrorCode::ERR_INTERNAL,
+                                "original import registry is invalid",
+                            )
+                        },
+                    )?
+                } else {
+                    Vec::new()
+                };
+                let replacement_records = if journal.replacement_bytes.is_empty() {
+                    Vec::new()
+                } else {
+                    serde_json::from_slice::<Vec<StorageRecord>>(&journal.replacement_bytes)
                         .map_err(|_| {
                             err(
                                 McpErrorCode::ERR_INTERNAL,
-                                "committed import registry is invalid",
+                                "replacement import registry is invalid",
                             )
                         })?
+                };
+                let original_refs = original_records
+                    .iter()
+                    .filter_map(|record| record.secret_ref.as_deref())
+                    .collect::<std::collections::HashSet<_>>();
+                let replacement_refs = replacement_records
+                    .iter()
+                    .filter_map(|record| record.secret_ref.as_deref())
+                    .collect::<std::collections::HashSet<_>>();
+                if !journal.replacement_bytes.is_empty()
+                    && (journal.staged_secret_accounts.iter().any(|account| {
+                        !replacement_refs.contains(account.as_str())
+                            || original_refs.contains(account.as_str())
+                    }) || journal.obsolete_secret_accounts.iter().any(|account| {
+                        !original_refs.contains(account.as_str())
+                            || replacement_refs.contains(account.as_str())
+                    }))
+                {
+                    return Err(err(
+                        McpErrorCode::ERR_INTERNAL,
+                        "pending import journal contains invalid secret transitions",
+                    ));
+                }
+                let active = if is_committed || is_replacement {
+                    current_records
                         .into_iter()
                         .filter_map(|record| record.secret_ref)
                         .collect::<std::collections::HashSet<_>>()
                 } else {
                     std::collections::HashSet::new()
                 };
-                let accounts = if is_original {
+                let accounts = if !is_committed && is_original {
                     &journal.staged_secret_accounts
                 } else {
                     &journal.obsolete_secret_accounts
@@ -1084,22 +1254,101 @@ mod tests {
         let journal_path = registry.import_journal_path("recovery-test").unwrap();
         let journal = ImportTransactionJournal {
             version: IMPORT_JOURNAL_VERSION,
-            state: "staging".into(),
+            state: ImportTransactionState::Staging,
             original_present: false,
             original_bytes: Vec::new(),
-            replacement_bytes: b"[]".to_vec(),
-            staged_secret_accounts: vec!["storage/staged-secret".into()],
+            replacement_bytes: Vec::new(),
+            staged_secret_accounts: vec!["storage/staged-secret/import/uuid".into()],
             obsolete_secret_accounts: Vec::new(),
         };
         secrets
-            .put_json("storage/staged-secret", &json!({"token": "x"}))
+            .put_json("storage/staged-secret/import/uuid", &json!({"token": "x"}))
             .unwrap();
         registry
             .write_import_journal(&journal_path, &journal)
             .unwrap();
         registry.recover_pending_imports().unwrap();
-        assert!(secrets.get_json("storage/staged-secret").unwrap().is_none());
+        assert!(secrets
+            .get_json("storage/staged-secret/import/uuid")
+            .unwrap()
+            .is_none());
         assert!(!journal_path.exists());
+    }
+
+    #[test]
+    fn committed_import_journal_recovers_after_later_registry_edit() {
+        let dir = TempDir::new().unwrap();
+        let secrets = std::sync::Arc::new(infimount_core::secrets::MemorySecretStore::new());
+        let registry = StorageRegistry::with_secret_store(
+            Some(dir.path().join("storages.json")),
+            secrets.clone(),
+        );
+        let mut original = StorageRecord::new(
+            "Original".into(),
+            "local".into(),
+            json!({"root": "/tmp/original"}),
+        );
+        original.secret_ref = Some("storage/original".into());
+        secrets
+            .put_json("storage/original", &json!({"token": "x"}))
+            .unwrap();
+        registry.save_all_atomic(&[original.clone()]).unwrap();
+        let (_, original_bytes) = registry.registry_bytes().unwrap();
+        let mut replacement = original.clone();
+        replacement.secret_ref = None;
+        registry.save_all_atomic(&[replacement]).unwrap();
+        let (_, replacement_bytes) = registry.registry_bytes().unwrap();
+        let mut later = StorageRecord::new(
+            "Later edit".into(),
+            "local".into(),
+            json!({"root": "/tmp/later"}),
+        );
+        later.id = original.id.clone();
+        registry.save_all_atomic(&[later]).unwrap();
+        let journal_path = registry
+            .import_journal_path("committed-later-edit")
+            .unwrap();
+        registry
+            .write_import_journal(
+                &journal_path,
+                &ImportTransactionJournal {
+                    version: IMPORT_JOURNAL_VERSION,
+                    state: ImportTransactionState::Committed,
+                    original_present: true,
+                    original_bytes,
+                    replacement_bytes,
+                    staged_secret_accounts: Vec::new(),
+                    obsolete_secret_accounts: vec!["storage/original".into()],
+                },
+            )
+            .unwrap();
+        registry.recover_pending_imports().unwrap();
+        assert!(secrets.get_json("storage/original").unwrap().is_none());
+        assert!(!journal_path.exists());
+    }
+
+    #[test]
+    fn invalid_import_journal_cannot_delete_non_import_secret_accounts() {
+        let dir = TempDir::new().unwrap();
+        let registry = StorageRegistry::with_secret_store(
+            Some(dir.path().join("storages.json")),
+            std::sync::Arc::new(infimount_core::secrets::MemorySecretStore::new()),
+        );
+        let journal_path = registry.import_journal_path("invalid-account").unwrap();
+        let journal = ImportTransactionJournal {
+            version: IMPORT_JOURNAL_VERSION,
+            state: ImportTransactionState::Staging,
+            original_present: false,
+            original_bytes: Vec::new(),
+            replacement_bytes: b"[]".to_vec(),
+            staged_secret_accounts: vec!["storage/auth-token".into()],
+            obsolete_secret_accounts: Vec::new(),
+        };
+        registry
+            .write_import_journal(&journal_path, &journal)
+            .unwrap();
+        assert!(registry.recover_pending_imports().is_err());
+        assert!(journal_path.exists());
     }
 
     #[test]

@@ -13,7 +13,8 @@ use uuid::Uuid;
 use crate::errors::{err, err_with_details, McpErrorCode, McpResult};
 use crate::policy::{normalize_storage_policy, McpStoragePolicy};
 use crate::registry::{
-    ensure_unique_name, ImportTransactionJournal, StorageRecord, IMPORT_JOURNAL_VERSION,
+    ensure_unique_name, ImportTransactionJournal, ImportTransactionState, StorageRecord,
+    IMPORT_JOURNAL_VERSION,
 };
 use crate::tools_fs::FsToolsContext;
 
@@ -972,7 +973,7 @@ fn write_pending_import_journal(
     let path = registry.import_journal_path(&Uuid::new_v4().to_string())?;
     let journal = ImportTransactionJournal {
         version: IMPORT_JOURNAL_VERSION,
-        state: "staging".to_string(),
+        state: ImportTransactionState::Staging,
         original_present,
         original_bytes,
         replacement_bytes: Vec::new(),
@@ -1036,6 +1037,18 @@ pub async fn apply_storage_import(
 }
 
 pub async fn apply_storage_import_with_validator<F>(
+    ctx: &FsToolsContext,
+    input: ApplyStorageImportInput,
+    validate_result: F,
+) -> McpResult<ApplyStorageImportResult>
+where
+    F: FnOnce(&[StorageRecord]) -> McpResult<()>,
+{
+    let _transaction = ctx.registry.acquire_configuration_transaction()?;
+    apply_storage_import_with_validator_locked(ctx, input, validate_result).await
+}
+
+async fn apply_storage_import_with_validator_locked<F>(
     ctx: &FsToolsContext,
     input: ApplyStorageImportInput,
     validate_result: F,
@@ -1134,6 +1147,22 @@ where
         let mut secret_fields = object.keys().cloned().collect::<Vec<_>>();
         secret_fields.sort();
         let account = format!("storage/{}/import/{}", record.id, Uuid::new_v4());
+        // Journal the intended account before touching the native store. A
+        // crash after put_json is therefore always recoverable.
+        journal.staged_secret_accounts.push(account.clone());
+        if let Err(error) = ctx.registry.write_import_journal(&pending_backup, &journal) {
+            journal.staged_secret_accounts.pop();
+            return Err(abort_import_before_commit(
+                ctx,
+                &pending_backup,
+                &mut rollback,
+                err_with_details(
+                    McpErrorCode::ERR_INTERNAL,
+                    format!("failed to journal staged credential: {error}"),
+                    serde_json::json!({}),
+                ),
+            ));
+        }
         if ctx
             .registry
             .secret_store()
@@ -1151,21 +1180,8 @@ where
             ));
         }
         rollback.push((account.clone(), None));
-        journal.staged_secret_accounts.push(account.clone());
         record.secret_ref = Some(account);
         record.secret_fields = secret_fields;
-        if let Err(error) = ctx.registry.write_import_journal(&pending_backup, &journal) {
-            return Err(abort_import_before_commit(
-                ctx,
-                &pending_backup,
-                &mut rollback,
-                err_with_details(
-                    McpErrorCode::ERR_INTERNAL,
-                    format!("failed to update import transaction journal: {error}"),
-                    serde_json::json!({}),
-                ),
-            ));
-        }
     }
     if let Err(error) = assign_import_revisions(&existing, &mut merged) {
         return Err(abort_import_before_commit(
@@ -1231,13 +1247,21 @@ where
         let _ = remove_pending_backup(&pending_backup);
         return Err(error);
     }
-    journal.state = "committed".to_string();
-    // If this write fails, the durable staging journal still describes the
-    // exact replacement bytes and startup recovery can safely finish it.
-    ctx.registry
-        .write_import_journal(&pending_backup, &journal)?;
-
+    journal.state = ImportTransactionState::Committed;
     let mut warnings = entry.changes.warnings.clone();
+    // If this write fails, the durable staging journal still describes the
+    // exact replacement bytes and startup recovery can safely finish it. The
+    // registry is already committed, so report success with a recovery warning.
+    if let Err(error) = ctx.registry.write_import_journal(&pending_backup, &journal) {
+        warnings.push(format!(
+            "Import committed; transaction journal update is pending recovery: {error}"
+        ));
+        preview_store().lock().unwrap().remove(&input.preview_id);
+        return Ok(ApplyStorageImportResult {
+            applied: entry.storages.len(),
+            warnings,
+        });
+    }
     let cleanup_accounts = journal.obsolete_secret_accounts.clone();
     let cleanup_result = ctx.registry.with_locked_mutation(|current| {
         let active = current
