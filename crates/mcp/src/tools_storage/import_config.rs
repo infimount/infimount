@@ -1007,6 +1007,27 @@ fn rollback_registry_if_matches(
         })
 }
 
+fn abort_import_before_commit(
+    ctx: &FsToolsContext,
+    journal_path: &std::path::Path,
+    rollback: &mut Vec<(String, Option<Value>)>,
+    error: crate::errors::McpError,
+) -> crate::errors::McpError {
+    let rollback_error = rollback_import_secrets(
+        ctx.registry.secret_store().as_ref(),
+        std::mem::take(rollback),
+    )
+    .err();
+    if rollback_error.is_none() {
+        let _ = remove_pending_backup(journal_path);
+    }
+    err_with_details(
+        error.code,
+        error.message,
+        serde_json::json!({ "secretRollbackError": rollback_error.map(|error| error.message) }),
+    )
+}
+
 pub async fn apply_storage_import(
     ctx: &FsToolsContext,
     input: ApplyStorageImportInput,
@@ -1071,32 +1092,44 @@ where
             .iter_mut()
             .find(|record| record.id == stage.record_id)
         else {
-            let _ = remove_pending_backup(&pending_backup);
-            return Err(err(
-                McpErrorCode::ERR_INTERNAL,
-                "import secret stage did not match its storage",
+            return Err(abort_import_before_commit(
+                ctx,
+                &pending_backup,
+                &mut rollback,
+                err(
+                    McpErrorCode::ERR_INTERNAL,
+                    "import secret stage did not match its storage",
+                ),
             ));
         };
         let mut bundle = match record.secret_ref.as_deref() {
-            Some(account) => ctx
-                .registry
-                .secret_store()
-                .get_json(account)
-                .map_err(|_| {
-                    err(
-                        McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
-                        "failed to read existing credentials",
-                    )
-                })?
-                .unwrap_or_else(|| Value::Object(serde_json::Map::new())),
+            Some(account) => match ctx.registry.secret_store().get_json(account) {
+                Ok(bundle) => bundle.unwrap_or_else(|| Value::Object(serde_json::Map::new())),
+                Err(_) => {
+                    return Err(abort_import_before_commit(
+                        ctx,
+                        &pending_backup,
+                        &mut rollback,
+                        err(
+                            McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                            "failed to read existing credentials",
+                        ),
+                    ));
+                }
+            },
             None => Value::Object(serde_json::Map::new()),
         };
-        let object = bundle.as_object_mut().ok_or_else(|| {
-            err(
-                McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
-                "stored secret bundle is invalid",
-            )
-        })?;
+        let Some(object) = bundle.as_object_mut() else {
+            return Err(abort_import_before_commit(
+                ctx,
+                &pending_backup,
+                &mut rollback,
+                err(
+                    McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                    "stored secret bundle is invalid",
+                ),
+            ));
+        };
         object.extend(stage.explicit.clone());
         let mut secret_fields = object.keys().cloned().collect::<Vec<_>>();
         secret_fields.sort();
@@ -1107,11 +1140,14 @@ where
             .put_json(&account, &bundle)
             .is_err()
         {
-            let _ = rollback_import_secrets(ctx.registry.secret_store().as_ref(), rollback);
-            let _ = remove_pending_backup(&pending_backup);
-            return Err(err(
-                McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
-                "failed to stage imported credentials",
+            return Err(abort_import_before_commit(
+                ctx,
+                &pending_backup,
+                &mut rollback,
+                err(
+                    McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                    "failed to stage imported credentials",
+                ),
             ));
         }
         rollback.push((account.clone(), None));
@@ -1119,44 +1155,54 @@ where
         record.secret_ref = Some(account);
         record.secret_fields = secret_fields;
         if let Err(error) = ctx.registry.write_import_journal(&pending_backup, &journal) {
-            let rollback_error = rollback_import_secrets(
-                ctx.registry.secret_store().as_ref(),
-                std::mem::take(&mut rollback),
-            )
-            .err();
-            let _ = remove_pending_backup(&pending_backup);
-            return Err(err_with_details(
-                McpErrorCode::ERR_INTERNAL,
-                format!("failed to update import transaction journal: {error}"),
-                serde_json::json!({ "rollbackError": rollback_error.map(|e| e.message) }),
+            return Err(abort_import_before_commit(
+                ctx,
+                &pending_backup,
+                &mut rollback,
+                err_with_details(
+                    McpErrorCode::ERR_INTERNAL,
+                    format!("failed to update import transaction journal: {error}"),
+                    serde_json::json!({}),
+                ),
             ));
         }
     }
     if let Err(error) = assign_import_revisions(&existing, &mut merged) {
-        let rollback_error = rollback_import_secrets(
-            ctx.registry.secret_store().as_ref(),
-            std::mem::take(&mut rollback),
-        )
-        .err();
-        let _ = remove_pending_backup(&pending_backup);
-        return Err(err_with_details(
-            error.code,
-            error.message,
-            serde_json::json!({ "rollbackError": rollback_error.map(|e| e.message) }),
+        return Err(abort_import_before_commit(
+            ctx,
+            &pending_backup,
+            &mut rollback,
+            error,
         ));
     }
     let retained_refs = merged
         .iter()
         .filter_map(|record| record.secret_ref.as_deref())
         .collect::<std::collections::HashSet<_>>();
-    journal.replacement_bytes = ctx.registry.serialize_records(&merged)?;
+    journal.replacement_bytes = match ctx.registry.serialize_records(&merged) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return Err(abort_import_before_commit(
+                ctx,
+                &pending_backup,
+                &mut rollback,
+                error,
+            ));
+        }
+    };
     journal.obsolete_secret_accounts = existing
         .iter()
         .filter_map(|record| record.secret_ref.clone())
         .filter(|account| !retained_refs.contains(account.as_str()))
         .collect();
-    ctx.registry
-        .write_import_journal(&pending_backup, &journal)?;
+    if let Err(error) = ctx.registry.write_import_journal(&pending_backup, &journal) {
+        return Err(abort_import_before_commit(
+            ctx,
+            &pending_backup,
+            &mut rollback,
+            error,
+        ));
+    }
     if let Err(error) = ctx.registry.replace_all_atomic_verified(&existing, &merged) {
         let rollback_error = rollback_import_secrets(
             ctx.registry.secret_store().as_ref(),
