@@ -311,6 +311,11 @@ fn verify_sidecar_checksum(path: &Path, actual: &str) -> Result<bool, &'static s
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows", test))]
+fn apple_team_requirement(team_id: &str) -> String {
+    format!(r#"=anchor apple generic and certificate leaf[subject.OU] = "{team_id}""#)
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 fn enforce_platform_trust(
     checksum: Result<bool, &'static str>,
     signature_valid: bool,
@@ -352,20 +357,23 @@ fn verify_platform_trust(path: &Path, actual: &str) -> Result<bool, &'static str
             &["--verify", "--strict", sidecar],
         )
         .is_ok_and(|(success, _)| success);
-        let requirement =
-            format!("=anchor apple generic and certificate leaf[subject.OU] = \\\"{team_id}\\\"");
+        // A signed Mach-O gains its LC_CODE_SIGNATURE after Tauri computes the
+        // build-time digest. For stable signed macOS artifacts, the pinned
+        // Developer ID requirement is the integrity authority; the packaged
+        // digest remains mandatory for Linux and unsigned/prerelease builds.
+        let requirement = apple_team_requirement(team_id);
         let identity_valid = bounded_command(
             Path::new("/usr/bin/codesign"),
             &[
                 "--verify",
                 "--strict",
-                "--requirements",
+                "--test-requirement",
                 &requirement,
                 sidecar,
             ],
         )
         .is_ok_and(|(success, _)| success);
-        return enforce_platform_trust(checksum, signature_valid, identity_valid, false);
+        return enforce_platform_trust(Ok(true), signature_valid, identity_valid, false);
     }
     #[cfg(target_os = "windows")]
     {
@@ -1103,6 +1111,14 @@ mod tests {
     use infimount_mcp::registry::{StorageRecord, StorageRegistry};
 
     use super::*;
+
+    #[test]
+    fn apple_requirement_uses_codesign_test_requirement_syntax() {
+        assert_eq!(
+            apple_team_requirement("TEAM123"),
+            r#"=anchor apple generic and certificate leaf[subject.OU] = "TEAM123""#
+        );
+    }
 
     #[test]
     fn platform_trust_requires_checksum_then_signature_and_identity_for_stable() {

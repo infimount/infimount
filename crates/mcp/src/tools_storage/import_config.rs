@@ -12,7 +12,9 @@ use uuid::Uuid;
 
 use crate::errors::{err, err_with_details, McpErrorCode, McpResult};
 use crate::policy::{normalize_storage_policy, McpStoragePolicy};
-use crate::registry::{ensure_unique_name, StorageRecord};
+use crate::registry::{
+    ensure_unique_name, ImportTransactionJournal, StorageRecord, IMPORT_JOURNAL_VERSION,
+};
 use crate::tools_fs::FsToolsContext;
 
 #[cfg(test)]
@@ -160,8 +162,14 @@ fn parse_import_json(input: &str) -> McpResult<Vec<ImportedStorage>> {
         .collect()
 }
 
-pub(crate) fn append_cleanup_journal(account: &str) -> McpResult<()> {
-    let path = crate::registry::default_config_dir().join("secret-cleanup.json");
+pub(crate) fn append_cleanup_journal_at(
+    registry_path: &std::path::Path,
+    account: &str,
+) -> McpResult<()> {
+    let path = registry_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("secret-cleanup.json");
     if let Some(parent) = path.parent() {
         infimount_core::atomic_file::create_dir_all(parent)
             .map_err(|_| err(McpErrorCode::ERR_INTERNAL, "failed to lock cleanup journal"))?;
@@ -186,10 +194,22 @@ pub(crate) fn append_cleanup_journal(account: &str) -> McpResult<()> {
             Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
         }
     }
-    let mut document = std::fs::read(&path)
-        .ok()
-        .and_then(|data| serde_json::from_slice::<Value>(&data).ok())
-        .unwrap_or_else(|| serde_json::json!({ "pending": [] }));
+    let mut document = if path.exists() {
+        serde_json::from_slice::<Value>(&std::fs::read(&path).map_err(|_| {
+            err(
+                McpErrorCode::ERR_INTERNAL,
+                "failed to read secret cleanup journal",
+            )
+        })?)
+        .map_err(|_| {
+            err(
+                McpErrorCode::ERR_INTERNAL,
+                "secret cleanup journal is invalid",
+            )
+        })?
+    } else {
+        serde_json::json!({ "pending": [] })
+    };
     let pending = document
         .get_mut("pending")
         .and_then(Value::as_array_mut)
@@ -225,23 +245,33 @@ pub(crate) fn append_cleanup_journal(account: &str) -> McpResult<()> {
     })
 }
 
+pub(crate) fn append_cleanup_journal(account: &str) -> McpResult<()> {
+    append_cleanup_journal_at(&crate::registry::default_registry_path(), account)
+}
+
 fn rollback_import_secrets(
     store: &dyn infimount_core::secrets::SecretStore,
     rollback: Vec<(String, Option<Value>)>,
 ) -> McpResult<()> {
+    let mut failures = Vec::new();
     for (account, previous) in rollback.into_iter().rev() {
         let restored = match previous {
             Some(value) => store.put_json(&account, &value),
             None => store.delete(&account),
         };
         if restored.is_err() {
-            return Err(err(
-                McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
-                "credential rollback failed; manual secret-store repair is required",
-            ));
+            failures.push(account);
         }
     }
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(err_with_details(
+            McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+            "one or more credential rollback stages failed; manual secret-store repair is required",
+            serde_json::json!({ "failedAccounts": failures }),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -403,7 +433,7 @@ pub async fn import_config(
         .filter(|account| !retained_refs.contains(account))
     {
         if ctx.registry.secret_store().delete(account).is_err() {
-            if append_cleanup_journal(account).is_ok() {
+            if append_cleanup_journal_at(ctx.registry.path(), account).is_ok() {
                 warnings.push("Credential cleanup is pending and will be retried.".to_string());
             } else {
                 warnings.push(
@@ -935,51 +965,22 @@ pub async fn preview_storage_import(
     Ok(preview)
 }
 
-fn write_pending_import_backup(
-    registry_path: &std::path::Path,
-    existing: &[StorageRecord],
-) -> McpResult<std::path::PathBuf> {
-    let parent = registry_path.parent().ok_or_else(|| {
-        err(
-            McpErrorCode::ERR_INTERNAL,
-            "storage registry has no parent directory for import journal",
-        )
-    })?;
-    let backups_dir = parent.join("backups");
-    infimount_core::atomic_file::create_dir_all(&backups_dir).map_err(|_| {
-        err(
-            McpErrorCode::ERR_INTERNAL,
-            "failed to create import journal directory",
-        )
-    })?;
-    let original = if registry_path.exists() {
-        std::fs::read(registry_path).map_err(|_| {
-            err(
-                McpErrorCode::ERR_INTERNAL,
-                "failed to read registry for import journal",
-            )
-        })?
-    } else {
-        serde_json::to_vec_pretty(existing).map_err(|_| {
-            err(
-                McpErrorCode::ERR_INTERNAL,
-                "failed to serialize import journal",
-            )
-        })?
+fn write_pending_import_journal(
+    registry: &crate::registry::StorageRegistry,
+) -> McpResult<(std::path::PathBuf, ImportTransactionJournal)> {
+    let (original_present, original_bytes) = registry.registry_bytes()?;
+    let path = registry.import_journal_path(&Uuid::new_v4().to_string())?;
+    let journal = ImportTransactionJournal {
+        version: IMPORT_JOURNAL_VERSION,
+        state: "staging".to_string(),
+        original_present,
+        original_bytes,
+        replacement_bytes: Vec::new(),
+        staged_secret_accounts: Vec::new(),
+        obsolete_secret_accounts: Vec::new(),
     };
-    let path = backups_dir.join(format!("storages.import-pending.{}.json", Uuid::new_v4()));
-    infimount_core::atomic_file::atomic_write_file(
-        &path,
-        &original,
-        infimount_core::atomic_file::FILE_MODE,
-    )
-    .map_err(|_| {
-        err(
-            McpErrorCode::ERR_INTERNAL,
-            "failed to persist pre-import rollback journal",
-        )
-    })?;
-    Ok(path)
+    registry.write_import_journal(&path, &journal)?;
+    Ok((path, journal))
 }
 
 fn remove_pending_backup(path: &std::path::Path) -> McpResult<()> {
@@ -995,10 +996,9 @@ fn rollback_registry_if_matches(
     ctx: &FsToolsContext,
     imported: &[StorageRecord],
     original: &[StorageRecord],
-) -> McpResult<()> {
+) -> McpResult<bool> {
     ctx.registry
         .restore_all_if_matches(imported, original)
-        .map(|_| ())
         .map_err(|_| {
             err(
                 McpErrorCode::ERR_INTERNAL,
@@ -1063,8 +1063,8 @@ where
     // registry, rollback-journal, or native-secret mutation occurs.
     validate_result(&merged)?;
 
-    // Persist rollback bytes before changing either the registry or native secret store.
-    let pending_backup = write_pending_import_backup(ctx.registry.path(), &existing)?;
+    // Persist a durable transaction before changing either the registry or native secret store.
+    let (pending_backup, mut journal) = write_pending_import_journal(&ctx.registry)?;
     let mut rollback = Vec::new();
     for stage in &entry.secret_stages {
         let Some(record) = merged
@@ -1115,44 +1115,116 @@ where
             ));
         }
         rollback.push((account.clone(), None));
+        journal.staged_secret_accounts.push(account.clone());
         record.secret_ref = Some(account);
         record.secret_fields = secret_fields;
+        if let Err(error) = ctx.registry.write_import_journal(&pending_backup, &journal) {
+            let rollback_error = rollback_import_secrets(
+                ctx.registry.secret_store().as_ref(),
+                std::mem::take(&mut rollback),
+            )
+            .err();
+            let _ = remove_pending_backup(&pending_backup);
+            return Err(err_with_details(
+                McpErrorCode::ERR_INTERNAL,
+                format!("failed to update import transaction journal: {error}"),
+                serde_json::json!({ "rollbackError": rollback_error.map(|e| e.message) }),
+            ));
+        }
     }
     if let Err(error) = assign_import_revisions(&existing, &mut merged) {
-        rollback_import_secrets(ctx.registry.secret_store().as_ref(), rollback)?;
+        let rollback_error = rollback_import_secrets(
+            ctx.registry.secret_store().as_ref(),
+            std::mem::take(&mut rollback),
+        )
+        .err();
         let _ = remove_pending_backup(&pending_backup);
-        return Err(error);
+        return Err(err_with_details(
+            error.code,
+            error.message,
+            serde_json::json!({ "rollbackError": rollback_error.map(|e| e.message) }),
+        ));
     }
-    if let Err(error) = ctx.registry.replace_all_atomic_verified(&existing, &merged) {
-        rollback_import_secrets(ctx.registry.secret_store().as_ref(), rollback)?;
-        let _ = rollback_registry_if_matches(ctx, &merged, &existing);
-        let _ = remove_pending_backup(&pending_backup);
-        return Err(error);
-    }
-
     let retained_refs = merged
         .iter()
         .filter_map(|record| record.secret_ref.as_deref())
         .collect::<std::collections::HashSet<_>>();
-    let mut warnings = entry.changes.warnings.clone();
-    for account in existing
+    journal.replacement_bytes = ctx.registry.serialize_records(&merged)?;
+    journal.obsolete_secret_accounts = existing
         .iter()
-        .filter_map(|record| record.secret_ref.as_deref())
-        .filter(|account| !retained_refs.contains(account))
-    {
-        if ctx.registry.secret_store().delete(account).is_err() {
-            if append_cleanup_journal(account).is_ok() {
-                warnings.push("Credential cleanup is pending and will be retried.".to_string());
-            } else {
-                warnings.push("Credential cleanup failed and could not be journaled; remove the native secret-store entry manually.".to_string());
+        .filter_map(|record| record.secret_ref.clone())
+        .filter(|account| !retained_refs.contains(account.as_str()))
+        .collect();
+    ctx.registry
+        .write_import_journal(&pending_backup, &journal)?;
+    if let Err(error) = ctx.registry.replace_all_atomic_verified(&existing, &merged) {
+        let rollback_error = rollback_import_secrets(
+            ctx.registry.secret_store().as_ref(),
+            std::mem::take(&mut rollback),
+        )
+        .err();
+        let registry_error = match rollback_registry_if_matches(ctx, &merged, &existing) {
+            Ok(true) => None,
+            Ok(false) => {
+                Some("registry rollback refused because persisted state advanced".to_string())
+            }
+            Err(error) => Some(error.message),
+        };
+        // Keep the durable journal when either rollback stage is incomplete;
+        // startup recovery will resolve it instead of treating CAS refusal as success.
+        if rollback_error.is_some() || registry_error.is_some() {
+            return Err(err_with_details(
+                error.code,
+                error.message.clone(),
+                serde_json::json!({
+                    "secretRollbackError": rollback_error.map(|e| e.message),
+                    "registryRollbackError": registry_error,
+                }),
+            ));
+        }
+        let _ = remove_pending_backup(&pending_backup);
+        return Err(error);
+    }
+    journal.state = "committed".to_string();
+    // If this write fails, the durable staging journal still describes the
+    // exact replacement bytes and startup recovery can safely finish it.
+    ctx.registry
+        .write_import_journal(&pending_backup, &journal)?;
+
+    let mut warnings = entry.changes.warnings.clone();
+    let cleanup_accounts = journal.obsolete_secret_accounts.clone();
+    let cleanup_result = ctx.registry.with_locked_mutation(|current| {
+        let active = current
+            .iter()
+            .filter_map(|record| record.secret_ref.as_deref())
+            .collect::<std::collections::HashSet<_>>();
+        let mut failed = Vec::new();
+        for account in &cleanup_accounts {
+            if !active.contains(account.as_str())
+                && ctx.registry.secret_store().delete(account).is_err()
+            {
+                failed.push(account.clone());
             }
         }
-    }
-    if remove_pending_backup(&pending_backup).is_err() {
-        warnings.push(
-            "The completed import rollback journal could not be removed; delete the pending journal manually."
-                .to_string(),
-        );
+        if failed.is_empty() {
+            remove_pending_backup(&pending_backup)?;
+        }
+        Ok(failed)
+    });
+    match cleanup_result {
+        Ok(failed) if failed.is_empty() => {}
+        Ok(failed) => {
+            for account in failed {
+                if append_cleanup_journal_at(ctx.registry.path(), &account).is_err() {
+                    warnings.push("Credential cleanup failed and could not be journaled; remove the native secret-store entry manually.".to_string());
+                }
+            }
+            warnings.push("Credential cleanup is pending and will be retried.".to_string());
+        }
+        Err(error) => warnings.push(format!(
+            "The completed import transaction remains journaled for recovery: {}",
+            error.message
+        )),
     }
     preview_store().lock().unwrap().remove(&input.preview_id);
     Ok(ApplyStorageImportResult {

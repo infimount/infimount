@@ -24,9 +24,24 @@ use uuid::Uuid;
 
 const REGISTRY_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 pub const STORAGE_RECORD_SCHEMA_VERSION: u32 = 2;
+pub const IMPORT_JOURNAL_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportTransactionJournal {
+    pub version: u32,
+    pub state: String,
+    pub original_present: bool,
+    pub original_bytes: Vec<u8>,
+    pub replacement_bytes: Vec<u8>,
+    pub staged_secret_accounts: Vec<String>,
+    pub obsolete_secret_accounts: Vec<String>,
+}
 
 #[cfg(test)]
 static FAIL_NEXT_IMPORT_READBACK: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+#[cfg(test)]
+static FAIL_NEXT_IMPORT_READBACK_CORRUPT: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,6 +150,135 @@ impl StorageRegistry {
         &self.secret_store
     }
 
+    pub fn registry_bytes(&self) -> McpResult<(bool, Vec<u8>)> {
+        if !self.path.exists() {
+            return Ok((false, Vec::new()));
+        }
+        fs::read(&self.path)
+            .map(|bytes| (true, bytes))
+            .map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))
+    }
+
+    pub fn import_journal_path(&self, id: &str) -> McpResult<PathBuf> {
+        let parent = self.path.parent().ok_or_else(|| {
+            err(
+                McpErrorCode::ERR_INTERNAL,
+                "storage registry has no parent directory for import journal",
+            )
+        })?;
+        let backups = parent.join("backups");
+        infimount_core::atomic_file::create_dir_all(&backups)
+            .map_err(|error| map_core_error(&error))?;
+        Ok(backups.join(format!("storages.import-pending.{id}.json")))
+    }
+
+    pub fn write_import_journal(
+        &self,
+        path: &Path,
+        journal: &ImportTransactionJournal,
+    ) -> McpResult<()> {
+        let bytes = serde_json::to_vec_pretty(journal).map_err(|error| {
+            err_with_details(
+                McpErrorCode::ERR_INTERNAL,
+                "failed to serialize import transaction journal",
+                json!({ "serde_error": error.to_string() }),
+            )
+        })?;
+        atomic_write_file(path, &bytes, 0o600).map_err(|error| map_core_error(&error))
+    }
+
+    pub fn recover_pending_imports(&self) -> McpResult<()> {
+        let Some(parent) = self.path.parent() else {
+            return Ok(());
+        };
+        let backups = parent.join("backups");
+        if !backups.exists() {
+            return Ok(());
+        }
+        let mut journals = fs::read_dir(&backups)
+            .map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.starts_with("storages.import-pending.") && name.ends_with(".json")
+                    })
+            })
+            .collect::<Vec<_>>();
+        journals.sort();
+        for journal_path in journals {
+            let bytes = fs::read(&journal_path)
+                .map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))?;
+            let journal: ImportTransactionJournal =
+                serde_json::from_slice(&bytes).map_err(|_| {
+                    err(
+                        McpErrorCode::ERR_INTERNAL,
+                        "pending import journal is invalid; refusing ambiguous recovery",
+                    )
+                })?;
+            if journal.version != IMPORT_JOURNAL_VERSION
+                || !matches!(journal.state.as_str(), "staging" | "committed")
+                || (journal.state == "committed" && journal.replacement_bytes.is_empty())
+            {
+                return Err(err(
+                    McpErrorCode::ERR_INTERNAL,
+                    "pending import journal is unsupported; refusing ambiguous recovery",
+                ));
+            }
+            self.with_file_lock(REGISTRY_LOCK_TIMEOUT, || {
+                let current_present = self.path.exists();
+                let current = if current_present {
+                    fs::read(&self.path)
+                        .map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))?
+                } else {
+                    Vec::new()
+                };
+                let is_original = current_present == journal.original_present
+                    && current == journal.original_bytes;
+                let is_replacement = current == journal.replacement_bytes;
+                if !is_original && !is_replacement {
+                    return Err(err(
+                        McpErrorCode::ERR_INTERNAL,
+                        "pending import recovery found an unexpected registry state",
+                    ));
+                }
+                let active = if is_replacement {
+                    serde_json::from_slice::<Vec<StorageRecord>>(&current)
+                        .map_err(|_| {
+                            err(
+                                McpErrorCode::ERR_INTERNAL,
+                                "committed import registry is invalid",
+                            )
+                        })?
+                        .into_iter()
+                        .filter_map(|record| record.secret_ref)
+                        .collect::<std::collections::HashSet<_>>()
+                } else {
+                    std::collections::HashSet::new()
+                };
+                let accounts = if is_original {
+                    &journal.staged_secret_accounts
+                } else {
+                    &journal.obsolete_secret_accounts
+                };
+                for account in accounts {
+                    if !active.contains(account) && self.secret_store.delete(account).is_err() {
+                        return Err(err(
+                            McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                            "pending import recovery could not remove a secret account",
+                        ));
+                    }
+                }
+                fs::remove_file(&journal_path)
+                    .map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))?;
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+
     pub fn load_all(&self) -> McpResult<Vec<StorageRecord>> {
         self.with_file_lock(REGISTRY_LOCK_TIMEOUT, || self.load_all_unlocked())
     }
@@ -185,8 +329,16 @@ impl StorageRegistry {
             #[cfg(test)]
             let fail_readback = FAIL_NEXT_IMPORT_READBACK.lock().unwrap().remove(&self.path);
             #[cfg(test)]
-            if fail_readback {
-                self.restore_all_if_matches_unlocked(replacement, expected)?;
+            let corrupt_readback = FAIL_NEXT_IMPORT_READBACK_CORRUPT
+                .lock()
+                .unwrap()
+                .remove(&self.path);
+            #[cfg(test)]
+            if fail_readback || corrupt_readback {
+                if corrupt_readback {
+                    let _ = fs::write(&self.path, b"{");
+                }
+                self.save_all_atomic_unlocked(expected)?;
                 return Err(err(
                     McpErrorCode::ERR_INTERNAL,
                     "storage registry readback failed; original registry was restored",
@@ -195,12 +347,12 @@ impl StorageRegistry {
             let persisted = match self.load_all_unlocked() {
                 Ok(persisted) => persisted,
                 Err(error) => {
-                    self.restore_all_if_matches_unlocked(replacement, expected)?;
+                    self.save_all_atomic_unlocked(expected)?;
                     return Err(error);
                 }
             };
             if !records_match_exact(&persisted, replacement) {
-                self.restore_all_if_matches_unlocked(replacement, expected)?;
+                self.save_all_atomic_unlocked(expected)?;
                 return Err(err(
                     McpErrorCode::ERR_INTERNAL,
                     "storage registry readback failed; original registry was restored",
@@ -225,6 +377,14 @@ impl StorageRegistry {
     #[cfg(test)]
     pub fn fail_next_import_readback(&self) {
         FAIL_NEXT_IMPORT_READBACK
+            .lock()
+            .unwrap()
+            .insert(self.path.clone());
+    }
+
+    #[cfg(test)]
+    pub fn fail_next_import_readback_with_corruption(&self) {
+        FAIL_NEXT_IMPORT_READBACK_CORRUPT
             .lock()
             .unwrap()
             .insert(self.path.clone());
@@ -533,9 +693,7 @@ impl StorageRegistry {
         Ok(backup_path)
     }
 
-    fn save_all_atomic_unlocked(&self, storages: &[StorageRecord]) -> McpResult<()> {
-        ensure_parent(&self.path).map_err(|e| map_core_error(&e))?;
-
+    pub fn serialize_records(&self, storages: &[StorageRecord]) -> McpResult<Vec<u8>> {
         let mut normalized_storages = storages.to_vec();
         let schema_secret_names = discover_secret_field_names();
         for storage in &mut normalized_storages {
@@ -555,14 +713,18 @@ impl StorageRegistry {
             storage.schema_version = STORAGE_RECORD_SCHEMA_VERSION;
         }
 
-        let payload = serde_json::to_vec_pretty(&normalized_storages).map_err(|e| {
+        serde_json::to_vec_pretty(&normalized_storages).map_err(|e| {
             err_with_details(
                 McpErrorCode::ERR_INTERNAL,
                 "failed to serialize storage registry",
                 json!({ "serde_error": e.to_string() }),
             )
-        })?;
+        })
+    }
 
+    fn save_all_atomic_unlocked(&self, storages: &[StorageRecord]) -> McpResult<()> {
+        ensure_parent(&self.path).map_err(|e| map_core_error(&e))?;
+        let payload = self.serialize_records(storages)?;
         atomic_write_file(&self.path, &payload, 0o600).map_err(|e| map_core_error(&e))
     }
 
@@ -607,7 +769,17 @@ pub struct ResolvedStorageRecord {
 }
 
 pub fn retry_pending_secret_cleanup(secret_store: &dyn SecretStore) -> McpResult<()> {
-    let path = default_config_dir().join("secret-cleanup.json");
+    retry_pending_secret_cleanup_at(&default_registry_path(), secret_store)
+}
+
+pub fn retry_pending_secret_cleanup_at(
+    registry_path: &Path,
+    secret_store: &dyn SecretStore,
+) -> McpResult<()> {
+    let path = registry_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("secret-cleanup.json");
     if !path.exists() {
         return Ok(());
     }
@@ -640,9 +812,9 @@ pub fn retry_pending_secret_cleanup(secret_store: &dyn SecretStore) -> McpResult
             "secret cleanup journal is invalid",
         )
     })?;
-    let active_secret_refs = if default_registry_path().exists() {
+    let active_secret_refs = if registry_path.exists() {
         serde_json::from_slice::<Vec<StorageRecord>>(
-            &fs::read(default_registry_path())
+            &fs::read(registry_path)
                 .map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))?,
         )
         .map_err(|_| err(McpErrorCode::ERR_INTERNAL, "storage registry is invalid"))?
@@ -652,11 +824,17 @@ pub fn retry_pending_secret_cleanup(secret_store: &dyn SecretStore) -> McpResult
     } else {
         std::collections::HashSet::new()
     };
-    let remaining = document
+    let pending = document
         .get("pending")
         .and_then(Value::as_array)
         .cloned()
-        .unwrap_or_default()
+        .ok_or_else(|| {
+            err(
+                McpErrorCode::ERR_INTERNAL,
+                "secret cleanup journal is invalid",
+            )
+        })?;
+    let remaining = pending
         .into_iter()
         .filter(|item| {
             item.get("account")
@@ -895,6 +1073,33 @@ mod tests {
         let error = registry.load_all().expect_err("migration should fail");
         assert_eq!(error.code, McpErrorCode::ERR_SECRET_MIGRATION_FAILED);
         assert_eq!(fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn pending_import_recovery_removes_staged_secrets_after_precommit_crash() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("storages.json");
+        let secrets = std::sync::Arc::new(infimount_core::secrets::MemorySecretStore::new());
+        let registry = StorageRegistry::with_secret_store(Some(path.clone()), secrets.clone());
+        let journal_path = registry.import_journal_path("recovery-test").unwrap();
+        let journal = ImportTransactionJournal {
+            version: IMPORT_JOURNAL_VERSION,
+            state: "staging".into(),
+            original_present: false,
+            original_bytes: Vec::new(),
+            replacement_bytes: b"[]".to_vec(),
+            staged_secret_accounts: vec!["storage/staged-secret".into()],
+            obsolete_secret_accounts: Vec::new(),
+        };
+        secrets
+            .put_json("storage/staged-secret", &json!({"token": "x"}))
+            .unwrap();
+        registry
+            .write_import_journal(&journal_path, &journal)
+            .unwrap();
+        registry.recover_pending_imports().unwrap();
+        assert!(secrets.get_json("storage/staged-secret").unwrap().is_none());
+        assert!(!journal_path.exists());
     }
 
     #[test]

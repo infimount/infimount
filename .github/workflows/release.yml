@@ -585,6 +585,7 @@ jobs:
       - name: Smoke check macOS artifact
         env:
           APPLE_SIGNED: ${{ steps.apple_signing.outputs.enabled }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           test -s out/macos/Infimount.dmg
@@ -597,10 +598,16 @@ jobs:
           test -d "$VOLUME_PATH/Infimount.app"
           SIDECAR="$(find "$VOLUME_PATH/Infimount.app" -type f -name 'mcp*' -perm -111 | sort | head -n 1)"
           test -n "$SIDECAR"
+          VERIFY_MODE="digest"
+          if [ "$APPLE_SIGNED" = "true" ]; then VERIFY_MODE="macos-signed"; fi
+          bash scripts/verify-packaged-sidecar.sh "$VOLUME_PATH/Infimount.app" "${GITHUB_REF#refs/tags/v}" "$VERIFY_MODE"
           test "$("$SIDECAR" --version)" = "infimount_mcp ${GITHUB_REF#refs/tags/v}"
           cp "$SIDECAR" out/macos/sbom-components/infimount_mcp-macos
           if [ "$APPLE_SIGNED" = "true" ]; then
             codesign --verify --strict --verbose=2 "$SIDECAR"
+            codesign --verify --strict --test-requirement \
+              "=anchor apple generic and certificate leaf[subject.OU] = \"${APPLE_TEAM_ID}\"" \
+              "$SIDECAR"
             codesign --verify --deep --strict --verbose=2 "$VOLUME_PATH/Infimount.app"
             spctl --assess --type execute --verbose=2 "$VOLUME_PATH/Infimount.app"
             xcrun stapler validate "$VOLUME_PATH/Infimount.app"
@@ -616,6 +623,7 @@ jobs:
               test -n "$updater_app"
               updater_sidecar="$(find "$updater_app" -type f -name 'mcp*' -perm -111 | head -n 1)"
               test -n "$updater_sidecar"
+              bash scripts/verify-packaged-sidecar.sh "$updater_app" "${GITHUB_REF#refs/tags/v}" "$VERIFY_MODE"
               codesign --verify --strict --verbose=2 "$updater_sidecar"
               codesign --verify --deep --strict --verbose=2 "$updater_app"
               rm -rf "$updater_dir"

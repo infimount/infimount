@@ -253,7 +253,11 @@ impl AppState {
         if native_available {
             let initialization = (|| -> McpResult<()> {
                 infimount_mcp::migration_cleanup::retry_pending_plaintext_cleanup(&config_dir)?;
-                infimount_mcp::registry::retry_pending_secret_cleanup(secret_store.as_ref())?;
+                registry.recover_pending_imports()?;
+                infimount_mcp::registry::retry_pending_secret_cleanup_at(
+                    registry.path(),
+                    secret_store.as_ref(),
+                )?;
                 migrate_legacy_sources_if_needed(&registry)?;
                 registry.load_all()?;
                 settings_store.load()?;

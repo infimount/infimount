@@ -917,7 +917,7 @@ async fn import_readback_failure_restores_registry_and_keeps_preview_recoverable
     )
     .await
     .unwrap();
-    ctx.registry.fail_next_import_readback();
+    ctx.registry.fail_next_import_readback_with_corruption();
     let error = apply_storage_import(
         &ctx,
         ApplyStorageImportInput {

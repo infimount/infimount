@@ -166,9 +166,12 @@ async fn run_server(serve: ServeArgs) -> Result<(), Box<dyn std::error::Error>> 
 
     let secret_store: std::sync::Arc<dyn infimount_core::secrets::SecretStore> =
         std::sync::Arc::new(infimount_core::secrets::NativeSecretStore::new());
+    let registry = StorageRegistry::with_secret_store(None, secret_store.clone());
+    registry
+        .recover_pending_imports()
+        .map_err(|error| std::io::Error::other(error.message))?;
     infimount_mcp::registry::retry_pending_secret_cleanup(secret_store.as_ref())
         .map_err(|error| std::io::Error::other(error.message))?;
-    let registry = StorageRegistry::with_secret_store(None, secret_store.clone());
     let settings = McpSettingsStore::with_secret_store(None, secret_store.clone())
         .load()
         .map_err(|error| std::io::Error::other(error.message))?;
