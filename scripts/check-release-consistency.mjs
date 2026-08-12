@@ -57,7 +57,14 @@ for (const path of [
   if (!fs.existsSync(path)) fail(`${path} must exist`);
 }
 contains(releaseNotesPath, `Infimount ${version}`);
-contains(releaseNotesPath, `https://github.com/infimount/infimount/releases/tag/${tag}`);
+if (candidateChannel) {
+  const releaseLink = `https://github.com/infimount/infimount/releases/tag/${tag}`;
+  if (!read(releaseNotesPath).includes(releaseLink)) {
+    contains(releaseNotesPath, "Release: not published yet.");
+  }
+} else {
+  contains(releaseNotesPath, `https://github.com/infimount/infimount/releases/tag/${tag}`);
+}
 
 contains("CHANGELOG.md", `[Unreleased]: https://github.com/infimount/infimount/compare/v${coreVersion}...HEAD`);
 contains("CHANGELOG.md", `[${coreVersion}]: https://github.com/infimount/infimount/compare/`);

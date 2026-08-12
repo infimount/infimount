@@ -2,7 +2,7 @@
 
 Infimount 0.8.0-rc.1 is the prerelease validation build for the v0.8 trust, recovery, workspace, and MCP activation work.
 
-Release: <https://github.com/infimount/infimount/releases/tag/v0.8.0-rc.1>
+Release: not published yet.
 
 ## Validation scope
 

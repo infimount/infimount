@@ -4,7 +4,7 @@
 
 Infimount 0.8.0 focuses on safer local credential handling, explicit agent access, recoverable configuration, and verification of the MCP executable bundled with the desktop app.
 
-Release: <https://github.com/infimount/infimount/releases/tag/v0.8.0> (not published yet).
+Release: not published yet.
 
 ## Highlights
 
