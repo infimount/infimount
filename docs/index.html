@@ -8,6 +8,7 @@
     <meta name="keywords" content="Infimount, storage browser, S3/S3-compatible, WebDAV, SFTP, FTP, MCP server, local-first storage" />
     <meta name="robots" content="index,follow,max-image-preview:large" />
     <meta name="theme-color" content="#f0ede6" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https://infimount.github.io; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'none'; base-uri 'self'; form-action 'none';" />
     <link rel="canonical" href="https://infimount.github.io/infimount/" />
     <link rel="sitemap" type="application/xml" href="https://infimount.github.io/infimount/sitemap.xml" />
     <link rel="icon" href="./assets/infimount-logo.png" />
@@ -39,8 +40,6 @@
       }
     </script>
     <style>
-      @import url("https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Inter+Tight:wght@400;500;600;700;800&display=swap");
-
       :root {
         --paper: #f0ede6;
         --paper-deep: #e5e0d6;
@@ -113,7 +112,7 @@
       .button-primary:hover, .button-primary:focus-visible { background: var(--orange-dark); }
       .button-quiet { border-color: var(--rule); color: var(--ink); background: transparent; }
       .button-quiet:hover, .button-quiet:focus-visible { background: var(--paper-deep); }
-      .hero-note { display: flex; gap: 20px; margin-top: 28px; color: var(--faint); font-size: .76rem; }
+      .hero-note { display: flex; gap: 20px; margin-top: 28px; color: var(--muted); font-size: .76rem; }
       .hero-note span + span { padding-left: 20px; border-left: 1px solid var(--rule); }
       .product-frame { position: relative; padding: 10px 10px 0; background: var(--night); box-shadow: 18px 22px 0 var(--paper-deep); }
       .product-frame::before { content: "INFIMOUNT / WORKBENCH"; display: block; padding: 8px 10px 10px; color: #9ea9a0; font-size: .62rem; font-weight: 700; letter-spacing: .14em; }
@@ -219,8 +218,9 @@
       .footer a:not(.wordmark) { display: block; width: fit-content; margin: 7px 0; color: #e7ebe4; font-size: .82rem; text-decoration: none; }
       .footer a:not(.wordmark):hover, .footer a:not(.wordmark):focus-visible { color: #f1a47f; }
       .footer-bottom { display: flex; justify-content: space-between; gap: 20px; margin-top: 60px; padding-top: 16px; border-top: 1px solid #46524b; color: #9da89f; font-size: .72rem; }
-      [data-reveal] { opacity: 0; transform: translateY(16px); transition: opacity 700ms var(--ease), transform 700ms var(--ease); }
-      [data-reveal].is-visible { opacity: 1; transform: none; }
+      [data-reveal] { opacity: 1; transform: none; }
+      .js [data-reveal] { opacity: 0; transform: translateY(16px); transition: opacity 700ms var(--ease), transform 700ms var(--ease); }
+      .js [data-reveal].is-visible { opacity: 1; transform: none; }
       @media (max-width: 900px) {
         .hero-grid, .capability-layout, .connector-layout, .workbench-layout, .agent-layout, .install-layout { grid-template-columns: 1fr; gap: 42px; }
         .hero { padding-top: 58px; }
@@ -297,7 +297,7 @@
           </div>
           <figure class="product-frame" data-reveal>
             <div class="product-frame-header"></div>
-            <img src="./assets/screenshot-infimount.png" alt="Infimount desktop workbench showing files, storage locations, and a preview panel" />
+            <img src="./assets/screenshot-infimount.png" width="1193" height="647" alt="Infimount desktop workbench showing files, storage locations, and a preview panel" />
             <figcaption class="frame-caption"><strong>The workbench</strong><span>One calm view across many backends</span></figcaption>
           </figure>
         </div>
@@ -402,13 +402,24 @@
     </footer>
 
     <script>
-      const reveal = new IntersectionObserver((entries) => entries.forEach((entry) => { if (entry.isIntersecting) { entry.target.classList.add("is-visible"); reveal.unobserve(entry.target); } }), { rootMargin: "0px 0px -8%" });
-      document.querySelectorAll("[data-reveal]").forEach((element) => reveal.observe(element));
+      document.documentElement.classList.add("js");
+      const reveal = "IntersectionObserver" in window
+        ? new IntersectionObserver((entries) => entries.forEach((entry) => { if (entry.isIntersecting) { entry.target.classList.add("is-visible"); reveal.unobserve(entry.target); } }), { rootMargin: "0px 0px -8%" })
+        : null;
+      if (reveal) document.querySelectorAll("[data-reveal]").forEach((element) => reveal.observe(element));
       document.querySelectorAll(".copy-command").forEach((button) => button.addEventListener("click", async () => {
         const command = button.parentElement?.querySelector(".code-block")?.textContent?.trim();
         if (!command) return;
         try { await navigator.clipboard.writeText(command); button.textContent = "Copied"; button.dataset.copied = "true"; window.setTimeout(() => { button.textContent = "Copy"; delete button.dataset.copied; }, 1600); }
-        catch { button.textContent = "Select"; window.setTimeout(() => { button.textContent = "Copy"; }, 1600); }
+        catch {
+          const range = document.createRange();
+          range.selectNodeContents(button.parentElement?.querySelector(".code-block") ?? button);
+          const selection = window.getSelection();
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+          button.textContent = "Selected";
+          window.setTimeout(() => { button.textContent = "Copy"; selection?.removeAllRanges(); }, 1600);
+        }
       }));
     </script>
   </body>
