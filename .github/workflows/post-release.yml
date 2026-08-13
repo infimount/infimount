@@ -22,8 +22,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
-
       - name: Resolve release tag
         id: release
         run: |
@@ -32,6 +30,15 @@ jobs:
           else
             echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
           fi
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+
+      - name: Apply tag version before consistency validation
+        env:
+          GITHUB_REF_NAME: ${{ steps.release.outputs.tag }}
+        run: node scripts/sync-release-version.mjs
 
       - name: Verify version, docs, changelog, and release notes
         run: node scripts/check-release-consistency.mjs "${{ steps.release.outputs.tag }}"
@@ -44,10 +51,44 @@ jobs:
           INFIMOUNT_RELEASE_BASE_URL: https://github.com/infimount/infimount/releases/download/${{ steps.release.outputs.tag }}
         run: ./scripts/check-release-links.sh
 
+      - name: Install exact release MSRV (Rust 1.94)
+        uses: dtolnay/rust-toolchain@1.94
+
+      - name: Re-download and validate published assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          rm -rf published-release-assets
+          mkdir published-release-assets
+          gh release download "$RELEASE_TAG" --dir published-release-assets
+          ./scripts/check-release-assets.sh published-release-assets
+          ./scripts/check-updater-assets.sh published-release-assets "${RELEASE_TAG#v}"
+          node scripts/check-upgrade-fixtures.mjs published-release-assets
+
+          public_key="$(jq -r '.plugins.updater.pubkey' apps/desktop/src-tauri/tauri.conf.json)"
+          while IFS= read -r signature; do
+            artifact="${signature%.sig}"
+            test -s "$artifact"
+            cargo run --quiet -p infimount_core --bin verify_updater_signature -- \
+              "$public_key" "$artifact" "$signature"
+          done < <(find published-release-assets -maxdepth 1 -type f -name '*.sig' | sort)
+
+          while IFS= read -r url; do
+            case "$url" in
+              "https://github.com/infimount/infimount/releases/download/${RELEASE_TAG}/"*) ;;
+              *) echo "Updater URL is not pinned to $RELEASE_TAG: $url" >&2; exit 1 ;;
+            esac
+            curl --fail --silent --show-error --location --head --retry 5 "$url" >/dev/null
+          done < <(jq -r '.platforms[].url' published-release-assets/latest.json)
+
       - name: Verify Homebrew update can resolve checksums
+        if: ${{ !contains(steps.release.outputs.tag, '-') }}
         run: ./scripts/check-homebrew-update.sh "${{ steps.release.outputs.tag }}"
 
       - name: Dispatch Homebrew tap update when token is configured
+        if: ${{ !contains(steps.release.outputs.tag, '-') }}
         env:
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_DISPATCH_TOKEN }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}

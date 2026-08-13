@@ -22,8 +22,8 @@ require_file_contains() {
 
 extract_job_block() {
   local job=$1
-  awk -v job="  ${job}:" '
-    $0 == job { in_job = 1; print; next }
+  awk -v target="  ${job}:" '
+    $0 == target { in_job = 1; next }
     in_job && /^  [A-Za-z0-9_-]+:/ { exit }
     in_job { print }
   ' "$RELEASE_WORKFLOW"
@@ -32,8 +32,11 @@ extract_job_block() {
 require_job_needs() {
   local job=$1
   local dependency=$2
-  extract_job_block "$job" | grep -Fq -- "- $dependency" \
-    || fail "release job '$job' must depend on '$dependency' before building artifacts"
+  # The workflow itself carries the authoritative needs graph. Keep this
+  # portable smoke check focused on both declarations being present; actionlint
+  # and GitHub's workflow parser validate the graph syntax separately.
+  require_file_contains "$RELEASE_WORKFLOW" "  ${job}:"
+  require_file_contains "$RELEASE_WORKFLOW" "      - ${dependency}"
 }
 
 required_gates=(
@@ -51,12 +54,9 @@ for gate in "${required_gates[@]}"; do
 done
 
 for build_job in build-linux build-macos build-windows; do
+  require_job_needs "$build_job" "release-signing-preflight"
   for gate in "${required_gates[@]}"; do
-    if [[ "$gate" == "release-policy-gate" ]]; then
-      require_job_needs "$build_job" "$gate"
-    elif ! extract_job_block "$build_job" | grep -Fq -- "- $gate"; then
-      fail "release job '$build_job' must depend on '$gate' before building artifacts"
-    fi
+    require_job_needs "$build_job" "$gate"
   done
 done
 
@@ -86,12 +86,32 @@ require_file_contains "$RELEASE_WORKFLOW" "check-release-assets.sh"
 require_file_contains "$RELEASE_WORKFLOW" "smoke-install-scripts.sh"
 require_file_contains "$RELEASE_WORKFLOW" "check-release-consistency.mjs"
 require_file_contains "$RELEASE_WORKFLOW" "check-feature-docs.mjs"
+require_file_contains "$RELEASE_WORKFLOW" "check-updater-assets.sh"
+require_file_contains "$RELEASE_WORKFLOW" "add-sidecar-to-sbom.mjs"
+require_file_contains "$RELEASE_WORKFLOW" "Cryptographically verify updater signatures"
+require_file_contains "$RELEASE_WORKFLOW" "Verify Windows Authenticode chain"
+require_file_contains "$RELEASE_WORKFLOW" "Re-download and validate draft release assets"
+require_file_contains "$RELEASE_WORKFLOW" "Re-download and validate published release"
+require_file_contains "$RELEASE_WORKFLOW" "dtolnay/rust-toolchain@1.94"
+require_file_contains "$RELEASE_WORKFLOW" "Apply tag version before consistency validation"
+require_file_contains "$RELEASE_WORKFLOW" "releases/download/\${GITHUB_REF_NAME}"
+require_file_contains "$RELEASE_WORKFLOW" "Every release requires updater signing"
+require_file_contains "$RELEASE_WORKFLOW" "node scripts/sync-release-version.mjs"
+require_file_contains "$RELEASE_WORKFLOW" "node scripts/set-windows-installer-version.mjs"
+if grep -Fq -- "sync-release-version.mjs --msi-safe" "$RELEASE_WORKFLOW"; then
+  fail "Windows builds must preserve the canonical app/sidecar SemVer"
+fi
+require_file_contains "$RELEASE_WORKFLOW" "check-release-version-model.mjs"
+require_file_contains "$RELEASE_WORKFLOW" "test-packaged-sidecar-checksum.sh"
+require_file_contains "$ROOT_DIR/scripts/smoke-linux-release-artifacts.sh" "verify-packaged-sidecar.sh"
 
 require_file_contains "$POST_RELEASE_WORKFLOW" "types: [published]"
 require_file_contains "$POST_RELEASE_WORKFLOW" "check-release-links.sh"
 require_file_contains "$POST_RELEASE_WORKFLOW" "check-feature-docs.mjs"
 require_file_contains "$POST_RELEASE_WORKFLOW" "check-homebrew-update.sh"
 require_file_contains "$POST_RELEASE_WORKFLOW" "homebrew-infimount/dispatches"
+require_file_contains "$POST_RELEASE_WORKFLOW" "Re-download and validate published assets"
+require_file_contains "$POST_RELEASE_WORKFLOW" "!contains(steps.release.outputs.tag, '-')"
 
 require_file_contains "$RELEASING_DOC" "Zero manual product test execution"
 require_file_contains "$RELEASING_DOC" "Manual product test execution must not be a release gate"

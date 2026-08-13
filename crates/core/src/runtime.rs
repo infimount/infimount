@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use opendal::Operator;
@@ -33,8 +32,19 @@ impl OperatorCache {
         cache.get(key).cloned()
     }
 
+    /// Look up a persisted storage operator before resolving its secret bundle.
+    /// Callers must supply the public record's current revision so credential or
+    /// configuration mutations cannot reuse an older operator.
+    pub fn get_for_storage(&self, storage_id: &str, revision: Revision) -> Option<Operator> {
+        self.get(&CacheKey {
+            storage_id: storage_id.to_string(),
+            revision,
+        })
+    }
+
     pub fn insert(&self, key: CacheKey, operator: Operator) {
         if let Ok(mut cache) = self.operators.lock() {
+            cache.retain(|existing, _| existing.storage_id != key.storage_id);
             cache.insert(key, operator);
         }
     }
@@ -61,8 +71,8 @@ impl Default for OperatorCache {
 pub fn get_or_create_operator(
     cache: &OperatorCache,
     source: &Source,
+    revision: Revision,
 ) -> Result<Operator> {
-    let revision = compute_source_revision(source);
     let cache_key = CacheKey {
         storage_id: source.id.clone(),
         revision,
@@ -79,15 +89,6 @@ pub fn get_or_create_operator(
 
 pub fn invalidate_source(cache: &OperatorCache, source_id: &str) {
     cache.invalidate(source_id);
-}
-
-fn compute_source_revision(source: &Source) -> Revision {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    source.id.hash(&mut hasher);
-    source.root.hash(&mut hasher);
-    source.kind.to_string().hash(&mut hasher);
-    source.config.to_string().hash(&mut hasher);
-    hasher.finish()
 }
 
 #[cfg(test)]
@@ -124,21 +125,39 @@ mod tests {
     }
 
     #[test]
+    fn newer_persisted_revision_evicts_the_previous_operator() {
+        let cache = OperatorCache::new();
+        let source = make_source("test", SourceKind::Local, "/tmp");
+        get_or_create_operator(&cache, &source, 1).unwrap();
+        get_or_create_operator(&cache, &source, 2).unwrap();
+        let operators = cache.operators.lock().unwrap();
+        assert_eq!(operators.len(), 1);
+        assert!(!operators.contains_key(&CacheKey {
+            storage_id: "test".into(),
+            revision: 1,
+        }));
+        assert!(operators.contains_key(&CacheKey {
+            storage_id: "test".into(),
+            revision: 2,
+        }));
+    }
+
+    #[test]
     fn test_cache_insert_get_invalidate() {
         let cache = OperatorCache::new();
         let source = make_source("test", SourceKind::Local, "/tmp");
-        let op = get_or_create_operator(&cache, &source).unwrap();
-        assert!(op.info().full_capability().read);
+        let op = get_or_create_operator(&cache, &source, 7).unwrap();
+        assert!(op.info().capability().read);
 
         // Second call should return cached
-        let op2 = get_or_create_operator(&cache, &source).unwrap();
-        assert!(op2.info().full_capability().read);
+        let op2 = get_or_create_operator(&cache, &source, 7).unwrap();
+        assert!(op2.info().capability().read);
 
         // Invalidate
         invalidate_source(&cache, "test");
         let key = CacheKey {
             storage_id: "test".into(),
-            revision: compute_source_revision(&source),
+            revision: 7,
         };
         assert!(cache.get(&key).is_none());
     }

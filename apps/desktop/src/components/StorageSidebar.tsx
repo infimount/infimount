@@ -13,6 +13,8 @@ import {
   Braces,
   LifeBuoy,
   Bot,
+  Bug,
+  ShieldCheck,
 } from "lucide-react";
 import s3Icon from "@/assets/amazon-s3.svg";
 import azureIcon from "@/assets/azure-storage-blob.svg";
@@ -67,6 +69,8 @@ interface StorageSidebarProps {
   onOpenOnboarding?: () => void;
   onOpenGlobalSearch?: () => void;
   onOpenAgentWorkspaces?: () => void;
+  onOpenDiagnostics?: () => void;
+  onOpenPrivacy?: () => void;
   isLoading?: boolean;
 }
 
@@ -121,6 +125,8 @@ export function StorageSidebar({
   onOpenOnboarding,
   onOpenGlobalSearch,
   onOpenAgentWorkspaces,
+  onOpenDiagnostics,
+  onOpenPrivacy,
   isLoading = false,
 }: StorageSidebarProps) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -458,6 +464,18 @@ export function StorageSidebar({
                 <DropdownMenuItem onClick={onOpenOnboarding}>
                   <LifeBuoy className="mr-2 h-4 w-4" />
                   Setup Guide
+                </DropdownMenuItem>
+              )}
+              {onOpenDiagnostics && (
+                <DropdownMenuItem onClick={onOpenDiagnostics}>
+                  <Bug className="mr-2 h-4 w-4" />
+                  Diagnostics
+                </DropdownMenuItem>
+              )}
+              {onOpenPrivacy && (
+                <DropdownMenuItem onClick={onOpenPrivacy}>
+                  <ShieldCheck className="mr-2 h-4 w-4" />
+                  Privacy
                 </DropdownMenuItem>
               )}
             </DropdownMenuContent>

@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 2,
+  "kind": "infimount-shareable-config",
+  "exportedAt": "2025-01-01T00:00:00Z",
+  "storages": [
+    {
+      "name": "Fixture S3",
+      "backend": "s3",
+      "config": {
+        "bucket": "fixture-bucket",
+        "region": "us-east-1"
+      },
+      "enabled": true,
+      "mcpExposed": false,
+      "readOnly": true,
+      "requiredSecretFields": ["accessKeyId", "secretAccessKey"],
+      "mcpPolicy": {
+        "version": 2,
+        "defaultAccess": "none",
+        "rules": [],
+        "deniedPaths": [],
+        "confirmationRules": {}
+      }
+    }
+  ]
+}

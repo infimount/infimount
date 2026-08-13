@@ -1,8 +1,8 @@
 # ADR 0001: MCP Data-Plane-Only Public Tool Surface
 
-**Status:** Accepted  
-**Date:** 2026-07-18  
-**Driver:** v0.8 Trust & Activation  
+**Status:** Accepted
+**Date:** 2026-07-18
+**Driver:** v0.8 Trust & Activation
 
 ## Context
 

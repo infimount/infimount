@@ -32,10 +32,11 @@ import { TransferQueuePanel } from "./TransferQueuePanel";
 import { FileItem } from "@/types/storage";
 import {
   Entry,
-  listEntries,
+  listEntriesPage,
   listEntriesRecursive,
-  readFile,
+  downloadFileToDownloads,
   writeFile,
+  uploadFileStreaming,
   createDirectory,
   deletePath,
   TauriApiError,
@@ -135,7 +136,9 @@ async function collectFilesFromDataTransfer(
       return [
         {
           name: relativeName,
+          size: file.size,
           arrayBuffer: () => file.arrayBuffer(),
+          slice: (start, end) => file.slice(start, end),
         },
       ];
     }
@@ -194,7 +197,9 @@ async function collectFilesFromDataTransfer(
     if (file) {
       files.push({
         name: file.name,
+        size: file.size,
         arrayBuffer: () => file.arrayBuffer(),
+        slice: (start, end) => file.slice(start, end),
       });
     }
   }
@@ -319,6 +324,9 @@ export function FileBrowser({
   const [history, setHistory] = useState<string[]>(["/"]);
   const [historyIndex, setHistoryIndex] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextPageCursor, setNextPageCursor] = useState<string | null>(null);
+  const [listingTruncated, setListingTruncated] = useState(false);
   const [error, setError] = useState<LoadError | null>(null);
 
   type SortField = "name" | "type" | "modified" | "size";
@@ -347,6 +355,7 @@ export function FileBrowser({
   } | null>(null);
   const deleteCancelRef = useRef(false);
   const uploadCancelRef = useRef(false);
+  const activeUploadAbortRef = useRef<AbortController | null>(null);
   const [pasteConflict, setPasteConflict] = useState<{
     fromSourceId: string;
     toSourceId: string;
@@ -378,6 +387,7 @@ export function FileBrowser({
   );
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const loadRequestIdRef = useRef(0);
+  const loadMoreInFlightRef = useRef(false);
 
   const describeLoadError = (err: TauriApiError): LoadError => {
     const shortMessage = (err.message || "")
@@ -525,19 +535,24 @@ export function FileBrowser({
     extension: !entry.is_dir ? entry.name.split(".").pop() : undefined,
   });
 
+  const visiblePageEntries = (entries: Entry[], path: string) =>
+    entries.filter((entry) => entry.path !== path && entry.path !== "" && entry.name !== ".");
+
   const loadFiles = async (path: string) => {
     const requestId = loadRequestIdRef.current + 1;
     loadRequestIdRef.current = requestId;
+    loadMoreInFlightRef.current = false;
     setLoading(true);
+    setLoadingMore(false);
+    setNextPageCursor(null);
+    setListingTruncated(false);
     setError(null);
     try {
-      const entries = await listEntries(sourceId, path);
+      const page = await listEntriesPage(sourceId, path, 200, undefined, false);
       if (requestId !== loadRequestIdRef.current) return;
-
-      const filtered = entries.filter(
-        (e) => e.path !== path && e.path !== "" && e.name !== ".",
-      );
-      setAllFiles(filtered.map(mapEntryToFileItem));
+      setAllFiles(visiblePageEntries(page.entries, path).map(mapEntryToFileItem));
+      setNextPageCursor(page.nextCursor);
+      setListingTruncated(page.truncated);
       setSelectedFiles(new Set());
     } catch (err) {
       if (requestId !== loadRequestIdRef.current) return;
@@ -558,12 +573,56 @@ export function FileBrowser({
     }
   };
 
+  const loadMoreFiles = async () => {
+    const cursor = nextPageCursor;
+    if (!cursor || loadMoreInFlightRef.current) return;
+    const requestId = loadRequestIdRef.current;
+    const requestedPath = currentPath;
+    loadMoreInFlightRef.current = true;
+    setLoadingMore(true);
+    try {
+      const page = await listEntriesPage(sourceId, requestedPath, 200, cursor, false);
+      if (requestId !== loadRequestIdRef.current || requestedPath !== currentPath) return;
+      const additions = visiblePageEntries(page.entries, requestedPath).map(mapEntryToFileItem);
+      setAllFiles((previous) => {
+        const existing = new Set(previous.map((file) => file.id));
+        return [...previous, ...additions.filter((file) => !existing.has(file.id))];
+      });
+      setNextPageCursor(page.nextCursor);
+      setListingTruncated(page.truncated);
+    } catch (err) {
+      if (requestId !== loadRequestIdRef.current || requestedPath !== currentPath) return;
+      toast({
+        title: "Could not load more files",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    } finally {
+      if (requestId === loadRequestIdRef.current) {
+        loadMoreInFlightRef.current = false;
+        setLoadingMore(false);
+      }
+    }
+  };
+
+  useEffect(
+    () => () => {
+      loadRequestIdRef.current += 1;
+      loadMoreInFlightRef.current = false;
+    },
+    [],
+  );
+
   useEffect(() => {
     loadRequestIdRef.current += 1;
     const nextPath = initialPath || "/";
     setCurrentPath(nextPath);
     setError(null);
     setLoading(false);
+    setLoadingMore(false);
+    setNextPageCursor(null);
+    setListingTruncated(false);
+    loadMoreInFlightRef.current = false;
     setAllFiles([]); // Clear files when switching sources
     setSelectedFiles(new Set());
     setHistory([nextPath]);
@@ -1058,25 +1117,10 @@ export function FileBrowser({
   const downloadOne = async (file: FileItem) => {
     if (file.type !== "file") return;
     try {
-      const data = await readFile(sourceId, file.id);
-      const arrayBuffer = data.buffer.slice(
-        data.byteOffset,
-        data.byteOffset + data.byteLength,
-      ) as ArrayBuffer;
-      const blob = new Blob([arrayBuffer], {
-        type: "application/octet-stream",
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = file.name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      const result = await downloadFileToDownloads(sourceId, file.id);
       toast({
-        title: "Download started",
-        description: `Downloading "${file.name}"`,
+        title: "Download complete",
+        description: `Saved "${result.fileName}" to Downloads.`,
       });
     } catch (error: unknown) {
       toast({
@@ -1295,11 +1339,19 @@ export function FileBrowser({
             reservedPaths.add(targetPath);
           }
 
-          const buffer = await file.arrayBuffer();
-          if (uploadCancelRef.current) break;
-          await writeFile(sourceId, targetPath, new Uint8Array(buffer));
+          const abortController = new AbortController();
+          activeUploadAbortRef.current = abortController;
+          await uploadFileStreaming(sourceId, targetPath, file, {
+            isCancelled: () => uploadCancelRef.current,
+            signal: abortController.signal,
+          });
+          activeUploadAbortRef.current = null;
           successCount += 1;
         } catch (error: unknown) {
+          activeUploadAbortRef.current = null;
+          if (uploadCancelRef.current || (error instanceof DOMException && error.name === "AbortError")) {
+            break;
+          }
           failedCount += 1;
           setUploadProgress((current) =>
             current
@@ -1873,6 +1925,30 @@ export function FileBrowser({
                   </ContextMenuContent>
                 </ContextMenu>
 
+                {(nextPageCursor || listingTruncated) && !error && (
+                  <div
+                    className="flex h-10 shrink-0 items-center justify-center gap-3 border-t bg-muted/20 px-3"
+                    aria-live="polite"
+                  >
+                    {nextPageCursor ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={loadingMore}
+                        onClick={() => void loadMoreFiles()}
+                      >
+                        {loadingMore ? "Loading more…" : "Load more"}
+                      </Button>
+                    ) : null}
+                    {listingTruncated ? (
+                      <span className="text-xs text-muted-foreground">
+                        Listing reached the backend safety limit.
+                      </span>
+                    ) : null}
+                  </div>
+                )}
+
                 {/* Footer path (Inside Left Panel) */}
                 {/* Footer path (Editable) */}
                 <div className="border-t bg-muted/30 h-9 px-3 flex items-center shrink-0">
@@ -2085,6 +2161,7 @@ export function FileBrowser({
                     className="h-7 px-2 text-xs"
                     onClick={() => {
                       uploadCancelRef.current = true;
+                      activeUploadAbortRef.current?.abort();
                       setUploadProgress((current) => current ? { ...current, cancelled: true } : current);
                     }}
                   >

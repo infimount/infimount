@@ -83,7 +83,7 @@ pub async fn generate_download_link(
         ));
     }
 
-    let caps = op.info().full_capability();
+    let caps = op.info().capability();
     if !caps.presign_read {
         return Err(err_with_details(
             McpErrorCode::ERR_PRESIGN_NOT_SUPPORTED,

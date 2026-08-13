@@ -11,16 +11,60 @@ use infimount_core::secrets::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+#[cfg(test)]
+use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::{LazyLock, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use tracing::info;
 use uuid::Uuid;
 
 const REGISTRY_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
+const MAX_IMPORT_JOURNAL_BYTES: usize = 2 * 1024 * 1024;
 pub const STORAGE_RECORD_SCHEMA_VERSION: u32 = 2;
+pub const IMPORT_JOURNAL_VERSION: u32 = 1;
+
+fn valid_import_secret_account(account: &str) -> bool {
+    let parts = account.split('/').collect::<Vec<_>>();
+    account.starts_with("storage/")
+        && (parts.len() == 2 || (parts.len() == 4 && parts[2] == "import"))
+        && parts.iter().skip(1).all(|part| {
+            !part.is_empty()
+                && part.len() <= 128
+                && part
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+        })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportTransactionState {
+    Staging,
+    Committed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportTransactionJournal {
+    pub version: u32,
+    pub state: ImportTransactionState,
+    pub original_present: bool,
+    pub original_bytes: Vec<u8>,
+    pub replacement_bytes: Vec<u8>,
+    pub staged_secret_accounts: Vec<String>,
+    pub obsolete_secret_accounts: Vec<String>,
+}
+
+#[cfg(test)]
+static FAIL_NEXT_IMPORT_READBACK: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+#[cfg(test)]
+static FAIL_NEXT_IMPORT_READBACK_CORRUPT: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageRecord {
@@ -102,7 +146,18 @@ impl StorageRecord {
 pub struct StorageRegistry {
     path: PathBuf,
     lock_path: PathBuf,
+    transaction_lock_path: PathBuf,
     secret_store: Arc<dyn SecretStore>,
+}
+
+pub struct ConfigurationTransaction {
+    file: std::fs::File,
+}
+
+impl Drop for ConfigurationTransaction {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.file);
+    }
 }
 
 impl StorageRegistry {
@@ -113,9 +168,14 @@ impl StorageRegistry {
     pub fn with_secret_store(path: Option<PathBuf>, secret_store: Arc<dyn SecretStore>) -> Self {
         let path = path.unwrap_or_else(default_registry_path);
         let lock_path = path.with_extension("lock");
+        let transaction_lock_path = path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("configuration-transaction.lock");
         Self {
             path,
             lock_path,
+            transaction_lock_path,
             secret_store,
         }
     }
@@ -126,6 +186,267 @@ impl StorageRegistry {
 
     pub fn secret_store(&self) -> &Arc<dyn SecretStore> {
         &self.secret_store
+    }
+
+    pub fn acquire_configuration_transaction(&self) -> McpResult<ConfigurationTransaction> {
+        ensure_parent(&self.transaction_lock_path).map_err(|error| map_core_error(&error))?;
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&self.transaction_lock_path)
+            .map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))?;
+        let start = Instant::now();
+        loop {
+            match file.try_lock_exclusive() {
+                Ok(()) => return Ok(ConfigurationTransaction { file }),
+                Err(_) if start.elapsed() >= REGISTRY_LOCK_TIMEOUT => {
+                    return Err(err(
+                        McpErrorCode::ERR_REGISTRY_LOCK_TIMEOUT,
+                        "timed out acquiring configuration transaction lock",
+                    ));
+                }
+                Err(_) => thread::sleep(Duration::from_millis(50)),
+            }
+        }
+    }
+
+    pub fn registry_bytes(&self) -> McpResult<(bool, Vec<u8>)> {
+        if !self.path.exists() {
+            return Ok((false, Vec::new()));
+        }
+        fs::read(&self.path)
+            .map(|bytes| (true, bytes))
+            .map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))
+    }
+
+    pub fn import_journal_path(&self, id: &str) -> McpResult<PathBuf> {
+        let parent = self.path.parent().ok_or_else(|| {
+            err(
+                McpErrorCode::ERR_INTERNAL,
+                "storage registry has no parent directory for import journal",
+            )
+        })?;
+        let backups = parent.join("backups");
+        infimount_core::atomic_file::create_dir_all(&backups)
+            .map_err(|error| map_core_error(&error))?;
+        Ok(backups.join(format!("storages.import-pending.{id}.json")))
+    }
+
+    pub fn write_import_journal(
+        &self,
+        path: &Path,
+        journal: &ImportTransactionJournal,
+    ) -> McpResult<()> {
+        let bytes = serde_json::to_vec_pretty(journal).map_err(|error| {
+            err_with_details(
+                McpErrorCode::ERR_INTERNAL,
+                "failed to serialize import transaction journal",
+                json!({ "serde_error": error.to_string() }),
+            )
+        })?;
+        atomic_write_file(path, &bytes, 0o600).map_err(|error| map_core_error(&error))
+    }
+
+    pub fn recover_pending_imports(&self) -> McpResult<()> {
+        let _transaction = self.acquire_configuration_transaction()?;
+        self.recover_pending_imports_locked()
+    }
+
+    fn recover_pending_imports_locked(&self) -> McpResult<()> {
+        let Some(parent) = self.path.parent() else {
+            return Ok(());
+        };
+        let backups = parent.join("backups");
+        if !backups.exists() {
+            return Ok(());
+        }
+        let mut journals = fs::read_dir(&backups)
+            .map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.starts_with("storages.import-pending.") && name.ends_with(".json")
+                    })
+            })
+            .collect::<Vec<_>>();
+        journals.sort();
+        for journal_path in journals {
+            let bytes = fs::read(&journal_path)
+                .map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))?;
+            if bytes.len() > MAX_IMPORT_JOURNAL_BYTES {
+                return Err(err(
+                    McpErrorCode::ERR_INTERNAL,
+                    "pending import journal exceeds the recovery size limit",
+                ));
+            }
+            let journal: ImportTransactionJournal =
+                serde_json::from_slice(&bytes).map_err(|_| {
+                    err(
+                        McpErrorCode::ERR_INTERNAL,
+                        "pending import journal is invalid; refusing ambiguous recovery",
+                    )
+                })?;
+            if journal.version != IMPORT_JOURNAL_VERSION
+                || (journal.state == ImportTransactionState::Committed
+                    && journal.replacement_bytes.is_empty())
+                || journal.original_bytes.len() > 16 * 1024 * 1024
+                || journal.replacement_bytes.len() > 16 * 1024 * 1024
+                || journal.staged_secret_accounts.len() > 1024
+                || journal.obsolete_secret_accounts.len() > 1024
+                || journal.staged_secret_accounts.iter().any(|account| {
+                    !valid_import_secret_account(account)
+                        || account.split('/').nth(2) != Some("import")
+                })
+                || journal
+                    .obsolete_secret_accounts
+                    .iter()
+                    .any(|account| !valid_import_secret_account(account))
+                || journal.staged_secret_accounts.iter().any(|account| {
+                    journal
+                        .staged_secret_accounts
+                        .iter()
+                        .filter(|other| *other == account)
+                        .count()
+                        > 1
+                })
+                || journal.obsolete_secret_accounts.iter().any(|account| {
+                    journal
+                        .obsolete_secret_accounts
+                        .iter()
+                        .filter(|other| *other == account)
+                        .count()
+                        > 1
+                })
+            {
+                return Err(err(
+                    McpErrorCode::ERR_INTERNAL,
+                    "pending import journal is unsupported; refusing ambiguous recovery",
+                ));
+            }
+            self.with_file_lock(REGISTRY_LOCK_TIMEOUT, || {
+                let current_present = self.path.exists();
+                let current = if current_present {
+                    fs::read(&self.path)
+                        .map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))?
+                } else {
+                    Vec::new()
+                };
+                let is_original = current_present == journal.original_present
+                    && current == journal.original_bytes;
+                let is_committed = journal.state == ImportTransactionState::Committed;
+                let is_replacement = current == journal.replacement_bytes;
+                if !is_committed && !is_original && !is_replacement {
+                    return Err(err(
+                        McpErrorCode::ERR_INTERNAL,
+                        "pending import recovery found an unexpected registry state",
+                    ));
+                }
+                if is_committed && !current_present {
+                    return Err(err(
+                        McpErrorCode::ERR_INTERNAL,
+                        "committed import registry is missing",
+                    ));
+                }
+                let current_records = if current_present {
+                    serde_json::from_slice::<Vec<StorageRecord>>(&current).map_err(|_| {
+                        err(
+                            McpErrorCode::ERR_INTERNAL,
+                            "pending import registry is invalid",
+                        )
+                    })?
+                } else {
+                    Vec::new()
+                };
+                if is_committed
+                    && journal.obsolete_secret_accounts.iter().any(|account| {
+                        journal
+                            .staged_secret_accounts
+                            .iter()
+                            .any(|staged| staged == account)
+                    })
+                {
+                    return Err(err(
+                        McpErrorCode::ERR_INTERNAL,
+                        "pending import journal contains overlapping secret transitions",
+                    ));
+                }
+                let original_records = if journal.original_present {
+                    serde_json::from_slice::<Vec<StorageRecord>>(&journal.original_bytes).map_err(
+                        |_| {
+                            err(
+                                McpErrorCode::ERR_INTERNAL,
+                                "original import registry is invalid",
+                            )
+                        },
+                    )?
+                } else {
+                    Vec::new()
+                };
+                let replacement_records = if journal.replacement_bytes.is_empty() {
+                    Vec::new()
+                } else {
+                    serde_json::from_slice::<Vec<StorageRecord>>(&journal.replacement_bytes)
+                        .map_err(|_| {
+                            err(
+                                McpErrorCode::ERR_INTERNAL,
+                                "replacement import registry is invalid",
+                            )
+                        })?
+                };
+                let original_refs = original_records
+                    .iter()
+                    .filter_map(|record| record.secret_ref.as_deref())
+                    .collect::<std::collections::HashSet<_>>();
+                let replacement_refs = replacement_records
+                    .iter()
+                    .filter_map(|record| record.secret_ref.as_deref())
+                    .collect::<std::collections::HashSet<_>>();
+                if !journal.replacement_bytes.is_empty()
+                    && (journal.staged_secret_accounts.iter().any(|account| {
+                        !replacement_refs.contains(account.as_str())
+                            || original_refs.contains(account.as_str())
+                    }) || journal.obsolete_secret_accounts.iter().any(|account| {
+                        !original_refs.contains(account.as_str())
+                            || replacement_refs.contains(account.as_str())
+                    }))
+                {
+                    return Err(err(
+                        McpErrorCode::ERR_INTERNAL,
+                        "pending import journal contains invalid secret transitions",
+                    ));
+                }
+                let active = if is_committed || is_replacement {
+                    current_records
+                        .into_iter()
+                        .filter_map(|record| record.secret_ref)
+                        .collect::<std::collections::HashSet<_>>()
+                } else {
+                    std::collections::HashSet::new()
+                };
+                let accounts = if !is_committed && is_original {
+                    &journal.staged_secret_accounts
+                } else {
+                    &journal.obsolete_secret_accounts
+                };
+                for account in accounts {
+                    if !active.contains(account) && self.secret_store.delete(account).is_err() {
+                        return Err(err(
+                            McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                            "pending import recovery could not remove a secret account",
+                        ));
+                    }
+                }
+                fs::remove_file(&journal_path)
+                    .map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))?;
+                Ok(())
+            })?;
+        }
+        Ok(())
     }
 
     pub fn load_all(&self) -> McpResult<Vec<StorageRecord>> {
@@ -145,15 +466,7 @@ impl StorageRegistry {
     ) -> McpResult<()> {
         self.with_file_lock(REGISTRY_LOCK_TIMEOUT, || {
             let current = self.load_all_unlocked()?;
-            let unchanged = current.len() == expected.len()
-                && current.iter().all(|record| {
-                    expected.iter().any(|old| {
-                        old.id == record.id
-                            && old.revision == record.revision
-                            && old.updated_at == record.updated_at
-                    })
-                });
-            if !unchanged {
+            if !records_match_exact(&current, expected) {
                 return Err(err(
                     McpErrorCode::ERR_INTERNAL,
                     "storage registry changed during transaction; retry the operation",
@@ -161,6 +474,103 @@ impl StorageRegistry {
             }
             self.save_all_atomic_unlocked(replacement)
         })
+    }
+
+    /// Replace a registry while holding the disk lock through write and readback.
+    /// If readback fails, restore only when the on-disk bytes still represent the
+    /// exact imported state; a later process mutation is never overwritten.
+    pub fn replace_all_atomic_verified(
+        &self,
+        expected: &[StorageRecord],
+        replacement: &[StorageRecord],
+    ) -> McpResult<()> {
+        self.with_file_lock(REGISTRY_LOCK_TIMEOUT, || {
+            let current = self.load_all_unlocked()?;
+            if !records_match_exact(&current, expected) {
+                return Err(err(
+                    McpErrorCode::ERR_INTERNAL,
+                    "storage registry changed during transaction; retry the operation",
+                ));
+            }
+            if let Err(error) = self.save_all_atomic_unlocked(replacement) {
+                let _ = self.restore_all_if_matches_unlocked(replacement, expected);
+                return Err(error);
+            }
+            #[cfg(test)]
+            let fail_readback = FAIL_NEXT_IMPORT_READBACK.lock().unwrap().remove(&self.path);
+            #[cfg(test)]
+            let corrupt_readback = FAIL_NEXT_IMPORT_READBACK_CORRUPT
+                .lock()
+                .unwrap()
+                .remove(&self.path);
+            #[cfg(test)]
+            if fail_readback || corrupt_readback {
+                if corrupt_readback {
+                    let _ = fs::write(&self.path, b"{");
+                }
+                self.save_all_atomic_unlocked(expected)?;
+                return Err(err(
+                    McpErrorCode::ERR_INTERNAL,
+                    "storage registry readback failed; original registry was restored",
+                ));
+            }
+            let persisted = match self.load_all_unlocked() {
+                Ok(persisted) => persisted,
+                Err(error) => {
+                    self.save_all_atomic_unlocked(expected)?;
+                    return Err(error);
+                }
+            };
+            if !records_match_exact(&persisted, replacement) {
+                self.save_all_atomic_unlocked(expected)?;
+                return Err(err(
+                    McpErrorCode::ERR_INTERNAL,
+                    "storage registry readback failed; original registry was restored",
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    /// Restore an imported registry only when no later process has changed it.
+    /// Returns false when the compare-and-restore precondition no longer holds.
+    pub fn restore_all_if_matches(
+        &self,
+        expected_current: &[StorageRecord],
+        replacement: &[StorageRecord],
+    ) -> McpResult<bool> {
+        self.with_file_lock(REGISTRY_LOCK_TIMEOUT, || {
+            self.restore_all_if_matches_unlocked(expected_current, replacement)
+        })
+    }
+
+    #[cfg(test)]
+    pub fn fail_next_import_readback(&self) {
+        FAIL_NEXT_IMPORT_READBACK
+            .lock()
+            .unwrap()
+            .insert(self.path.clone());
+    }
+
+    #[cfg(test)]
+    pub fn fail_next_import_readback_with_corruption(&self) {
+        FAIL_NEXT_IMPORT_READBACK_CORRUPT
+            .lock()
+            .unwrap()
+            .insert(self.path.clone());
+    }
+
+    fn restore_all_if_matches_unlocked(
+        &self,
+        expected_current: &[StorageRecord],
+        replacement: &[StorageRecord],
+    ) -> McpResult<bool> {
+        let current = self.load_all_unlocked()?;
+        if !records_match_exact(&current, expected_current) {
+            return Ok(false);
+        }
+        self.save_all_atomic_unlocked(replacement)?;
+        Ok(true)
     }
 
     pub fn save_legacy_records_secure(&self, mut storages: Vec<StorageRecord>) -> McpResult<()> {
@@ -351,7 +761,7 @@ impl StorageRegistry {
                 self.rollback_secret_writes(rollback)?;
                 return Err(error);
             }
-            info!("migrated storage registry with backup at {:?}", backup_path);
+            crate::migration_cleanup::delete_plaintext_backup_or_journal(&backup_path)?;
         }
 
         Ok(storages)
@@ -453,9 +863,7 @@ impl StorageRegistry {
         Ok(backup_path)
     }
 
-    fn save_all_atomic_unlocked(&self, storages: &[StorageRecord]) -> McpResult<()> {
-        ensure_parent(&self.path).map_err(|e| map_core_error(&e))?;
-
+    pub fn serialize_records(&self, storages: &[StorageRecord]) -> McpResult<Vec<u8>> {
         let mut normalized_storages = storages.to_vec();
         let schema_secret_names = discover_secret_field_names();
         for storage in &mut normalized_storages {
@@ -475,14 +883,18 @@ impl StorageRegistry {
             storage.schema_version = STORAGE_RECORD_SCHEMA_VERSION;
         }
 
-        let payload = serde_json::to_vec_pretty(&normalized_storages).map_err(|e| {
+        serde_json::to_vec_pretty(&normalized_storages).map_err(|e| {
             err_with_details(
                 McpErrorCode::ERR_INTERNAL,
                 "failed to serialize storage registry",
                 json!({ "serde_error": e.to_string() }),
             )
-        })?;
+        })
+    }
 
+    fn save_all_atomic_unlocked(&self, storages: &[StorageRecord]) -> McpResult<()> {
+        ensure_parent(&self.path).map_err(|e| map_core_error(&e))?;
+        let payload = self.serialize_records(storages)?;
         atomic_write_file(&self.path, &payload, 0o600).map_err(|e| map_core_error(&e))
     }
 
@@ -527,7 +939,17 @@ pub struct ResolvedStorageRecord {
 }
 
 pub fn retry_pending_secret_cleanup(secret_store: &dyn SecretStore) -> McpResult<()> {
-    let path = default_config_dir().join("secret-cleanup.json");
+    retry_pending_secret_cleanup_at(&default_registry_path(), secret_store)
+}
+
+pub fn retry_pending_secret_cleanup_at(
+    registry_path: &Path,
+    secret_store: &dyn SecretStore,
+) -> McpResult<()> {
+    let path = registry_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("secret-cleanup.json");
     if !path.exists() {
         return Ok(());
     }
@@ -560,9 +982,9 @@ pub fn retry_pending_secret_cleanup(secret_store: &dyn SecretStore) -> McpResult
             "secret cleanup journal is invalid",
         )
     })?;
-    let active_secret_refs = if default_registry_path().exists() {
+    let active_secret_refs = if registry_path.exists() {
         serde_json::from_slice::<Vec<StorageRecord>>(
-            &fs::read(default_registry_path())
+            &fs::read(registry_path)
                 .map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))?,
         )
         .map_err(|_| err(McpErrorCode::ERR_INTERNAL, "storage registry is invalid"))?
@@ -572,11 +994,17 @@ pub fn retry_pending_secret_cleanup(secret_store: &dyn SecretStore) -> McpResult
     } else {
         std::collections::HashSet::new()
     };
-    let remaining = document
+    let pending = document
         .get("pending")
         .and_then(Value::as_array)
         .cloned()
-        .unwrap_or_default()
+        .ok_or_else(|| {
+            err(
+                McpErrorCode::ERR_INTERNAL,
+                "secret cleanup journal is invalid",
+            )
+        })?;
+    let remaining = pending
         .into_iter()
         .filter(|item| {
             item.get("account")
@@ -757,6 +1185,10 @@ pub fn default_registry_path() -> PathBuf {
     default_config_dir().join("storages.json")
 }
 
+fn records_match_exact(left: &[StorageRecord], right: &[StorageRecord]) -> bool {
+    serde_json::to_vec(left).ok() == serde_json::to_vec(right).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -771,32 +1203,24 @@ mod tests {
         let path = dir.path().join("storages.json");
         let secret_store = std::sync::Arc::new(infimount_core::secrets::MemorySecretStore::new());
         let registry = StorageRegistry::with_secret_store(Some(path.clone()), secret_store.clone());
-        let mut record = StorageRecord::new(
-            "S3".to_string(),
-            "s3".to_string(),
-            json!({
-                "bucket": "example",
-                "nested": { "secretAccessKey": "seeded-secret-value" }
-            }),
-        );
-        record.schema_version = STORAGE_RECORD_SCHEMA_VERSION;
-        fs::write(&path, serde_json::to_vec_pretty(&vec![record]).unwrap()).unwrap();
+        fs::write(
+            &path,
+            include_str!("../../../tests/fixtures/v0.7/storages-plaintext.json"),
+        )
+        .unwrap();
 
         let loaded = registry.load_all().expect("migrate registry");
-        assert!(loaded[0]
-            .config
-            .pointer("/nested/secretAccessKey")
-            .is_none());
+        assert!(loaded[0].config.get("secretAccessKey").is_none());
         assert_eq!(
             secret_store
                 .get_json(&format!("storage/{}", loaded[0].id))
                 .unwrap()
-                .unwrap()["nested.secretAccessKey"],
-            "seeded-secret-value"
+                .unwrap()["secretAccessKey"],
+            "TEST_SECRET_ACCESS_KEY_DO_NOT_SHIP"
         );
         assert!(!fs::read_to_string(&path)
             .unwrap()
-            .contains("seeded-secret-value"));
+            .contains("TEST_SECRET_ACCESS_KEY_DO_NOT_SHIP"));
     }
 
     #[test]
@@ -819,6 +1243,112 @@ mod tests {
         let error = registry.load_all().expect_err("migration should fail");
         assert_eq!(error.code, McpErrorCode::ERR_SECRET_MIGRATION_FAILED);
         assert_eq!(fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn pending_import_recovery_removes_staged_secrets_after_precommit_crash() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("storages.json");
+        let secrets = std::sync::Arc::new(infimount_core::secrets::MemorySecretStore::new());
+        let registry = StorageRegistry::with_secret_store(Some(path.clone()), secrets.clone());
+        let journal_path = registry.import_journal_path("recovery-test").unwrap();
+        let journal = ImportTransactionJournal {
+            version: IMPORT_JOURNAL_VERSION,
+            state: ImportTransactionState::Staging,
+            original_present: false,
+            original_bytes: Vec::new(),
+            replacement_bytes: Vec::new(),
+            staged_secret_accounts: vec!["storage/staged-secret/import/uuid".into()],
+            obsolete_secret_accounts: Vec::new(),
+        };
+        secrets
+            .put_json("storage/staged-secret/import/uuid", &json!({"token": "x"}))
+            .unwrap();
+        registry
+            .write_import_journal(&journal_path, &journal)
+            .unwrap();
+        registry.recover_pending_imports().unwrap();
+        assert!(secrets
+            .get_json("storage/staged-secret/import/uuid")
+            .unwrap()
+            .is_none());
+        assert!(!journal_path.exists());
+    }
+
+    #[test]
+    fn committed_import_journal_recovers_after_later_registry_edit() {
+        let dir = TempDir::new().unwrap();
+        let secrets = std::sync::Arc::new(infimount_core::secrets::MemorySecretStore::new());
+        let registry = StorageRegistry::with_secret_store(
+            Some(dir.path().join("storages.json")),
+            secrets.clone(),
+        );
+        let mut original = StorageRecord::new(
+            "Original".into(),
+            "local".into(),
+            json!({"root": "/tmp/original"}),
+        );
+        original.secret_ref = Some("storage/original".into());
+        secrets
+            .put_json("storage/original", &json!({"token": "x"}))
+            .unwrap();
+        registry.save_all_atomic(&[original.clone()]).unwrap();
+        let (_, original_bytes) = registry.registry_bytes().unwrap();
+        let mut replacement = original.clone();
+        replacement.secret_ref = None;
+        registry.save_all_atomic(&[replacement]).unwrap();
+        let (_, replacement_bytes) = registry.registry_bytes().unwrap();
+        let mut later = StorageRecord::new(
+            "Later edit".into(),
+            "local".into(),
+            json!({"root": "/tmp/later"}),
+        );
+        later.id = original.id.clone();
+        registry.save_all_atomic(&[later]).unwrap();
+        let journal_path = registry
+            .import_journal_path("committed-later-edit")
+            .unwrap();
+        registry
+            .write_import_journal(
+                &journal_path,
+                &ImportTransactionJournal {
+                    version: IMPORT_JOURNAL_VERSION,
+                    state: ImportTransactionState::Committed,
+                    original_present: true,
+                    original_bytes,
+                    replacement_bytes,
+                    staged_secret_accounts: Vec::new(),
+                    obsolete_secret_accounts: vec!["storage/original".into()],
+                },
+            )
+            .unwrap();
+        registry.recover_pending_imports().unwrap();
+        assert!(secrets.get_json("storage/original").unwrap().is_none());
+        assert!(!journal_path.exists());
+    }
+
+    #[test]
+    fn invalid_import_journal_cannot_delete_non_import_secret_accounts() {
+        let dir = TempDir::new().unwrap();
+        let registry = StorageRegistry::with_secret_store(
+            Some(dir.path().join("storages.json")),
+            std::sync::Arc::new(infimount_core::secrets::MemorySecretStore::new()),
+        );
+        let journal_path = registry.import_journal_path("invalid-account").unwrap();
+        let journal = ImportTransactionJournal {
+            version: IMPORT_JOURNAL_VERSION,
+            state: ImportTransactionState::Staging,
+            original_present: false,
+            original_bytes: Vec::new(),
+            replacement_bytes: b"[]".to_vec(),
+            staged_secret_accounts: vec!["storage/auth-token".into()],
+            obsolete_secret_accounts: Vec::new(),
+        };
+        registry
+            .write_import_journal(&journal_path, &journal)
+            .unwrap();
+        assert!(registry.recover_pending_imports().is_err());
+        assert!(journal_path.exists());
     }
 
     #[test]
@@ -1018,21 +1548,18 @@ mod tests {
 
         let _storages = load_registry(&dir);
 
-        // Check that backup was written to backups/
+        // After successful migration the plaintext backup is deleted
         let backups_dir = dir.path().join("backups");
-        assert!(backups_dir.exists(), "backups directory should exist");
-        let backup_files: Vec<_> = fs::read_dir(&backups_dir)
-            .expect("read backups dir")
-            .filter_map(|e| e.ok())
-            .collect();
-        assert!(!backup_files.is_empty(), "backup files should exist");
-
-        // Verify backup content matches original byte-for-byte
-        let backup_content = fs::read_to_string(backup_files[0].path()).expect("read backup");
-        assert_eq!(
-            backup_content, original_json,
-            "backup must match original byte-for-byte"
-        );
+        if backups_dir.exists() {
+            let count = fs::read_dir(&backups_dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .count();
+            assert_eq!(
+                count, 0,
+                "backup should be deleted after successful migration"
+            );
+        }
     }
 
     #[test]

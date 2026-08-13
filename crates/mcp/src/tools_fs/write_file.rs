@@ -8,8 +8,8 @@ use crate::path::{enforce_root_operation, parse_mcp_path, resolve_storage_path, 
 use crate::policy::McpOperation;
 
 use super::common::{
-    create_dir_chain, default_encoding, default_true, enforce_storage_policy, parent_path,
-    FsToolsContext,
+    create_dir_chain, default_encoding, default_true, enforce_storage_policy,
+    missing_directory_paths, parent_path, FsToolsContext,
 };
 
 #[derive(Debug, Deserialize)]
@@ -117,6 +117,22 @@ pub async fn write_file(ctx: &FsToolsContext, input: WriteFileInput) -> McpResul
 
     if input.create_parents {
         if let Some(parent) = parent_path(&parsed.backend_path) {
+            let missing =
+                missing_directory_paths(&op, &parent, &storage.name, parsed.normalized.as_str())
+                    .await?;
+            for ancestor in &missing {
+                let ancestor_session = ctx
+                    .validate_session(input.session_id.as_deref(), &storage.name, Some(ancestor))
+                    .await?;
+                if ancestor_session.read_only {
+                    return Err(err_with_details(
+                        McpErrorCode::ERR_SESSION_FORBIDDEN,
+                        "session cannot create a parent directory",
+                        json!({ "session_id": input.session_id }),
+                    ));
+                }
+                enforce_storage_policy(&storage, ancestor, McpOperation::Mkdir, false, false)?;
+            }
             create_dir_chain(&op, &parent, &storage.name, parsed.normalized.as_str()).await?;
         }
     } else if let Some(parent) = parent_path(&parsed.backend_path) {
@@ -141,7 +157,7 @@ pub async fn write_file(ctx: &FsToolsContext, input: WriteFileInput) -> McpResul
     }
 
     let user_metadata = sanitize_user_metadata(input.user_metadata);
-    if user_metadata.is_some() && !op.info().full_capability().write_with_user_metadata {
+    if user_metadata.is_some() && !op.info().capability().write_with_user_metadata {
         return Err(err_with_details(
             McpErrorCode::ERR_BACKEND_UNSUPPORTED,
             "storage backend does not support user metadata writes",

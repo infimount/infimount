@@ -91,20 +91,20 @@ Use **Copy visible** for a JSON clipboard export of the current filtered rows, o
 
 ## Claude Desktop / Stdio
 
-Use stdio when the MCP client launches the server process itself.
+Use stdio when the MCP client launches the server process itself. Copy the generated JSON from MCP Settings; the desktop inserts the verified absolute path of its bundled, same-version sidecar and correctly escapes spaces and Windows backslashes.
 
 ```json
 {
   "mcpServers": {
     "infimount": {
-      "command": "infimount_mcp",
-      "args": ["--transport", "stdio"]
+      "command": "/absolute/path/from-Infimount-MCP-Settings/infimount_mcp",
+      "args": ["serve", "--transport", "stdio"]
     }
   }
 }
 ```
 
-If `infimount_mcp` is not on `PATH`, use the absolute binary path in `command`.
+Normal desktop users do not need to build or install `infimount_mcp` separately, and onboarding does not fall back to an executable on `PATH`.
 
 ## Cursor / VS Code-style MCP JSON
 
@@ -114,8 +114,8 @@ Many editor clients accept a similar MCP JSON shape. Use stdio for the broadest 
 {
   "mcpServers": {
     "infimount": {
-      "command": "infimount_mcp",
-      "args": ["--transport", "stdio"]
+      "command": "/absolute/path/from-Infimount-MCP-Settings/infimount_mcp",
+      "args": ["serve", "--transport", "stdio"]
     }
   }
 }
@@ -161,7 +161,7 @@ Desktop HTTP can run without a token only on loopback for local development. If 
 Headless HTTP mode requires a bearer token unless `--allow-insecure` is passed for loopback local development. Set the token with either CLI or environment:
 
 ```bash
-INFIMOUNT_AUTH_TOKEN='replace-with-a-random-token' infimount_mcp --transport http --bind 127.0.0.1 --port 7331
+INFIMOUNT_AUTH_TOKEN='replace-with-a-random-token' /verified/path/to/infimount_mcp serve --transport http --bind 127.0.0.1 --port 7331
 ```
 
 Clients must send:

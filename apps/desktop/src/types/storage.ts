@@ -56,7 +56,8 @@ export type SecretMutation =
 export type AuthTokenMutation =
   | { action: "keep" }
   | { action: "set"; value: string }
-  | { action: "clear" };
+  | { action: "clear" }
+  | { action: "rotate" };
 
 export interface StorageConfig extends StorageDraft {
   id: string;
@@ -150,6 +151,45 @@ export interface McpRuntimeStatus {
   authTokenConfigured: boolean;
 }
 
+export type McpClientKind =
+  | "generic_stdio"
+  | "claude_code"
+  | "cursor"
+  | "vs_code"
+  | "open_code"
+  | "claude_desktop";
+
+export interface McpClientAdapterInfo {
+  kind: McpClientKind;
+  name: string;
+  description: string;
+  detected: boolean;
+  detection: string;
+  writeCapable: boolean;
+  requiresExecutionConfirmation: boolean;
+  defaultTarget: string | null;
+  snippet: string;
+}
+
+export interface McpClientInstallPreview {
+  previewId: string;
+  kind: McpClientKind;
+  action: "copy" | "write" | "execute";
+  targetPath: string | null;
+  before: string | null;
+  after: string;
+  canApply: boolean;
+  requiresExecutionConfirmation: boolean;
+  expiresInSeconds: number;
+}
+
+export interface McpClientInstallResult {
+  applied: boolean;
+  targetPath: string | null;
+  backupPath: string | null;
+  rollbackId: string | null;
+}
+
 export interface McpClientSnippets {
   stdio: string;
   http: string;
@@ -192,7 +232,7 @@ export interface AppSettings {
   onboardingSkippedAt: string | null;
   wizardStep: string | null;
   wizardCompletedSteps: string[];
-  telemetryConsent: boolean | null;
+  telemetryConsent: "unknown" | "granted" | "denied";
 }
 
 export interface McpAuditExportManifest {
@@ -273,4 +313,26 @@ export interface Entry {
   size: number;
   modified_at: string | null;
   etag: string | null;
+}
+
+export interface SidecarValidation {
+  binaryFound: boolean;
+  executable: boolean;
+  canonicalPath: string | null;
+  version: string | null;
+  versionMatch: boolean;
+  doctorHealthy: boolean;
+  sha256: string | null;
+  checksumVerified: boolean;
+  errorCode: string | null;
+}
+
+export interface ActivationProbeOutput {
+  sidecar: SidecarValidation;
+  mcpHandshakeOk: boolean;
+  mcpAllowedOpOk: boolean;
+  mcpDenialProven: boolean;
+  mcpAuditOk: boolean;
+  overallOk: boolean;
+  errorCode: string | null;
 }

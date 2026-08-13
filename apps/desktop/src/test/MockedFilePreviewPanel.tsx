@@ -22,6 +22,14 @@ export function MockedFilePreviewPanel() {
         if (cmd === "read_file") {
           return readFilePayload;
         }
+        if (cmd === "read_file_range") {
+          return {
+            totalSize: readFilePayload.length,
+            offset: 0,
+            bytes: readFilePayload,
+            truncated: false,
+          };
+        }
         if (cmd === "stat_entry") {
           return {
             path: "/docs/agents.md",

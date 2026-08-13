@@ -1,0 +1,20 @@
+[
+  {
+    "id": "fixture-v07-s3",
+    "revision": 1,
+    "name": "Fixture S3",
+    "backend": "s3",
+    "config": {
+      "bucket": "fixture-bucket",
+      "region": "us-east-1",
+      "accessKeyId": "TEST_ACCESS_KEY_ID_DO_NOT_SHIP",
+      "secretAccessKey": "TEST_SECRET_ACCESS_KEY_DO_NOT_SHIP"
+    },
+    "enabled": true,
+    "schema_version": 2,
+    "mcp_exposed": false,
+    "read_only": true,
+    "created_at": "2025-01-01T00:00:00Z",
+    "updated_at": "2025-01-01T00:00:00Z"
+  }
+]

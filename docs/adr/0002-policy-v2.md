@@ -1,8 +1,8 @@
 # ADR 0002: Policy Schema v2
 
-**Status:** Accepted  
-**Date:** 2026-07-18  
-**Driver:** v0.8 Trust & Activation  
+**Status:** Accepted
+**Date:** 2026-07-18
+**Driver:** v0.8 Trust & Activation
 
 ## Context
 

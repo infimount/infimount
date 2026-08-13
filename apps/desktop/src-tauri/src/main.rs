@@ -3,7 +3,9 @@
     windows_subsystem = "windows"
 )]
 
+mod activation_probe;
 mod app_settings;
+mod client_integrations;
 mod commands;
 mod diagnostics;
 mod state;
@@ -13,11 +15,13 @@ use tauri::tray::TrayIconBuilder;
 use tauri::Manager;
 
 fn main() {
-    let app_state = state::AppState::new().expect("failed to initialize desktop state");
+    let app_state = match state::AppState::new() {
+        Ok(s) => s,
+        Err(_) => state::AppState::degraded("ERR_STARTUP_RESTORE_RECOVERY"),
+    };
 
     tauri::Builder::default()
         .manage(app_state)
-        .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             #[cfg(desktop)]
             app.handle()
@@ -50,6 +54,19 @@ fn main() {
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     let app_state = app_handle.state::<state::AppState>();
+                    if !app_state.startup_health().operational {
+                        return;
+                    }
+                    if let Ok(validation) = tauri::async_runtime::spawn_blocking(
+                        activation_probe::validate_sidecar_binary,
+                    )
+                    .await
+                    {
+                        activation_probe::record_startup_sidecar_event(
+                            &app_state.product_events,
+                            &validation,
+                        );
+                    }
                     if let Err(error) = app_state.ensure_runtime_from_settings().await {
                         eprintln!("failed to initialize MCP runtime: {}", error.message);
                     }
@@ -65,16 +82,22 @@ fn main() {
             commands::stat_entry,
             commands::read_file,
             commands::read_file_range,
+            commands::download_file_to_downloads,
+            commands::download_file_version_to_downloads,
             commands::write_file,
+            commands::begin_file_upload,
+            commands::append_file_upload_chunk,
+            commands::finish_file_upload,
+            commands::cancel_file_upload,
             commands::create_directory,
             commands::delete_path,
             commands::list_storages,
+            commands::create_activation_demo_storage,
             commands::add_storage,
             commands::remove_storage,
             commands::update_storage,
             commands::update_mcp_storage_policy,
             commands::verify_storage,
-            commands::import_storage_config,
             commands::export_shareable_config,
             commands::preview_storage_import_cmd,
             commands::apply_storage_import_cmd,
@@ -103,6 +126,10 @@ fn main() {
             commands::start_mcp_http,
             commands::stop_mcp_http,
             commands::get_mcp_client_snippets,
+            client_integrations::list_mcp_client_adapters,
+            client_integrations::preview_mcp_client_install,
+            client_integrations::apply_mcp_client_install,
+            client_integrations::rollback_mcp_client_install,
             commands::create_recovery_backup,
             commands::preview_recovery_restore,
             commands::apply_recovery_restore,
@@ -111,15 +138,23 @@ fn main() {
             commands::delete_version,
             commands::get_mcp_sidecar_info,
             commands::list_workspaces,
-            commands::create_workspace,
+            commands::create_workspace_atomic,
             commands::update_workspace,
             commands::delete_workspace,
+            commands::delete_workspace_with_files,
             commands::import_legacy_workspaces,
+            commands::list_workspace_checkpoints,
+            commands::create_workspace_checkpoint,
+            commands::restore_workspace_checkpoint,
             commands::save_wizard_state,
             commands::set_telemetry_consent,
             commands::export_diagnostics,
+            commands::get_startup_health,
             commands::get_product_events,
+            commands::clear_product_events,
+            commands::reveal_diagnostics_export,
             commands::get_os_info,
+            commands::run_activation_probe,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,8 +1,8 @@
 # ADR 0003: Native Secret Storage and Plaintext Migration
 
-**Status:** Accepted  
-**Date:** 2026-07-18  
-**Driver:** v0.8 Trust & Activation  
+**Status:** Accepted
+**Date:** 2026-07-18
+**Driver:** v0.8 Trust & Activation
 
 ## Context
 
@@ -27,7 +27,7 @@ with an actionable error rather than leaking credentials to disk.
 
 ### Keyring dependency constraints
 
-Use the current stable `keyring` crate API compatible with Rust 1.85.
+Use the current stable `keyring` crate API compatible with the workspace MSRV, Rust 1.94.
 The expected API is the v4 `v1` compatibility layer. Pin the resolved
 version in `Cargo.lock`. **Do not raise the project MSRV in this PR
 without a separate ADR.**

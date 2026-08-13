@@ -81,12 +81,21 @@ const installTauriMocks = ({ failRead = false }: { failRead?: boolean }) => {
         if (cmd === "plugin:event|unlisten") return null;
         if (cmd.includes("updater") || cmd.includes("window")) return null;
         if (cmd === "list_entries") return entries;
+        if (cmd === "list_entries_page") return { entries, nextCursor: null, truncated: false };
         if (cmd === "get_storage_capabilities") return capabilities;
-        if (cmd === "read_file") {
+        if (cmd === "download_file_to_downloads") {
+          const path = typeof args?.path === "string" ? args.path : "";
+          const name = path.split("/").filter(Boolean).pop() ?? "download";
+          (window as unknown as { __infimountPreviewState: PreviewState }).__infimountPreviewState.downloadedNames.push(name);
+          return { fileName: name, bytes: previewBytes.length };
+        }
+        if (cmd === "read_file" || cmd === "read_file_range") {
           const path = typeof args?.path === "string" ? args.path : "";
           (window as unknown as { __infimountPreviewState: PreviewState }).__infimountPreviewState.readFileCalls.push(path);
           if (failRead) throw "Read failed";
-          return previewBytes;
+          return cmd === "read_file_range"
+            ? { totalSize: previewBytes.length, offset: 0, bytes: previewBytes, truncated: false }
+            : previewBytes;
         }
         return null;
       },

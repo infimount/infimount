@@ -7,8 +7,8 @@ use crate::path::{enforce_root_operation, parse_mcp_path, resolve_storage_path, 
 use crate::policy::McpOperation;
 
 use super::common::{
-    create_dir_chain, default_true, enforce_storage_policy, normalize_list_prefix, parent_path,
-    FsToolsContext,
+    create_dir_chain, default_true, enforce_storage_policy, missing_directory_paths,
+    normalize_list_prefix, parent_path, FsToolsContext,
 };
 
 #[derive(Debug, Deserialize)]
@@ -124,6 +124,26 @@ pub async fn mkdir(ctx: &FsToolsContext, input: MkdirInput) -> McpResult<MkdirOu
     }
 
     if input.parents {
+        let missing = missing_directory_paths(
+            &op,
+            &parsed.backend_path,
+            &storage.name,
+            parsed.normalized.as_str(),
+        )
+        .await?;
+        for ancestor in &missing {
+            let ancestor_session = ctx
+                .validate_session(input.session_id.as_deref(), &storage.name, Some(ancestor))
+                .await?;
+            if ancestor_session.read_only {
+                return Err(err_with_details(
+                    McpErrorCode::ERR_SESSION_FORBIDDEN,
+                    "session cannot create a parent directory",
+                    json!({ "session_id": input.session_id }),
+                ));
+            }
+            enforce_storage_policy(&storage, ancestor, McpOperation::Mkdir, false, false)?;
+        }
         create_dir_chain(
             &op,
             &parsed.backend_path,

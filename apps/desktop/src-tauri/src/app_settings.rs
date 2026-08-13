@@ -7,7 +7,41 @@ use infimount_mcp::registry::default_config_dir;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TelemetryConsent {
+    #[default]
+    Unknown,
+    Granted,
+    Denied,
+}
+
+impl<'de> Deserialize<'de> for TelemetryConsent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Legacy(bool),
+            Named(String),
+        }
+
+        match Wire::deserialize(deserializer)? {
+            Wire::Legacy(true) => Ok(Self::Granted),
+            Wire::Legacy(false) => Ok(Self::Denied),
+            Wire::Named(value) => match value.as_str() {
+                "unknown" => Ok(Self::Unknown),
+                "granted" => Ok(Self::Granted),
+                "denied" => Ok(Self::Denied),
+                _ => Err(serde::de::Error::custom("invalid telemetry consent")),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AppSettings {
     pub onboarding_completed: bool,
@@ -16,21 +50,8 @@ pub struct AppSettings {
     pub onboarding_skipped_at: Option<String>,
     pub wizard_step: Option<String>,
     pub wizard_completed_steps: Vec<String>,
-    pub telemetry_consent: Option<bool>,
-}
-
-impl Default for AppSettings {
-    fn default() -> Self {
-        Self {
-            onboarding_completed: false,
-            onboarding_skipped: false,
-            onboarding_completed_at: None,
-            onboarding_skipped_at: None,
-            wizard_step: None,
-            wizard_completed_steps: Vec::new(),
-            telemetry_consent: None,
-        }
-    }
+    #[serde(alias = "telemetryEnabled")]
+    pub telemetry_consent: TelemetryConsent,
 }
 
 #[derive(Debug, Clone)]
@@ -109,11 +130,16 @@ impl AppSettingsStore {
 
     pub fn set_telemetry_consent(&self, consent: bool) -> McpResult<AppSettings> {
         let mut settings = self.load()?;
-        settings.telemetry_consent = Some(consent);
+        settings.telemetry_consent = if consent {
+            TelemetryConsent::Granted
+        } else {
+            TelemetryConsent::Denied
+        };
         self.save_atomic(&settings)?;
         Ok(settings)
     }
 
+    #[allow(dead_code)]
     pub fn reset_all(&self) -> McpResult<AppSettings> {
         let settings = AppSettings::default();
         self.save_atomic(&settings)?;
@@ -172,6 +198,15 @@ mod tests {
 
         store.set_telemetry_consent(true).expect("set consent");
         let loaded = store.load().unwrap();
-        assert_eq!(loaded.telemetry_consent, Some(true));
+        assert_eq!(loaded.telemetry_consent, TelemetryConsent::Granted);
+    }
+
+    #[test]
+    fn telemetry_consent_migrates_legacy_boolean() {
+        let parsed: AppSettings = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/v0.7/app-settings.json"
+        ))
+        .unwrap();
+        assert_eq!(parsed.telemetry_consent, TelemetryConsent::Denied);
     }
 }

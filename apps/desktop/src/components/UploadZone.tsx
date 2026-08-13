@@ -5,7 +5,9 @@ import { Upload } from "lucide-react";
 // Minimal interface we need for uploads.
 export interface UploadFileLike {
   name: string;
+  size?: number;
   arrayBuffer: () => Promise<ArrayBuffer>;
+  slice?: (start?: number, end?: number) => Blob;
 }
 
 export interface UploadZoneRef {
@@ -41,7 +43,9 @@ export const UploadZone = forwardRef<UploadZoneRef, UploadZoneProps>(
 
           return {
             name: relPath,
+            size: file.size,
             arrayBuffer: () => file.arrayBuffer(),
+            slice: (start, end) => file.slice(start, end),
           };
         });
 

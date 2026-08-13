@@ -18,7 +18,7 @@ use crate::models::{CoreError, Result, Source, SourceKind, StorageBackendCapabil
 
 pub fn get_capabilities(op: &Operator) -> StorageBackendCapabilities {
     let info = op.info();
-    let full = info.full_capability();
+    let full = info.capability();
     StorageBackendCapabilities {
         list_with_versions: full.list_with_versions,
         read_with_version: full.read_with_version,
@@ -268,7 +268,7 @@ fn build_local_operator(source: &Source) -> Result<Operator> {
 
     let expanded = expand_tilde_home(root);
     let builder = Fs::default().root(&expanded);
-    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    let op = Operator::new(builder).map_err(CoreError::Storage)?;
     Ok(op)
 }
 
@@ -320,13 +320,7 @@ fn build_sftp_operator(source: &Source) -> Result<Operator> {
     {
         builder = builder.known_hosts_strategy(strategy);
     }
-    if let Some(enabled) = config_bool(&source.config, "enableCopy")
-        .or_else(|| config_bool(&source.config, "enable_copy"))
-    {
-        builder = builder.enable_copy(enabled);
-    }
-
-    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    let op = Operator::new(builder).map_err(CoreError::Storage)?;
     Ok(op)
 }
 
@@ -371,7 +365,7 @@ fn build_ftp_operator(source: &Source) -> Result<Operator> {
         builder = builder.root(root);
     }
 
-    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    let op = Operator::new(builder).map_err(CoreError::Storage)?;
     Ok(op)
 }
 
@@ -457,7 +451,7 @@ fn build_s3_operator(source: &Source) -> Result<Operator> {
         }
     }
 
-    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    let op = Operator::new(builder).map_err(CoreError::Storage)?;
     Ok(op)
 }
 
@@ -489,7 +483,7 @@ fn build_webdav_operator(source: &Source) -> Result<Operator> {
         builder = builder.disable_create_dir(true);
     }
 
-    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    let op = Operator::new(builder).map_err(CoreError::Storage)?;
     Ok(op)
 }
 
@@ -529,7 +523,7 @@ fn build_azure_blob_operator(source: &Source) -> Result<Operator> {
         builder = builder.endpoint(endpoint);
     }
 
-    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    let op = Operator::new(builder).map_err(CoreError::Storage)?;
     Ok(op)
 }
 
@@ -580,7 +574,7 @@ fn build_gdrive_operator(source: &Source) -> Result<Operator> {
         builder = builder.client_secret(client_secret);
     }
 
-    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    let op = Operator::new(builder).map_err(CoreError::Storage)?;
     Ok(op)
 }
 
@@ -622,19 +616,7 @@ fn build_onedrive_operator(source: &Source) -> Result<Operator> {
     {
         builder = builder.client_id(client_id);
     }
-    if let Some(client_secret) = source
-        .config
-        .get("clientSecret")
-        .or_else(|| source.config.get("client_secret"))
-        .and_then(|v| v.as_str())
-    {
-        builder = builder.client_secret(client_secret);
-    }
-    if let Some(enabled) = config_bool(&source.config, "versioning") {
-        builder = builder.enable_versioning(enabled);
-    }
-
-    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    let op = Operator::new(builder).map_err(CoreError::Storage)?;
     Ok(op)
 }
 
@@ -693,12 +675,12 @@ fn build_gcs_operator(source: &Source) -> Result<Operator> {
     if source.config.get("endpoint").is_some() && credential.is_none() && credential_path.is_none()
     {
         builder = builder
-            .allow_anonymous()
+            .skip_signature()
             .disable_vm_metadata()
             .disable_config_load();
     }
 
-    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    let op = Operator::new(builder).map_err(CoreError::Storage)?;
     Ok(op)
 }
 
@@ -746,7 +728,7 @@ fn build_b2_operator(source: &Source) -> Result<Operator> {
         builder = builder.root(root);
     }
 
-    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    let op = Operator::new(builder).map_err(CoreError::Storage)?;
     Ok(op)
 }
 
@@ -800,18 +782,7 @@ fn build_oss_operator(source: &Source) -> Result<Operator> {
     {
         builder = builder.addressing_style(addressing_style);
     }
-    if let Some(presign_endpoint) = source
-        .config
-        .get("presignEndpoint")
-        .and_then(|v| v.as_str())
-    {
-        builder = builder.presign_endpoint(presign_endpoint);
-    }
-    if let Some(enabled) = config_bool(&source.config, "versioning") {
-        builder = builder.enable_versioning(enabled);
-    }
-
-    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    let op = Operator::new(builder).map_err(CoreError::Storage)?;
     Ok(op)
 }
 
@@ -857,11 +828,8 @@ fn build_cos_operator(source: &Source) -> Result<Operator> {
     {
         builder = builder.root(root);
     }
-    if let Some(enabled) = config_bool(&source.config, "versioning") {
-        builder = builder.enable_versioning(enabled);
-    }
 
-    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    let op = Operator::new(builder).map_err(CoreError::Storage)?;
     Ok(op)
 }
 
@@ -908,11 +876,8 @@ fn build_obs_operator(source: &Source) -> Result<Operator> {
     {
         builder = builder.root(root);
     }
-    if let Some(enabled) = config_bool(&source.config, "versioning") {
-        builder = builder.enable_versioning(enabled);
-    }
 
-    let op = Operator::new(builder).map_err(CoreError::Storage)?.finish();
+    let op = Operator::new(builder).map_err(CoreError::Storage)?;
     Ok(op)
 }
 
@@ -1093,7 +1058,7 @@ mod tests {
         };
 
         let op = build_operator(&source).expect("operator should build");
-        let caps = op.info().full_capability();
+        let caps = op.info().capability();
         assert!(caps.list);
         assert!(caps.read);
         assert!(caps.write);
@@ -1143,7 +1108,7 @@ mod tests {
                 config,
             };
             let op = build_operator(&source).expect("operator should build");
-            let caps = op.info().full_capability();
+            let caps = op.info().capability();
             assert!(caps.list);
             assert!(caps.read);
             assert!(caps.write);
@@ -1185,7 +1150,7 @@ mod tests {
                 config,
             };
             let op = build_operator(&source).expect("operator should build");
-            let caps = op.info().full_capability();
+            let caps = op.info().capability();
             assert!(caps.list);
             assert!(caps.read);
             assert!(caps.write);
@@ -1212,7 +1177,7 @@ mod tests {
         };
 
         let op = build_operator(&source).expect("operator should build");
-        let caps = op.info().full_capability();
+        let caps = op.info().capability();
         assert!(caps.list);
         assert!(caps.read);
         assert!(caps.write);
@@ -1239,7 +1204,7 @@ mod tests {
         };
 
         let op = build_operator(&source).expect("operator should build");
-        let caps = op.info().full_capability();
+        let caps = op.info().capability();
         assert!(caps.list);
         assert!(caps.read);
         assert!(caps.write);

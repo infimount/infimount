@@ -15,10 +15,12 @@ import {
   addStorage as apiAddStorage,
   approveMcpConfirmation,
   completeOnboarding,
+  createActivationDemoStorage,
   denyMcpConfirmation,
   exportMcpAuditBundle,
   exportShareableConfig,
   getAppSettings,
+  getStartupHealth,
   getMcpClientSnippets,
   getMcpStatus,
   listActiveMcpSessions,
@@ -26,9 +28,10 @@ import {
   listPendingMcpConfirmations,
   listMcpAuditEvents,
   listMcpTools,
-  importStorageConfig,
   listStorages,
+  listWorkspaces,
   removeStorage as apiRemoveStorage,
+  runActivationProbe,
   clearMcpAuditEvents,
   skipOnboarding,
   startMcpHttp,
@@ -46,6 +49,7 @@ import {
   requestMcpNotificationPermission,
   type McpNotificationPermission,
 } from "@/lib/mcpNotifications";
+import type { StartupHealth } from "@/types/diagnostics";
 import type {
   ActiveMcpSession,
   AppSettings,
@@ -93,6 +97,16 @@ const StorageImportDialog = lazy(() =>
 const RecoveryBackupDialog = lazy(() =>
   import("@/components/RecoveryBackupDialog").then((module) => ({
     default: module.RecoveryBackupDialog,
+  })),
+);
+const DiagnosticsDialog = lazy(() =>
+  import("@/components/DiagnosticsDialog").then((module) => ({
+    default: module.DiagnosticsDialog,
+  })),
+);
+const PrivacySettings = lazy(() =>
+  import("@/components/PrivacySettings").then((module) => ({
+    default: module.PrivacySettings,
   })),
 );
 
@@ -274,6 +288,7 @@ interface McpRuntimeStatusWire {
 }
 
 const Index = () => {
+  const [startupHealth, setStartupHealth] = useState<StartupHealth | null>(null);
   const [storages, setStorages] = useState<StorageConfig[]>([]);
   const [isStoragesLoading, setIsStoragesLoading] = useState(true);
   const [storageRefreshTick, setStorageRefreshTick] = useState<Record<string, number>>({});
@@ -286,9 +301,13 @@ const Index = () => {
   const [isStorageConfigEditorOpen, setIsStorageConfigEditorOpen] = useState(false);
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
   const [isAgentWorkspacesOpen, setIsAgentWorkspacesOpen] = useState(false);
+  const [workspaceCount, setWorkspaceCount] = useState(0);
   const [isMcpDialogOpen, setIsMcpDialogOpen] = useState(false);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
+  const [pendingImportJson, setPendingImportJson] = useState("");
   const [isBackupDialogOpen, setIsBackupDialogOpen] = useState(false);
+  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
+  const [isPrivacyOpen, setIsPrivacyOpen] = useState(false);
   const [mcpStatus, setMcpStatus] = useState<McpRuntimeStatus | null>(null);
   const [mcpSnippets, setMcpSnippets] = useState<McpClientSnippets | null>(null);
   const [mcpTools, setMcpTools] = useState<McpToolDefinition[]>([]);
@@ -308,7 +327,21 @@ const Index = () => {
   const [primaryPaneState, setPrimaryPaneState] = useState<FileBrowserPaneState | null>(null);
   const [secondaryPaneState, setSecondaryPaneState] = useState<FileBrowserPaneState | null>(null);
 
+  useEffect(() => {
+    void getStartupHealth()
+      .then(setStartupHealth)
+      .catch(() =>
+        setStartupHealth({
+          operational: false,
+          recoveryAvailable: false,
+          errorCode: "ERR_STARTUP_HEALTH_UNAVAILABLE",
+          message: "Infimount could not verify startup health. Storage and MCP operations are disabled.",
+        }),
+      );
+  }, []);
+
   const reloadMcpStatus = useCallback(async () => {
+    if (!startupHealth?.operational) return;
     try {
       const [status, snippets, tools] = await Promise.all([
         getMcpStatus().then(mapStatusWire),
@@ -329,9 +362,13 @@ const Index = () => {
     } catch {
       // The settings dialog renders its unavailable state without exposing backend details.
     }
-  }, []);
+  }, [startupHealth?.operational]);
 
   const reloadStorages = useCallback(async () => {
+    if (!startupHealth?.operational) {
+      setIsStoragesLoading(false);
+      return;
+    }
     setIsStoragesLoading(true);
     try {
       const items = await listStorages();
@@ -358,11 +395,23 @@ const Index = () => {
     } finally {
       setIsStoragesLoading(false);
     }
-  }, []);
+  }, [startupHealth?.operational]);
 
   useEffect(() => {
     void reloadStorages();
   }, [reloadStorages]);
+
+  useEffect(() => {
+    if (!startupHealth?.operational) return;
+    void import("@/lib/agentWorkspaces")
+      .then(({ migrateLegacyWorkspaces }) => migrateLegacyWorkspaces())
+      .then((result) => {
+        if (result.imported > 0) void reloadStorages();
+      })
+      .catch(() => {
+        // Preserve legacy browser state for a later retry.
+      });
+  }, [reloadStorages, startupHealth?.operational]);
 
   useEffect(() => {
     void (async () => {
@@ -375,15 +424,15 @@ const Index = () => {
   }, []);
 
   useEffect(() => {
-    if (isStoragesLoading || !appSettings) return;
-    const onboardingDone = appSettings.onboardingCompleted || appSettings.onboardingSkipped;
-    setIsOnboardingOpen(!onboardingDone && storages.length === 0);
-  }, [appSettings, isStoragesLoading, storages.length]);
+    if (!startupHealth?.operational || isStoragesLoading || !appSettings) return;
+    setIsOnboardingOpen(!appSettings.onboardingCompleted && !appSettings.onboardingSkipped);
+  }, [appSettings, isStoragesLoading, startupHealth?.operational, storages.length]);
 
   useEffect(() => {
-    if (!isMcpDialogOpen) return;
+    if (!isMcpDialogOpen && !isOnboardingOpen) return;
     void reloadMcpStatus();
-  }, [isMcpDialogOpen, reloadMcpStatus]);
+    void listWorkspaces().then((workspaces) => setWorkspaceCount(workspaces.length)).catch(() => undefined);
+  }, [isMcpDialogOpen, isOnboardingOpen, reloadMcpStatus]);
 
   useEffect(() => {
     if (!mcpStatus?.runningHttp) return;
@@ -551,6 +600,7 @@ const Index = () => {
   };
 
   const handleImportStorages = () => {
+    setPendingImportJson("");
     setIsImportDialogOpen(true);
   };
 
@@ -564,27 +614,11 @@ const Index = () => {
   };
 
   const handleSaveStorageConfigJson = async (json: string) => {
-    try {
-      const result = await importStorageConfig({
-        json,
-        mode: "replace",
-        onConflict: "overwrite",
-      });
-      await reloadStorages();
-      toast({
-        title: "Storage config updated",
-        description: result.warnings?.length
-          ? `Applied ${result.imported} storage configuration(s). ${result.warnings.join(" ")}`
-          : `Applied ${result.imported} storage configuration(s) from JSON.`,
-      });
-    } catch (error: unknown) {
-      toast({
-        title: "Failed to apply storage config",
-        description: error instanceof Error ? error.message : String(error),
-        variant: "destructive",
-      });
-      throw error;
-    }
+    // Advanced JSON edits use the same server-authoritative preview and apply
+    // transaction as file imports; there is no direct registry replacement path.
+    setPendingImportJson(json);
+    setIsStorageConfigEditorOpen(false);
+    setIsImportDialogOpen(true);
   };
 
   const handleSaveMcpSettings = async (settings: McpSettingsUpdate) => {
@@ -632,6 +666,27 @@ const Index = () => {
     }
   };
 
+  const handleCreateActivationDemo = async () => {
+    const storage = await createActivationDemoStorage();
+    const { createAgentWorkspace, listAgentWorkspaces } = await import("@/lib/agentWorkspaces");
+    const existing = (await listAgentWorkspaces()).find(
+      (workspace) => workspace.storageId === storage.id && workspace.rootPath === "workspace",
+    );
+    if (!existing) {
+      await createAgentWorkspace({
+        storageId: storage.id,
+        name: "Activation Demo Workspace",
+        rootPath: "workspace",
+        templateId: "research",
+        adoptExisting: true,
+        accessProfile: "read_only",
+      });
+    }
+    await reloadStorages();
+    setWorkspaceCount((await listWorkspaces()).length);
+    await reloadMcpStatus();
+  };
+
   const handleCompleteOnboarding = async () => {
     const next = await completeOnboarding();
     setAppSettings(next);
@@ -653,12 +708,18 @@ const Index = () => {
   };
 
   const handleTestMcpConnection = async () => {
+    const probe = await runActivationProbe();
     await reloadMcpStatus();
-    const exposedCount = storages.filter((storage) => storage.enabled && storage.mcpExposed).length;
     toast({
-      title: "MCP setup check",
-      description: `${mcpTools.length} function(s) available. ${exposedCount} storage(s) currently exposed.`,
+      title: probe.overallOk ? "Real MCP probe passed" : "Real MCP probe failed",
+      description: probe.overallOk
+        ? "The bundled sidecar completed handshake, allowed-workspace, and exact policy-denial checks."
+        : `The real sidecar probe did not pass (${probe.errorCode ?? "ERR_ACTIVATION_PROBE_FAILED"}).`,
+      variant: probe.overallOk ? "default" : "destructive",
     });
+    if (!probe.overallOk) {
+      throw new Error(probe.errorCode ?? "ERR_ACTIVATION_PROBE_FAILED");
+    }
   };
 
   const handleClearMcpAudit = async () => {
@@ -764,6 +825,67 @@ const Index = () => {
     }
   };
 
+  if (!startupHealth) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background" role="status">
+        <p className="text-sm text-muted-foreground">Checking local security state…</p>
+      </div>
+    );
+  }
+
+  if (!startupHealth.operational) {
+    return (
+      <div className="flex h-screen flex-col bg-background">
+        <div className="flex h-12 items-center justify-end border-b border-border/60 px-3" data-tauri-drag-region>
+          <WindowControls />
+        </div>
+        <main className="flex flex-1 items-center justify-center p-6">
+          <section
+            className="w-full max-w-xl rounded-xl border border-destructive/30 bg-card p-6 shadow-sm"
+            role="alert"
+            aria-labelledby="restricted-mode-title"
+          >
+            <p className="text-xs font-semibold uppercase tracking-wide text-destructive">Restricted recovery mode</p>
+            <h1 id="restricted-mode-title" className="mt-2 text-xl font-semibold">
+              Storage and MCP access are disabled
+            </h1>
+            <p className="mt-3 text-sm text-muted-foreground">
+              {startupHealth.message ?? "Infimount could not safely initialize local security state."}
+            </p>
+            <p className="mt-2 text-xs text-muted-foreground">Reference: {startupHealth.errorCode ?? "ERR_STARTUP_INITIALIZATION"}</p>
+            <div className="mt-6 flex flex-wrap gap-2">
+              {startupHealth.recoveryAvailable ? (
+                <Button type="button" onClick={() => setIsBackupDialogOpen(true)}>
+                  Open recovery
+                </Button>
+              ) : null}
+              <Button type="button" variant="outline" onClick={() => setIsDiagnosticsOpen(true)}>
+                Export diagnostics
+              </Button>
+            </div>
+            <p className="mt-4 text-xs text-muted-foreground">
+              {startupHealth.recoveryAvailable
+                ? "Complete the recovery action, then restart Infimount."
+                : "Unlock or repair the system credential store, then restart Infimount before restoring a backup."}
+            </p>
+          </section>
+        </main>
+        <Suspense fallback={null}>
+          {isBackupDialogOpen ? (
+            <RecoveryBackupDialog
+              open={isBackupDialogOpen}
+              onOpenChange={setIsBackupDialogOpen}
+              onRestoreComplete={() => undefined}
+            />
+          ) : null}
+          {isDiagnosticsOpen ? (
+            <DiagnosticsDialog open={isDiagnosticsOpen} onOpenChange={setIsDiagnosticsOpen} />
+          ) : null}
+        </Suspense>
+      </div>
+    );
+  }
+
   return (
     <TransferQueueProvider>
       <div className="flex h-screen w-full overflow-hidden rounded-[12px] border border-border/40 bg-background">
@@ -791,6 +913,8 @@ const Index = () => {
                 onOpenOnboarding={() => setIsOnboardingOpen(true)}
                 onOpenGlobalSearch={() => setIsGlobalSearchOpen(true)}
                 onOpenAgentWorkspaces={() => setIsAgentWorkspacesOpen(true)}
+                onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
+                onOpenPrivacy={() => setIsPrivacyOpen(true)}
                 isLoading={isStoragesLoading}
               />
             </ResizablePanel>
@@ -829,6 +953,8 @@ const Index = () => {
             onOpenOnboarding={() => setIsOnboardingOpen(true)}
             onOpenGlobalSearch={() => setIsGlobalSearchOpen(true)}
             onOpenAgentWorkspaces={() => setIsAgentWorkspacesOpen(true)}
+            onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
+            onOpenPrivacy={() => setIsPrivacyOpen(true)}
             isLoading={isStoragesLoading}
           />
         </div>
@@ -971,6 +1097,11 @@ const Index = () => {
           <ActivationWizard
             open={isOnboardingOpen}
             onOpenChange={setIsOnboardingOpen}
+            onCreateDemo={handleCreateActivationDemo}
+            onOpenWorkspaces={() => {
+              setIsOnboardingOpen(false);
+              setIsAgentWorkspacesOpen(true);
+            }}
             onAddStorage={() => {
               setIsOnboardingOpen(false);
               setIsAddDialogOpen(true);
@@ -983,8 +1114,10 @@ const Index = () => {
             onSkip={handleSkipOnboarding}
             onSaveState={handleSaveWizardState}
             storagesCount={storages.length}
+            workspacesCount={workspaceCount}
             mcpStatus={mcpStatus ?? undefined}
-            clientSnippets={mcpSnippets ?? undefined}
+            initialStep={appSettings?.wizardStep}
+            initialCompletedSteps={appSettings?.wizardCompletedSteps}
           />
         ) : null}
 
@@ -993,7 +1126,12 @@ const Index = () => {
             open={isAddDialogOpen}
             onOpenChange={(open) => {
               setIsAddDialogOpen(open);
-              if (!open) setEditingStorage(null);
+              if (!open) {
+                setEditingStorage(null);
+                if (appSettings && !appSettings.onboardingCompleted && !appSettings.onboardingSkipped) {
+                  setIsOnboardingOpen(true);
+                }
+              }
             }}
             onAdd={handleAddStorage}
             onUpdate={handleUpdateStorage}
@@ -1005,7 +1143,12 @@ const Index = () => {
         {isMcpDialogOpen ? (
           <McpSettingsDialog
             open={isMcpDialogOpen}
-            onOpenChange={setIsMcpDialogOpen}
+            onOpenChange={(open) => {
+              setIsMcpDialogOpen(open);
+              if (!open && appSettings && !appSettings.onboardingCompleted && !appSettings.onboardingSkipped) {
+                setIsOnboardingOpen(true);
+              }
+            }}
             status={mcpStatus}
             snippets={mcpSnippets}
             tools={mcpTools}
@@ -1051,9 +1194,18 @@ const Index = () => {
             open={isAgentWorkspacesOpen}
             storages={storages}
             auditEvents={mcpAuditEvents}
-            onOpenChange={setIsAgentWorkspacesOpen}
+            onOpenChange={(open) => {
+              setIsAgentWorkspacesOpen(open);
+              if (!open) {
+                void listWorkspaces()
+                  .then((workspaces) => setWorkspaceCount(workspaces.length))
+                  .catch(() => undefined);
+                if (appSettings && !appSettings.onboardingCompleted && !appSettings.onboardingSkipped) {
+                  setIsOnboardingOpen(true);
+                }
+              }
+            }}
             onSelectStorage={handleSelectStorage}
-            onUpdateStoragePolicy={handleUpdateMcpStoragePolicy}
           />
         ) : null}
 
@@ -1062,6 +1214,7 @@ const Index = () => {
             open={isImportDialogOpen}
             onOpenChange={setIsImportDialogOpen}
             onImportComplete={reloadStorages}
+            initialJson={pendingImportJson}
           />
         ) : null}
 
@@ -1072,7 +1225,31 @@ const Index = () => {
             onRestoreComplete={reloadStorages}
           />
         ) : null}
+
+        {isDiagnosticsOpen ? (
+          <DiagnosticsDialog open={isDiagnosticsOpen} onOpenChange={setIsDiagnosticsOpen} />
+        ) : null}
+
+        {isPrivacyOpen && appSettings ? (
+          <PrivacySettings
+            open={isPrivacyOpen}
+            onOpenChange={setIsPrivacyOpen}
+            currentConsent={appSettings.telemetryConsent}
+            onConsentChange={(telemetryConsent) =>
+              setAppSettings((current) => current ? { ...current, telemetryConsent } : current)
+            }
+          />
+        ) : null}
         </Suspense>
+
+        {appSettings?.onboardingSkipped && !appSettings.onboardingCompleted ? (
+          <div className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-amber-500/30 bg-background px-4 py-3 shadow-lg">
+            <p className="text-sm">Activation is incomplete. MCP access remains unverified.</p>
+            <Button type="button" size="sm" onClick={() => setIsOnboardingOpen(true)}>
+              Finish setup
+            </Button>
+          </div>
+        ) : null}
       </div>
     </TransferQueueProvider>
   );

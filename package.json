@@ -1,15 +1,27 @@
 {
-	"scripts": {
-		"setup:hooks": "bash scripts/setup-git-hooks.sh",
-		"test:docs": "node scripts/check-feature-docs.mjs",
-		"test:release": "bash scripts/release-test-gate.sh",
-		"test:release:policy": "bash scripts/check-zero-manual-release-gate.sh"
-	},
-	"dependencies": {
-		"@tauri-apps/api": "2.10.1",
-		"@tauri-apps/cli": "2.9.4"
-	},
-	"devDependencies": {
-		"markdownlint-cli": "^0.48.0"
-	}
+  "version": "0.8.0",
+  "private": true,
+  "scripts": {
+    "setup:hooks": "bash scripts/setup-git-hooks.sh",
+    "build:mcp-sidecar": "node scripts/prepare-mcp-sidecar.mjs",
+    "test:mcp-sidecar": "bash scripts/smoke-mcp-sidecar.sh",
+    "test:docs": "node scripts/check-feature-docs.mjs",
+    "test:upgrade-fixtures": "node scripts/check-upgrade-fixtures.mjs",
+    "test:release": "bash scripts/release-test-gate.sh",
+    "test:release:policy": "bash scripts/check-zero-manual-release-gate.sh",
+    "test:release:rehearsal": "bash scripts/release-rehearsal.sh",
+    "test:release:rehearsal:policy": "bash scripts/check-signing-policy-rehearsal.sh --matrix"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.10.1",
+    "@tauri-apps/cli": "2.9.4"
+  },
+  "devDependencies": {
+    "markdownlint-cli": "^0.48.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "lodash": "4.18.1"
+    }
+  }
 }

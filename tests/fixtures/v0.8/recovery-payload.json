@@ -1,0 +1,28 @@
+{
+  "schema_version": 2,
+  "created_at": "2025-01-01T00:00:00Z",
+  "storages": [],
+  "mcp_settings": {
+    "enabled": false,
+    "transport": "stdio",
+    "bindAddress": "127.0.0.1",
+    "port": 7331,
+    "enabledTools": [
+      "list_dir",
+      "stat_path",
+      "read_file"
+    ]
+  },
+  "app_settings": {
+    "onboardingCompleted": false,
+    "onboardingSkipped": false,
+    "telemetryConsent": "unset"
+  },
+  "workspaces": {
+    "records": []
+  },
+  "secrets": {
+    "storage/fixture-v07-s3": "{\"refreshToken\":\"TEST_OAUTH_REFRESH_TOKEN_DO_NOT_SHIP\"}"
+  },
+  "checksum": "bea63c2ed0f2179e842bd0fb6a1c82b3db19d5d3ee842bb39ff496474581c342"
+}

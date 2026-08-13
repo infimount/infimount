@@ -1,15 +1,20 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AgentWorkspacesDialog } from "./AgentWorkspacesDialog";
 import {
   listWorkspaces,
-  createWorkspace as apiCreateWorkspace,
+  createWorkspaceAtomic as apiCreateWorkspaceAtomic,
   updateWorkspace as apiUpdateWorkspace,
+  createWorkspaceCheckpointCommand,
+  listWorkspaceCheckpoints,
+  restoreWorkspaceCheckpointCommand,
   createDirectory,
   listEntries,
-  readFile,
+  readFileRange,
   writeFile,
+  deleteWorkspace,
+  deleteWorkspaceWithFiles,
 } from "@/lib/api";
 import type { StorageConfig } from "@/types/storage";
 
@@ -18,12 +23,39 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     listWorkspaces: vi.fn().mockResolvedValue([]),
-    createWorkspace: vi.fn().mockResolvedValue({}),
+    createWorkspaceAtomic: vi.fn().mockResolvedValue({
+      workspace: {},
+      policyUpdated: false,
+      rollbackErrors: [],
+    }),
     updateWorkspace: vi.fn().mockResolvedValue({}),
+    createWorkspaceCheckpointCommand: vi.fn().mockResolvedValue({
+      schemaVersion: 1,
+      id: "checkpoint-1",
+      workspaceId: "workspace-1",
+      label: "Checkpoint",
+      createdAt: "2026-01-01T00:00:00Z",
+      manifestPath: "/agent-workspaces/existing-workspace/.infimount/checkpoints/checkpoint-1.json",
+      fileCount: 3,
+    }),
+    listWorkspaceCheckpoints: vi.fn().mockResolvedValue([
+      {
+        schemaVersion: 1,
+        id: "checkpoint-1",
+        workspaceId: "workspace-1",
+        label: "Checkpoint",
+        createdAt: "2026-01-01T00:00:00Z",
+        manifestPath: "/agent-workspaces/existing-workspace/.infimount/checkpoints/checkpoint-1.json",
+        fileCount: 3,
+      },
+    ]),
+    restoreWorkspaceCheckpointCommand: vi.fn().mockResolvedValue(undefined),
     createDirectory: vi.fn(),
     listEntries: vi.fn(),
-    readFile: vi.fn(),
+    readFileRange: vi.fn(),
     writeFile: vi.fn(),
+    deleteWorkspace: vi.fn(),
+    deleteWorkspaceWithFiles: vi.fn(),
   };
 });
 
@@ -70,7 +102,7 @@ function makeWorkspace(id: string, name: string) {
     templateId: "coding" as const,
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
-    memoryFiles: ["memory/tasks.md"],
+    memoryFiles: ["memory/tasks.md", "memory/decisions.md", "memory/handoff.md"],
     checkpointIds: [],
   };
 }
@@ -81,17 +113,52 @@ describe("AgentWorkspacesDialog", () => {
     window.localStorage.clear();
     vi.mocked(createDirectory).mockResolvedValue(undefined);
     vi.mocked(writeFile).mockResolvedValue(undefined);
-    vi.mocked(readFile).mockResolvedValue(new TextEncoder().encode("# Tasks\n"));
+    vi.mocked(readFileRange).mockResolvedValue({
+      totalSize: 8,
+      offset: 0,
+      bytes: Array.from(new TextEncoder().encode("# Tasks\n")),
+      truncated: false,
+    });
     vi.mocked(listEntries).mockResolvedValue([]);
+    vi.mocked(deleteWorkspace).mockResolvedValue(undefined);
+    vi.mocked(deleteWorkspaceWithFiles).mockResolvedValue(undefined);
+    vi.mocked(listWorkspaceCheckpoints).mockResolvedValue([
+      {
+        schemaVersion: 1,
+        id: "checkpoint-1",
+        workspaceId: "workspace-1",
+        label: "Checkpoint",
+        createdAt: "2026-01-01T00:00:00Z",
+        manifestPath: "/agent-workspaces/existing-workspace/.infimount/checkpoints/checkpoint-1.json",
+        fileCount: 3,
+      },
+    ]);
     (listWorkspaces as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-    (apiCreateWorkspace as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    (apiCreateWorkspaceAtomic as ReturnType<typeof vi.fn>).mockResolvedValue({
+      workspace: {
+        id: "ws-1",
+        storageId: "local",
+        name: "Agent Research",
+        rootPath: "/agent-workspaces/agent-research",
+        templateId: "coding",
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+        memoryFiles: ["memory/tasks.md", "memory/decisions.md", "memory/handoff.md"],
+        checkpointIds: [],
+      },
+      policyUpdated: true,
+      rollbackErrors: [],
+    });
     (apiUpdateWorkspace as ReturnType<typeof vi.fn>).mockResolvedValue({});
   });
 
   it("creates a scoped workspace and applies MCP policy", async () => {
-    const onUpdateStoragePolicy = vi.fn().mockResolvedValue(undefined);
     const ws = makeWorkspace("ws-1", "Agent Research");
-    (apiCreateWorkspace as ReturnType<typeof vi.fn>).mockResolvedValue(ws);
+    (apiCreateWorkspaceAtomic as ReturnType<typeof vi.fn>).mockResolvedValue({
+      workspace: ws,
+      policyUpdated: true,
+      rollbackErrors: [],
+    });
     (listWorkspaces as ReturnType<typeof vi.fn>).mockResolvedValue([ws]);
 
     render(
@@ -100,7 +167,6 @@ describe("AgentWorkspacesDialog", () => {
         storages={[storage]}
         onOpenChange={vi.fn()}
         onSelectStorage={vi.fn()}
-        onUpdateStoragePolicy={onUpdateStoragePolicy}
       />,
     );
 
@@ -110,23 +176,55 @@ describe("AgentWorkspacesDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create workspace" }));
 
     await waitFor(() => {
-      expect(writeFile).toHaveBeenCalledWith(
-        "local",
-        "/agent-workspaces/agent-research/README.md",
-        expect.anything(),
-      );
-      expect(onUpdateStoragePolicy).toHaveBeenCalledWith(
-        "local",
-        expect.objectContaining({
-          default_access: "read_write",
-          rules: [expect.objectContaining({ prefix: "/agent-workspaces/agent-research/", access: "read_only" })],
-        }),
+      expect(apiCreateWorkspaceAtomic).toHaveBeenCalledWith(
+        expect.objectContaining({ accessProfile: "read_only" }),
       );
     });
 
     await waitFor(() => {
       expect(screen.getAllByText("Agent Research").length).toBeGreaterThan(0);
     });
+  });
+
+  it("offers separate confirmed registration-only and registration-plus-files deletion", async () => {
+    const ws = makeWorkspace("workspace-delete", "Delete workspace");
+    (listWorkspaces as ReturnType<typeof vi.fn>).mockResolvedValue([ws]);
+    const { unmount } = render(
+      <AgentWorkspacesDialog
+        open
+        storages={[storage]}
+        onOpenChange={vi.fn()}
+        onSelectStorage={vi.fn()}
+      />,
+    );
+    await screen.findByRole("button", { name: "Remove registration only" });
+    fireEvent.click(screen.getByRole("button", { name: "Remove registration only" }));
+    const registrationDialog = await screen.findByRole("alertdialog");
+    fireEvent.click(
+      within(registrationDialog).getByRole("button", { name: "Remove registration only" }),
+    );
+    await waitFor(() => expect(deleteWorkspace).toHaveBeenCalledWith("workspace-delete"));
+    expect(deleteWorkspaceWithFiles).not.toHaveBeenCalled();
+    unmount();
+
+    render(
+      <AgentWorkspacesDialog
+        open
+        storages={[storage]}
+        onOpenChange={vi.fn()}
+        onSelectStorage={vi.fn()}
+      />,
+    );
+    await screen.findByRole("button", { name: "Delete registration and files" });
+    fireEvent.click(screen.getByRole("button", { name: "Delete registration and files" }));
+    const filesDialog = await screen.findByRole("alertdialog");
+    expect(within(filesDialog).getByText(/permanently deletes/i)).toBeInTheDocument();
+    fireEvent.click(
+      within(filesDialog).getByRole("button", { name: "Delete registration and files" }),
+    );
+    await waitFor(() =>
+      expect(deleteWorkspaceWithFiles).toHaveBeenCalledWith("workspace-delete", true),
+    );
   });
 
   it("appends workspace memory and restores a checkpoint", async () => {
@@ -140,9 +238,9 @@ describe("AgentWorkspacesDialog", () => {
         is_dir: false,
         size: 7,
         modified_at: null,
+        etag: null,
       },
     ]);
-    vi.mocked(readFile).mockResolvedValue(new TextEncoder().encode("# Tasks\n"));
 
     render(
       <AgentWorkspacesDialog
@@ -172,7 +270,6 @@ describe("AgentWorkspacesDialog", () => {
         ]}
         onOpenChange={vi.fn()}
         onSelectStorage={vi.fn()}
-        onUpdateStoragePolicy={vi.fn()}
       />,
     );
 
@@ -195,18 +292,16 @@ describe("AgentWorkspacesDialog", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Save checkpoint" }));
     await waitFor(() => {
-      expect(window.localStorage.getItem("infimount:agent-workspace-checkpoints:v1")).toContain(
-        "workspace-1",
-      );
+      expect(createWorkspaceCheckpointCommand).toHaveBeenCalledWith("workspace-1", undefined);
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Restore memory" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("Overwrite workspace memory?");
+    expect(restoreWorkspaceCheckpointCommand).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Restore and overwrite" }));
     await waitFor(() => {
-      expect(writeFile).toHaveBeenCalledWith(
-        "local",
-        "/agent-workspaces/existing-workspace/memory/tasks.md",
-        expect.anything(),
-      );
+      expect(restoreWorkspaceCheckpointCommand).toHaveBeenCalledWith("workspace-1", "checkpoint-1", true);
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     });
   });
 });

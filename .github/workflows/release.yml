@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,6 +12,34 @@ env:
   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
 jobs:
+  release-signing-preflight:
+    name: Release Gate / Signing Policy
+    runs-on: ubuntu-latest
+    outputs:
+      stable: ${{ steps.policy.outputs.stable }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Require updater signing for every release and platform signing for stable tags
+        id: policy
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # Every release requires updater signing; policy is implemented by the shared checker.
+          result="$(bash scripts/check-signing-policy-rehearsal.sh)"
+          printf '%s\n' "$result"
+          stable="$(printf '%s\n' "$result" | awk -F= '/^stable=/{print $2}')"
+          printf 'stable=%s\n' "$stable" >> "$GITHUB_OUTPUT"
+
   release-frontend-gate:
     name: Release Gate / Frontend
     runs-on: ubuntu-latest
@@ -105,8 +132,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install exact release MSRV (Rust 1.94)
+        uses: dtolnay/rust-toolchain@1.94
         with:
           components: rustfmt, clippy
 
@@ -126,6 +153,9 @@ jobs:
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings -A clippy::result_large_err -A clippy::needless_borrows_for_generic_args
+
+      - name: Prepare packaged MCP sidecar for Tauri tests and coverage
+        run: bash scripts/build-mcp-sidecar.sh
 
       - name: Rust tests
         run: cargo test --workspace
@@ -163,10 +193,16 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb gnome-keyring dbus-x11
 
       - name: Desktop launch/migration smoke
         run: ./scripts/smoke-desktop.sh
+
+      - name: Activation, secret migration, and recovery smoke
+        run: |
+          ./scripts/smoke-activation.sh
+          ./scripts/smoke-secret-migration.sh
+          ./scripts/smoke-backup-restore.sh
 
   release-storage-simulator:
     name: Release Gate / Storage Simulator
@@ -199,11 +235,17 @@ jobs:
         with:
           node-version: 20
 
+      - name: Apply tag version before consistency validation
+        run: node scripts/sync-release-version.mjs
+
       - name: Verify version, docs, changelog, and release notes
         run: node scripts/check-release-consistency.mjs "${GITHUB_REF_NAME}"
 
       - name: Verify feature documentation consistency
         run: node scripts/check-feature-docs.mjs
+
+      - name: Verify committed upgrade fixtures
+        run: node scripts/check-upgrade-fixtures.mjs
 
       - name: Smoke install scripts with checksum fixtures
         run: ./scripts/smoke-install-scripts.sh
@@ -218,10 +260,18 @@ jobs:
       - name: Verify zero-manual release gate policy
         run: ./scripts/check-zero-manual-release-gate.sh
 
+      - name: Verify canonical and Windows installer release versions
+        run: node scripts/check-release-version-model.mjs
+
+      - name: Verify packaged-sidecar checksum smoke fixtures
+        run: ./scripts/test-packaged-sidecar-checksum.sh
+
   build-linux:
     name: Build Linux
     runs-on: ubuntu-22.04
+    # Every platform build is blocked on signing policy before compilation.
     needs:
+      - release-signing-preflight
       - release-frontend-gate
       - release-ui-gate
       - release-rust-gate
@@ -256,7 +306,7 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb rpm file
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb rpm cpio unzip file
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -265,19 +315,28 @@ jobs:
         working-directory: apps/desktop
         run: pnpm build
 
+      - name: Prepare and smoke target sidecar
+        run: node scripts/prepare-mcp-sidecar.mjs && bash scripts/smoke-mcp-sidecar.sh
+
       - name: Build Tauri app
         working-directory: apps/desktop
         run: pnpm tauri build
 
       - name: Collect Linux release assets
         run: |
-          mkdir -p out/linux
+          mkdir -p out/linux/sbom-components
           APPIMAGE="$(find target/release/bundle/appimage -maxdepth 1 -type f -name '*.AppImage' | sort | head -n 1)"
           DEB="$(find target/release/bundle/deb -maxdepth 1 -type f -name '*.deb' | sort | head -n 1)"
           RPM="$(find target/release/bundle/rpm -maxdepth 1 -type f -name '*.rpm' | sort | head -n 1)"
           cp "$APPIMAGE" out/linux/Infimount-x86_64.AppImage
           cp "$DEB" out/linux/Infimount-amd64.deb
           cp "$RPM" out/linux/Infimount-x86_64.rpm
+          SIDECAR_TREE="$(mktemp -d)"
+          dpkg-deb -x "$DEB" "$SIDECAR_TREE"
+          SIDECAR="$(find "$SIDECAR_TREE" -type f -name 'mcp*' -perm -111 | sort | head -n 1)"
+          test -x "$SIDECAR"
+          cp "$SIDECAR" out/linux/sbom-components/infimount_mcp-linux
+          rm -rf "$SIDECAR_TREE"
 
       - name: Collect Linux updater artifacts
         run: |
@@ -336,7 +395,7 @@ jobs:
               --arg pub_date "$PUB_DATE" \
               --arg platform "$PLATFORM_KEY" \
               --arg signature "$SIG_VALUE" \
-              --arg url "https://github.com/infimount/infimount/releases/latest/download/${UPDATER_ARTIFACT_NAME}" \
+              --arg url "https://github.com/infimount/infimount/releases/download/${GITHUB_REF_NAME}/${UPDATER_ARTIFACT_NAME}" \
               '{
                 version: $version,
                 notes: $notes,
@@ -363,7 +422,9 @@ jobs:
   build-macos:
     name: Build macOS
     runs-on: macos-latest
+    # Every platform build is blocked on signing policy before compilation.
     needs:
+      - release-signing-preflight
       - release-frontend-gate
       - release-ui-gate
       - release-rust-gate
@@ -402,6 +463,9 @@ jobs:
         working-directory: apps/desktop
         run: pnpm build
 
+      - name: Prepare and smoke target sidecar
+        run: node scripts/prepare-mcp-sidecar.mjs && bash scripts/smoke-mcp-sidecar.sh
+
       - name: Detect macOS signing configuration
         id: apple_signing
         env:
@@ -433,16 +497,18 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          INFIMOUNT_EXPECTED_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          INFIMOUNT_OFFICIAL_SIGNED_BUILD: "1"
         run: pnpm tauri build
 
-      - name: Build Tauri app (unsigned fallback)
-        if: ${{ steps.apple_signing.outputs.enabled != 'true' }}
+      - name: Build Tauri app (unsigned prerelease fallback)
+        if: ${{ steps.apple_signing.outputs.enabled != 'true' && needs.release-signing-preflight.outputs.stable != 'true' }}
         working-directory: apps/desktop
         run: pnpm tauri build
 
       - name: Collect macOS release assets
         run: |
-          mkdir -p out/macos
+          mkdir -p out/macos/sbom-components
           DMG="$(find target/release/bundle/dmg -maxdepth 1 -type f -name '*.dmg' | sort | head -n 1)"
           cp "$DMG" out/macos/Infimount.dmg
 
@@ -503,7 +569,7 @@ jobs:
               --arg pub_date "$PUB_DATE" \
               --arg platform "$PLATFORM_KEY" \
               --arg signature "$SIG_VALUE" \
-              --arg url "https://github.com/infimount/infimount/releases/latest/download/${UPDATER_ARTIFACT_NAME}" \
+              --arg url "https://github.com/infimount/infimount/releases/download/${GITHUB_REF_NAME}/${UPDATER_ARTIFACT_NAME}" \
               '{
                 version: $version,
                 notes: $notes,
@@ -518,6 +584,9 @@ jobs:
           fi
 
       - name: Smoke check macOS artifact
+        env:
+          APPLE_SIGNED: ${{ steps.apple_signing.outputs.enabled }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           test -s out/macos/Infimount.dmg
@@ -528,6 +597,39 @@ jobs:
           test -n "$DEVICE"
           test -n "$VOLUME_PATH"
           test -d "$VOLUME_PATH/Infimount.app"
+          SIDECAR="$(find "$VOLUME_PATH/Infimount.app" -type f -name 'mcp*' -perm -111 | sort | head -n 1)"
+          test -n "$SIDECAR"
+          VERIFY_MODE="digest"
+          if [ "$APPLE_SIGNED" = "true" ]; then VERIFY_MODE="macos-signed"; fi
+          bash scripts/verify-packaged-sidecar.sh "$VOLUME_PATH/Infimount.app" "${GITHUB_REF#refs/tags/v}" "$VERIFY_MODE"
+          test "$("$SIDECAR" --version)" = "infimount_mcp ${GITHUB_REF#refs/tags/v}"
+          cp "$SIDECAR" out/macos/sbom-components/infimount_mcp-macos
+          if [ "$APPLE_SIGNED" = "true" ]; then
+            codesign --verify --strict --verbose=2 "$SIDECAR"
+            codesign --verify --strict --test-requirement \
+              "=anchor apple generic and certificate leaf[subject.OU] = \"${APPLE_TEAM_ID}\"" \
+              "$SIDECAR"
+            codesign --verify --deep --strict --verbose=2 "$VOLUME_PATH/Infimount.app"
+            spctl --assess --type execute --verbose=2 "$VOLUME_PATH/Infimount.app"
+            xcrun stapler validate "$VOLUME_PATH/Infimount.app"
+            xcrun stapler validate out/macos/Infimount.dmg
+            for archive in out/macos/updater/*.tar.gz out/macos/updater/*.zip; do
+              [ -f "$archive" ] || continue
+              updater_dir="$(mktemp -d)"
+              case "$archive" in
+                *.tar.gz) tar -xzf "$archive" -C "$updater_dir" ;;
+                *.zip) ditto -x -k "$archive" "$updater_dir" ;;
+              esac
+              updater_app="$(find "$updater_dir" -type d -name 'Infimount.app' | head -n 1)"
+              test -n "$updater_app"
+              updater_sidecar="$(find "$updater_app" -type f -name 'mcp*' -perm -111 | head -n 1)"
+              test -n "$updater_sidecar"
+              bash scripts/verify-packaged-sidecar.sh "$updater_app" "${GITHUB_REF#refs/tags/v}" "$VERIFY_MODE"
+              codesign --verify --strict --verbose=2 "$updater_sidecar"
+              codesign --verify --deep --strict --verbose=2 "$updater_app"
+              rm -rf "$updater_dir"
+            done
+          fi
           hdiutil detach "$DEVICE"
 
       - name: Upload macOS artifacts
@@ -540,7 +642,9 @@ jobs:
   build-windows:
     name: Build Windows
     runs-on: windows-latest
+    # Every platform build is blocked on signing policy before compilation.
     needs:
+      - release-signing-preflight
       - release-frontend-gate
       - release-ui-gate
       - release-rust-gate
@@ -557,8 +661,11 @@ jobs:
         with:
           node-version: 20
 
-      - name: Apply tag version to app manifests
-        run: node scripts/sync-release-version.mjs --msi-safe
+      - name: Apply canonical tag version to app and sidecar manifests
+        run: node scripts/sync-release-version.mjs
+
+      - name: Apply MSI-safe numeric version only to the WiX bundle
+        run: node scripts/set-windows-installer-version.mjs
 
       - uses: pnpm/action-setup@v4
         name: Install pnpm
@@ -579,62 +686,143 @@ jobs:
         working-directory: apps/desktop
         run: pnpm build
 
-      - name: Build Tauri app
-        working-directory: apps/desktop
-        run: pnpm tauri build
-
-      - name: Detect Windows signing configuration
+      - name: Configure Windows signing certificate
         id: windows_signing
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
-          if (![string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64) -and ![string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD)) {
-            "enabled=true" >> $env:GITHUB_OUTPUT
-          } else {
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64) -or [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD)) {
             "enabled=false" >> $env:GITHUB_OUTPUT
+            exit 0
           }
+          $certPath = Join-Path $env:RUNNER_TEMP "infimount-codesign.pfx"
+          [System.IO.File]::WriteAllBytes(
+            $certPath,
+            [System.Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64)
+          )
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $certificate = Import-PfxCertificate -FilePath $certPath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          if (-not $certificate -or -not $certificate.HasPrivateKey) {
+            throw "Windows signing certificate import failed or has no private key"
+          }
+          if ($certificate.NotBefore -gt (Get-Date) -or $certificate.NotAfter -lt (Get-Date)) {
+            throw "Windows signing certificate is not currently valid"
+          }
+          $codeSigningEku = $certificate.Extensions |
+            Where-Object { $_.Oid.Value -eq "2.5.29.37" } |
+            ForEach-Object { $_.EnhancedKeyUsages } |
+            Where-Object { $_.ObjectId.Value -eq "1.3.6.1.5.5.7.3.3" }
+          if (-not $codeSigningEku) { throw "Windows certificate is not valid for code signing" }
+          "enabled=true" >> $env:GITHUB_OUTPUT
+          "thumbprint=$($certificate.Thumbprint)" >> $env:GITHUB_OUTPUT
+          "certificate_path=$certPath" >> $env:GITHUB_OUTPUT
 
-      - name: Sign Windows installers (optional)
+      - name: Prepare and smoke target sidecar
+        shell: bash
+        run: node scripts/prepare-mcp-sidecar.mjs && bash scripts/smoke-mcp-sidecar.sh
+
+      - name: Sign packaged Windows sidecar before bundling
         if: ${{ steps.windows_signing.outputs.enabled == 'true' }}
         shell: pwsh
         env:
-          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
-          $certPath = Join-Path $env:RUNNER_TEMP "infimount-codesign.pfx"
-          $certBytes = [System.Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64)
-          [System.IO.File]::WriteAllBytes($certPath, $certBytes)
-
           $signtool = (where.exe signtool.exe | Select-Object -First 1)
-          if (-not $signtool) {
-            throw "signtool.exe not found on runner"
+          if (-not $signtool) { throw "signtool.exe not found on runner" }
+          $sidecar = Get-ChildItem apps/desktop/src-tauri/binaries/mcp-*.exe | Select-Object -First 1
+          if (-not $sidecar) { throw "prepared Windows MCP sidecar was not found" }
+          & $signtool sign /fd SHA256 /f "${{ steps.windows_signing.outputs.certificate_path }}" /p $env:WINDOWS_CERTIFICATE_PASSWORD /tr http://timestamp.digicert.com /td SHA256 $sidecar.FullName
+          if ($LASTEXITCODE -ne 0) { throw "failed to sign packaged Windows MCP sidecar" }
+          & $signtool verify /pa /all /v $sidecar.FullName
+          if ($LASTEXITCODE -ne 0) { throw "packaged Windows MCP sidecar signature verification failed" }
+          $hash = (Get-FileHash -Algorithm SHA256 $sidecar.FullName).Hash.ToLowerInvariant()
+          "$hash  $($sidecar.Name)" | Set-Content -Encoding ascii "$($sidecar.FullName).sha256"
+          "$hash  mcp" | Set-Content -Encoding ascii "apps/desktop/src-tauri/binaries/mcp.sha256"
+
+      - name: Build signed Tauri app and updater chain
+        if: ${{ steps.windows_signing.outputs.enabled == 'true' }}
+        working-directory: apps/desktop
+        shell: pwsh
+        env:
+          INFIMOUNT_EXPECTED_WINDOWS_PUBLISHER: ${{ steps.windows_signing.outputs.thumbprint }}
+          INFIMOUNT_OFFICIAL_SIGNED_BUILD: "1"
+        run: |
+          $config = @{
+            build = @{
+              beforeBuildCommand = ""
+            }
+            bundle = @{
+              windows = @{
+                certificateThumbprint = "${{ steps.windows_signing.outputs.thumbprint }}"
+                digestAlgorithm = "sha256"
+                timestampUrl = "http://timestamp.digicert.com"
+              }
+            }
+          }
+          $configPath = Join-Path $env:RUNNER_TEMP "tauri.windows-signing.conf.json"
+          $config | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 $configPath
+          pnpm tauri build --config $configPath
+          if ($LASTEXITCODE -ne 0) { throw "signed Tauri build failed" }
+
+      - name: Build unsigned Tauri prerelease
+        if: ${{ steps.windows_signing.outputs.enabled != 'true' && needs.release-signing-preflight.outputs.stable != 'true' }}
+        working-directory: apps/desktop
+        run: pnpm tauri build
+
+      - name: Verify Windows Authenticode chain
+        if: ${{ steps.windows_signing.outputs.enabled == 'true' }}
+        shell: pwsh
+        run: |
+          $signtool = (where.exe signtool.exe | Select-Object -First 1)
+          if (-not $signtool) { throw "signtool.exe not found on runner" }
+          $signedFiles = @(
+            Get-Item target/release/infimount.exe
+            Get-ChildItem apps/desktop/src-tauri/binaries/mcp-*.exe
+            Get-ChildItem target/release/bundle -Recurse -File | Where-Object { $_.Extension -in @(".exe", ".msi") }
+          ) | Sort-Object FullName -Unique
+          if ($signedFiles.Count -lt 4) { throw "expected signed Windows application, sidecar, and installer artifacts were not found" }
+          foreach ($file in $signedFiles) {
+            & $signtool verify /pa /all /v $file.FullName
+            if ($LASTEXITCODE -ne 0) { throw "Authenticode verification failed: $($file.FullName)" }
           }
 
-          $signArgs = @(
-            "sign",
-            "/fd", "SHA256",
-            "/f", $certPath,
-            "/p", $env:WINDOWS_CERTIFICATE_PASSWORD,
-            "/tr", "http://timestamp.digicert.com",
-            "/td", "SHA256"
-          )
-
-          Get-ChildItem -Path target/release/bundle/msi/*.msi | ForEach-Object {
-            & $signtool @signArgs $_.FullName
-            if ($LASTEXITCODE -ne 0) { throw "Failed signing MSI: $($_.FullName)" }
-          }
-
-          Get-ChildItem -Path target/release/bundle/nsis/*.exe | ForEach-Object {
-            & $signtool @signArgs $_.FullName
-            if ($LASTEXITCODE -ne 0) { throw "Failed signing EXE: $($_.FullName)" }
+          $updaterArchives = Get-ChildItem target/release/bundle -Recurse -File -Filter *.zip
+          foreach ($archive in $updaterArchives) {
+            $destination = Join-Path $env:RUNNER_TEMP ("verify-updater-" + [guid]::NewGuid())
+            Expand-Archive -LiteralPath $archive.FullName -DestinationPath $destination
+            $archiveExecutables = Get-ChildItem $destination -Recurse -File | Where-Object { $_.Extension -in @(".exe", ".msi") }
+            if (-not $archiveExecutables) { throw "updater archive contains no signed executable or MSI: $($archive.FullName)" }
+            $archiveSidecar = Get-ChildItem $destination -Recurse -File -Filter mcp*.exe | Select-Object -First 1
+            if (-not $archiveSidecar) {
+              $archiveMsi = Get-ChildItem $destination -Recurse -File -Filter *.msi | Select-Object -First 1
+              if ($archiveMsi) {
+                $msiDestination = Join-Path $destination "msi-extracted"
+                New-Item -ItemType Directory -Force -Path $msiDestination | Out-Null
+                $process = Start-Process msiexec.exe -ArgumentList @("/a", $archiveMsi.FullName, "/qn", "TARGETDIR=$msiDestination") -Wait -PassThru
+                if ($process.ExitCode -ne 0) { throw "could not extract updater MSI: $($archiveMsi.FullName)" }
+                $archiveSidecar = Get-ChildItem $msiDestination -Recurse -File -Filter mcp*.exe | Select-Object -First 1
+              }
+            }
+            if (-not $archiveSidecar) { throw "updater archive is missing the bundled MCP sidecar: $($archive.FullName)" }
+            $archiveSidecarVersion = & $archiveSidecar.FullName --version
+            $expectedVersion = $env:GITHUB_REF -replace '^refs/tags/v', ''
+            if ($archiveSidecarVersion.Trim() -ne "infimount_mcp $expectedVersion") {
+              throw "updater archive sidecar version mismatch: $archiveSidecarVersion"
+            }
+            & $signtool verify /pa /all /v $archiveSidecar.FullName
+            if ($LASTEXITCODE -ne 0) { throw "updater sidecar signature verification failed: $($archiveSidecar.FullName)" }
+            foreach ($file in $archiveExecutables) {
+              & $signtool verify /pa /all /v $file.FullName
+              if ($LASTEXITCODE -ne 0) { throw "updater payload signature verification failed: $($file.FullName)" }
+            }
           }
 
       - name: Collect Windows release assets
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path out/windows | Out-Null
+          New-Item -ItemType Directory -Force -Path out/windows/sbom-components | Out-Null
           $msi = Get-ChildItem -Path target/release/bundle/msi/*.msi | Select-Object -First 1
           $exe = Get-ChildItem -Path target/release/bundle/nsis/*.exe | Select-Object -First 1
           Copy-Item $msi.FullName out/windows/Infimount.msi
@@ -684,7 +872,7 @@ jobs:
 
             $sigValue = (Get-Content $updaterSig.FullName -Raw).Trim()
             $artifactName = Split-Path -Leaf $updaterArtifact
-            $url = "https://github.com/infimount/infimount/releases/latest/download/$artifactName"
+            $url = "https://github.com/infimount/infimount/releases/download/$env:GITHUB_REF_NAME/$artifactName"
             $latestObject = [ordered]@{
               version = $version
               notes = "See release notes."
@@ -702,6 +890,8 @@ jobs:
 
       - name: Smoke check Windows artifacts
         shell: pwsh
+        env:
+          WINDOWS_SIGNED: ${{ steps.windows_signing.outputs.enabled }}
         run: |
           $msiPath = "out/windows/Infimount.msi"
           $exePath = "out/windows/Infimount-setup.exe"
@@ -714,6 +904,46 @@ jobs:
             throw "EXE does not have MZ header"
           }
 
+          $extractDir = Join-Path $env:RUNNER_TEMP "infimount-nsis"
+          New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+          & 7z x -y $exePath "-o$extractDir" | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Could not inspect NSIS package" }
+          $sidecar = Get-ChildItem -Path $extractDir -Recurse -Filter "mcp*.exe" | Select-Object -First 1
+          if (-not $sidecar) { throw "Bundled MCP sidecar was not found in Windows installer" }
+          $reportedVersion = & $sidecar.FullName --version
+          $expectedVersion = $env:GITHUB_REF -replace '^refs/tags/v', ''
+          if ($reportedVersion.Trim() -ne "infimount_mcp $expectedVersion") {
+            throw "Bundled MCP sidecar version mismatch: $reportedVersion"
+          }
+          if ($env:WINDOWS_SIGNED -eq "true") {
+            $signtool = (where.exe signtool.exe | Select-Object -First 1)
+            Get-ChildItem $extractDir -Recurse -File -Filter *.exe | ForEach-Object {
+              & $signtool verify /pa /all /v $_.FullName
+              if ($LASTEXITCODE -ne 0) { throw "NSIS embedded executable signature verification failed: $($_.FullName)" }
+            }
+          }
+
+          $msiExtractDir = Join-Path $env:RUNNER_TEMP "infimount-msi"
+          New-Item -ItemType Directory -Force -Path $msiExtractDir | Out-Null
+          $msiProcess = Start-Process msiexec.exe -ArgumentList @(
+            "/a", (Resolve-Path $msiPath).Path,
+            "/qn", "TARGETDIR=$msiExtractDir"
+          ) -Wait -PassThru
+          if ($msiProcess.ExitCode -ne 0) { throw "Could not administratively extract MSI" }
+          $msiSidecar = Get-ChildItem -Path $msiExtractDir -Recurse -Filter "mcp*.exe" | Select-Object -First 1
+          if (-not $msiSidecar) { throw "Bundled MCP sidecar was not found in MSI" }
+          $msiReportedVersion = & $msiSidecar.FullName --version
+          if ($msiReportedVersion.Trim() -ne "infimount_mcp $expectedVersion") {
+            throw "MSI sidecar version mismatch: $msiReportedVersion"
+          }
+          Copy-Item $msiSidecar.FullName out/windows/sbom-components/infimount_mcp-windows.exe -Force
+          if ($env:WINDOWS_SIGNED -eq "true") {
+            Get-ChildItem $msiExtractDir -Recurse -File -Filter *.exe | ForEach-Object {
+              & $signtool verify /pa /all /v $_.FullName
+              if ($LASTEXITCODE -ne 0) { throw "MSI embedded executable signature verification failed: $($_.FullName)" }
+            }
+          }
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v6
         with:
@@ -722,8 +952,8 @@ jobs:
           if-no-files-found: warn
 
   create-release:
-    name: Create Release
-    needs: [build-linux, build-macos, build-windows]
+    name: Validate and Publish Release
+    needs: [build-linux, build-macos, build-windows, release-signing-preflight]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -743,6 +973,9 @@ jobs:
 
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Install Rust for updater signature verification
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Get version from tag
         id: get_version
@@ -767,6 +1000,21 @@ jobs:
             fi
           done
 
+      - name: Cryptographically verify updater signatures
+        run: |
+          set -euo pipefail
+          public_key="$(jq -r '.plugins.updater.pubkey' apps/desktop/src-tauri/tauri.conf.json)"
+          test -n "$public_key"
+          shopt -s nullglob
+          signatures=(release-assets/*.sig)
+          test "${#signatures[@]}" -gt 0
+          for signature in "${signatures[@]}"; do
+            artifact="${signature%.sig}"
+            test -s "$artifact"
+            cargo run --quiet -p infimount_core --bin verify_updater_signature -- \
+              "$public_key" "$artifact" "$signature"
+          done
+
       - name: Merge updater metadata
         run: |
           set -euo pipefail
@@ -784,64 +1032,78 @@ jobs:
             platforms: (reduce .[] as $item ({}; . + ($item.platforms // {})))
           }' "${latest_files[@]}" > release-assets/latest.json
 
-          platform_count="$(jq '.platforms | length' release-assets/latest.json)"
-          if [ "${platform_count}" -eq 0 ]; then
-            echo "Merged latest.json has no platforms entries." >&2
-            exit 1
-          fi
-
-      - name: Generate checksums
+      - name: Validate merged updater metadata and references
         run: |
+          ./scripts/check-updater-assets.sh release-assets "${GITHUB_REF#refs/tags/v}"
+          rm -f release-assets/latest-linux.json release-assets/latest-macos.json release-assets/latest-windows.json
+
+      - name: Prepare complete SBOM input including bundled sidecars
+        run: |
+          set -euo pipefail
+          rm -rf sbom-input
+          mkdir -p sbom-input/sidecars
+          cp release-assets/* sbom-input/
+          find artifacts -type f -path '*/sbom-components/infimount_mcp*' -exec cp {} sbom-input/sidecars/ \;
+          test "$(find sbom-input/sidecars -type f -name 'infimount_mcp*' | wc -l)" -ge 3
+
+      - name: Generate mandatory SBOM (SPDX JSON)
+        uses: anchore/sbom-action@v0
+        with:
+          path: sbom-input
+          output-file: release-assets/SBOM.spdx.json
+          format: spdx-json
+
+      - name: Add explicit bundled-sidecar component to SBOM
+        run: node scripts/add-sidecar-to-sbom.mjs release-assets/SBOM.spdx.json sbom-input/sidecars "${GITHUB_REF#refs/tags/v}"
+
+      - name: Verify SBOM covers bundled sidecar
+        run: |
+          test -s release-assets/SBOM.spdx.json
+          jq -e --arg version "${GITHUB_REF#refs/tags/v}" '
+            (.packages[] | select(.name == "infimount_mcp")) as $sidecar |
+            ($sidecar.versionInfo == $version and ($sidecar.hasFiles | length >= 3)) and
+            ([
+              $sidecar.hasFiles[] as $id |
+              .files[] |
+              select(.SPDXID == $id and any(.checksums[]?; .algorithm == "SHA256" and (.checksumValue | length == 64)))
+            ] | length >= 3)
+          ' release-assets/SBOM.spdx.json >/dev/null
+
+      - name: Generate checksums for every published payload
+        run: |
+          set -euo pipefail
           cd release-assets
-          sha256sum Infimount-* Infimount.dmg Infimount.msi install.sh install.ps1 > SHA256SUMS.txt
-          for file in Infimount-* Infimount.dmg Infimount.msi install.sh install.ps1; do
+          rm -f SHA256SUMS.txt ./*.sha256
+          mapfile -t files < <(find . -maxdepth 1 -type f -printf '%f\n' | sort)
+          test "${#files[@]}" -gt 0
+          sha256sum "${files[@]}" > SHA256SUMS.txt
+          for file in "${files[@]}"; do
             sha256sum "$file" > "$file.sha256"
           done
 
-      - name: Validate release assets and checksums
-        run: ./scripts/check-release-assets.sh release-assets
+      - name: Validate release assets, updater references, SBOM, and checksums
+        run: |
+          ./scripts/check-release-assets.sh release-assets
+          ./scripts/check-updater-assets.sh release-assets "${GITHUB_REF#refs/tags/v}"
+          node scripts/check-upgrade-fixtures.mjs release-assets
 
       - name: Smoke install scripts against release assets
         run: ./scripts/smoke-install-scripts.sh release-assets
-
-      - name: Generate SBOM (SPDX JSON)
-        uses: anchore/sbom-action@v0
-        with:
-          path: release-assets
-          output-file: release-assets/SBOM.spdx.json
-          format: spdx-json
 
       - name: Attest release assets provenance
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: release-assets/*
 
-      - name: Validate final release asset set
-        run: ./scripts/check-release-assets.sh release-assets
-
-      - name: Create Release
+      - name: Create validated draft release
         uses: softprops/action-gh-release@v2
         with:
           name: Infimount ${{ steps.get_version.outputs.VERSION }}
           draft: true
-          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+          prerelease: ${{ needs.release-signing-preflight.outputs.stable != 'true' }}
           generate_release_notes: true
           files: |
-            release-assets/Infimount-amd64.deb
-            release-assets/Infimount-x86_64.rpm
-            release-assets/Infimount-x86_64.AppImage
-            release-assets/Infimount.dmg
-            release-assets/Infimount.msi
-            release-assets/Infimount-setup.exe
-            release-assets/install.sh
-            release-assets/install.ps1
-            release-assets/latest.json
-            release-assets/*.sig
-            release-assets/*.tar.gz
-            release-assets/*.zip
-            release-assets/SHA256SUMS.txt
-            release-assets/SBOM.spdx.json
-            release-assets/*.sha256
+            release-assets/*
           body: |
             ## Infimount ${{ steps.get_version.outputs.VERSION }}
 
@@ -850,19 +1112,19 @@ jobs:
             Linux:
 
             ```bash
-            curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh
+            curl -fsSL https://github.com/infimount/infimount/releases/download/${{ github.ref_name }}/install.sh | INFIMOUNT_VERSION=${{ github.ref_name }} sh
             ```
 
             macOS:
 
             ```bash
-            curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh
+            curl -fsSL https://github.com/infimount/infimount/releases/download/${{ github.ref_name }}/install.sh | INFIMOUNT_VERSION=${{ github.ref_name }} sh
             ```
 
             Windows PowerShell:
 
             ```powershell
-            irm https://github.com/infimount/infimount/releases/latest/download/install.ps1 | iex
+            $env:INFIMOUNT_VERSION='${{ github.ref_name }}'; irm https://github.com/infimount/infimount/releases/download/${{ github.ref_name }}/install.ps1 | iex
             ```
 
             ### Manual downloads
@@ -892,11 +1154,91 @@ jobs:
             - GitHub artifact attestation for release assets (provenance)
             - `latest.json` + signed updater archives for in-app auto-update
 
-            ### Notes
+            ### Signing status
 
-            ⚠️ **Signing status**: macOS/Windows binaries may be unsigned if signing secrets are not configured for this release.
+            **${{ needs.release-signing-preflight.outputs.stable == 'true' && 'SIGNED STABLE RELEASE' || 'SIGNED UPDATER; PLATFORM SIGNING MAY BE OMITTED — PRERELEASE ONLY' }}**
 
-            - **macOS**: Right-click the app and select "Open" to bypass Gatekeeper
-            - **Windows**: Click "More info" → "Run anyway" on SmartScreen
+            Every release passes mandatory updater-signing preflight. Stable tags additionally require macOS and Windows platform signing. Prerelease applications may omit platform signing; verify the release is marked prerelease before using one.
 
             See [CHANGELOG.md](https://github.com/infimount/infimount/blob/main/CHANGELOG.md) for details.
+
+      - name: Re-download and validate draft release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf downloaded-release-assets
+          mkdir downloaded-release-assets
+          gh release download "$GITHUB_REF_NAME" --dir downloaded-release-assets
+          ./scripts/check-release-assets.sh downloaded-release-assets
+          ./scripts/check-updater-assets.sh downloaded-release-assets "${GITHUB_REF#refs/tags/v}"
+          node scripts/check-upgrade-fixtures.mjs downloaded-release-assets
+          (cd downloaded-release-assets && sha256sum --check SHA256SUMS.txt)
+
+          public_key="$(jq -r '.plugins.updater.pubkey' apps/desktop/src-tauri/tauri.conf.json)"
+          while IFS= read -r signature; do
+            artifact="${signature%.sig}"
+            test -s "$artifact"
+            cargo run --quiet -p infimount_core --bin verify_updater_signature -- \
+              "$public_key" "$artifact" "$signature"
+          done < <(find downloaded-release-assets -maxdepth 1 -type f -name '*.sig' | sort)
+
+          uploaded_assets="$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name')"
+          while IFS= read -r url; do
+            asset="${url##*/}"
+            grep -Fxq "$asset" <<<"$uploaded_assets" || {
+              echo "Draft release is missing updater URL target: $asset" >&2
+              exit 1
+            }
+            grep -Fxq "$asset.sig" <<<"$uploaded_assets" || {
+              echo "Draft release is missing updater signature: $asset.sig" >&2
+              exit 1
+            }
+          done < <(jq -r '.platforms[].url' downloaded-release-assets/latest.json)
+
+      - name: Publish validated release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IS_STABLE: ${{ needs.release-signing-preflight.outputs.stable }}
+        run: |
+          set -euo pipefail
+          if [ "$IS_STABLE" = "true" ]; then
+            gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease=false
+          else
+            gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease=true
+          fi
+
+      - name: Re-download and validate published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf published-release-assets
+          mkdir published-release-assets
+          for attempt in 1 2 3 4 5; do
+            rm -f published-release-assets/*
+            if gh release download "$GITHUB_REF_NAME" --dir published-release-assets; then
+              break
+            fi
+            if [ "$attempt" = 5 ]; then exit 1; fi
+            sleep $((attempt * 5))
+          done
+          ./scripts/check-release-assets.sh published-release-assets
+          ./scripts/check-updater-assets.sh published-release-assets "${GITHUB_REF#refs/tags/v}"
+          node scripts/check-upgrade-fixtures.mjs published-release-assets
+
+          public_key="$(jq -r '.plugins.updater.pubkey' apps/desktop/src-tauri/tauri.conf.json)"
+          while IFS= read -r signature; do
+            artifact="${signature%.sig}"
+            test -s "$artifact"
+            cargo run --quiet -p infimount_core --bin verify_updater_signature -- \
+              "$public_key" "$artifact" "$signature"
+          done < <(find published-release-assets -maxdepth 1 -type f -name '*.sig' | sort)
+
+          while IFS= read -r url; do
+            case "$url" in
+              "https://github.com/infimount/infimount/releases/download/${GITHUB_REF_NAME}/"*) ;;
+              *) echo "Updater URL is not pinned to ${GITHUB_REF_NAME}: $url" >&2; exit 1 ;;
+            esac
+            curl --fail --silent --show-error --location --head --retry 5 "$url" >/dev/null
+          done < <(jq -r '.platforms[].url' published-release-assets/latest.json)

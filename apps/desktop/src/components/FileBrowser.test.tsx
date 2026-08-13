@@ -7,16 +7,20 @@ import {
     createDirectory,
     deletePath,
     listEntries,
+    listEntriesPage,
     listEntriesRecursive,
-    readFile,
+    downloadFileToDownloads,
     TauriApiError,
     planTransferEntries,
     transferEntries,
+    uploadFileStreaming,
     writeFile,
 } from "@/lib/api";
 import { AppZoomProvider } from "@/hooks/use-app-zoom";
 import { FileClipboardProvider } from "@/hooks/use-file-clipboard";
 import { TransferQueueProvider } from "@/hooks/use-transfer-queue";
+
+const { listEntriesMock } = vi.hoisted(() => ({ listEntriesMock: vi.fn() }));
 
 function deferred<T>() {
     let resolve!: (value: T) => void;
@@ -47,10 +51,16 @@ function renderFileBrowser(sourceId = "test", storageName = "Test Storage") {
 // Mock the api module
 vi.mock("@/lib/api", () => ({
   connectOAuthStorage: vi.fn(),
-    listEntries: vi.fn(),
+    listEntries: listEntriesMock,
+    listEntriesPage: vi.fn(async (sourceId: string, path: string) => ({
+        entries: await listEntriesMock(sourceId, path),
+        nextCursor: null,
+        truncated: false,
+    })),
     listEntriesRecursive: vi.fn(),
-    readFile: vi.fn(),
+    downloadFileToDownloads: vi.fn(),
     writeFile: vi.fn(),
+    uploadFileStreaming: vi.fn(),
     createDirectory: vi.fn(),
     deletePath: vi.fn(),
     planTransferEntries: vi.fn().mockResolvedValue({
@@ -373,6 +383,12 @@ describe("FileBrowser shortcuts and creation", () => {
 describe("FileBrowser navigation, selection, and upload flows", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        vi.mocked(listEntriesPage).mockReset();
+        vi.mocked(listEntriesPage).mockImplementation(async (sourceId, path) => ({
+            entries: await listEntriesMock(sourceId, path),
+            nextCursor: null,
+            truncated: false,
+        }));
         vi.mocked(listEntries).mockImplementation((_sourceId, path) => {
             if (path === "/docs") {
                 return Promise.resolve([
@@ -382,6 +398,7 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
                         is_dir: false,
                         size: 40,
                         modified_at: null,
+                        etag: null,
                     },
                 ]);
             }
@@ -393,6 +410,7 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
                     is_dir: true,
                     size: 0,
                     modified_at: null,
+                    etag: null,
                 },
                 {
                     path: "/report.txt",
@@ -400,6 +418,7 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
                     is_dir: false,
                     size: 12,
                     modified_at: null,
+                    etag: null,
                 },
                 {
                     path: "/notes.md",
@@ -407,13 +426,84 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
                     is_dir: false,
                     size: 6,
                     modified_at: null,
+                    etag: null,
                 },
             ]);
         });
-        vi.mocked(readFile).mockResolvedValue(new TextEncoder().encode("preview"));
+        vi.mocked(downloadFileToDownloads).mockResolvedValue({ fileName: "report.txt", bytes: 12 });
         vi.mocked(writeFile).mockResolvedValue(undefined);
+        vi.mocked(uploadFileStreaming).mockResolvedValue(undefined);
         vi.mocked(deletePath).mockResolvedValue(undefined);
         vi.mocked(transferEntries).mockResolvedValue(undefined);
+    });
+
+    it("loads large folders one page at a time", async () => {
+        vi.mocked(listEntriesPage)
+            .mockResolvedValueOnce({
+                entries: [{
+                    path: "/first.txt",
+                    name: "first.txt",
+                    is_dir: false,
+                    size: 1,
+                    modified_at: null,
+                    etag: null,
+                }],
+                nextCursor: "signed-next",
+                truncated: false,
+            })
+            .mockResolvedValueOnce({
+                entries: [{
+                    path: "/second.txt",
+                    name: "second.txt",
+                    is_dir: false,
+                    size: 1,
+                    modified_at: null,
+                    etag: null,
+                }],
+                nextCursor: null,
+                truncated: false,
+            });
+
+        renderFileBrowser();
+        expect(await screen.findByRole("button", { name: "first.txt" })).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "second.txt" })).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+        expect(await screen.findByRole("button", { name: "second.txt" })).toBeInTheDocument();
+        expect(listEntriesPage).toHaveBeenNthCalledWith(1, "test", "/", 200, undefined, false);
+        expect(listEntriesPage).toHaveBeenNthCalledWith(2, "test", "/", 200, "signed-next", false);
+        expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+    });
+
+    it("ignores a stale load-more response after navigation", async () => {
+        const pendingPage = deferred<{
+            entries: Array<{ path: string; name: string; is_dir: boolean; size: number; modified_at: null; etag: null }>;
+            nextCursor: null;
+            truncated: false;
+        }>();
+        vi.mocked(listEntriesPage)
+            .mockResolvedValueOnce({
+                entries: [{ path: "/docs", name: "docs", is_dir: true, size: 0, modified_at: null, etag: null }],
+                nextCursor: "signed-next",
+                truncated: false,
+            })
+            .mockReturnValueOnce(pendingPage.promise)
+            .mockResolvedValueOnce({
+                entries: [{ path: "/docs/current.txt", name: "current.txt", is_dir: false, size: 1, modified_at: null, etag: null }],
+                nextCursor: null,
+                truncated: false,
+            });
+
+        renderFileBrowser();
+        await screen.findByRole("button", { name: "docs" });
+        fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+        fireEvent.click(screen.getByRole("button", { name: "Open docs" }));
+        expect(await screen.findByRole("button", { name: "current.txt" })).toBeInTheDocument();
+        pendingPage.resolve({
+            entries: [{ path: "/stale.txt", name: "stale.txt", is_dir: false, size: 1, modified_at: null, etag: null }],
+            nextCursor: null,
+            truncated: false,
+        });
+        await waitFor(() => expect(screen.queryByRole("button", { name: "stale.txt" })).not.toBeInTheDocument());
     });
 
     it("filters files through the search input", async () => {
@@ -438,6 +528,7 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
                 is_dir: false,
                 size: 1,
                 modified_at: null,
+                etag: null,
             },
             {
                 path: "/zzz-large.txt",
@@ -445,6 +536,7 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
                 is_dir: false,
                 size: 100,
                 modified_at: null,
+                etag: null,
             },
         ]);
 
@@ -480,10 +572,6 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
     });
 
     it("opens, edits, downloads, and closes the preview panel from file actions", async () => {
-        const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:preview-download");
-        const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
-        const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
-
         renderFileBrowser();
 
         fireEvent.click(await screen.findByRole("button", { name: "Open report.txt" }));
@@ -497,18 +585,11 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
 
         fireEvent.click(screen.getByRole("button", { name: "Preview download report.txt" }));
         await waitFor(() => {
-            expect(readFile).toHaveBeenCalledWith("test", "/report.txt");
-            expect(createObjectURL).toHaveBeenCalled();
-            expect(revokeObjectURL).toHaveBeenCalledWith("blob:preview-download");
-            expect(click).toHaveBeenCalled();
+            expect(downloadFileToDownloads).toHaveBeenCalledWith("test", "/report.txt");
         });
 
         fireEvent.click(screen.getByRole("button", { name: "Close preview mock" }));
         expect(screen.queryByLabelText("Preview report.txt")).not.toBeInTheDocument();
-
-        createObjectURL.mockRestore();
-        revokeObjectURL.mockRestore();
-        click.mockRestore();
     });
 
     it("deletes selected files only after confirming the keyboard delete dialog", async () => {
@@ -564,9 +645,13 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
         });
     });
 
-    it("shows upload progress while write is pending and can cancel remaining uploads", async () => {
+    it("shows upload progress and aborts active native finalization", async () => {
         const pendingWrite = deferred<void>();
-        vi.mocked(writeFile).mockReturnValueOnce(pendingWrite.promise);
+        let activeSignal: AbortSignal | undefined;
+        vi.mocked(uploadFileStreaming).mockImplementationOnce(async (_source, _path, _file, options) => {
+            activeSignal = options?.signal;
+            return pendingWrite.promise;
+        });
         renderFileBrowser();
 
         await screen.findByTestId("grid-view");
@@ -576,6 +661,8 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
         expect(screen.getByText("Uploading 1 file")).toBeInTheDocument();
         expect(screen.getByText(/Writing fixture\.txt/)).toBeInTheDocument();
 
+        fireEvent.click(screen.getByRole("button", { name: "Cancel remaining" }));
+        expect(activeSignal?.aborted).toBe(true);
         pendingWrite.resolve();
         await waitFor(() => {
             expect(screen.queryByLabelText("Upload in progress")).not.toBeInTheDocument();
@@ -606,12 +693,16 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
         fireEvent(container.firstChild as HTMLElement, dropEvent);
 
         expect(await screen.findByText("Upload existing files?")).toBeInTheDocument();
-        expect(writeFile).not.toHaveBeenCalledWith("test", "/report.txt", expect.any(Uint8Array));
+        expect(uploadFileStreaming).not.toHaveBeenCalledWith(
+            "test", "/report.txt", expect.anything(), expect.any(Object),
+        );
 
         fireEvent.click(screen.getByRole("button", { name: "Keep both" }));
 
         await waitFor(() => {
-            expect(writeFile).toHaveBeenCalledWith("test", "/report copy.txt", expect.any(Uint8Array));
+            expect(uploadFileStreaming).toHaveBeenCalledWith(
+                "test", "/report copy.txt", expect.anything(), expect.any(Object),
+            );
         });
     });
 
@@ -622,7 +713,9 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
         fireEvent.click(screen.getByRole("button", { name: "Upload fixture" }));
 
         await waitFor(() => {
-            expect(writeFile).toHaveBeenCalledWith("test", "/fixture.txt", expect.any(Uint8Array));
+            expect(uploadFileStreaming).toHaveBeenCalledWith(
+                "test", "/fixture.txt", expect.anything(), expect.any(Object),
+            );
             expect(listEntries).toHaveBeenCalledWith("test", "/");
         });
 
@@ -645,7 +738,9 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
         container.firstElementChild!.dispatchEvent(dropEvent);
 
         await waitFor(() => {
-            expect(writeFile).toHaveBeenCalledWith("test", "/drop.txt", expect.any(Uint8Array));
+            expect(uploadFileStreaming).toHaveBeenCalledWith(
+                "test", "/drop.txt", expect.anything(), expect.any(Object),
+            );
         });
 
         const fallbackFile = {
@@ -662,7 +757,9 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
         container.firstElementChild!.dispatchEvent(fallbackDrop);
 
         await waitFor(() => {
-            expect(writeFile).toHaveBeenCalledWith("test", "/fallback.txt", expect.any(Uint8Array));
+            expect(uploadFileStreaming).toHaveBeenCalledWith(
+                "test", "/fallback.txt", expect.anything(), expect.any(Object),
+            );
         });
 
         const nestedFile = {
@@ -702,7 +799,9 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
         container.firstElementChild!.dispatchEvent(folderDrop);
 
         await waitFor(() => {
-            expect(writeFile).toHaveBeenCalledWith("test", "/folder/nested.txt", expect.any(Uint8Array));
+            expect(uploadFileStreaming).toHaveBeenCalledWith(
+                "test", "/folder/nested.txt", expect.anything(), expect.any(Object),
+            );
         });
 
         const ignoredItemDrop = new Event("drop", { bubbles: true, cancelable: true });
@@ -720,10 +819,11 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
         container.firstElementChild!.dispatchEvent(ignoredItemDrop);
 
         await waitFor(() => {
-            expect(writeFile).toHaveBeenCalledWith(
+            expect(uploadFileStreaming).toHaveBeenCalledWith(
                 "test",
                 "/fallback-after-ignored.txt",
-                expect.any(Uint8Array),
+                expect.anything(),
+                expect.any(Object),
             );
         });
     });
@@ -739,6 +839,7 @@ describe("FileBrowser transfer and download flows", () => {
                 is_dir: false,
                 size: 12,
                 modified_at: null,
+                etag: null,
             },
         ]);
         vi.mocked(listEntriesRecursive).mockResolvedValue([
@@ -748,9 +849,10 @@ describe("FileBrowser transfer and download flows", () => {
                 is_dir: false,
                 size: 12,
                 modified_at: null,
+                etag: null,
             },
         ]);
-        vi.mocked(readFile).mockResolvedValue(new TextEncoder().encode("hello"));
+        vi.mocked(downloadFileToDownloads).mockResolvedValue({ fileName: "report.txt", bytes: 12 });
         vi.mocked(planTransferEntries).mockResolvedValue({
             operation: "copy",
             conflictPolicy: "fail",
@@ -770,21 +872,12 @@ describe("FileBrowser transfer and download flows", () => {
     });
 
     it("downloads a file through the file context menu", async () => {
-        const createObjectURL = vi
-            .spyOn(URL, "createObjectURL")
-            .mockReturnValue("blob:infimount-report");
-        const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
-        const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
-
         renderFileBrowser();
 
         fireEvent.click(await screen.findByText("Download report.txt"));
 
         await waitFor(() => {
-            expect(readFile).toHaveBeenCalledWith("test", "/report.txt");
-            expect(createObjectURL).toHaveBeenCalled();
-            expect(click).toHaveBeenCalled();
-            expect(revokeObjectURL).toHaveBeenCalledWith("blob:infimount-report");
+            expect(downloadFileToDownloads).toHaveBeenCalledWith("test", "/report.txt");
         });
     });
 
@@ -907,6 +1000,7 @@ describe("FileBrowser transfer and download flows", () => {
                 is_dir: true,
                 size: 0,
                 modified_at: null,
+                etag: null,
             },
             {
                 path: "/report.txt",
@@ -914,6 +1008,7 @@ describe("FileBrowser transfer and download flows", () => {
                 is_dir: false,
                 size: 12,
                 modified_at: null,
+                etag: null,
             },
         ]);
         vi.mocked(transferEntries)

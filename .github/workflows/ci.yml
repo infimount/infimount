@@ -59,6 +59,32 @@ jobs:
       - name: Run Unit Tests
         run: pnpm test:unit
 
+  msrv:
+    name: Rust MSRV 1.94.0
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust 1.94.0
+        uses: dtolnay/rust-toolchain@1.94.0
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv-1.94.0
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Prepare bundled sidecar and checksum resource
+        run: node scripts/prepare-mcp-sidecar.mjs
+
+      - name: Check workspace with exact MSRV
+        run: cargo +1.94.0 check --workspace --all-targets --locked
+
   check-rust:
     name: Rust Core & Tauri
     runs-on: ubuntu-latest
@@ -78,6 +104,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Prepare bundled sidecar and checksum resource
+        run: node scripts/prepare-mcp-sidecar.mjs
 
       - name: Check formatting
         run: cargo fmt --all -- --check

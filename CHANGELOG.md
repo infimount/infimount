@@ -7,16 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - Unreleased release candidate
+
 ### Added
 
 - Added native OS secret store integration with automatic plaintext migration for stored credentials.
 - Added shareable storage export/import with config preview, conflict resolution, and backup/restore.
-- Added recovery backup with age encryption, asymmetric keypair, and decryption preview.
+- Added passphrase-protected recovery backup with age encryption, integrity verification, and decryption preview.
 - Added workspace profiles with file-locked atomic persistence and browser-storage migration.
 - Added multi-step activation wizard covering storage, MCP, client, and verification.
 - Added diagnostics bundle export with privacy-safe redaction, checksums, and leak validation.
 - Added structured product event log with local JSONL storage, rotation, and opt-in telemetry consent.
-- Added `StorageRuntime` with operator caching keyed by storage revision.
+- Added revision-keyed operator caches for desktop and MCP storage access, with invalidation after configuration or secret changes.
 - Added paginated directory listing with cursor support for non-recursive and recursive scans.
 - Added ranged file reads with configurable max (256 KiB default, 2 MiB absolute).
 - Added guided desktop OAuth connection for Google Drive and Microsoft OneDrive using browser authorization, local loopback callback, PKCE S256, state validation, and local-only token storage.
@@ -200,7 +202,8 @@ First stable release of Infimount — a unified desktop storage browser powered 
 
 ---
 
-[Unreleased]: https://github.com/infimount/infimount/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/infimount/infimount/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/infimount/infimount/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/infimount/infimount/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/infimount/infimount/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/infimount/infimount/compare/v0.5.0...v0.6.0

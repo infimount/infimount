@@ -27,6 +27,11 @@ EOF
 
 pnpm --dir "$ROOT_DIR/apps/desktop" build
 
+# Tauri validates bundled external binaries before compiling the desktop crate.
+# Clean CI checkouts do not contain the generated MCP sidecar, so prepare the
+# host-target sidecar explicitly rather than weakening that package validation.
+bash "$ROOT_DIR/scripts/build-mcp-sidecar.sh"
+
 # Build desktop binary outside runtime timeout so CI cold builds do not get killed.
 cargo +stable build --manifest-path "$ROOT_DIR/apps/desktop/src-tauri/Cargo.toml"
 
@@ -36,6 +41,9 @@ if [ ! -x "$DESKTOP_BIN" ]; then
   exit 1
 fi
 
+# Keep the desktop smoke on the same native-secret-store path as a real
+# Linux session; the gnome-keyring package makes the Secret Service backend
+# available without weakening AppState's restricted-recovery behavior.
 timeout 60s xvfb-run -a env \
   HOME="$TMP_HOME" \
   XDG_CONFIG_HOME="$TMP_HOME/.config" \

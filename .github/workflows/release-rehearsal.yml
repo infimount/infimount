@@ -1,0 +1,80 @@
+name: Release Rehearsal
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: SemVer prerelease version to rehearse
+        required: true
+        default: 0.8.0-rc.1
+        type: string
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Hermetic release rehearsal (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - run: pnpm install --frozen-lockfile
+      - run: bash scripts/release-rehearsal.sh --version "${{ inputs.version || '0.8.0-rc.1' }}" --work-dir rehearsal-evidence --keep
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-rehearsal-linux
+          path: rehearsal-evidence
+          if-no-files-found: error
+
+  macos:
+    name: Native signing integrity rehearsal (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Sign and tamper-test disposable fixture
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          printf 'rehearsal executable\n' > "$work/mcp"; chmod +x "$work/mcp"
+          # Ad-hoc codesign is deterministic on hosted macOS runners and still
+          # proves that native signature verification rejects post-signing
+          # mutation. Certificate trust and notarization remain external gates.
+          codesign --force --sign - "$work/mcp"
+          codesign --verify --strict --verbose=2 "$work/mcp"
+          printf tamper >> "$work/mcp"
+          if codesign --verify --strict "$work/mcp" >/dev/null 2>&1; then echo 'tamper unexpectedly verified' >&2; exit 1; fi
+          echo 'Ad-hoc macOS code-signing integrity passed; certificate trust, notarization, stapling, and Gatekeeper trust are intentionally not asserted.'
+          echo 'Production Apple signing remains a stable-release gate.'
+
+  windows:
+    name: Native signing integrity rehearsal (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Create disposable certificate and test signing integrity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $cert = New-SelfSignedCertificate -Subject 'CN=Infimount Rehearsal' -Type CodeSigningCert -CertStoreLocation Cert:\CurrentUser\My
+          try {
+            $file = Join-Path $env:RUNNER_TEMP 'rehearsal.bin'; Set-Content -Path $file -Value 'rehearsal'
+            $signtool = Get-Command signtool.exe -ErrorAction SilentlyContinue
+            if ($null -eq $signtool) { Write-Host 'signtool unavailable; certificate generation passed and structural rehearsal remains covered by Linux.' }
+            else {
+              & $signtool.Source sign /fd SHA256 /a /sha1 $cert.Thumbprint $file
+              & $signtool.Source verify /pa $file
+              Add-Content -Path $file -Value 'tamper'
+              & $signtool.Source verify /pa $file *> $null
+              if ($LASTEXITCODE -eq 0) { throw 'tampered file unexpectedly verified' }
+            }
+          } finally { Remove-Item "Cert:\CurrentUser\My\$($cert.Thumbprint)" -Force -ErrorAction SilentlyContinue; Remove-Item $file -Force -ErrorAction SilentlyContinue }
+          Write-Host 'Self-signed local integrity only; trusted Authenticode and SmartScreen are intentionally not asserted.'
+          Write-Host 'Production Windows signing remains a stable-release gate.'

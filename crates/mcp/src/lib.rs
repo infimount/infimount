@@ -1,6 +1,7 @@
 pub mod audit;
 pub mod confirmation;
 pub mod errors;
+pub mod migration_cleanup;
 pub mod opendal_adapter;
 pub mod path;
 pub mod policy;
@@ -31,6 +32,7 @@ pub use server::{
 pub use session::SessionManager;
 pub use settings::{McpSettings, McpSettingsStore, McpTransport, SECURITY_BASELINE_VERSION};
 pub use telemetry::{
-    init_telemetry, build_os_arch, DiagnosticsBundle, DiagnosticsSummary, ProductEvent,
-    ProductEventName, ProductEventStore, RedactionManifest, SanitizedError,
+    build_os_arch, init_telemetry, AuditEventSummary, DiagnosticsBundle, DiagnosticsSummary,
+    ProductEvent, ProductEventName, ProductEventStore, ProductEventSummary, RedactionManifest,
+    SanitizedError,
 };

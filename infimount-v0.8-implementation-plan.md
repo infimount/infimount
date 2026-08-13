@@ -1,9 +1,9 @@
 # Infimount v0.8 — Trust & Activation
 ## Execution-grade implementation plan for coding agents
 
-**Target repository:** `infimount/infimount`  
-**Target release:** `v0.8.0`  
-**Planning baseline:** `main` as reviewed in July 2026. Before coding, record the actual HEAD SHA and re-check every referenced file.  
+**Target repository:** `infimount/infimount`
+**Target release:** `v0.8.0`
+**Planning baseline:** `main` as reviewed in July 2026. Before coding, record the actual HEAD SHA and re-check every referenced file.
 **Primary outcome:** A clean-machine user can install Infimount, create or select a scoped workspace, connect a local MCP client through the bundled sidecar, complete a verified read, and see proof that access outside the workspace is denied.
 
 ---
@@ -2401,7 +2401,7 @@ PR 00
                                                   └── PR 11
 ```
 
-Do not begin PR 06 before policy v2, secret storage, and sidecar contracts are stable.  
+Do not begin PR 06 before policy v2, secret storage, and sidecar contracts are stable.
 Do not begin public launch work before the activation probe, signing, and clean-install gates pass.
 
 ---

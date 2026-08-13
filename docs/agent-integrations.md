@@ -19,14 +19,14 @@ Use this for clients that launch MCP servers themselves, including Claude Deskto
 {
   "mcpServers": {
     "infimount": {
-      "command": "infimount_mcp",
-      "args": ["--transport", "stdio"]
+      "command": "/absolute/path/copied-from-Infimount-MCP-Settings/mcp",
+      "args": ["serve", "--transport", "stdio"]
     }
   }
 }
 ```
 
-If `infimount_mcp` is not on `PATH`, use the absolute path to the binary.
+Always copy the canonical bundled-sidecar path from Infimount MCP Settings. Do not use a bare command from `PATH`; Infimount rejects non-executable, unhealthy, or version-mismatched sidecars. Packaged Linux builds also verify the binary against the bundled SHA-256 resource; signed macOS and Windows builds rely on the mandatory platform signature verification performed by the release pipeline and operating system.
 
 ## Generic local HTTP MCP config
 
@@ -58,8 +58,8 @@ Add the stdio config to Claude Desktop's MCP server configuration:
 {
   "mcpServers": {
     "infimount": {
-      "command": "infimount_mcp",
-      "args": ["--transport", "stdio"]
+      "command": "/absolute/path/copied-from-Infimount-MCP-Settings/mcp",
+      "args": ["serve", "--transport", "stdio"]
     }
   }
 }
@@ -72,7 +72,7 @@ Restart Claude Desktop after editing the config.
 If your Claude Code install supports MCP commands, add Infimount as a local stdio server:
 
 ```bash
-claude mcp add infimount -- infimount_mcp --transport stdio
+claude mcp add infimount -- /absolute/path/copied-from-Infimount-MCP-Settings/mcp serve --transport stdio
 ```
 
 For safer project work, create an Infimount Agent Workspace first, apply the workspace-scoped MCP policy, then connect Claude Code.
@@ -87,7 +87,7 @@ OpenCode supports MCP directly. Add an `opencode.jsonc` file to a project or you
   "mcp": {
     "infimount": {
       "type": "local",
-      "command": ["infimount_mcp", "--transport", "stdio"],
+      "command": ["/absolute/path/copied-from-Infimount-MCP-Settings/mcp", "serve", "--transport", "stdio"],
       "enabled": true,
       "timeout": 10000
     }
@@ -134,7 +134,7 @@ The local stdio setup has been smoke-tested with OpenCode: OpenCode connected to
 
 For Codex-style CLIs and editor agents, use the client's MCP configuration mechanism if available and point it at Infimount using either:
 
-- stdio: `infimount_mcp --transport stdio`
+- stdio: `/verified/absolute/bundled/mcp serve --transport stdio`
 - local HTTP: `http://127.0.0.1:7331/mcp`
 
 If the client does not support MCP directly, use a small adapter or extension that calls Infimount MCP tools and does not bypass Infimount policy.
@@ -171,10 +171,10 @@ pi install ./examples/agent-integrations/pi-infimount-extension
 
 The smoke test creates a temporary local storage and verifies root-listing, list, read, and search calls through Infimount MCP. `npm pack --dry-run` verifies the package contents for publishing.
 
-The extension uses `infimount_mcp --transport stdio` by default. Override the command with:
+The extension must use the verified bundled-sidecar command copied from Infimount MCP Settings. Configure it with:
 
 ```bash
-INFIMOUNT_MCP_COMMAND=/absolute/path/to/infimount_mcp pi -e ./index.ts
+INFIMOUNT_MCP_COMMAND=/absolute/path/copied-from-Infimount-MCP-Settings/mcp pi -e ./index.ts
 ```
 
 Use a separate Infimount config home for tests or sandboxes:

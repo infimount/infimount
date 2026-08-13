@@ -40,6 +40,7 @@ test("delete action shows visible progress while a large folder is being removed
           if (cmd === "plugin:event|unlisten") return null;
           if (cmd.includes("updater") || cmd.includes("window")) return null;
           if (cmd === "list_entries") return entries;
+          if (cmd === "list_entries_page") return { entries, nextCursor: null, truncated: false };
           if (cmd === "delete_path") return new Promise(() => undefined);
           return null;
         },
@@ -110,6 +111,7 @@ test("delete failures can be retried from the visible progress panel", async ({ 
           if (cmd === "plugin:event|unlisten") return null;
           if (cmd.includes("updater") || cmd.includes("window")) return null;
           if (cmd === "list_entries") return entries;
+          if (cmd === "list_entries_page") return { entries, nextCursor: null, truncated: false };
           if (cmd === "delete_path") {
             deleteCalls += 1;
             if (deleteCalls === 1) throw "Permission denied";

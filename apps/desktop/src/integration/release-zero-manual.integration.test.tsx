@@ -8,12 +8,15 @@ import {
   getAppSettings,
   getMcpClientSnippets,
   getMcpStatus,
+  getStartupHealth,
   listActiveMcpSessions,
   listMcpAuditEvents,
   listMcpTools,
   listPendingMcpConfirmations,
   listStorageSchemas,
   listStorages,
+  listWorkspaces,
+  runActivationProbe,
   startMcpHttp,
   updateMcpSettings,
 } from "@/lib/api";
@@ -84,6 +87,7 @@ vi.mock("@/lib/api", () => ({
   getAppSettings: vi.fn(),
   getMcpClientSnippets: vi.fn(),
   getMcpStatus: vi.fn(),
+  getStartupHealth: vi.fn(),
   importStorageConfig: vi.fn(),
   listActiveMcpSessions: vi.fn(),
   listEntries: vi.fn(),
@@ -92,7 +96,9 @@ vi.mock("@/lib/api", () => ({
   listPendingMcpConfirmations: vi.fn(),
   listStorageSchemas: vi.fn(),
   listStorages: vi.fn(),
+  listWorkspaces: vi.fn(),
   removeStorage: vi.fn(),
+  runActivationProbe: vi.fn(),
   skipOnboarding: vi.fn(),
   startMcpHttp: vi.fn(),
   stopMcpHttp: vi.fn(),
@@ -174,6 +180,7 @@ describe("release zero-manual smoke path", () => {
       }),
     });
 
+    vi.mocked(getStartupHealth).mockResolvedValue({ operational: true, recoveryAvailable: true, errorCode: null, message: null });
     vi.mocked(getAppSettings).mockResolvedValue({
       onboardingCompleted: true,
       onboardingSkipped: false,
@@ -181,7 +188,7 @@ describe("release zero-manual smoke path", () => {
       onboardingSkippedAt: null,
       wizardStep: null,
       wizardCompletedSteps: [],
-      telemetryConsent: null,
+      telemetryConsent: "unknown",
     });
     vi.mocked(listStorageSchemas).mockResolvedValue([
       {
@@ -193,6 +200,26 @@ describe("release zero-manual smoke path", () => {
         ],
       },
     ]);
+    vi.mocked(listWorkspaces).mockResolvedValue([]);
+    vi.mocked(runActivationProbe).mockResolvedValue({
+      sidecar: {
+        binaryFound: true,
+        executable: true,
+        canonicalPath: "/opt/infimount/mcp",
+        version: "0.8.0",
+        versionMatch: true,
+        doctorHealthy: true,
+        sha256: "a".repeat(64),
+        checksumVerified: true,
+        errorCode: null,
+      },
+      mcpHandshakeOk: true,
+      mcpAllowedOpOk: true,
+      mcpDenialProven: true,
+      mcpAuditOk: true,
+      overallOk: true,
+      errorCode: null,
+    });
     vi.mocked(listStorages).mockImplementation(
       async () => storages as unknown as Awaited<ReturnType<typeof listStorages>>,
     );
@@ -284,5 +311,21 @@ describe("release zero-manual smoke path", () => {
       });
       expect(startMcpHttp).toHaveBeenCalled();
     });
+  });
+
+  it("blocks storage and MCP UI when startup health is restricted", async () => {
+    vi.mocked(getStartupHealth).mockResolvedValue({
+      operational: false,
+      recoveryAvailable: false,
+      errorCode: "ERR_STARTUP_MIGRATION_CLEANUP",
+      message: "Infimount started in restricted recovery mode.",
+    });
+
+    render(<Index />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Storage and MCP access are disabled");
+    expect(screen.queryByRole("button", { name: "Open Add Storage" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open recovery" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Export diagnostics" })).toBeInTheDocument();
   });
 });

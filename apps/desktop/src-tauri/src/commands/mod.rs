@@ -1,19 +1,21 @@
+pub mod activation_probe;
 pub mod backup;
 pub mod diagnostics;
 pub mod mcp;
 pub mod mcp_sidecar;
-pub mod workspaces;
 pub mod oauth;
 pub mod settings;
 pub mod storage;
 pub mod transfers;
+pub mod workspaces;
 
+pub use activation_probe::*;
 pub use backup::*;
 pub use diagnostics::*;
 pub use mcp::*;
 pub use mcp_sidecar::*;
-pub use workspaces::*;
 pub use oauth::*;
 pub use settings::*;
 pub use storage::*;
 pub use transfers::*;
+pub use workspaces::*;

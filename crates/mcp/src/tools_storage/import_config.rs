@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use fs2::FileExt;
@@ -11,10 +11,16 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::errors::{err, err_with_details, McpErrorCode, McpResult};
-use crate::registry::{ensure_unique_name, StorageRecord};
+use crate::policy::{normalize_storage_policy, McpStoragePolicy};
+use crate::registry::{
+    ensure_unique_name, ImportTransactionJournal, ImportTransactionState, StorageRecord,
+    IMPORT_JOURNAL_VERSION,
+};
 use crate::tools_fs::FsToolsContext;
 
-use super::common::{masked, next_renamed_name, ImportedStorage};
+#[cfg(test)]
+use super::common::masked;
+use super::common::{next_renamed_name, ImportedStorage};
 
 fn default_mode() -> String {
     "merge".to_string()
@@ -24,6 +30,7 @@ fn default_on_conflict() -> String {
     "error".to_string()
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ImportConfigInput {
@@ -34,6 +41,7 @@ pub struct ImportConfigInput {
     pub on_conflict: String,
 }
 
+#[cfg(test)]
 #[derive(Debug, Serialize)]
 pub struct ImportConfigOutput {
     pub imported: usize,
@@ -42,6 +50,7 @@ pub struct ImportConfigOutput {
     pub warnings: Vec<String>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ImportedStorageWire {
@@ -63,10 +72,43 @@ fn default_true() -> bool {
     true
 }
 
+#[cfg(test)]
 fn default_false() -> bool {
     false
 }
 
+fn assign_import_revisions(
+    existing: &[StorageRecord],
+    merged: &mut [StorageRecord],
+) -> McpResult<()> {
+    for record in merged {
+        let Some(previous) = existing.iter().find(|item| item.id == record.id) else {
+            record.revision = record.revision.max(1);
+            continue;
+        };
+        let mut comparable = record.clone();
+        comparable.revision = previous.revision;
+        let unchanged = serde_json::to_value(&comparable).map_err(|_| {
+            err(
+                McpErrorCode::ERR_INTERNAL,
+                "failed to compare imported storage revision",
+            )
+        })? == serde_json::to_value(previous).map_err(|_| {
+            err(
+                McpErrorCode::ERR_INTERNAL,
+                "failed to compare existing storage revision",
+            )
+        })?;
+        record.revision = if unchanged {
+            previous.revision
+        } else {
+            previous.revision.saturating_add(1)
+        };
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 fn parse_import_json(input: &str) -> McpResult<Vec<ImportedStorage>> {
     let value: Value = serde_json::from_str(input).map_err(|e| {
         err_with_details(
@@ -121,8 +163,14 @@ fn parse_import_json(input: &str) -> McpResult<Vec<ImportedStorage>> {
         .collect()
 }
 
-pub(crate) fn append_cleanup_journal(account: &str) -> McpResult<()> {
-    let path = crate::registry::default_config_dir().join("secret-cleanup.json");
+pub(crate) fn append_cleanup_journal_at(
+    registry_path: &std::path::Path,
+    account: &str,
+) -> McpResult<()> {
+    let path = registry_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("secret-cleanup.json");
     if let Some(parent) = path.parent() {
         infimount_core::atomic_file::create_dir_all(parent)
             .map_err(|_| err(McpErrorCode::ERR_INTERNAL, "failed to lock cleanup journal"))?;
@@ -147,10 +195,22 @@ pub(crate) fn append_cleanup_journal(account: &str) -> McpResult<()> {
             Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
         }
     }
-    let mut document = std::fs::read(&path)
-        .ok()
-        .and_then(|data| serde_json::from_slice::<Value>(&data).ok())
-        .unwrap_or_else(|| serde_json::json!({ "pending": [] }));
+    let mut document = if path.exists() {
+        serde_json::from_slice::<Value>(&std::fs::read(&path).map_err(|_| {
+            err(
+                McpErrorCode::ERR_INTERNAL,
+                "failed to read secret cleanup journal",
+            )
+        })?)
+        .map_err(|_| {
+            err(
+                McpErrorCode::ERR_INTERNAL,
+                "secret cleanup journal is invalid",
+            )
+        })?
+    } else {
+        serde_json::json!({ "pending": [] })
+    };
     let pending = document
         .get_mut("pending")
         .and_then(Value::as_array_mut)
@@ -186,25 +246,36 @@ pub(crate) fn append_cleanup_journal(account: &str) -> McpResult<()> {
     })
 }
 
+pub(crate) fn append_cleanup_journal(account: &str) -> McpResult<()> {
+    append_cleanup_journal_at(&crate::registry::default_registry_path(), account)
+}
+
 fn rollback_import_secrets(
     store: &dyn infimount_core::secrets::SecretStore,
     rollback: Vec<(String, Option<Value>)>,
 ) -> McpResult<()> {
+    let mut failures = Vec::new();
     for (account, previous) in rollback.into_iter().rev() {
         let restored = match previous {
             Some(value) => store.put_json(&account, &value),
             None => store.delete(&account),
         };
         if restored.is_err() {
-            return Err(err(
-                McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
-                "credential rollback failed; manual secret-store repair is required",
-            ));
+            failures.push(account);
         }
     }
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(err_with_details(
+            McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+            "one or more credential rollback stages failed; manual secret-store repair is required",
+            serde_json::json!({ "failedAccounts": failures }),
+        ))
+    }
 }
 
+#[cfg(test)]
 pub async fn import_config(
     ctx: &FsToolsContext,
     input: ImportConfigInput,
@@ -340,6 +411,10 @@ pub async fn import_config(
             .map(|object| object.keys().cloned().collect())
             .unwrap_or_default();
     }
+    if let Err(error) = assign_import_revisions(&existing, &mut merged) {
+        rollback_import_secrets(ctx.registry.secret_store().as_ref(), rollback)?;
+        return Err(error);
+    }
     if let Err(error) = ctx
         .registry
         .save_all_atomic_if_unchanged(&existing, &merged)
@@ -359,7 +434,7 @@ pub async fn import_config(
         .filter(|account| !retained_refs.contains(account))
     {
         if ctx.registry.secret_store().delete(account).is_err() {
-            if append_cleanup_journal(account).is_ok() {
+            if append_cleanup_journal_at(ctx.registry.path(), account).is_ok() {
                 warnings.push("Credential cleanup is pending and will be retried.".to_string());
             } else {
                 warnings.push(
@@ -379,6 +454,7 @@ pub async fn import_config(
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MissingSecretField {
+    /// RFC 6901 JSON Pointer identifying the missing credential field.
     pub name: String,
     pub storage_name: String,
 }
@@ -394,8 +470,9 @@ pub struct StorageImportChange {
 pub struct StorageImportPreview {
     #[serde(rename = "previewId")]
     pub preview_id: String,
-    #[serde(rename = "baseRegistryRevision")]
-    pub base_registry_revision: String,
+    pub mode: String,
+    #[serde(rename = "onConflict")]
+    pub on_conflict: String,
     pub additions: Vec<StorageImportChange>,
     pub updates: Vec<StorageImportChange>,
     pub renames: Vec<StorageImportChange>,
@@ -406,15 +483,20 @@ pub struct StorageImportPreview {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PreviewStorageImportInput {
+    pub json: String,
+    #[serde(default = "default_mode")]
+    pub mode: String,
+    #[serde(default = "default_on_conflict")]
+    pub on_conflict: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApplyStorageImportInput {
     #[serde(rename = "previewId")]
     pub preview_id: String,
-    #[serde(rename = "baseRegistryRevision")]
-    pub base_registry_revision: String,
-    pub mode: String,
-    #[serde(rename = "onConflict")]
-    pub on_conflict: String,
     pub confirmed: bool,
 }
 
@@ -424,10 +506,20 @@ pub struct ApplyStorageImportResult {
     pub warnings: Vec<String>,
 }
 
+const IMPORT_PREVIEW_TTL: Duration = Duration::from_secs(10 * 60);
+
+#[derive(Clone)]
+struct SecretStage {
+    record_id: String,
+    explicit: serde_json::Map<String, Value>,
+}
+
+#[derive(Clone)]
 struct PreviewEntry {
-    #[allow(dead_code)]
     changes: StorageImportPreview,
     storages: Vec<StorageRecord>,
+    secret_stages: Vec<SecretStage>,
+    base_registry_snapshot: Vec<u8>,
     created_at: Instant,
 }
 
@@ -436,7 +528,110 @@ fn preview_store() -> &'static Mutex<HashMap<String, PreviewEntry>> {
     STORE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn parse_shareable_json(input: &str) -> McpResult<Vec<ImportedStorage>> {
+#[cfg(test)]
+pub(super) fn expire_storage_import_preview(preview_id: &str) {
+    if let Some(entry) = preview_store().lock().unwrap().get_mut(preview_id) {
+        entry.created_at = Instant::now() - IMPORT_PREVIEW_TTL;
+    }
+}
+
+#[derive(Debug)]
+struct ParsedShareableStorage {
+    record: StorageRecord,
+    requested_exposure: bool,
+    explicit_secrets: serde_json::Map<String, Value>,
+}
+
+fn decode_json_pointer_segment(segment: &str) -> McpResult<String> {
+    let mut decoded = String::with_capacity(segment.len());
+    let mut chars = segment.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '~' {
+            decoded.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('0') => decoded.push('~'),
+            Some('1') => decoded.push('/'),
+            _ => {
+                return Err(err(
+                    McpErrorCode::ERR_INTERNAL,
+                    "requiredSecretFields contains an invalid JSON Pointer escape",
+                ))
+            }
+        }
+    }
+    Ok(decoded)
+}
+
+fn escape_internal_path_segment(segment: &str) -> String {
+    segment.replace('\\', "\\\\").replace('.', "\\.")
+}
+
+/// Convert an RFC 6901 pointer to the escaped internal path representation used
+/// by secret bundles. The conversion is reversible for dots, slashes, tildes,
+/// backslashes, and numeric object keys.
+fn secret_pointer_to_field(pointer: &str) -> McpResult<String> {
+    if !pointer.starts_with('/') || pointer == "/" {
+        return Err(err(
+            McpErrorCode::ERR_INTERNAL,
+            "requiredSecretFields entries must be non-root RFC 6901 JSON Pointers",
+        ));
+    }
+    pointer[1..]
+        .split('/')
+        .map(decode_json_pointer_segment)
+        .map(|segment| segment.map(|value| escape_internal_path_segment(&value)))
+        .collect::<McpResult<Vec<_>>>()
+        .map(|segments| segments.join("."))
+}
+
+fn split_internal_path(path: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut chars = path.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => match chars.next() {
+                Some(next) => current.push(next),
+                None => current.push('\\'),
+            },
+            '.' => parts.push(std::mem::take(&mut current)),
+            _ => current.push(ch),
+        }
+    }
+    parts.push(current);
+    parts
+}
+
+pub(crate) fn secret_field_to_pointer(field: &str) -> String {
+    let segments = if field.starts_with('/') {
+        // Newer stores may already use JSON Pointer keys.
+        return field.to_string();
+    } else {
+        split_internal_path(field)
+    };
+    format!(
+        "/{}",
+        segments
+            .iter()
+            .map(|segment| segment.replace('~', "~0").replace('/', "~1"))
+            .collect::<Vec<_>>()
+            .join("/")
+    )
+}
+
+fn registry_snapshot(storages: &[StorageRecord]) -> McpResult<Vec<u8>> {
+    serde_json::to_vec(storages).map_err(|e| {
+        err_with_details(
+            McpErrorCode::ERR_INTERNAL,
+            "failed to fingerprint storage registry",
+            serde_json::json!({ "serde_error": e.to_string() }),
+        )
+    })
+}
+
+fn parse_shareable_json(input: &str) -> McpResult<Vec<ParsedShareableStorage>> {
     let value: Value = serde_json::from_str(input).map_err(|e| {
         err_with_details(
             McpErrorCode::ERR_INTERNAL,
@@ -461,11 +656,7 @@ fn parse_shareable_json(input: &str) -> McpResult<Vec<ImportedStorage>> {
             } else {
                 map.get("storages")
                     .or_else(|| {
-                        if map.contains_key("name") || map.contains_key("backend") {
-                            Some(&value)
-                        } else {
-                            None
-                        }
+                        (map.contains_key("name") || map.contains_key("backend")).then_some(&value)
                     })
                     .and_then(|v| {
                         if v.is_array() {
@@ -487,7 +678,7 @@ fn parse_shareable_json(input: &str) -> McpResult<Vec<ImportedStorage>> {
             return Err(err(
                 McpErrorCode::ERR_INTERNAL,
                 "import JSON must be an array or an object",
-            ));
+            ))
         }
     };
 
@@ -495,24 +686,51 @@ fn parse_shareable_json(input: &str) -> McpResult<Vec<ImportedStorage>> {
         .into_iter()
         .map(|item| {
             #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
             struct ImportedStorageWire {
                 name: String,
                 backend: String,
                 #[serde(default)]
                 config: Value,
+                #[serde(
+                    default,
+                    rename = "requiredSecretFields",
+                    alias = "required_secret_fields"
+                )]
+                required_secret_fields: Vec<String>,
                 #[serde(default = "default_true")]
                 enabled: bool,
-                #[serde(default)]
+                #[serde(default, rename = "mcpExposed", alias = "mcp_exposed")]
+                mcp_exposed: bool,
+                #[serde(default, rename = "readOnly", alias = "read_only")]
                 read_only: bool,
+                #[serde(default, rename = "mcpPolicy", alias = "mcp_policy")]
+                mcp_policy: McpStoragePolicy,
             }
-            let wire: ImportedStorageWire = serde_json::from_value(item).map_err(|e| {
+            let mut wire: ImportedStorageWire = serde_json::from_value(item).map_err(|e| {
                 err_with_details(
                     McpErrorCode::ERR_INTERNAL,
                     "imported storage entry is invalid",
                     serde_json::json!({ "serde_error": e.to_string() }),
                 )
             })?;
-            Ok(ImportedStorage {
+            normalize_storage_policy(&mut wire.mcp_policy)?;
+
+            let secret_names = infimount_core::secrets::discover_secret_field_names();
+            let extracted =
+                infimount_core::secrets::extract_secret_fields(&wire.config, &secret_names);
+            infimount_core::secrets::strip_secret_fields(&mut wire.config, &secret_names);
+            let explicit_secrets = extracted.iter().cloned().collect::<serde_json::Map<_, _>>();
+            let mut required_secret_fields = wire
+                .required_secret_fields
+                .iter()
+                .map(|field| secret_pointer_to_field(field))
+                .collect::<McpResult<Vec<_>>>()?;
+            required_secret_fields.extend(extracted.into_iter().map(|(field, _)| field));
+            required_secret_fields.sort();
+            required_secret_fields.dedup();
+
+            let mut record = ImportedStorage {
                 name: wire.name,
                 backend: wire.backend,
                 config: wire.config,
@@ -522,113 +740,47 @@ fn parse_shareable_json(input: &str) -> McpResult<Vec<ImportedStorage>> {
                 id: None,
                 created_at: None,
                 updated_at: None,
+            }
+            .into_record()?;
+            record.mcp_policy = wire.mcp_policy;
+            record.secret_fields = required_secret_fields;
+            Ok(ParsedShareableStorage {
+                record,
+                requested_exposure: wire.mcp_exposed,
+                explicit_secrets,
             })
         })
         .collect()
 }
 
-pub async fn preview_storage_import(
-    ctx: &FsToolsContext,
-    json: String,
-) -> McpResult<StorageImportPreview> {
-    let imported = parse_shareable_json(&json)?
-        .into_iter()
-        .map(ImportedStorage::into_record)
-        .collect::<McpResult<Vec<_>>>()?;
-
-    let existing = ctx.registry.load_all()?;
-    let existing_by_name: HashMap<&str, &StorageRecord> =
-        existing.iter().map(|s| (s.name.as_str(), s)).collect();
-
-    let mut additions = Vec::new();
-    let mut updates = Vec::new();
-    let mut removals = Vec::new();
-    let mut policy_changes = Vec::new();
-    let mut exposure_changes = Vec::new();
-    let mut missing_secret_fields = Vec::new();
-    let mut warnings = Vec::new();
-
-    let secret_names = infimount_core::secrets::discover_secret_field_names();
-
-    for incoming in &imported {
-        if let Some(existing_record) = existing_by_name.get(incoming.name.as_str()) {
-            let mut update_desc = format!("config updated");
-            if incoming.enabled != existing_record.enabled {
-                update_desc = format!("{update_desc}, enabled changed");
-            }
-            updates.push(StorageImportChange {
-                name: incoming.name.clone(),
-                backend: incoming.backend.clone(),
-                change_type: update_desc,
-            });
-            let has_plaintext = infimount_core::secrets::contains_plaintext_secrets(
-                &incoming.config,
-                &secret_names,
-            );
-            if has_plaintext {
-                missing_secret_fields.push(MissingSecretField {
-                    name: "plaintext credentials in config".into(),
-                    storage_name: incoming.name.clone(),
-                });
-            }
-        } else {
-            additions.push(StorageImportChange {
-                name: incoming.name.clone(),
-                backend: incoming.backend.clone(),
-                change_type: "new storage".into(),
-            });
-        }
-    }
-
-    for existing_record in &existing {
-        if !imported.iter().any(|i| i.name == existing_record.name) {
-            removals.push(StorageImportChange {
-                name: existing_record.name.clone(),
-                backend: existing_record.backend.clone(),
-                change_type: "not in import".into(),
-            });
-        }
-    }
-
-    let preview_id = Uuid::new_v4().to_string();
-    let base_revision = existing
-        .iter()
-        .map(|s| s.revision)
-        .max()
-        .unwrap_or(0)
-        .to_string();
-
-    let preview = StorageImportPreview {
-        preview_id: preview_id.clone(),
-        base_registry_revision: base_revision,
-        additions,
-        updates,
-        renames: Vec::new(),
-        removals,
-        policy_changes,
-        exposure_changes,
-        missing_secret_fields,
-        warnings,
-    };
-
-    let mut store = preview_store().lock().unwrap();
-    store.insert(
-        preview_id.clone(),
-        PreviewEntry {
-            changes: preview.clone(),
-            storages: imported,
-            created_at: Instant::now(),
-        },
-    );
-    store.retain(|_, entry| entry.created_at.elapsed().as_secs() < 600);
-
-    Ok(preview)
+fn preserve_existing_credentials(
+    mut incoming: StorageRecord,
+    existing: &StorageRecord,
+) -> StorageRecord {
+    incoming.id = existing.id.clone();
+    incoming.created_at = existing.created_at.clone();
+    incoming.updated_at = Utc::now().to_rfc3339();
+    incoming.secret_ref = existing.secret_ref.clone();
+    incoming
+        .secret_fields
+        .extend(existing.secret_fields.iter().cloned());
+    incoming.secret_fields.sort();
+    incoming.secret_fields.dedup();
+    incoming
 }
 
-pub async fn apply_storage_import(
+fn change(record: &StorageRecord, change_type: impl Into<String>) -> StorageImportChange {
+    StorageImportChange {
+        name: record.name.clone(),
+        backend: record.backend.clone(),
+        change_type: change_type.into(),
+    }
+}
+
+pub async fn preview_storage_import(
     ctx: &FsToolsContext,
-    input: ApplyStorageImportInput,
-) -> McpResult<ApplyStorageImportResult> {
+    input: PreviewStorageImportInput,
+) -> McpResult<StorageImportPreview> {
     if !matches!(input.mode.as_str(), "merge" | "replace") {
         return Err(err(
             McpErrorCode::ERR_INTERNAL,
@@ -641,101 +793,512 @@ pub async fn apply_storage_import(
             "on_conflict must be 'error', 'overwrite', or 'rename'",
         ));
     }
-    if input.mode == "replace" && !input.confirmed {
+    let parsed = parse_shareable_json(&input.json)?;
+    let existing = ctx.registry.load_all()?;
+    let mut result = if input.mode == "replace" {
+        Vec::new()
+    } else {
+        existing.clone()
+    };
+    let mut renames = Vec::new();
+    let mut warnings = Vec::new();
+    let mut missing_secret_fields = Vec::new();
+    let mut secret_stages = Vec::new();
+
+    for parsed_storage in parsed {
+        let original_name = parsed_storage.record.name.clone();
+        let existing_match = existing.iter().find(|record| record.name == original_name);
+        let mut incoming = parsed_storage.record;
+
+        if input.mode == "replace" {
+            if let Some(previous) = existing_match {
+                incoming = preserve_existing_credentials(incoming, previous);
+            }
+            ensure_unique_name(&result, &incoming.name, None)?;
+            result.push(incoming.clone());
+        } else if let Some(index) = result
+            .iter()
+            .position(|record| record.name == incoming.name)
+        {
+            match input.on_conflict.as_str() {
+                "error" => {
+                    return Err(err_with_details(
+                        McpErrorCode::ERR_STORAGE_NAME_CONFLICT,
+                        format!("Storage name '{}' already exists", incoming.name),
+                        serde_json::json!({ "name": incoming.name }),
+                    ))
+                }
+                "overwrite" => {
+                    incoming = preserve_existing_credentials(incoming, &result[index]);
+                    result[index] = incoming.clone();
+                }
+                "rename" => {
+                    incoming.id = Uuid::new_v4().to_string();
+                    incoming.name = next_renamed_name(&result, &incoming.name);
+                    incoming.created_at = Utc::now().to_rfc3339();
+                    incoming.updated_at = incoming.created_at.clone();
+                    incoming.secret_ref = None;
+                    ensure_unique_name(&result, &incoming.name, None)?;
+                    renames.push(change(&incoming, format!("renamed from '{original_name}'")));
+                    result.push(incoming.clone());
+                }
+                _ => unreachable!(),
+            }
+        } else {
+            ensure_unique_name(&result, &incoming.name, None)?;
+            result.push(incoming.clone());
+        }
+
+        let existing_bundle = match incoming.secret_ref.as_deref() {
+            Some(account) => {
+                match ctx.registry.secret_store().get_json(account) {
+                    Ok(Some(Value::Object(bundle))) => bundle,
+                    Ok(_) => {
+                        warnings.push(format!(
+                            "Stored credentials for '{}' are missing and must be re-entered.",
+                            incoming.name
+                        ));
+                        serde_json::Map::new()
+                    }
+                    Err(_) => {
+                        warnings.push(format!("Stored credentials for '{}' could not be verified and must be re-entered.", incoming.name));
+                        serde_json::Map::new()
+                    }
+                }
+            }
+            None => serde_json::Map::new(),
+        };
+        let available = existing_bundle
+            .keys()
+            .chain(parsed_storage.explicit_secrets.keys())
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+        for field in &incoming.secret_fields {
+            if !available.contains(field) {
+                missing_secret_fields.push(MissingSecretField {
+                    name: secret_field_to_pointer(field),
+                    storage_name: incoming.name.clone(),
+                });
+            }
+        }
+        if !parsed_storage.explicit_secrets.is_empty() {
+            secret_stages.push(SecretStage {
+                record_id: incoming.id.clone(),
+                explicit: parsed_storage.explicit_secrets,
+            });
+        }
+        if parsed_storage.requested_exposure {
+            warnings.push(format!(
+                "Storage '{}' requested MCP exposure; shareable imports always disable exposure.",
+                incoming.name
+            ));
+        }
+    }
+
+    assign_import_revisions(&existing, &mut result)?;
+    let mut additions = Vec::new();
+    let mut updates = Vec::new();
+    let mut removals = Vec::new();
+    let mut policy_changes = Vec::new();
+    let mut exposure_changes = Vec::new();
+
+    for planned in &result {
+        if let Some(previous) = existing.iter().find(|record| record.id == planned.id) {
+            if planned.backend != previous.backend
+                || planned.config != previous.config
+                || planned.enabled != previous.enabled
+                || planned.read_only != previous.read_only
+            {
+                updates.push(change(planned, "storage configuration changed"));
+            }
+            if planned.mcp_policy != previous.mcp_policy {
+                policy_changes.push(change(planned, "MCP policy changed"));
+            }
+            if planned.mcp_exposed != previous.mcp_exposed {
+                exposure_changes.push(change(
+                    planned,
+                    if planned.mcp_exposed {
+                        "MCP exposure enabled"
+                    } else {
+                        "MCP exposure disabled"
+                    },
+                ));
+            }
+        } else if !renames.iter().any(|renamed| renamed.name == planned.name) {
+            additions.push(change(planned, "new storage"));
+        }
+    }
+    if input.mode == "replace" {
+        for previous in &existing {
+            if !result.iter().any(|planned| planned.id == previous.id) {
+                removals.push(change(previous, "storage removed"));
+            }
+        }
+    }
+
+    missing_secret_fields
+        .sort_by(|a, b| (&a.storage_name, &a.name).cmp(&(&b.storage_name, &b.name)));
+    missing_secret_fields.dedup_by(|a, b| a.storage_name == b.storage_name && a.name == b.name);
+    let preview_id = Uuid::new_v4().to_string();
+    let preview = StorageImportPreview {
+        preview_id: preview_id.clone(),
+        mode: input.mode,
+        on_conflict: input.on_conflict,
+        additions,
+        updates,
+        renames,
+        removals,
+        policy_changes,
+        exposure_changes,
+        missing_secret_fields,
+        warnings,
+    };
+    let entry = PreviewEntry {
+        changes: preview.clone(),
+        storages: result,
+        secret_stages,
+        base_registry_snapshot: registry_snapshot(&existing)?,
+        created_at: Instant::now(),
+    };
+    let mut store = preview_store().lock().unwrap();
+    store.retain(|_, entry| entry.created_at.elapsed() < IMPORT_PREVIEW_TTL);
+    store.insert(preview_id, entry);
+    Ok(preview)
+}
+
+fn write_pending_import_journal(
+    registry: &crate::registry::StorageRegistry,
+) -> McpResult<(std::path::PathBuf, ImportTransactionJournal)> {
+    let (original_present, original_bytes) = registry.registry_bytes()?;
+    let path = registry.import_journal_path(&Uuid::new_v4().to_string())?;
+    let journal = ImportTransactionJournal {
+        version: IMPORT_JOURNAL_VERSION,
+        state: ImportTransactionState::Staging,
+        original_present,
+        original_bytes,
+        replacement_bytes: Vec::new(),
+        staged_secret_accounts: Vec::new(),
+        obsolete_secret_accounts: Vec::new(),
+    };
+    registry.write_import_journal(&path, &journal)?;
+    Ok((path, journal))
+}
+
+fn remove_pending_backup(path: &std::path::Path) -> McpResult<()> {
+    std::fs::remove_file(path).map_err(|_| {
+        err(
+            McpErrorCode::ERR_INTERNAL,
+            "failed to remove completed import rollback journal",
+        )
+    })
+}
+
+fn rollback_registry_if_matches(
+    ctx: &FsToolsContext,
+    imported: &[StorageRecord],
+    original: &[StorageRecord],
+) -> McpResult<bool> {
+    ctx.registry
+        .restore_all_if_matches(imported, original)
+        .map_err(|_| {
+            err(
+                McpErrorCode::ERR_INTERNAL,
+                "import failed and storage registry rollback failed",
+            )
+        })
+}
+
+fn abort_import_before_commit(
+    ctx: &FsToolsContext,
+    journal_path: &std::path::Path,
+    rollback: &mut Vec<(String, Option<Value>)>,
+    error: crate::errors::McpError,
+) -> crate::errors::McpError {
+    let rollback_error = rollback_import_secrets(
+        ctx.registry.secret_store().as_ref(),
+        std::mem::take(rollback),
+    )
+    .err();
+    if rollback_error.is_none() {
+        let _ = remove_pending_backup(journal_path);
+    }
+    err_with_details(
+        error.code,
+        error.message,
+        serde_json::json!({ "secretRollbackError": rollback_error.map(|error| error.message) }),
+    )
+}
+
+pub async fn apply_storage_import(
+    ctx: &FsToolsContext,
+    input: ApplyStorageImportInput,
+) -> McpResult<ApplyStorageImportResult> {
+    apply_storage_import_with_validator(ctx, input, |_| Ok(())).await
+}
+
+pub async fn apply_storage_import_with_validator<F>(
+    ctx: &FsToolsContext,
+    input: ApplyStorageImportInput,
+    validate_result: F,
+) -> McpResult<ApplyStorageImportResult>
+where
+    F: FnOnce(&[StorageRecord]) -> McpResult<()>,
+{
+    let _transaction = ctx.registry.acquire_configuration_transaction()?;
+    apply_storage_import_with_validator_locked(ctx, input, validate_result).await
+}
+
+async fn apply_storage_import_with_validator_locked<F>(
+    ctx: &FsToolsContext,
+    input: ApplyStorageImportInput,
+    validate_result: F,
+) -> McpResult<ApplyStorageImportResult>
+where
+    F: FnOnce(&[StorageRecord]) -> McpResult<()>,
+{
+    let entry = {
+        let mut store = preview_store().lock().unwrap();
+        match store.get(&input.preview_id) {
+            Some(entry) if entry.created_at.elapsed() < IMPORT_PREVIEW_TTL => entry.clone(),
+            _ => {
+                store.remove(&input.preview_id);
+                return Err(err(
+                    McpErrorCode::ERR_IMPORT_PREVIEW_EXPIRED,
+                    "import preview not found or expired; re-preview the import",
+                ));
+            }
+        }
+    };
+    if entry.changes.mode == "replace" && !input.confirmed {
         return Err(err(
             McpErrorCode::ERR_IMPORT_CONFIRMATION_REQUIRED,
             "replace mode requires explicit confirmation",
         ));
     }
-
-    let entry = {
-        let mut store = preview_store().lock().unwrap();
-        store.remove(&input.preview_id).ok_or_else(|| {
-            err(
-                McpErrorCode::ERR_IMPORT_PREVIEW_EXPIRED,
-                "import preview not found or expired; re-preview the import",
-            )
-        })?
-    };
+    if !entry.changes.missing_secret_fields.is_empty() {
+        return Err(err_with_details(
+            McpErrorCode::ERR_SECRET_NOT_FOUND,
+            "required credentials are missing; add them to the import JSON and preview again",
+            serde_json::json!({ "missingSecretFields": entry.changes.missing_secret_fields }),
+        ));
+    }
 
     let existing = ctx.registry.load_all()?;
-    let current_revision = existing
-        .iter()
-        .map(|s| s.revision)
-        .max()
-        .unwrap_or(0)
-        .to_string();
-    if current_revision != input.base_registry_revision {
+    if registry_snapshot(&existing)? != entry.base_registry_snapshot {
         return Err(err(
             McpErrorCode::ERR_IMPORT_PREVIEW_STALE,
             "storage registry has changed since preview; re-preview the import",
         ));
     }
 
-    let imported = entry.storages;
-    let imported_count = imported.len();
-    let merged = if input.mode == "replace" {
-        imported
-    } else {
-        let mut merged = existing.clone();
-        for incoming in imported {
-            if let Some(idx) = merged
-                .iter()
-                .position(|s| s.name == incoming.name)
-            {
-                match input.on_conflict.as_str() {
-                    "error" => {
-                        return Err(err_with_details(
-                            McpErrorCode::ERR_STORAGE_NAME_CONFLICT,
-                            format!("Storage name '{}' already exists", incoming.name),
-                            serde_json::json!({ "name": incoming.name }),
-                        ));
-                    }
-                    "overwrite" => {
-                        let mut record = incoming;
-                        record.id = merged[idx].id.clone();
-                        record.created_at = merged[idx].created_at.clone();
-                        record.updated_at = Utc::now().to_rfc3339();
-                        record.secret_ref = merged[idx].secret_ref.clone();
-                        record.secret_fields = merged[idx].secret_fields.clone();
-                        merged[idx] = record;
-                    }
-                    "rename" => {
-                        let mut record = incoming;
-                        record.name = next_renamed_name(&merged, &record.name);
-                        ensure_unique_name(&merged, &record.name, None)?;
-                        merged.push(record);
-                    }
-                    _ => unreachable!(),
+    let mut merged = entry.storages.clone();
+    // Desktop control-plane callers can enforce additional persisted-state
+    // invariants (for example workspace-to-storage references) before any
+    // registry, rollback-journal, or native-secret mutation occurs.
+    validate_result(&merged)?;
+
+    // Persist a durable transaction before changing either the registry or native secret store.
+    let (pending_backup, mut journal) = write_pending_import_journal(&ctx.registry)?;
+    let mut rollback = Vec::new();
+    for stage in &entry.secret_stages {
+        let Some(record) = merged
+            .iter_mut()
+            .find(|record| record.id == stage.record_id)
+        else {
+            return Err(abort_import_before_commit(
+                ctx,
+                &pending_backup,
+                &mut rollback,
+                err(
+                    McpErrorCode::ERR_INTERNAL,
+                    "import secret stage did not match its storage",
+                ),
+            ));
+        };
+        let mut bundle = match record.secret_ref.as_deref() {
+            Some(account) => match ctx.registry.secret_store().get_json(account) {
+                Ok(bundle) => bundle.unwrap_or_else(|| Value::Object(serde_json::Map::new())),
+                Err(_) => {
+                    return Err(abort_import_before_commit(
+                        ctx,
+                        &pending_backup,
+                        &mut rollback,
+                        err(
+                            McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                            "failed to read existing credentials",
+                        ),
+                    ));
                 }
-            } else {
-                ensure_unique_name(&merged, &incoming.name, None)?;
-                merged.push(incoming);
+            },
+            None => Value::Object(serde_json::Map::new()),
+        };
+        let Some(object) = bundle.as_object_mut() else {
+            return Err(abort_import_before_commit(
+                ctx,
+                &pending_backup,
+                &mut rollback,
+                err(
+                    McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                    "stored secret bundle is invalid",
+                ),
+            ));
+        };
+        object.extend(stage.explicit.clone());
+        let mut secret_fields = object.keys().cloned().collect::<Vec<_>>();
+        secret_fields.sort();
+        let account = format!("storage/{}/import/{}", record.id, Uuid::new_v4());
+        // Journal the intended account before touching the native store. A
+        // crash after put_json is therefore always recoverable.
+        journal.staged_secret_accounts.push(account.clone());
+        if let Err(error) = ctx.registry.write_import_journal(&pending_backup, &journal) {
+            journal.staged_secret_accounts.pop();
+            return Err(abort_import_before_commit(
+                ctx,
+                &pending_backup,
+                &mut rollback,
+                err_with_details(
+                    McpErrorCode::ERR_INTERNAL,
+                    format!("failed to journal staged credential: {error}"),
+                    serde_json::json!({}),
+                ),
+            ));
+        }
+        if ctx
+            .registry
+            .secret_store()
+            .put_json(&account, &bundle)
+            .is_err()
+        {
+            return Err(abort_import_before_commit(
+                ctx,
+                &pending_backup,
+                &mut rollback,
+                err(
+                    McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                    "failed to stage imported credentials",
+                ),
+            ));
+        }
+        rollback.push((account.clone(), None));
+        record.secret_ref = Some(account);
+        record.secret_fields = secret_fields;
+    }
+    if let Err(error) = assign_import_revisions(&existing, &mut merged) {
+        return Err(abort_import_before_commit(
+            ctx,
+            &pending_backup,
+            &mut rollback,
+            error,
+        ));
+    }
+    let retained_refs = merged
+        .iter()
+        .filter_map(|record| record.secret_ref.as_deref())
+        .collect::<std::collections::HashSet<_>>();
+    journal.replacement_bytes = match ctx.registry.serialize_records(&merged) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return Err(abort_import_before_commit(
+                ctx,
+                &pending_backup,
+                &mut rollback,
+                error,
+            ));
+        }
+    };
+    journal.obsolete_secret_accounts = existing
+        .iter()
+        .filter_map(|record| record.secret_ref.clone())
+        .filter(|account| !retained_refs.contains(account.as_str()))
+        .collect();
+    if let Err(error) = ctx.registry.write_import_journal(&pending_backup, &journal) {
+        return Err(abort_import_before_commit(
+            ctx,
+            &pending_backup,
+            &mut rollback,
+            error,
+        ));
+    }
+    if let Err(error) = ctx.registry.replace_all_atomic_verified(&existing, &merged) {
+        let rollback_error = rollback_import_secrets(
+            ctx.registry.secret_store().as_ref(),
+            std::mem::take(&mut rollback),
+        )
+        .err();
+        let registry_error = match rollback_registry_if_matches(ctx, &merged, &existing) {
+            Ok(true) => None,
+            Ok(false) => {
+                Some("registry rollback refused because persisted state advanced".to_string())
+            }
+            Err(error) => Some(error.message),
+        };
+        // Keep the durable journal when either rollback stage is incomplete;
+        // startup recovery will resolve it instead of treating CAS refusal as success.
+        if rollback_error.is_some() || registry_error.is_some() {
+            return Err(err_with_details(
+                error.code,
+                error.message.clone(),
+                serde_json::json!({
+                    "secretRollbackError": rollback_error.map(|e| e.message),
+                    "registryRollbackError": registry_error,
+                }),
+            ));
+        }
+        let _ = remove_pending_backup(&pending_backup);
+        return Err(error);
+    }
+    journal.state = ImportTransactionState::Committed;
+    let mut warnings = entry.changes.warnings.clone();
+    // If this write fails, the durable staging journal still describes the
+    // exact replacement bytes and startup recovery can safely finish it. The
+    // registry is already committed, so report success with a recovery warning.
+    if let Err(error) = ctx.registry.write_import_journal(&pending_backup, &journal) {
+        warnings.push(format!(
+            "Import committed; transaction journal update is pending recovery: {error}"
+        ));
+        preview_store().lock().unwrap().remove(&input.preview_id);
+        return Ok(ApplyStorageImportResult {
+            applied: entry.storages.len(),
+            warnings,
+        });
+    }
+    let cleanup_accounts = journal.obsolete_secret_accounts.clone();
+    let cleanup_result = ctx.registry.with_locked_mutation(|current| {
+        let active = current
+            .iter()
+            .filter_map(|record| record.secret_ref.as_deref())
+            .collect::<std::collections::HashSet<_>>();
+        let mut failed = Vec::new();
+        for account in &cleanup_accounts {
+            if !active.contains(account.as_str())
+                && ctx.registry.secret_store().delete(account).is_err()
+            {
+                failed.push(account.clone());
             }
         }
-        merged
-    };
-
-    let backup = serde_json::to_vec(&existing).map_err(|e| {
-        err_with_details(
-            McpErrorCode::ERR_INTERNAL,
-            "failed to create pre-import backup",
-            serde_json::json!({ "serde_error": e.to_string() }),
-        )
-    })?;
-
-    let result = ctx.registry.save_all_atomic_if_unchanged(&existing, &merged);
-    match result {
-        Ok(()) => Ok(ApplyStorageImportResult {
-            applied: imported_count,
-            warnings: Vec::new(),
-        }),
-        Err(error) => {
-            let _ = std::fs::write(
-                crate::registry::default_config_dir().join("import-backup.json"),
-                &backup,
-            );
-            Err(error)
+        if failed.is_empty() {
+            remove_pending_backup(&pending_backup)?;
         }
+        Ok(failed)
+    });
+    match cleanup_result {
+        Ok(failed) if failed.is_empty() => {}
+        Ok(failed) => {
+            for account in failed {
+                if append_cleanup_journal_at(ctx.registry.path(), &account).is_err() {
+                    warnings.push("Credential cleanup failed and could not be journaled; remove the native secret-store entry manually.".to_string());
+                }
+            }
+            warnings.push("Credential cleanup is pending and will be retried.".to_string());
+        }
+        Err(error) => warnings.push(format!(
+            "The completed import transaction remains journaled for recovery: {}",
+            error.message
+        )),
     }
+    preview_store().lock().unwrap().remove(&input.preview_id);
+    Ok(ApplyStorageImportResult {
+        applied: entry.storages.len(),
+        warnings,
+    })
 }

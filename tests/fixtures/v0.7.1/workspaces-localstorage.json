@@ -1,0 +1,13 @@
+[
+  {
+    "id": "fixture-workspace-v071",
+    "storageId": "fixture-v071-local",
+    "name": "v0.7.1 Fixture Workspace",
+    "rootPath": "/workspace",
+    "templateId": "coding",
+    "createdAt": "2025-07-01T00:00:00Z",
+    "updatedAt": "2025-07-01T00:00:00Z",
+    "memoryFiles": [],
+    "checkpointIds": []
+  }
+]

@@ -1,0 +1,8 @@
+{
+  "kind": "infimount-agent-workspace",
+  "workspace": {
+    "id": "fixture-workspace-v071",
+    "rootPath": "/workspace",
+    "templateId": "coding"
+  }
+}

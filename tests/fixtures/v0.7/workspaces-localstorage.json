@@ -1,0 +1,16 @@
+[
+  {
+    "id": "fixture-workspace-v07",
+    "schemaVersion": 1,
+    "storageId": "fixture-v07-s3",
+    "name": "Fixture Workspace",
+    "rootPath": "workspace",
+    "templateId": "research",
+    "accessProfile": "read_only",
+    "policyRuleId": "workspace:fixture-workspace-v07",
+    "createdAt": "2025-01-01T00:00:00Z",
+    "updatedAt": "2025-01-01T00:00:00Z",
+    "memoryFiles": ["memory.md"],
+    "checkpointIds": []
+  }
+]

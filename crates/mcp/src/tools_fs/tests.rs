@@ -444,6 +444,76 @@ async fn list_dir_recursive_is_flat_and_sorted_by_full_path() {
 }
 
 #[tokio::test]
+async fn list_dir_recursive_pages_are_bounded_and_filter_denied_nested_paths() {
+    let dir = TempDir::new().unwrap();
+    let local_root = dir.path().join("local");
+    for index in 0..75 {
+        std::fs::create_dir_all(local_root.join("allowed/nested")).unwrap();
+        std::fs::create_dir_all(local_root.join("private/nested")).unwrap();
+        std::fs::write(
+            local_root.join(format!("allowed/nested/{index:03}.txt")),
+            b"visible",
+        )
+        .unwrap();
+        std::fs::write(
+            local_root.join(format!("private/nested/{index:03}.txt")),
+            b"hidden",
+        )
+        .unwrap();
+    }
+
+    let registry = registry_in(&dir);
+    let mut storage = StorageRecord::new(
+        "Local".to_string(),
+        "local".to_string(),
+        json!({"root": local_root}),
+    );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    storage.mcp_policy.denied_paths = vec!["private".to_string()];
+    registry.save_all_atomic(&[storage]).unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+
+    let mut cursor = None;
+    let mut paths = Vec::new();
+    let mut pages = 0usize;
+    loop {
+        let page = list_dir(
+            &ctx,
+            ListDirInput {
+                session_id: None,
+                path: "/Local".to_string(),
+                recursive: true,
+                limit: 11,
+                cursor,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(page.entries.len() <= 11);
+        assert!(page
+            .entries
+            .iter()
+            .all(|entry| !entry.path.contains("/private")));
+        paths.extend(page.entries.into_iter().map(|entry| entry.path));
+        cursor = page.next_cursor;
+        pages += 1;
+        assert!(pages < 20, "cursor did not make bounded progress");
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert!(paths.contains(&"/Local/allowed/nested/074.txt".to_string()));
+    let unique = paths.iter().collect::<std::collections::HashSet<_>>();
+    assert_eq!(unique.len(), paths.len());
+}
+
+#[tokio::test]
 async fn list_dir_cursor_offset_applies_after_sorting() {
     let dir = TempDir::new().unwrap();
     let registry = registry_in(&dir);

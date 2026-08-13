@@ -1,10 +1,19 @@
 use crate::errors::{err_with_details, McpError, McpErrorCode, McpResult};
 use crate::registry::{ResolvedStorageRecord, StorageRecord, StorageRegistry};
 pub use infimount_core::models::StorageBackendCapabilities;
+use infimount_core::runtime::{get_or_create_operator, OperatorCache};
 use infimount_core::secrets::SecretStore;
 use infimount_core::{registry, Source, SourceKind};
 use opendal::Operator;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+
+static MCP_OPERATOR_CACHE: OnceLock<OperatorCache> = OnceLock::new();
+
+pub fn clear_operator_cache() {
+    if let Some(cache) = MCP_OPERATOR_CACHE.get() {
+        cache.clear();
+    }
+}
 
 pub fn get_capabilities(op: &Operator) -> StorageBackendCapabilities {
     registry::get_capabilities(op)
@@ -19,6 +28,10 @@ pub fn build_operator(
     storage: &StorageRecord,
     storage_registry: &StorageRegistry,
 ) -> McpResult<Operator> {
+    let cache = MCP_OPERATOR_CACHE.get_or_init(OperatorCache::new);
+    if let Some(operator) = cache.get_for_storage(&storage.id, storage.revision) {
+        return Ok(operator);
+    }
     let resolved = storage_registry.resolve_storage(storage)?;
     build_operator_resolved(&resolved)
 }
@@ -31,7 +44,9 @@ pub fn build_operator_from_config(storage: &StorageRecord) -> McpResult<Operator
 
 pub fn build_operator_resolved(resolved: &ResolvedStorageRecord) -> McpResult<Operator> {
     let source = resolved_record_to_source(resolved)?;
-    registry::build_operator(&source).map_err(core_error_to_mcp_error)
+    let cache = MCP_OPERATOR_CACHE.get_or_init(OperatorCache::new);
+    get_or_create_operator(cache, &source, resolved.record.revision)
+        .map_err(core_error_to_mcp_error)
 }
 
 pub fn resolve_and_build(
@@ -46,7 +61,8 @@ pub fn resolve_and_build(
             serde_json::json!({ "storage_id": record.id }),
         )
     })?;
-    build_operator_resolved(&resolved)
+    let source = resolved_record_to_source(&resolved)?;
+    registry::build_operator(&source).map_err(core_error_to_mcp_error)
 }
 
 fn storage_record_to_source(storage: &StorageRecord) -> McpResult<Source> {
@@ -143,6 +159,36 @@ mod tests {
     }
 
     #[test]
+    fn persisted_cache_hit_does_not_reopen_secret_store_and_revision_miss_fails_closed() {
+        clear_operator_cache();
+        let temp = tempfile::tempdir().expect("temp dir");
+        let secret_store = Arc::new(infimount_core::secrets::MemorySecretStore::new());
+        let registry = StorageRegistry::with_secret_store(
+            Some(temp.path().join("storages.json")),
+            secret_store.clone(),
+        );
+        let mut record = storage("s3", json!({ "bucket": "example", "region": "us-east-1" }));
+        let account = format!("storage/{}", record.id);
+        secret_store
+            .put_json(
+                &account,
+                &json!({ "accessKeyId": "id", "secretAccessKey": "secret" }),
+            )
+            .unwrap();
+        record.secret_ref = Some(account.clone());
+
+        build_operator(&record, &registry).expect("initial cache population");
+        secret_store.delete(&account).unwrap();
+        build_operator(&record, &registry).expect("same revision must use cache");
+
+        record.revision += 1;
+        let error =
+            build_operator(&record, &registry).expect_err("new revision must resolve again");
+        assert_eq!(error.code, McpErrorCode::ERR_SECRET_NOT_FOUND);
+        clear_operator_cache();
+    }
+
+    #[test]
     fn missing_secret_bundle_fails_closed() {
         let temp = tempfile::tempdir().expect("temp dir");
         let registry = StorageRegistry::with_secret_store(
@@ -200,7 +246,7 @@ mod tests {
         .expect("operator should build");
         let caps = get_capabilities(&op);
         assert!(!caps.read_with_version);
-        assert!(!op.info().full_capability().copy);
+        assert!(!op.info().capability().copy);
         assert!(!caps.presign_read);
     }
 
@@ -220,7 +266,7 @@ mod tests {
         .expect("operator should build");
         let caps = get_capabilities(&op);
         assert!(!caps.read_with_version);
-        assert!(op.info().full_capability().copy);
+        assert!(op.info().capability().copy);
         assert!(!caps.presign_read);
     }
 
@@ -251,10 +297,10 @@ mod tests {
             let op = build_operator_from_config(&storage(backend, config))
                 .expect("operator should build");
             let caps = get_capabilities(&op);
-            assert!(op.info().full_capability().copy);
-            assert!(op.info().full_capability().rename);
+            assert!(op.info().capability().copy);
+            assert!(op.info().capability().rename);
             assert!(!caps.presign_read);
-            assert_eq!(op.info().full_capability().list_with_versions, versions);
+            assert_eq!(op.info().capability().list_with_versions, versions);
         }
     }
 

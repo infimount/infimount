@@ -35,20 +35,27 @@ struct ShareableStorage {
     mcp_policy: Value,
 }
 
-pub async fn export_config(
-    ctx: &FsToolsContext,
-) -> McpResult<ExportConfigOutput> {
+pub async fn export_config(ctx: &FsToolsContext) -> McpResult<ExportConfigOutput> {
     let storages = ctx.registry.load_all()?;
 
     let shareable: Vec<ShareableStorage> = storages
         .iter()
         .map(|s| {
-            let config = s.config.clone();
-            let required_secret_fields: Vec<String> = s
+            // Fail closed even if a malformed/current-schema registry was written
+            // outside the normal migration path: shareable exports never include
+            // values recognized as credentials.
+            let mut config = s.config.clone();
+            let secret_names = infimount_core::secrets::discover_secret_field_names();
+            let extracted = infimount_core::secrets::extract_secret_fields(&config, &secret_names);
+            infimount_core::secrets::strip_secret_fields(&mut config, &secret_names);
+            let mut required_secret_fields: Vec<String> = s
                 .secret_fields
                 .iter()
-                .map(|f| format!("/{f}"))
+                .chain(extracted.iter().map(|(field, _)| field))
+                .map(|field| super::import_config::secret_field_to_pointer(field))
                 .collect();
+            required_secret_fields.sort();
+            required_secret_fields.dedup();
             ShareableStorage {
                 name: s.name.clone(),
                 backend: s.backend.clone(),
@@ -57,8 +64,7 @@ pub async fn export_config(
                 enabled: s.enabled,
                 mcp_exposed: false,
                 read_only: s.read_only,
-                mcp_policy: serde_json::to_value(&s.mcp_policy)
-                    .unwrap_or_default(),
+                mcp_policy: serde_json::to_value(&s.mcp_policy).unwrap_or_default(),
             }
         })
         .collect();

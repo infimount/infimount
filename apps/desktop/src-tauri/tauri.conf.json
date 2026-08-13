@@ -1,11 +1,11 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Infimount",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "identifier": "com.infimount.desktop",
   "build": {
     "beforeDevCommand": "",
-    "beforeBuildCommand": "bash ../../scripts/build-mcp-sidecar.sh",
+    "beforeBuildCommand": "node ../../scripts/prepare-mcp-sidecar.mjs",
     "frontendDist": "../../dist",
     "devUrl": "http://localhost:5173"
   },
@@ -28,7 +28,8 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' ipc: http://localhost:5173 ws://localhost:5173; font-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' ipc:; font-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'",
+      "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' ipc: http://localhost:5173 ws://localhost:5173; font-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'",
       "capabilities": [
         "main"
       ]
@@ -40,6 +41,9 @@
     "createUpdaterArtifacts": true,
     "externalBin": [
       "binaries/mcp"
+    ],
+    "resources": [
+      "binaries/mcp.sha256"
     ],
     "icon": [
       "icons/32x32.png",

@@ -9,7 +9,7 @@ Default local files:
 - `~/.infimount/storages.json`: storage registry and backend configuration.
 - `~/.infimount/mcp_settings.json`: MCP runtime settings, transport, bind address, port, secret reference, and enabled tool list.
 
-Storage credentials, OAuth tokens, and desktop MCP bearer tokens are stored in the operating system's native secret store. Stable v0.8 operation never falls back to plaintext credential persistence. Registry and settings files contain only public configuration and opaque secret references.
+Storage credentials, OAuth tokens, and desktop MCP bearer tokens are stored in the operating system's native secret store. The v0.8 release candidate never falls back to plaintext credential persistence. Registry and settings files contain only public configuration and opaque secret references.
 
 ## Secret Handling
 
@@ -96,6 +96,10 @@ By default, confirmations are required for:
 - rename/move operations that may behave like copy plus delete
 
 Desktop notifications, when enabled by the user, are attention signals only. They do not approve or deny operations and do not include tokens, secrets, or presigned URLs.
+
+## Dependency audit policy
+
+The scheduled dependency audit fails on high-severity advisories. The only current RustSec exception is `RUSTSEC-2023-0071` (Marvin timing attack in `rsa`), which has no fixed release and is pulled transitively by reqsign's optional Azure client-certificate/JWT support. Infimount does not enable or expose that credential mode. The exact exception is passed to `cargo audit` in `.github/workflows/deps-audit.yml` and must be removed when a fixed `rsa` release is available. JavaScript production audits have no ignored advisories.
 
 ## MCP Audit Log
 

@@ -16,10 +16,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { FileTypeIcon } from "./FileIcon";
 import {
+  downloadFileVersionToDownloads,
   generateDownloadLink,
   getStorageCapabilities,
-  readFile,
-  readFileVersion,
+  readFileRange,
   statEntry,
   writeFile,
 } from "@/lib/api";
@@ -27,7 +27,8 @@ import { toast } from "@/hooks/use-toast";
 import infinityLoader from "@/assets/loading-infinity.apng";
 import { FileVersionsTab } from "./FileVersionsTab";
 
-const MAX_PREVIEW_BYTES = 20 * 1024 * 1024;
+const DEFAULT_TEXT_PREVIEW_BYTES = 256 * 1024;
+const MAX_PREVIEW_BYTES = 2 * 1024 * 1024;
 
 const TEXT_EXTENSIONS = new Set([
   "txt",
@@ -186,6 +187,7 @@ export function FilePreviewPanel({
   const [isEditing, setIsEditing] = useState(false);
   const [draftContent, setDraftContent] = useState("");
   const [originalContent, setOriginalContent] = useState("");
+  const [previewTruncated, setPreviewTruncated] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
   const [editBaselineMs, setEditBaselineMs] = useState<number | null>(null);
@@ -211,6 +213,7 @@ export function FilePreviewPanel({
     setIsEditing(false);
     setDraftContent("");
     setOriginalContent("");
+    setPreviewTruncated(false);
     setEditBaselineMs(null);
     setEditBaselineRaw(null);
     setRemoteModifiedAtLabel(null);
@@ -264,12 +267,20 @@ export function FilePreviewPanel({
 
     let cancelled = false;
 
-    // setLoading(true); // Moved to render phase reset
-    readFile(sourceId, file.id)
-      .then((data) => {
+    const previewLimit = isImage || isPdf ? MAX_PREVIEW_BYTES : DEFAULT_TEXT_PREVIEW_BYTES;
+    readFileRange(sourceId, file.id, 0, previewLimit)
+      .then((result) => {
         if (cancelled) return;
+        const data = new Uint8Array(result.bytes);
 
         if (isImage || isPdf) {
+          if (result.truncated) {
+            setMode("unsupported");
+            setError(
+              `${isImage ? "Image" : "PDF"} is too large to preview completely (${formatFileSize(result.totalSize)}).`,
+            );
+            return;
+          }
           const buffer = data.buffer.slice(
             data.byteOffset,
             data.byteOffset + data.byteLength,
@@ -295,7 +306,11 @@ export function FilePreviewPanel({
         }
 
         const text = new TextDecoder().decode(data);
-        setContent(text);
+        setPreviewTruncated(result.truncated);
+        const previewText = result.truncated
+          ? `${text}\n\n[Preview truncated at ${formatFileSize(previewLimit)}]`
+          : text;
+        setContent(previewText);
         setDraftContent(text);
         setOriginalContent(text);
         setMode("text");
@@ -333,7 +348,7 @@ export function FilePreviewPanel({
   const showVersionsTab = versionsCapable;
 
   const isDirty = isEditing && draftContent !== originalContent;
-  const canEdit = mode === "text" && !loading && !error;
+  const canEdit = mode === "text" && !previewTruncated && !loading && !error;
 
   const handleCreateDownloadLink = useCallback(async () => {
     if (!file || file.type !== "file" || isGeneratingLink) return;
@@ -555,16 +570,11 @@ export function FilePreviewPanel({
                 path={file.id} 
                 onVersionDownload={async (version) => {
                   try {
-                    const data = await readFileVersion(sourceId, file.id, version);
-                    const blob = new Blob([data.buffer as ArrayBuffer]);
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = `${file.name}.v${version}`;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
+                    const result = await downloadFileVersionToDownloads(sourceId, file.id, version);
+                    toast({
+                      title: "Version downloaded",
+                      description: `${result.fileName} was saved to Downloads.`,
+                    });
                   } catch (err: unknown) {
                     toast({
                       title: "Download failed",

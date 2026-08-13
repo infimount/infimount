@@ -1,0 +1,5 @@
+import fs from 'node:fs'; import path from 'node:path';
+const [assetDir, version]=process.argv.slice(2); if(!assetDir||!version) throw new Error('usage: rehearse-updater-client.mjs <asset-dir> <version>');
+const m=JSON.parse(fs.readFileSync(path.join(assetDir,'latest.json'))); if(m.version!==version) throw new Error('metadata version mismatch');
+for(const [platform,v] of Object.entries(m.platforms)){const u=new URL(v.url); if(u.protocol!=='https:'||u.hostname!=='github.com'||!u.pathname.includes(`/download/v${version}/`)) throw new Error(`non-production-shaped updater URL: ${v.url}`); const f=path.join(assetDir,path.basename(u.pathname)); if(!fs.existsSync(f)||!fs.existsSync(`${f}.sig`)) throw new Error(`missing updater files for ${platform}`); if(v.signature!==fs.readFileSync(`${f}.sig`,'utf8').trim()) throw new Error(`signature metadata mismatch for ${platform}`);}
+console.log(`Updater metadata rehearsal passed for ${Object.keys(m.platforms).length} platforms; no external network used.`);
