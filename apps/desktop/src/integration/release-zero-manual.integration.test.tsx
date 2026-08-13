@@ -270,6 +270,10 @@ describe("release zero-manual smoke path", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: "Open Add Storage" })[0]);
 
+    await waitFor(() => {
+      expect(screen.getByLabelText("Storage Name")).toBeInTheDocument();
+    });
+
     fireEvent.change(await screen.findByLabelText("Storage Name"), {
       target: { value: "Release Local" },
     });
