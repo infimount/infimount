@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
 EXPECTED_VERSION="${EXPECTED_VERSION:-}"
 if [[ -z "$EXPECTED_VERSION" ]]; then
   EXPECTED_VERSION="$(node -p "require('$ROOT/apps/desktop/package.json').version")"
