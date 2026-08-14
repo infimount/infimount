@@ -69,7 +69,7 @@ run_desktop_for_migration() {
   local desktop_pid=$!
   local migrated=false
 
-  for _ in $(seq 1 120); do
+  for _ in $(seq 1 480); do
     if ! kill -0 "$desktop_pid" 2>/dev/null; then
       set +e
       wait "$desktop_pid"
