@@ -56,6 +56,17 @@ if (!fs.statSync(source).isFile()) throw new Error(`sidecar was not built at ${s
 fs.mkdirSync(destinationDir, { recursive: true });
 fs.copyFileSync(source, destination);
 if (!executableSuffix) fs.chmodSync(destination, 0o755);
+// Tauri rewrites Linux external binaries to use the bundled library directory.
+// Apply the same deterministic RPATH before hashing so packaged verification
+// validates the bytes that Tauri will embed.
+if (target.includes("linux") && process.platform === "linux") {
+  const patchelf = spawnSync("patchelf", ["--set-rpath", "$ORIGIN/../lib", destination], {
+    cwd: root,
+    stdio: "inherit",
+  });
+  if (patchelf.error) throw patchelf.error;
+  if (patchelf.status !== 0) throw new Error(`patchelf exited with status ${patchelf.status}`);
+}
 
 const expectedVersion = JSON.parse(
   fs.readFileSync(path.join(root, "apps", "desktop", "package.json"), "utf8"),
