@@ -29,11 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Set `withGlobalTauri` to `false` with restrictive CSP for hardened security.
 - Replaced flat onboarding dialog with multi-step ActivationWizard.
 - Migrated workspace storage from `localStorage` to Tauri-backed `WorkspaceRegistry`.
+- Bound workspaces to the storage namespace identity (fingerprint of backend, account, container, and root) and verified the binding whenever workspace access or policy rules change.
+- Rejected storage namespace edits and storage removal while workspaces remain bound, and required explicit confirmation plus validation before committing storage credential changes that affect bound workspaces.
+- Disabled pre-v0.8 Agent Workspaces migration: the legacy import command is unregistered and the browser storage keys are never read or removed.
 
 ### Security
 
 - Reinforced OAuth secret handling so access tokens, refresh tokens, client secrets, authorization codes, device codes, and PKCE verifiers remain masked from UI text, validation output, logs, audit exports, and token-exchange errors.
 - Preserved explicit MCP opt-in: connecting Google Drive or OneDrive does not expose the storage to MCP clients by default.
+- Rejected copy/move transfers that would nest a storage into its own or a peer storage's subtree, and rejected manual storage-policy edits that would override workspace-managed rules.
 
 ## [0.7.1] - 2026-06-05
 

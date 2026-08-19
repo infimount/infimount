@@ -12,7 +12,7 @@ use crate::atomic_file;
 use crate::models::{CoreError, Result};
 
 pub const WORKSPACES_SCHEMA_VERSION: u32 = 1;
-pub const WORKSPACE_RECORD_SCHEMA_VERSION: u32 = 1;
+pub const WORKSPACE_RECORD_SCHEMA_VERSION: u32 = 2;
 pub const WORKSPACES_FILE: &str = "workspaces.json";
 pub const MAX_CHECKPOINT_IDS: usize = 200;
 const WORKSPACE_MUTATION_LOCK_FILE: &str = "workspace-mutations.lock";
@@ -40,10 +40,21 @@ pub struct WorkspaceRecord {
     pub access_profile: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy_rule_id: Option<String>,
+    /// Namespace identity of the storage this workspace grant refers to. Empty
+    /// for pre-v0.8 records, which are intentionally not migrated.
+    #[serde(default)]
+    pub storage_namespace_fingerprint: String,
     pub created_at: String,
     pub updated_at: String,
     pub memory_files: Vec<String>,
     pub checkpoint_ids: Vec<String>,
+}
+
+/// True only for current-schema records that carry a namespace fingerprint.
+/// Legacy Agent Workspace records must be recreated, never auto-upgraded.
+pub fn workspace_schema_supported(workspace: &WorkspaceRecord) -> bool {
+    workspace.schema_version == WORKSPACE_RECORD_SCHEMA_VERSION
+        && !workspace.storage_namespace_fingerprint.is_empty()
 }
 
 fn default_schema_version() -> u32 {
@@ -102,6 +113,11 @@ pub struct TemplateFile {
 }
 
 pub fn validate_workspace_metadata(workspace: &WorkspaceRecord) -> Result<()> {
+    if !workspace_schema_supported(workspace) {
+        return Err(CoreError::Config(
+            "workspace schema is unsupported; recreate the workspace after upgrading".to_string(),
+        ));
+    }
     let expected_memory_files = memory_files_for(&workspace.template_id);
     if workspace.memory_files != expected_memory_files {
         return Err(CoreError::Config(
@@ -506,6 +522,7 @@ mod tests {
             template_id: "coding".to_string(),
             access_profile: "read_write".to_string(),
             policy_rule_id: Some(format!("workspace:{id}")),
+            storage_namespace_fingerprint: format!("fingerprint-{id}"),
             created_at: "2025-01-01T00:00:00Z".to_string(),
             updated_at: "2025-01-01T00:00:00Z".to_string(),
             memory_files: memory_files_for("coding"),

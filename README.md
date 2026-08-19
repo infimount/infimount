@@ -105,6 +105,7 @@ Agent Workspaces give AI workflows a safer project-shaped storage area:
 - Keep visible memory files under `memory/` for task notes and handoff context.
 - Capture checkpoint manifests under `.infimount/checkpoints` and restore workspace memory when needed.
 - Review workspace activity grouped from local events and MCP audit events that fall under the workspace root.
+- Bind each workspace to the storage namespace it references; changing the storage namespace or removing the storage while workspaces are bound is blocked until the workspaces are recreated.
 
 ## First run and upgrades
 

@@ -410,8 +410,16 @@ export interface UpdateStorageResult {
   warning?: string | null;
 }
 
-export function updateStorage(storageId: string, storage: StorageDraft): Promise<UpdateStorageResult> {
-  return invokeOrThrow<UpdateStorageResult>("update_storage", { storageId, storage });
+export function updateStorage(
+  storageId: string,
+  storage: StorageDraft,
+  confirmWorkspaceCredentialChange = false,
+): Promise<UpdateStorageResult> {
+  return invokeOrThrow<UpdateStorageResult>("update_storage", {
+    storageId,
+    storage,
+    confirmWorkspaceCredentialChange,
+  });
 }
 
 export interface RemoveStorageResult {

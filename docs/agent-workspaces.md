@@ -23,7 +23,18 @@ Checkpoint manifests are stored under `.infimount/checkpoints/`. A checkpoint re
 
 Workspace rules are segment-aware path-prefix rules. Denied prefixes override grants. Changing a workspace access profile updates only its managed rule and preserves unrelated storage policy rules. Deleting a workspace removes its managed rule; it does not delete the workspace's storage files.
 
+The workspace-managed rule on a storage cannot be edited, re-prefixed, or removed through the storage policy editor; it is enforced by the bound workspace. A generic storage policy update that alters workspace-sourced rules or adds a manual rule under a workspace root is rejected.
+
 Multiple workspaces may share a storage when their normalized roots do not overlap and their names are unique within that storage.
+
+## Namespace binding
+
+Each workspace is bound to the namespace identity of the storage it references, captured as a fingerprint of the backend, account authority, container, and canonical root. The storage namespace is verified whenever workspace access or policy rules change.
+
+- Editing a storage so its namespace changes while workspaces are bound is rejected (`ERR_STORAGE_NAMESPACE_IN_USE`); delete or recreate the workspaces first.
+- Removing a storage that still has bound workspaces is rejected (`ERR_STORAGE_HAS_WORKSPACES`).
+- Changing storage credentials while workspaces are bound requires explicit confirmation and validation of the updated storage before it is committed (`ERR_CONFIRMATION_REQUIRED` otherwise). After the change, verify each affected workspace still maps to the same account and namespace.
+- Pre-v0.8 browser-local workspaces are not imported. Recreate them in Agent Workspaces after upgrading.
 
 ## Limits
 

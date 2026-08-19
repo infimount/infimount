@@ -1881,6 +1881,139 @@ async fn copy_path_cross_storage_streams_large_file() {
 }
 
 #[tokio::test]
+async fn copy_path_rejects_alias_copy_into_own_child() {
+    let dir = TempDir::new().unwrap();
+    let shared_root = dir.path().join("shared");
+    std::fs::create_dir_all(shared_root.join("foo")).unwrap();
+    std::fs::write(shared_root.join("foo").join("file.txt"), "hello").unwrap();
+
+    let registry = registry_in(&dir);
+    let mut a = StorageRecord::new(
+        "A".to_string(),
+        "local".to_string(),
+        json!({"root": shared_root.clone()}),
+    );
+    a.mcp_exposed = true;
+    a.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    let mut b = StorageRecord::new(
+        "B".to_string(),
+        "local".to_string(),
+        json!({"root": shared_root}),
+    );
+    b.mcp_exposed = true;
+    b.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    registry.save_all_atomic(&[a, b]).unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+
+    let error = copy_path(
+        &ctx,
+        CopyPathInput {
+            session_id: None,
+            confirmation_id: None,
+            src: "/A/foo".to_string(),
+            dst: "/B/foo/child".to_string(),
+            overwrite: false,
+            recursive: true,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, McpErrorCode::ERR_TRANSFER_NAMESPACE_CONFLICT);
+    assert!(
+        !dir.path().join("shared/foo/child").exists(),
+        "rejected before destination creation"
+    );
+}
+
+#[tokio::test]
+async fn copy_path_rejects_alias_into_nested_root() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("root");
+    let nested = root.join("foo");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(nested.join("file.txt"), "hello").unwrap();
+
+    let registry = registry_in(&dir);
+    let mut a = StorageRecord::new("A".to_string(), "local".to_string(), json!({"root": root}));
+    a.mcp_exposed = true;
+    a.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    let mut b = StorageRecord::new(
+        "B".to_string(),
+        "local".to_string(),
+        json!({"root": nested}),
+    );
+    b.mcp_exposed = true;
+    b.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    registry.save_all_atomic(&[a, b]).unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+
+    let error = copy_path(
+        &ctx,
+        CopyPathInput {
+            session_id: None,
+            confirmation_id: None,
+            src: "/A/foo".to_string(),
+            dst: "/B/child".to_string(),
+            overwrite: false,
+            recursive: true,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, McpErrorCode::ERR_TRANSFER_NAMESPACE_CONFLICT);
+}
+
+#[tokio::test]
+async fn copy_path_rejects_copy_into_own_subdirectory_same_storage() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir_all(root.join("foo")).unwrap();
+    std::fs::write(root.join("foo").join("file.txt"), "hello").unwrap();
+
+    let registry = registry_in(&dir);
+    let mut storage = StorageRecord::new(
+        "Local".to_string(),
+        "local".to_string(),
+        json!({"root": root.clone()}),
+    );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    registry.save_all_atomic(&[storage]).unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+
+    let error = copy_path(
+        &ctx,
+        CopyPathInput {
+            session_id: None,
+            confirmation_id: None,
+            src: "/Local/foo".to_string(),
+            dst: "/Local/foo/child".to_string(),
+            overwrite: false,
+            recursive: true,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, McpErrorCode::ERR_TRANSFER_NAMESPACE_CONFLICT);
+    assert!(!root.join("foo/child").exists());
+}
+
+#[tokio::test]
 async fn copy_path_recursive_preserves_structure() {
     let dir = TempDir::new().unwrap();
     let src_root = dir.path().join("src");

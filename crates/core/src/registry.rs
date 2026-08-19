@@ -223,7 +223,7 @@ pub fn build_operator(source: &Source) -> Result<Operator> {
 
 fn validate_source(source: &Source) -> Result<()> {
     if matches!(source.kind, SourceKind::Local) {
-        validate_local_root(local_root(source))?;
+        validate_local_root(&local_root(source))?;
     }
     Ok(())
 }
@@ -247,18 +247,295 @@ fn validate_local_root(root: &str) -> Result<()> {
     Ok(())
 }
 
-fn local_root(source: &Source) -> &str {
-    source
-        .config
+fn local_root(source: &Source) -> String {
+    // This must stay in sync with `local_root_from_config`; operator construction
+    // and namespace identity resolve the same aliases.
+    local_root_from_config(&source.config, &source.root)
+}
+
+/// Canonical local root resolution shared by operator construction and
+/// storage namespace identity. Returns an owned value so callers cannot
+/// accidentally diverge on lifetimes.
+pub fn local_root_from_config(config: &Value, fallback: &str) -> String {
+    config
         .get("root")
         .and_then(|v| v.as_str())
-        .or_else(|| source.config.get("rootPath").and_then(|v| v.as_str()))
-        .or_else(|| source.config.get("path").and_then(|v| v.as_str()))
-        .unwrap_or(&source.root)
+        .or_else(|| config.get("rootPath").and_then(|v| v.as_str()))
+        .or_else(|| config.get("path").and_then(|v| v.as_str()))
+        .unwrap_or(fallback)
+        .to_string()
+}
+
+/// Canonical namespace identity fields resolved from the exact same config
+/// aliases and defaults the operator builders use.
+///
+/// The `source_root` legacy form mirrors `Source.root` handling in the
+/// builders: S3 `bucket@region`, Azure `account/container`, plain `bucket`
+/// for GCS/B2/OSS/COS/OBS, and the endpoint for WebDAV/SFTP/FTP.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedNamespaceFields {
+    pub authority: String,
+    pub container: String,
+    pub root: String,
+}
+
+pub fn resolve_namespace_fields(
+    kind: &SourceKind,
+    source_root: &str,
+    config: &Value,
+) -> ResolvedNamespaceFields {
+    use SourceKind::*;
+    match *kind {
+        Local => ResolvedNamespaceFields {
+            authority: "local".to_string(),
+            container: String::new(),
+            root: local_root_from_config(config, source_root),
+        },
+        S3 => {
+            let (legacy_bucket, legacy_region) = split_bucket_region(source_root);
+            let bucket = config
+                .get("bucket")
+                .or_else(|| config.get("bucketName"))
+                .and_then(|v| v.as_str())
+                .or(legacy_bucket)
+                .unwrap_or("")
+                .to_string();
+            let region = config
+                .get("region")
+                .and_then(|v| v.as_str())
+                .or(legacy_region)
+                .unwrap_or("")
+                .to_string();
+            let endpoint = config
+                .get("endpoint")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let authority = if !endpoint.trim().is_empty() {
+                normalize_endpoint_authority(&endpoint)
+            } else if !region.trim().is_empty() {
+                region
+            } else {
+                "aws".to_string()
+            };
+            ResolvedNamespaceFields {
+                authority,
+                container: bucket,
+                root: String::new(),
+            }
+        }
+        WebDav => {
+            let endpoint = config
+                .get("serverUrl")
+                .or_else(|| config.get("endpoint"))
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.trim().is_empty())
+                .or_else(|| (!source_root.trim().is_empty()).then_some(source_root));
+            let root = config
+                .get("rootPath")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            ResolvedNamespaceFields {
+                authority: endpoint
+                    .map(normalize_endpoint_authority)
+                    .unwrap_or_default(),
+                container: String::new(),
+                root,
+            }
+        }
+        AzureBlob => {
+            let mut parts = source_root.split('/');
+            let legacy_account = parts.next().filter(|s| !s.is_empty());
+            let legacy_container = parts.next().filter(|s| !s.is_empty());
+            let container = config
+                .get("container")
+                .or_else(|| config.get("containerName"))
+                .and_then(|v| v.as_str())
+                .or(legacy_container)
+                .unwrap_or("")
+                .to_string();
+            let account = config
+                .get("accountName")
+                .and_then(|v| v.as_str())
+                .or(legacy_account)
+                .unwrap_or("")
+                .to_string();
+            let endpoint = config
+                .get("endpoint")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let authority = if !endpoint.trim().is_empty() {
+                normalize_endpoint_authority(&endpoint)
+            } else {
+                account
+            };
+            ResolvedNamespaceFields {
+                authority,
+                container,
+                root: String::new(),
+            }
+        }
+        Gcs => {
+            let bucket = config
+                .get("bucket")
+                .or_else(|| config.get("bucketName"))
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.trim().is_empty())
+                .or_else(|| (!source_root.trim().is_empty()).then_some(source_root))
+                .unwrap_or("")
+                .to_string();
+            let root = config
+                .get("root")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let endpoint = config
+                .get("endpoint")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            ResolvedNamespaceFields {
+                authority: normalize_endpoint_authority(&endpoint),
+                container: bucket,
+                root,
+            }
+        }
+        B2 => {
+            let bucket = config
+                .get("bucket")
+                .or_else(|| config.get("bucketName"))
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.trim().is_empty())
+                .or_else(|| (!source_root.trim().is_empty()).then_some(source_root))
+                .unwrap_or("")
+                .to_string();
+            let root = config
+                .get("rootPath")
+                .or_else(|| config.get("root"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            ResolvedNamespaceFields {
+                authority: String::new(),
+                container: bucket,
+                root,
+            }
+        }
+        Oss | Cos | Obs => {
+            let bucket = config
+                .get("bucket")
+                .or_else(|| config.get("bucketName"))
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.trim().is_empty())
+                .or_else(|| (!source_root.trim().is_empty()).then_some(source_root))
+                .unwrap_or("")
+                .to_string();
+            let root = config
+                .get("rootPath")
+                .or_else(|| config.get("root"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let endpoint = config
+                .get("endpoint")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            ResolvedNamespaceFields {
+                authority: normalize_endpoint_authority(&endpoint),
+                container: bucket,
+                root,
+            }
+        }
+        Sftp | Ftp => {
+            let endpoint = config
+                .get("endpoint")
+                .or_else(|| config.get("serverUrl"))
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.trim().is_empty())
+                .or_else(|| (!source_root.trim().is_empty()).then_some(source_root));
+            let root = config
+                .get("rootPath")
+                .or_else(|| config.get("root"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            ResolvedNamespaceFields {
+                authority: endpoint
+                    .map(normalize_endpoint_authority)
+                    .unwrap_or_default(),
+                container: String::new(),
+                root,
+            }
+        }
+        Gdrive | Onedrive => {
+            let root = config
+                .get("rootPath")
+                .or_else(|| config.get("root"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(source_root)
+                .to_string();
+            ResolvedNamespaceFields {
+                authority: String::new(),
+                container: String::new(),
+                root,
+            }
+        }
+    }
+}
+
+fn split_bucket_region(root: &str) -> (Option<&str>, Option<&str>) {
+    let mut parts = root.split('@');
+    let bucket = parts.next().filter(|s| !s.is_empty());
+    let region = parts.next().filter(|s| !s.is_empty());
+    (bucket, region)
+}
+
+/// Normalize an endpoint for identity: lowercase scheme and host, strip userinfo,
+/// strip an explicit default port, and drop path/query. Returns the raw input when
+/// it cannot be parsed so identity remains deterministic rather than empty.
+pub fn normalize_endpoint_authority(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let (scheme, rest) = match trimmed.find("://") {
+        Some(index) => (trimmed[..index].to_lowercase(), &trimmed[index + 3..]),
+        None => ("https".to_string(), trimmed),
+    };
+    let rest = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let host_port = rest.rsplit('@').next().unwrap_or(rest);
+    let (host, port) = match host_port.rfind(':') {
+        Some(index) => (
+            &host_port[..index],
+            host_port[index + 1..].parse::<u16>().ok(),
+        ),
+        None => (host_port, None),
+    };
+    let host = host.trim_end_matches('.').to_lowercase();
+    if host.is_empty() {
+        return trimmed.to_string();
+    }
+    let default_port = match scheme.as_str() {
+        "http" => Some(80),
+        "https" => Some(443),
+        "ftp" => Some(21),
+        "sftp" | "ssh" => Some(22),
+        _ => None,
+    };
+    let port_str = match port {
+        Some(value) if Some(value) == default_port => String::new(),
+        Some(value) => format!(":{value}"),
+        None => String::new(),
+    };
+    format!("{scheme}://{host}{port_str}")
 }
 
 fn build_local_operator(source: &Source) -> Result<Operator> {
     let root = local_root(source);
+    let root = root.as_str();
 
     if root.trim().is_empty() {
         return Err(CoreError::Config(

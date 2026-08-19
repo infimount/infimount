@@ -161,13 +161,20 @@ describe("agentWorkspaces", () => {
     expect(restoreWorkspaceCheckpointCommand).toHaveBeenCalledWith(workspace.id, checkpoint.id, true);
   });
 
-  it("removes obsolete browser checkpoint cache during legacy migration", async () => {
+  it("does not read or remove legacy browser state during migration (migration is disabled)", async () => {
     window.localStorage.setItem(
       "infimount:agent-workspace-checkpoints:v1",
       JSON.stringify([{ id: "checkpoint-untrusted", content: "untrusted" }]),
     );
-    await migrateLegacyWorkspaces();
-    expect(window.localStorage.getItem("infimount:agent-workspace-checkpoints:v1")).toBeNull();
+    window.localStorage.setItem(
+      "infimount:agent-workspaces:v1",
+      JSON.stringify([{ id: "legacy-1", storageId: "local" }]),
+    );
+    const result = await migrateLegacyWorkspaces();
+    expect(result).toEqual({ imported: 0, outcomes: [] });
+    expect(window.localStorage.getItem("infimount:agent-workspace-checkpoints:v1")).not.toBeNull();
+    expect(window.localStorage.getItem("infimount:agent-workspaces:v1")).not.toBeNull();
+    expect(apiImportLegacyWorkspaces).not.toHaveBeenCalled();
   });
 
   it("keeps memory path validation in the UI helper while checkpoint trust stays server-owned", async () => {
@@ -339,7 +346,7 @@ describe("agentWorkspaces", () => {
     expect(all).toHaveLength(2);
   });
 
-  it("migrates valid legacy workspaces independently and preserves failed or corrupt records", async () => {
+  it("does not migrate legacy workspaces and never calls the import command", async () => {
     const validOne = {
       id: "legacy-1",
       storageId: "local",
@@ -357,23 +364,12 @@ describe("agentWorkspaces", () => {
       "infimount:agent-workspaces:v1",
       JSON.stringify([validOne, validTwo, corrupt]),
     );
-    vi.mocked(apiImportLegacyWorkspaces)
-      .mockResolvedValueOnce(1)
-      .mockRejectedValueOnce(new Error("manifest mismatch"));
 
     const result = await migrateLegacyWorkspaces();
 
-    expect(result.imported).toBe(1);
-    expect(result.outcomes.map((outcome) => outcome.status)).toEqual([
-      "imported",
-      "failed",
-      "invalid",
-    ]);
-    expect(JSON.parse(window.localStorage.getItem("infimount:agent-workspaces:v1")!)).toEqual([
-      validTwo,
-      corrupt,
-    ]);
-    expect(apiImportLegacyWorkspaces).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({ imported: 0, outcomes: [] });
+    expect(apiImportLegacyWorkspaces).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("infimount:agent-workspaces:v1")).not.toBeNull();
   });
 
   it("rejects truncated workspace memory before decoding", async () => {

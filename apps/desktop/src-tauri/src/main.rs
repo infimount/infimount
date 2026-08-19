@@ -142,7 +142,6 @@ fn main() {
             commands::update_workspace,
             commands::delete_workspace,
             commands::delete_workspace_with_files,
-            commands::import_legacy_workspaces,
             commands::list_workspace_checkpoints,
             commands::create_workspace_checkpoint,
             commands::restore_workspace_checkpoint,

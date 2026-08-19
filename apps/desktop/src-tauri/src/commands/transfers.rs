@@ -6,6 +6,39 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::state::AppState;
 
+fn reject_namespace_conflicts(
+    state: &State<'_, AppState>,
+    from_source_id: &str,
+    to_source_id: &str,
+    paths: &[String],
+    target_dir: &str,
+) -> Result<(), CoreError> {
+    if from_source_id == to_source_id {
+        return Ok(());
+    }
+    let from_storage = state
+        .find_storage_by_id(from_source_id)
+        .map_err(crate::state::mcp_error_to_core_error)?;
+    let to_storage = state
+        .find_storage_by_id(to_source_id)
+        .map_err(crate::state::mcp_error_to_core_error)?;
+    for path in paths {
+        let relation = infimount_mcp::storage_namespace::transfer_namespace_relation(
+            &from_storage,
+            path,
+            &to_storage,
+            target_dir,
+        )
+        .map_err(|error| CoreError::Config(error.to_string()))?;
+        if infimount_mcp::storage_namespace::transfer_has_namespace_conflict(&relation) {
+            return Err(CoreError::Config(format!(
+                "transfer destination overlaps the source namespace: {path}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TransferProgressPayload {
@@ -57,6 +90,7 @@ pub async fn plan_transfer_entries(
 ) -> Result<operations::TransferPlan, CoreError> {
     let from_op = state.operator_for_storage_id(&fromSourceId)?;
     let to_op = state.operator_for_storage_id(&toSourceId)?;
+    reject_namespace_conflicts(&state, &fromSourceId, &toSourceId, &paths, &targetDir)?;
     if let Some(job_id) = jobId {
         let cancel_job_id = job_id.clone();
         let result = operations::plan_transfer_entries_cancellable(
@@ -102,6 +136,7 @@ pub async fn transfer_entries(
 ) -> Result<(), CoreError> {
     let from_op = state.operator_for_storage_id(&fromSourceId)?;
     let to_op = state.operator_for_storage_id(&toSourceId)?;
+    reject_namespace_conflicts(&state, &fromSourceId, &toSourceId, &paths, &targetDir)?;
 
     let op = parse_transfer_operation(&operation)?;
     let policy = parse_transfer_conflict_policy(&conflictPolicy)?;

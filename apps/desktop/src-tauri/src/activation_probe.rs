@@ -1109,7 +1109,9 @@ mod tests {
     use std::sync::Arc;
 
     use infimount_core::secrets::MemorySecretStore;
-    use infimount_core::workspaces::{WorkspaceRecord, WorkspaceRegistry};
+    use infimount_core::workspaces::{
+        WorkspaceRecord, WorkspaceRegistry, WORKSPACE_RECORD_SCHEMA_VERSION,
+    };
     use infimount_mcp::audit::AuditEvent;
     use infimount_mcp::policy::{
         McpAccessMode, McpOperation, McpPathRule, McpRuleSource, McpStoragePolicy,
@@ -1417,6 +1419,9 @@ mod tests {
             denied_paths: vec!["outside".to_string()],
             ..McpStoragePolicy::default()
         };
+        let storage_namespace_fingerprint =
+            infimount_mcp::storage_namespace::storage_namespace_fingerprint(&storage)
+                .expect("storage namespace fingerprint");
         registry
             .save_all_atomic(&[storage])
             .expect("save storage registry");
@@ -1425,13 +1430,14 @@ mod tests {
         workspace_registry
             .create(&WorkspaceRecord {
                 id: "workspace-id".to_string(),
-                schema_version: 1,
+                schema_version: WORKSPACE_RECORD_SCHEMA_VERSION,
                 storage_id: "storage-id".to_string(),
                 name: "Demo workspace".to_string(),
                 root_path: "workspace".to_string(),
                 template_id: "custom".to_string(),
                 access_profile: "read_only".to_string(),
                 policy_rule_id: Some("rule-id".to_string()),
+                storage_namespace_fingerprint,
                 created_at: Utc::now().to_rfc3339(),
                 updated_at: Utc::now().to_rfc3339(),
                 memory_files: vec![],

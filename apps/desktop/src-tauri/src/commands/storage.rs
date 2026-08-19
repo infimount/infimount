@@ -821,6 +821,7 @@ pub async fn update_storage(
     state: State<'_, AppState>,
     storageId: String,
     mut storage: StorageDraft,
+    confirmWorkspaceCredentialChange: bool,
 ) -> Result<UpdateStorageResult, McpError> {
     state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
@@ -855,7 +856,23 @@ pub async fn update_storage(
         None
     };
 
-    let result = update_storage_with_draft(&state, storageId, storage);
+    let credentials_changed = claimed.is_some()
+        || storage
+            .secret_mutations
+            .values()
+            .any(|mutation| !matches!(mutation, SecretMutation::Keep));
+    if credentials_changed && confirmWorkspaceCredentialChange {
+        validate_confirmed_credential_change(&state, &storageId, &storage, claimed.is_some())
+            .await?;
+    }
+
+    let result = update_storage_with_draft(
+        &state,
+        storageId,
+        storage,
+        claimed.is_some(),
+        confirmWorkspaceCredentialChange,
+    );
     if let Some(session) = claimed {
         if result.is_ok() {
             state.pending_oauth.complete(session);
@@ -866,10 +883,110 @@ pub async fn update_storage(
     result.map(|(storage, warning)| UpdateStorageResult { storage, warning })
 }
 
+fn build_prospective_storage_record(
+    state: &AppState,
+    current: &StorageRecord,
+    storage: &StorageDraft,
+    name: String,
+) -> Result<StorageRecord, McpError> {
+    let secret_store = state.secret_store.clone();
+    let schema_secret_names = secrets::discover_secret_field_names();
+    let previous_account = current
+        .secret_ref
+        .clone()
+        .unwrap_or_else(|| format!("storage/{}", current.id));
+    let mut bundle = secret_store
+        .get_json(&previous_account)
+        .map_err(|_| {
+            err(
+                McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                "failed to access stored credentials",
+            )
+        })?
+        .unwrap_or_else(|| json!({}));
+    let extracted = secrets::extract_secret_fields(&storage.config, &schema_secret_names);
+    if let Some(object) = bundle.as_object_mut() {
+        object.extend(extracted);
+    }
+    apply_secret_mutations_to_bundle(&mut bundle, &storage.secret_mutations)?;
+    let has_secrets = bundle.as_object().is_some_and(|object| !object.is_empty());
+    let mut prospective = current.clone();
+    prospective.name = name;
+    prospective.backend = storage.backend.clone();
+    prospective.enabled = storage.enabled;
+    prospective.mcp_exposed = storage.mcp_exposed;
+    prospective.read_only = storage.read_only;
+    prospective.config = secrets::merge_secret_config(&storage.config, &bundle);
+    prospective.secret_ref = has_secrets.then_some(previous_account);
+    prospective.secret_fields = bundle
+        .as_object()
+        .map(|object| object.keys().cloned().collect())
+        .unwrap_or_default();
+    Ok(prospective)
+}
+
+async fn validate_confirmed_credential_change(
+    state: &AppState,
+    storage_id: &str,
+    storage: &StorageDraft,
+    oauth_session_claimed: bool,
+) -> McpResult<()> {
+    let credentials_changed = oauth_session_claimed
+        || storage
+            .secret_mutations
+            .values()
+            .any(|mutation| !matches!(mutation, SecretMutation::Keep));
+    if !credentials_changed {
+        return Ok(());
+    }
+    let dependent = state
+        .workspaces
+        .load_all()
+        .map_err(|_| {
+            err(
+                McpErrorCode::ERR_INTERNAL,
+                "failed to load workspaces while updating storage",
+            )
+        })?
+        .into_iter()
+        .filter(|workspace| workspace.storage_id == storage_id)
+        .collect::<Vec<_>>();
+    if dependent.is_empty() {
+        return Ok(());
+    }
+    let current = state.find_storage_by_id(storage_id)?;
+    let prospective = build_prospective_storage_record(
+        state,
+        &current,
+        storage,
+        validate_storage_name(&storage.name)?,
+    )?;
+    let validation = match validate_storage_record(&prospective).await {
+        Ok(output) => output,
+        Err(_) => {
+            return Err(err_with_details(
+                McpErrorCode::ERR_INVALID_STORAGE_CREDENTIALS,
+                "the updated storage could not be validated; the update was rejected",
+                json!({ "details": "storage validation failed" }),
+            ));
+        }
+    };
+    if !validation.valid {
+        return Err(err_with_details(
+            McpErrorCode::ERR_INVALID_STORAGE_CREDENTIALS,
+            "the updated storage could not be validated; the update was rejected",
+            json!({ "details": validation.details }),
+        ));
+    }
+    Ok(())
+}
+
 fn update_storage_with_draft(
-    state: &State<'_, AppState>,
+    state: &AppState,
     storageId: String,
     storage: StorageDraft,
+    oauth_session_claimed: bool,
+    confirm_workspace_credential_change: bool,
 ) -> Result<(StorageRecord, Option<String>), McpError> {
     validate_storage_draft(&storage)?;
     let name = validate_storage_name(&storage.name)?;
@@ -879,6 +996,23 @@ fn update_storage_with_draft(
     let mut staged_account = String::new();
     let mut previous_bundle: Option<Value> = None;
     let mut staged_secret = false;
+    let dependent = state
+        .workspaces
+        .load_all()
+        .map_err(|_| {
+            err(
+                McpErrorCode::ERR_INTERNAL,
+                "failed to load workspaces while updating storage",
+            )
+        })?
+        .into_iter()
+        .filter(|workspace| workspace.storage_id == storageId)
+        .collect::<Vec<_>>();
+    let credentials_changed = oauth_session_claimed
+        || storage
+            .secret_mutations
+            .values()
+            .any(|mutation| !matches!(mutation, SecretMutation::Keep));
     let result = state.registry.with_locked_mutation(|storages| {
         let idx = storages
             .iter()
@@ -957,6 +1091,47 @@ fn update_storage_with_draft(
             .unwrap_or_default();
         updated.revision = updated.revision.saturating_add(1);
         updated.updated_at = Utc::now().to_rfc3339();
+        if !dependent.is_empty() {
+            let previous_namespace =
+                infimount_mcp::storage_namespace::storage_namespace_fingerprint(&storages[idx])
+                    .map_err(|e| {
+                        err(
+                            McpErrorCode::ERR_INTERNAL,
+                            format!("failed to fingerprint current storage: {e}"),
+                        )
+                    })?;
+            let prospective_namespace =
+                infimount_mcp::storage_namespace::storage_namespace_fingerprint(&updated)
+                    .map_err(|e| {
+                        err(
+                            McpErrorCode::ERR_INTERNAL,
+                            format!("failed to fingerprint updated storage: {e}"),
+                        )
+                    })?;
+            if previous_namespace != prospective_namespace {
+                let workspaces = dependent
+                    .iter()
+                    .map(|workspace| {
+                        serde_json::json!({
+                            "workspaceId": workspace.id,
+                            "workspaceName": workspace.name,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                return Err(err_with_details(
+                    McpErrorCode::ERR_STORAGE_NAMESPACE_IN_USE,
+                    "storage namespace change is rejected while workspaces are bound; delete or recreate the workspaces first",
+                    serde_json::json!({ "workspaces": workspaces }),
+                ));
+            }
+            if credentials_changed && !confirm_workspace_credential_change {
+                return Err(err_with_details(
+                    McpErrorCode::ERR_CONFIRMATION_REQUIRED,
+                    "changing credentials may point this storage at a different account; confirm the workspace credential change",
+                    serde_json::json!({ "workspaceCount": dependent.len() }),
+                ));
+            }
+        }
         storages[idx] = updated.clone();
         Ok(updated)
     });
@@ -1006,6 +1181,8 @@ pub async fn remove_storage(
     let secret_store = state.secret_store.clone();
     let mut secret_ref_to_delete: Option<String> = None;
 
+    ensure_storage_removable(&state, &storageId)?;
+
     state.registry.with_locked_mutation(|storages| {
         let original_len = storages.len();
         let target = storages.iter().find(|s| s.id == storageId);
@@ -1043,6 +1220,38 @@ pub async fn remove_storage(
         removed: true,
         warning: None,
     })
+}
+
+fn ensure_storage_removable(state: &AppState, storage_id: &str) -> McpResult<()> {
+    let dependent = state
+        .workspaces
+        .load_all()
+        .map_err(|_| {
+            err(
+                McpErrorCode::ERR_INTERNAL,
+                "failed to load workspaces while removing storage",
+            )
+        })?
+        .into_iter()
+        .filter(|workspace| workspace.storage_id == storage_id)
+        .collect::<Vec<_>>();
+    if !dependent.is_empty() {
+        let workspaces = dependent
+            .iter()
+            .map(|workspace| {
+                serde_json::json!({
+                    "workspaceId": workspace.id,
+                    "workspaceName": workspace.name,
+                })
+            })
+            .collect::<Vec<_>>();
+        return Err(err_with_details(
+            McpErrorCode::ERR_STORAGE_HAS_WORKSPACES,
+            "storage removal is rejected while workspaces are bound; delete the workspaces first",
+            serde_json::json!({ "workspaces": workspaces }),
+        ));
+    }
+    Ok(())
 }
 
 fn append_secret_cleanup(path: &std::path::Path, account: &str) -> McpResult<()> {
@@ -1122,6 +1331,20 @@ pub async fn update_mcp_storage_policy(
 ) -> Result<StorageRecord, McpError> {
     state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
+    let workspace_roots = state
+        .workspaces
+        .load_all()
+        .map_err(|_| {
+            err(
+                McpErrorCode::ERR_INTERNAL,
+                "failed to load workspaces while updating storage policy",
+            )
+        })?
+        .into_iter()
+        .filter(|workspace| workspace.storage_id == storageId)
+        .filter_map(|workspace| normalize_policy_path(&workspace.root_path).ok())
+        .collect::<Vec<_>>();
+    let prospective = normalize_mcp_policy(policy)?;
     state.registry.with_locked_mutation(|storages| {
         let storage = storages
             .iter_mut()
@@ -1134,10 +1357,73 @@ pub async fn update_mcp_storage_policy(
                 )
             })?;
 
-        storage.mcp_policy = normalize_mcp_policy(policy)?;
+        assert_generic_policy_respects_workspace_rules(
+            &storage.mcp_policy,
+            &prospective,
+            &workspace_roots,
+        )?;
+
+        storage.mcp_policy = prospective;
         storage.updated_at = Utc::now().to_rfc3339();
         Ok(storage.clone())
     })
+}
+
+fn assert_generic_policy_respects_workspace_rules(
+    current: &McpStoragePolicy,
+    prospective: &McpStoragePolicy,
+    workspace_roots: &[String],
+) -> McpResult<()> {
+    if workspace_rule_signatures(current) != workspace_rule_signatures(prospective) {
+        return Err(err_with_details(
+            McpErrorCode::ERR_WORKSPACE_POLICY_MANAGED,
+            "workspace-managed policy rules cannot be edited from the generic policy editor",
+            serde_json::json!({}),
+        ));
+    }
+    for rule in &prospective.rules {
+        if matches!(rule.source, McpRuleSource::Manual) && workspace_roots.contains(&rule.prefix) {
+            return Err(err_with_details(
+                McpErrorCode::ERR_WORKSPACE_POLICY_MANAGED,
+                "a manual policy rule cannot be created at a workspace root",
+                serde_json::json!({}),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn workspace_rule_signatures(policy: &McpStoragePolicy) -> Vec<String> {
+    let mut signatures = policy
+        .rules
+        .iter()
+        .filter_map(|rule| {
+            let McpRuleSource::Workspace { workspace_id } = &rule.source else {
+                return None;
+            };
+            let confirmation = rule
+                .confirmation_rules
+                .as_ref()
+                .map(|c| {
+                    format!(
+                        "w:{}o:{}d:{}vd:{}p:{}c:{}",
+                        c.require_for_write,
+                        c.require_for_overwrite,
+                        c.require_for_delete,
+                        c.require_for_version_delete,
+                        c.require_for_presign,
+                        c.require_for_cross_storage_copy,
+                    )
+                })
+                .unwrap_or_default();
+            Some(format!(
+                "{}|{}|{}|{:?}|{}",
+                workspace_id, rule.id, rule.prefix, rule.access, confirmation
+            ))
+        })
+        .collect::<Vec<_>>();
+    signatures.sort();
+    signatures
 }
 
 fn normalize_mcp_policy(mut policy: McpStoragePolicy) -> McpResult<McpStoragePolicy> {
@@ -1272,6 +1558,24 @@ fn validate_import_workspace_references(
             return Err(err_with_details(
                 McpErrorCode::ERR_IMPORT_PREVIEW_MISMATCH,
                 "storage import would disable a storage referenced by a workspace",
+                details(),
+            ));
+        }
+
+        let resulting_fingerprint =
+            infimount_mcp::storage_namespace::storage_namespace_fingerprint(storage).map_err(
+                |error| {
+                    err_with_details(
+                        McpErrorCode::ERR_IMPORT_PREVIEW_MISMATCH,
+                        format!("failed to fingerprint imported storage namespace: {error}"),
+                        details(),
+                    )
+                },
+            )?;
+        if workspace.storage_namespace_fingerprint != resulting_fingerprint {
+            return Err(err_with_details(
+                McpErrorCode::ERR_IMPORT_PREVIEW_MISMATCH,
+                "storage import would retarget a workspace to a different namespace",
                 details(),
             ));
         }
@@ -1691,6 +1995,9 @@ mod tests {
             template_id: "coding".to_string(),
             access_profile: "read_only".to_string(),
             policy_rule_id: Some("workspace:workspace-1".to_string()),
+            storage_namespace_fingerprint:
+                infimount_mcp::storage_namespace::storage_namespace_fingerprint(&storage)
+                    .expect("storage namespace fingerprint"),
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             memory_files: vec![
@@ -1810,6 +2117,277 @@ mod tests {
         );
 
         validate_import_workspace_references(&[workspace], &[storage]).unwrap();
+    }
+
+    fn workspace_bound_state(
+        dir: &tempfile::TempDir,
+    ) -> (
+        AppState,
+        StorageRecord,
+        infimount_core::workspaces::WorkspaceRecord,
+    ) {
+        use infimount_core::secrets::MemorySecretStore;
+        use std::sync::Arc;
+        let state = AppState::new_for_test(dir.path(), Arc::new(MemorySecretStore::new()));
+        let mut storage = StorageRecord::new(
+            "Bound".to_string(),
+            "local".to_string(),
+            json!({ "root": "/tmp" }),
+        );
+        storage.id = "bound-storage".to_string();
+        let fingerprint =
+            infimount_mcp::storage_namespace::storage_namespace_fingerprint(&storage).unwrap();
+        let workspace = infimount_core::workspaces::WorkspaceRecord {
+            id: "bound-ws".to_string(),
+            schema_version: infimount_core::workspaces::WORKSPACE_RECORD_SCHEMA_VERSION,
+            storage_id: storage.id.clone(),
+            name: "Bound".to_string(),
+            root_path: "workspace".to_string(),
+            template_id: "coding".to_string(),
+            access_profile: "read_only".to_string(),
+            policy_rule_id: Some("workspace:bound-ws".to_string()),
+            storage_namespace_fingerprint: fingerprint,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            memory_files: infimount_core::workspaces::memory_files_for("coding"),
+            checkpoint_ids: vec![],
+        };
+        storage
+            .mcp_policy
+            .rules
+            .push(infimount_mcp::policy::McpPathRule {
+                id: workspace.policy_rule_id.clone().unwrap(),
+                prefix: "workspace".to_string(),
+                access: McpAccessMode::ReadOnly,
+                source: McpRuleSource::Workspace {
+                    workspace_id: workspace.id.clone(),
+                },
+                confirmation_rules: None,
+            });
+        state.registry.save_all_atomic(&[storage.clone()]).unwrap();
+        state.workspaces.create(&workspace).unwrap();
+        (state, storage, workspace)
+    }
+
+    #[tokio::test]
+    async fn storage_namespace_edit_with_dependent_workspace_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, storage, _workspace) = workspace_bound_state(&dir);
+        let draft = StorageDraft {
+            storage_id: None,
+            name: storage.name.clone(),
+            backend: "local".to_string(),
+            config: json!({ "root": "/tmp/other" }),
+            enabled: true,
+            mcp_exposed: false,
+            read_only: false,
+            oauth_session_id: None,
+            secret_mutations: HashMap::new(),
+        };
+        let error =
+            update_storage_with_draft(&state, storage.id.clone(), draft, false, false).unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_STORAGE_NAMESPACE_IN_USE);
+    }
+
+    #[tokio::test]
+    async fn storage_credential_change_requires_confirmation_when_workspaces_bound() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, storage, _workspace) = workspace_bound_state(&dir);
+        let mut mutations = HashMap::new();
+        mutations.insert(
+            "token".to_string(),
+            SecretMutation::Set {
+                value: "new-token".to_string(),
+            },
+        );
+        let unconfirmed = StorageDraft {
+            storage_id: None,
+            name: storage.name.clone(),
+            backend: "local".to_string(),
+            config: storage.config.clone(),
+            enabled: true,
+            mcp_exposed: false,
+            read_only: false,
+            oauth_session_id: None,
+            secret_mutations: mutations,
+        };
+        let error =
+            update_storage_with_draft(&state, storage.id.clone(), unconfirmed, false, false)
+                .unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_CONFIRMATION_REQUIRED);
+
+        let mut confirmed_mutations = HashMap::new();
+        confirmed_mutations.insert(
+            "token".to_string(),
+            SecretMutation::Set {
+                value: "new-token".to_string(),
+            },
+        );
+        let confirmed = StorageDraft {
+            storage_id: None,
+            name: storage.name.clone(),
+            backend: "local".to_string(),
+            config: storage.config.clone(),
+            enabled: true,
+            mcp_exposed: false,
+            read_only: false,
+            oauth_session_id: None,
+            secret_mutations: confirmed_mutations,
+        };
+        let (updated, _) =
+            update_storage_with_draft(&state, storage.id.clone(), confirmed, false, true).unwrap();
+        assert_eq!(updated.id, storage.id);
+    }
+
+    #[tokio::test]
+    async fn confirmed_credential_change_with_bound_workspaces_rejects_invalid_prospective_storage()
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, storage, _workspace) = workspace_bound_state(&dir);
+        let mut mutations = HashMap::new();
+        mutations.insert(
+            "token".to_string(),
+            SecretMutation::Set {
+                value: "new-token".to_string(),
+            },
+        );
+        let draft = StorageDraft {
+            storage_id: None,
+            name: storage.name.clone(),
+            backend: "local".to_string(),
+            config: json!({ "root": dir.path().join("blocker/does-not-exist") }),
+            enabled: true,
+            mcp_exposed: false,
+            read_only: false,
+            oauth_session_id: None,
+            secret_mutations: mutations,
+        };
+        std::fs::write(dir.path().join("blocker"), b"blocker").unwrap();
+        let error = validate_confirmed_credential_change(&state, &storage.id, &draft, false)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_INVALID_STORAGE_CREDENTIALS);
+    }
+
+    #[tokio::test]
+    async fn confirmed_credential_change_with_bound_workspaces_accepts_valid_prospective_storage() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, storage, _workspace) = workspace_bound_state(&dir);
+        let mut mutations = HashMap::new();
+        mutations.insert(
+            "token".to_string(),
+            SecretMutation::Set {
+                value: "new-token".to_string(),
+            },
+        );
+        let draft = StorageDraft {
+            storage_id: None,
+            name: storage.name.clone(),
+            backend: "local".to_string(),
+            config: json!({ "root": "/tmp" }),
+            enabled: true,
+            mcp_exposed: false,
+            read_only: false,
+            oauth_session_id: None,
+            secret_mutations: mutations,
+        };
+        validate_confirmed_credential_change(&state, &storage.id, &draft, false)
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn storage_removal_with_dependent_workspace_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, storage, _workspace) = workspace_bound_state(&dir);
+        let error = ensure_storage_removable(&state, &storage.id).unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_STORAGE_HAS_WORKSPACES);
+    }
+
+    #[test]
+    fn manual_policy_update_cannot_alter_workspace_rule() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, storage, workspace) = workspace_bound_state(&dir);
+        let roots = vec!["workspace".to_string()];
+        let policy = storage.mcp_policy.clone();
+        assert_eq!(policy.rules.len(), 1);
+        assert!(matches!(
+            &policy.rules[0].source,
+            McpRuleSource::Workspace { workspace_id } if workspace_id == &workspace.id
+        ));
+
+        let mut changed = policy.clone();
+        changed.rules[0].access = McpAccessMode::ReadWrite;
+        let error =
+            assert_generic_policy_respects_workspace_rules(&storage.mcp_policy, &changed, &roots)
+                .unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_WORKSPACE_POLICY_MANAGED);
+
+        let mut manual_at_root = policy.clone();
+        manual_at_root
+            .rules
+            .push(infimount_mcp::policy::McpPathRule {
+                id: "manual-root".to_string(),
+                prefix: "workspace".to_string(),
+                access: McpAccessMode::ReadWrite,
+                source: McpRuleSource::Manual,
+                confirmation_rules: None,
+            });
+        let error = assert_generic_policy_respects_workspace_rules(
+            &storage.mcp_policy,
+            &manual_at_root,
+            &roots,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_WORKSPACE_POLICY_MANAGED);
+
+        let mut manual_elsewhere = policy.clone();
+        manual_elsewhere
+            .rules
+            .push(infimount_mcp::policy::McpPathRule {
+                id: "manual-elsewhere".to_string(),
+                prefix: "other".to_string(),
+                access: McpAccessMode::ReadWrite,
+                source: McpRuleSource::Manual,
+                confirmation_rules: None,
+            });
+        assert_generic_policy_respects_workspace_rules(
+            &storage.mcp_policy,
+            &manual_elsewhere,
+            &roots,
+        )
+        .unwrap();
+        let _ = state;
+    }
+
+    #[test]
+    fn import_cannot_retarget_a_workspace() {
+        let storage = StorageRecord::new(
+            "Bound".to_string(),
+            "local".to_string(),
+            json!({ "root": "/tmp" }),
+        );
+        let mut retargeted = storage.clone();
+        retargeted.config = json!({ "root": "/tmp/other" });
+        let workspace = infimount_core::workspaces::WorkspaceRecord {
+            id: "bound-ws".to_string(),
+            schema_version: infimount_core::workspaces::WORKSPACE_RECORD_SCHEMA_VERSION,
+            storage_id: storage.id.clone(),
+            name: "Bound".to_string(),
+            root_path: "workspace".to_string(),
+            template_id: "coding".to_string(),
+            access_profile: "read_only".to_string(),
+            policy_rule_id: Some("workspace:bound-ws".to_string()),
+            storage_namespace_fingerprint:
+                infimount_mcp::storage_namespace::storage_namespace_fingerprint(&storage)
+                    .expect("storage namespace fingerprint"),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            memory_files: vec![],
+            checkpoint_ids: vec![],
+        };
+        let error = validate_import_workspace_references(&[workspace], &[retargeted]).unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_IMPORT_PREVIEW_MISMATCH);
     }
 
     #[test]

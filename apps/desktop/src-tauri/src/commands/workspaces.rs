@@ -1,7 +1,7 @@
 use infimount_core::workspaces::{
     generate_workspace_id, known_template_plans, memory_files_for, template_files_for,
-    validate_workspace_metadata, WorkspaceRecord, WorkspaceRegistry, MAX_CHECKPOINT_IDS,
-    WORKSPACE_RECORD_SCHEMA_VERSION,
+    validate_workspace_metadata, workspace_schema_supported, WorkspaceRecord, WorkspaceRegistry,
+    MAX_CHECKPOINT_IDS, WORKSPACE_RECORD_SCHEMA_VERSION,
 };
 use infimount_mcp::errors::{err, err_with_details, McpError, McpErrorCode, McpResult};
 use infimount_mcp::policy::{McpAccessMode, McpPathRule, McpRuleSource};
@@ -15,7 +15,42 @@ const MAX_CHECKPOINT_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_CHECKPOINT_TOTAL_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_CHECKPOINT_MANIFEST_BYTES: u64 = 6 * 1024 * 1024;
 const MAX_CHECKPOINT_LABEL_BYTES: usize = 200;
-const MAX_LEGACY_MANIFEST_BYTES: u64 = 64 * 1024;
+
+/// Verifies the workspace record schema and that its storage namespace
+/// fingerprint still matches the current storage record. Called before every
+/// workspace filesystem or policy operation. Details must never expose
+/// endpoints, roots, buckets or account names.
+fn verify_workspace_storage_namespace(
+    storage: &StorageRecord,
+    workspace: &WorkspaceRecord,
+) -> McpResult<()> {
+    if !workspace_schema_supported(workspace) {
+        return Err(err_with_details(
+            McpErrorCode::ERR_WORKSPACE_SCHEMA_UNSUPPORTED,
+            "workspace schema is unsupported; recreate the workspace after upgrading",
+            serde_json::json!({ "workspaceId": workspace.id }),
+        ));
+    }
+    let current = infimount_mcp::storage_namespace::storage_namespace_fingerprint(storage)
+        .map_err(|e| {
+            err_with_details(
+                McpErrorCode::ERR_INTERNAL,
+                format!("failed to compute storage namespace identity: {e}"),
+                serde_json::json!({ "workspaceId": workspace.id }),
+            )
+        })?;
+    if current != workspace.storage_namespace_fingerprint {
+        return Err(err_with_details(
+            McpErrorCode::ERR_WORKSPACE_STORAGE_NAMESPACE_CHANGED,
+            "workspace storage namespace changed; the workspace must be recreated",
+            serde_json::json!({
+                "workspaceId": workspace.id,
+                "workspaceName": workspace.name,
+            }),
+        ));
+    }
+    Ok(())
+}
 
 async fn read_workspace_file_bounded(
     op: &opendal::Operator,
@@ -193,6 +228,15 @@ pub async fn create_workspace_atomic(
         ));
     }
 
+    let storage_namespace_fingerprint =
+        infimount_mcp::storage_namespace::storage_namespace_fingerprint(&storage).map_err(|e| {
+            err_with_details(
+                McpErrorCode::ERR_INTERNAL,
+                format!("failed to compute storage namespace identity: {e}"),
+                serde_json::json!({ "storageId": request.storage_id }),
+            )
+        })?;
+
     let op = state
         .operator_for_storage_id(&request.storage_id)
         .map_err(|e| {
@@ -311,6 +355,7 @@ pub async fn create_workspace_atomic(
             "none".to_string()
         },
         policy_rule_id: policy_rule_id.clone(),
+        storage_namespace_fingerprint: storage_namespace_fingerprint.clone(),
         created_at: now.clone(),
         updated_at: now,
         memory_files: memory_files_for(&request.template_id),
@@ -425,6 +470,7 @@ async fn try_create_workspace(
             "rootPath": workspace.root_path,
             "templateId": workspace.template_id,
             "accessProfile": workspace.access_profile,
+            "storageNamespaceFingerprint": workspace.storage_namespace_fingerprint,
             "createdAt": workspace.created_at,
             "updatedAt": workspace.updated_at,
         },
@@ -740,39 +786,56 @@ fn remove_workspace_policy_rule(
                         serde_json::json!({ "storageId": storage_id }),
                     )
                 })?;
-            let rule = storage
+            let Some(rule) = storage
                 .mcp_policy
                 .rules
                 .iter()
                 .find(|rule| rule.id == rule_id)
                 .cloned()
-                .ok_or_else(|| {
-                    err(
-                        McpErrorCode::ERR_INTERNAL,
-                        "workspace policy rule is missing; refusing to revoke an unknown grant",
-                    )
-                })?;
-            if rule.prefix.trim_matches('/') != workspace.root_path.trim_matches('/')
-                || !matches!(
-                    rule.source,
-                    McpRuleSource::Workspace { ref workspace_id } if workspace_id == &workspace.id
-                )
-            {
-                return Err(err(
+            else {
+                // No bound rule exists; revocation is a no-op so deleting or
+                // disabling the workspace can always proceed.
+                snapshot = Some(PolicySnapshot {
+                    rule: None,
+                    applied_rule: None,
+                    revision: storage.revision,
+                });
+                return Ok(());
+            };
+            match &rule.source {
+                McpRuleSource::Workspace { workspace_id }
+                    if workspace_id == &workspace.id
+                        && rule.prefix.trim_matches('/')
+                            == workspace.root_path.trim_matches('/') =>
+                {
+                    snapshot = Some(PolicySnapshot {
+                        rule: Some(rule),
+                        applied_rule: None,
+                        revision: storage.revision,
+                    });
+                    storage.mcp_policy.rules.retain(|r| r.id != rule_id);
+                    storage.revision = storage.revision.saturating_add(1);
+                    storage.updated_at = chrono::Utc::now().to_rfc3339();
+                    Ok(())
+                }
+                // A manual rule that the user created independently is never
+                // removed by workspace operations. The workspace still detaches
+                // from it; the grant itself remains under manual control.
+                McpRuleSource::Manual
+                    if rule.prefix.trim_matches('/') == workspace.root_path.trim_matches('/') =>
+                {
+                    snapshot = Some(PolicySnapshot {
+                        rule: None,
+                        applied_rule: None,
+                        revision: storage.revision,
+                    });
+                    Ok(())
+                }
+                _ => Err(err(
                     McpErrorCode::ERR_INTERNAL,
                     "workspace policy rule identity does not match; refusing deletion",
-                ));
+                )),
             }
-            snapshot = Some(PolicySnapshot {
-                rule: Some(rule),
-                applied_rule: None,
-                revision: storage.revision,
-            });
-            storage.mcp_policy.rules.retain(|r| r.id != rule_id);
-
-            storage.revision = storage.revision.saturating_add(1);
-            storage.updated_at = chrono::Utc::now().to_rfc3339();
-            Ok(())
         })
         .map_err(|e| {
             err_with_details(
@@ -1030,6 +1093,11 @@ pub async fn update_workspace(
         workspace.name = name.to_string();
     }
 
+    // A policy change is a workspace operation; verify the namespace binding
+    // before mutating any rule.
+    let storage = state.find_storage_by_id(&workspace.storage_id)?;
+    verify_workspace_storage_namespace(&storage, &workspace)?;
+
     // root_path is immutable after creation
     if request.access_profile.is_some() && workspace.root_path.is_empty() {
         return Err(err(
@@ -1058,7 +1126,6 @@ pub async fn update_workspace(
     let mut policy_rule_id_for_rollback = workspace.policy_rule_id.clone();
     if let Some(access_mode) = new_access_mode {
         if workspace.policy_rule_id.is_none() {
-            let storage = state.find_storage_by_id(&workspace.storage_id)?;
             workspace.policy_rule_id = Some(resolve_legacy_policy_rule_id(&storage, &workspace));
         }
         policy_rule_id_for_rollback = workspace.policy_rule_id.clone();
@@ -1292,274 +1359,6 @@ pub async fn delete_workspace_with_files(
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ImportLegacyWorkspacesRequest {
-    pub workspaces: Vec<WorkspaceRecord>,
-}
-
-fn require_per_workspace_legacy_import(count: usize) -> McpResult<()> {
-    if count <= 1 {
-        Ok(())
-    } else {
-        Err(err(
-            McpErrorCode::ERR_INVALID_PATH,
-            "legacy workspaces must be imported one at a time so failures remain independently retryable",
-        ))
-    }
-}
-
-#[tauri::command]
-pub async fn import_legacy_workspaces(
-    state: State<'_, AppState>,
-    request: ImportLegacyWorkspacesRequest,
-) -> Result<usize, McpError> {
-    state.require_operational()?;
-    require_per_workspace_legacy_import(request.workspaces.len())?;
-    let _lifecycle = state.lifecycle_mutation.lock().await;
-    let _transaction = state.workspaces.acquire_mutation_lock().map_err(|e| {
-        err(
-            McpErrorCode::ERR_INTERNAL,
-            format!("failed to lock workspace mutation: {e}"),
-        )
-    })?;
-    let existing = state.workspaces.load_all().map_err(|_| {
-        err(
-            McpErrorCode::ERR_INTERNAL,
-            "failed to load workspace registry",
-        )
-    })?;
-    let mut validated: Vec<WorkspaceRecord> = Vec::new();
-
-    for mut workspace in request.workspaces {
-        if workspace.id.trim().is_empty()
-            || workspace.id.len() > 200
-            || workspace.name.trim().is_empty()
-            || workspace.name.len() > 200
-            || workspace.id.chars().any(char::is_control)
-            || workspace.name.chars().any(char::is_control)
-        {
-            return Err(err(
-                McpErrorCode::ERR_INVALID_PATH,
-                "legacy workspace contains an invalid identifier or name",
-            ));
-        }
-        workspace.root_path = validate_workspace_root(&workspace.root_path)?;
-        if let Some(existing_workspace) = existing.iter().find(|item| item.id == workspace.id) {
-            if existing_workspace.storage_id != workspace.storage_id
-                || existing_workspace.root_path != workspace.root_path
-                || existing_workspace.template_id != workspace.template_id
-            {
-                return Err(err(
-                    McpErrorCode::ERR_INVALID_PATH,
-                    "legacy workspace identity conflicts with the existing workspace record",
-                ));
-            }
-        }
-        if !known_template_plans().contains(&workspace.template_id.as_str()) {
-            return Err(err(
-                McpErrorCode::ERR_INVALID_PATH,
-                "legacy workspace contains an unknown template",
-            ));
-        }
-        parse_access_profile(&workspace.access_profile)?;
-        let storage = state.find_storage_by_id(&workspace.storage_id)?;
-        if !storage.enabled {
-            return Err(err(
-                McpErrorCode::ERR_STORAGE_DISABLED,
-                "legacy workspace references a disabled storage",
-            ));
-        }
-        workspace.schema_version = WORKSPACE_RECORD_SCHEMA_VERSION;
-        workspace.memory_files = memory_files_for(&workspace.template_id);
-        workspace.policy_rule_id = Some(resolve_legacy_policy_rule_id(&storage, &workspace));
-        validate_workspace_metadata(&workspace).map_err(|e| {
-            err(
-                McpErrorCode::ERR_INVALID_PATH,
-                format!("invalid legacy workspace metadata: {e}"),
-            )
-        })?;
-
-        if validated.iter().any(|other| other.id == workspace.id) {
-            return Err(err(
-                McpErrorCode::ERR_ALREADY_EXISTS,
-                "legacy import contains duplicate workspace identifiers",
-            ));
-        }
-
-        for other in existing.iter().chain(validated.iter()) {
-            if other.storage_id != workspace.storage_id {
-                continue;
-            }
-            let other_root = other.root_path.trim_end_matches('/');
-            if workspace.root_path == other_root
-                || workspace.root_path.starts_with(&format!("{other_root}/"))
-                || other_root.starts_with(&format!("{}/", workspace.root_path))
-            {
-                return Err(err(
-                    McpErrorCode::ERR_INVALID_PATH,
-                    "legacy workspace root overlaps an existing workspace",
-                ));
-            }
-        }
-
-        verify_legacy_workspace_manifest(&state, &workspace).await?;
-        validated.push(workspace);
-    }
-
-    persist_legacy_workspaces_and_policies(&state, &validated)
-}
-
-fn persist_legacy_workspaces_and_policies(
-    state: &AppState,
-    validated: &[WorkspaceRecord],
-) -> McpResult<usize> {
-    let existing = state.workspaces.load_all().map_err(|e| {
-        err(
-            McpErrorCode::ERR_INTERNAL,
-            format!("failed to load existing workspaces: {e}"),
-        )
-    })?;
-    let imported = state
-        .workspaces
-        .import_legacy(validated.to_vec())
-        .map_err(|e| {
-            err(
-                McpErrorCode::ERR_INTERNAL,
-                format!("failed to import legacy workspaces: {e}"),
-            )
-        })?;
-    let repaired = validated
-        .iter()
-        .filter(|workspace| existing.iter().any(|item| item.id == workspace.id))
-        .count();
-    for workspace in validated {
-        if repaired > 0 && existing.iter().any(|item| item.id == workspace.id) {
-            state.workspaces.update(workspace).map_err(|e| {
-                err(
-                    McpErrorCode::ERR_INTERNAL,
-                    format!("failed to persist repaired legacy workspace: {e}"),
-                )
-            })?;
-        }
-    }
-
-    let mut applied: Vec<(String, String, PolicySnapshot)> = Vec::new();
-    for workspace in validated {
-        let access = parse_access_profile(&workspace.access_profile)?;
-        let mut mutations = Vec::new();
-        if let Err(error) = apply_workspace_policy_rule(
-            &state.registry,
-            &workspace.storage_id,
-            workspace,
-            access,
-            &mut mutations,
-        ) {
-            let mut rollback_errors = Vec::new();
-            for imported_workspace in validated.iter().rev() {
-                if let Some(previous) = existing
-                    .iter()
-                    .find(|item| item.id == imported_workspace.id)
-                {
-                    if state.workspaces.update(previous).is_err() {
-                        rollback_errors.push("ERR_WORKSPACE_ROLLBACK_REGISTRY");
-                    }
-                } else if state.workspaces.delete(&imported_workspace.id).is_err() {
-                    rollback_errors.push("ERR_WORKSPACE_ROLLBACK_REGISTRY");
-                }
-            }
-            for (storage_id, rule_id, snapshot) in applied.iter().rev() {
-                if restore_policy_rule(&state.registry, storage_id, rule_id, snapshot).is_err() {
-                    rollback_errors.push("ERR_WORKSPACE_ROLLBACK_POLICY");
-                }
-            }
-            return Err(err_with_details(
-                McpErrorCode::ERR_INTERNAL,
-                format!("failed to create policy for migrated workspace: {error}"),
-                serde_json::json!({ "rollbackErrors": rollback_errors }),
-            ));
-        }
-        if let Some(Mutation::UpdatedPolicy(snapshot)) = mutations.pop() {
-            applied.push((
-                workspace.storage_id.clone(),
-                workspace.policy_rule_id.clone().unwrap_or_default(),
-                snapshot,
-            ));
-        }
-    }
-    Ok(imported + repaired)
-}
-
-async fn verify_legacy_workspace_manifest(
-    state: &AppState,
-    workspace: &WorkspaceRecord,
-) -> McpResult<()> {
-    let op = state
-        .operator_for_storage_id(&workspace.storage_id)
-        .map_err(|e| {
-            err_with_details(
-                McpErrorCode::ERR_STORAGE_NOT_FOUND,
-                format!("legacy workspace storage is inaccessible: {e}"),
-                serde_json::json!({ "storageId": workspace.storage_id }),
-            )
-        })?;
-    let root_metadata = op.stat(&workspace.root_path).await.map_err(|_| {
-        err_with_details(
-            McpErrorCode::ERR_INVALID_PATH,
-            "legacy workspace root does not exist or is inaccessible",
-            serde_json::json!({ "rootPath": workspace.root_path }),
-        )
-    })?;
-    if !root_metadata.is_dir() {
-        return Err(err(
-            McpErrorCode::ERR_INVALID_PATH,
-            "legacy workspace root is not a directory",
-        ));
-    }
-
-    let manifest_path = join_path(&workspace.root_path, ".infimount/workspace.json");
-    let bytes = read_workspace_file_bounded(
-        &op,
-        &manifest_path,
-        MAX_LEGACY_MANIFEST_BYTES,
-        McpErrorCode::ERR_INVALID_PATH,
-        "legacy workspace manifest is missing, inaccessible, or changed while being read",
-    )
-    .await?;
-    let manifest: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| {
-        err(
-            McpErrorCode::ERR_INVALID_PATH,
-            "legacy workspace manifest is malformed",
-        )
-    })?;
-    if !manifest_matches_workspace(&manifest, workspace) {
-        return Err(err(
-            McpErrorCode::ERR_INVALID_PATH,
-            "legacy workspace manifest identity does not match the imported record",
-        ));
-    }
-    Ok(())
-}
-
-fn manifest_matches_workspace(manifest: &serde_json::Value, workspace: &WorkspaceRecord) -> bool {
-    let identity = manifest
-        .get("workspace")
-        .and_then(serde_json::Value::as_object);
-    manifest.get("kind").and_then(serde_json::Value::as_str) == Some("infimount-agent-workspace")
-        && identity
-            .and_then(|value| value.get("id"))
-            .and_then(serde_json::Value::as_str)
-            == Some(workspace.id.as_str())
-        && identity
-            .and_then(|value| value.get("rootPath"))
-            .and_then(serde_json::Value::as_str)
-            == Some(workspace.root_path.as_str())
-        && identity
-            .and_then(|value| value.get("templateId"))
-            .and_then(serde_json::Value::as_str)
-            == Some(workspace.template_id.as_str())
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct CreateWorkspaceCheckpointRequest {
     pub workspace_id: String,
     pub label: Option<String>,
@@ -1654,6 +1453,7 @@ fn validate_checkpoint_context(
     workspace: &WorkspaceRecord,
     require_write: bool,
 ) -> McpResult<()> {
+    verify_workspace_storage_namespace(storage, workspace)?;
     validate_workspace_metadata(workspace).map_err(|e| {
         err(
             McpErrorCode::ERR_INVALID_PATH,
@@ -2088,7 +1888,6 @@ pub async fn restore_workspace_checkpoint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use infimount_core::secrets::MemorySecretStore;
     use infimount_core::workspaces::WorkspaceRegistry;
     use infimount_mcp::registry::{StorageRecord, StorageRegistry};
     use infimount_mcp::McpStoragePolicy;
@@ -2163,6 +1962,7 @@ mod tests {
             template_id: "coding".to_string(),
             access_profile: "read_write".to_string(),
             policy_rule_id: Some(format!("workspace:{id}")),
+            storage_namespace_fingerprint: "test-fixture".to_string(),
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             memory_files: memory_files_for("coding"),
@@ -2293,14 +2093,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_import_is_forced_to_report_outcomes_per_workspace() {
-        require_per_workspace_legacy_import(0).unwrap();
-        require_per_workspace_legacy_import(1).unwrap();
-        let error = require_per_workspace_legacy_import(2).unwrap_err();
-        assert_eq!(error.code, McpErrorCode::ERR_INVALID_PATH);
-    }
-
-    #[test]
     fn deleting_workspace_files_requires_explicit_confirmation() {
         let error = require_delete_files_confirmation(false).unwrap_err();
         assert_eq!(error.code, McpErrorCode::ERR_CONFIRMATION_REQUIRED);
@@ -2308,36 +2100,9 @@ mod tests {
     }
 
     #[test]
-    fn legacy_manifest_requires_matching_identity() {
-        let workspace = make_workspace_record("workspace-1", "storage-1", "/root");
-        let valid = serde_json::json!({
-            "kind": "infimount-agent-workspace",
-            "workspace": {
-                "id": "workspace-1",
-                "rootPath": "/root",
-                "templateId": "coding",
-            }
-        });
-        assert!(manifest_matches_workspace(&valid, &workspace));
-        let mismatched = serde_json::json!({
-            "kind": "infimount-agent-workspace",
-            "workspace": {
-                "id": "different",
-                "rootPath": "/root",
-                "templateId": "coding",
-            }
-        });
-        assert!(!manifest_matches_workspace(&mismatched, &workspace));
-    }
-
-    #[test]
-    fn v071_fixture_migration_adopts_exact_manual_rule_identity() {
+    fn v071_fixture_adopts_exact_manual_rule_identity() {
         let workspaces: Vec<WorkspaceRecord> = serde_json::from_str(include_str!(
             "../../../../../tests/fixtures/v0.7.1/workspaces-localstorage.json"
-        ))
-        .unwrap();
-        let manifest: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../../tests/fixtures/v0.7.1/workspace-manifest.json"
         ))
         .unwrap();
         let policy: McpStoragePolicy = serde_json::from_str(include_str!(
@@ -2345,7 +2110,6 @@ mod tests {
         ))
         .unwrap();
         let workspace = &workspaces[0];
-        assert!(manifest_matches_workspace(&manifest, workspace));
         let mut storage = StorageRecord::new(
             "Fixture storage".into(),
             "local".into(),
@@ -2363,96 +2127,6 @@ mod tests {
             ),
             "legacy-allowed-workspace"
         );
-    }
-
-    #[test]
-    fn v071_fixture_runs_persist_policy_adoption_delete_and_restart_path() {
-        let dir = tempdir().unwrap();
-        let state = AppState::new_for_test(dir.path(), Arc::new(MemorySecretStore::new()));
-        let mut workspaces: Vec<WorkspaceRecord> = serde_json::from_str(include_str!(
-            "../../../../../tests/fixtures/v0.7.1/workspaces-localstorage.json"
-        ))
-        .unwrap();
-        let mut storage = StorageRecord::new(
-            "Fixture storage".into(),
-            "local".into(),
-            serde_json::json!({"root": dir.path().to_string_lossy()}),
-        );
-        storage.id = workspaces[0].storage_id.clone();
-        storage.mcp_policy = serde_json::from_str(include_str!(
-            "../../../../../tests/fixtures/v0.7.1/storage-policy-legacy.json"
-        ))
-        .unwrap();
-        state.registry.save_all_atomic(&[storage]).unwrap();
-        workspaces[0].policy_rule_id = None;
-        workspaces[0].root_path = "/workspace".into();
-        workspaces[0].access_profile = "read_only".into();
-        workspaces[0].schema_version = WORKSPACE_RECORD_SCHEMA_VERSION;
-        workspaces[0].memory_files = memory_files_for(&workspaces[0].template_id);
-        let migrated_storage = state.registry.load_all().unwrap().pop().unwrap();
-        workspaces[0].policy_rule_id = Some(resolve_legacy_policy_rule_id(
-            &migrated_storage,
-            &workspaces[0],
-        ));
-
-        persist_legacy_workspaces_and_policies(&state, &workspaces).unwrap();
-        let persisted = state.workspaces.load_all().unwrap();
-        assert_eq!(persisted[0].policy_rule_id.as_deref(), Some("migrated-0"));
-        let storage = state.registry.load_all().unwrap().pop().unwrap();
-        assert!(matches!(
-            storage.mcp_policy.rules[0].source,
-            McpRuleSource::Workspace { ref workspace_id } if workspace_id == &persisted[0].id
-        ));
-
-        let workspace = persisted[0].clone();
-        remove_workspace_policy_rule(&state.registry, &workspace.storage_id, &workspace).unwrap();
-        state.workspaces.delete(&workspace.id).unwrap();
-        assert!(state.workspaces.load_all().unwrap().is_empty());
-        assert!(state.registry.load_all().unwrap()[0]
-            .mcp_policy
-            .rules
-            .is_empty());
-    }
-
-    #[test]
-    fn legacy_import_repairs_existing_workspace_id_after_partial_crash() {
-        let dir = tempdir().unwrap();
-        let state = AppState::new_for_test(dir.path(), Arc::new(MemorySecretStore::new()));
-        let mut storage = StorageRecord::new(
-            "Fixture storage".into(),
-            "local".into(),
-            serde_json::json!({"root": dir.path().to_string_lossy()}),
-        );
-        storage.id = "storage-partial".into();
-        storage.mcp_policy.rules.push(McpPathRule {
-            id: "ws:partial".into(),
-            prefix: "workspace".into(),
-            access: McpAccessMode::ReadWrite,
-            source: McpRuleSource::Workspace {
-                workspace_id: "partial".into(),
-            },
-            confirmation_rules: None,
-        });
-        state.registry.save_all_atomic(&[storage]).unwrap();
-        let existing = WorkspaceRecord {
-            id: "partial".into(),
-            storage_id: "storage-partial".into(),
-            root_path: "/workspace".into(),
-            policy_rule_id: None,
-            memory_files: memory_files_for("coding"),
-            ..make_workspace_record("partial", "storage-partial", "/workspace")
-        };
-        state.workspaces.create(&existing).unwrap();
-        let mut retry = existing.clone();
-        let migrated_storage = state.registry.load_all().unwrap().pop().unwrap();
-        retry.policy_rule_id = Some(resolve_legacy_policy_rule_id(&migrated_storage, &retry));
-        persist_legacy_workspaces_and_policies(&state, &[retry]).unwrap();
-        let repaired = state.workspaces.find_by_id("partial").unwrap().unwrap();
-        assert_eq!(repaired.policy_rule_id.as_deref(), Some("ws:partial"));
-        assert!(matches!(
-            state.registry.load_all().unwrap()[0].mcp_policy.rules[0].source,
-            McpRuleSource::Workspace { ref workspace_id } if workspace_id == "partial"
-        ));
     }
 
     #[test]
@@ -2605,19 +2279,22 @@ mod tests {
     }
 
     #[test]
-    fn workspace_policy_deletion_fails_closed_on_wrong_source_or_missing_rule() {
+    fn workspace_policy_deletion_is_tolerant_of_missing_and_manual_rules() {
         let temp_config = tempdir().unwrap();
         let (temp_storage, _op) = create_test_op();
         let (_workspace_registry, storage_registry) = create_test_registries(&temp_config);
         let storage_id = create_test_storage(&storage_registry, &temp_storage);
         let workspace = WorkspaceRecord {
-            policy_rule_id: Some("ws:fail-closed".into()),
-            ..make_workspace_record("fail-closed", &storage_id, "/protected")
+            policy_rule_id: Some("ws:no-op".into()),
+            ..make_workspace_record("no-op", &storage_id, "/protected")
         };
+
+        // A manual rule at the same prefix is never deleted, but revocation is a
+        // no-op so the workspace can always be deleted or disabled.
         storage_registry
             .with_locked_mutation(|storages| {
                 storages[0].mcp_policy.rules.push(McpPathRule {
-                    id: "ws:fail-closed".into(),
+                    id: "ws:no-op".into(),
                     prefix: "protected".into(),
                     access: McpAccessMode::ReadWrite,
                     source: McpRuleSource::Manual,
@@ -2626,7 +2303,7 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        assert!(remove_workspace_policy_rule(&storage_registry, &storage_id, &workspace).is_err());
+        remove_workspace_policy_rule(&storage_registry, &storage_id, &workspace).unwrap();
         assert_eq!(
             storage_registry.load_all().unwrap()[0]
                 .mcp_policy
@@ -2634,9 +2311,45 @@ mod tests {
                 .len(),
             1
         );
+
+        // A missing rule is also a no-op.
         storage_registry
             .with_locked_mutation(|storages| {
                 storages[0].mcp_policy.rules.clear();
+                Ok(())
+            })
+            .unwrap();
+        remove_workspace_policy_rule(&storage_registry, &storage_id, &workspace).unwrap();
+
+        // A workspace rule owned by a DIFFERENT workspace is still fail-closed.
+        storage_registry
+            .with_locked_mutation(|storages| {
+                storages[0].mcp_policy.rules.push(McpPathRule {
+                    id: "ws:no-op".into(),
+                    prefix: "protected".into(),
+                    access: McpAccessMode::ReadWrite,
+                    source: McpRuleSource::Workspace {
+                        workspace_id: "someone-else".into(),
+                    },
+                    confirmation_rules: None,
+                });
+                Ok(())
+            })
+            .unwrap();
+        assert!(remove_workspace_policy_rule(&storage_registry, &storage_id, &workspace).is_err());
+
+        // A manual rule at a DIFFERENT prefix is also fail-closed: the identity
+        // does not match the workspace binding.
+        storage_registry
+            .with_locked_mutation(|storages| {
+                storages[0].mcp_policy.rules.clear();
+                storages[0].mcp_policy.rules.push(McpPathRule {
+                    id: "ws:no-op".into(),
+                    prefix: "other".into(),
+                    access: McpAccessMode::ReadWrite,
+                    source: McpRuleSource::Manual,
+                    confirmation_rules: None,
+                });
                 Ok(())
             })
             .unwrap();
@@ -2750,8 +2463,17 @@ mod tests {
         op: &opendal::Operator,
         workspace_registry: &WorkspaceRegistry,
         storage_registry: &StorageRegistry,
-        workspace: &WorkspaceRecord,
+        workspace: &mut WorkspaceRecord,
     ) -> StorageRecord {
+        let bound_storage = storage_registry
+            .load_all()
+            .unwrap()
+            .into_iter()
+            .find(|storage| storage.id == workspace.storage_id)
+            .unwrap();
+        workspace.storage_namespace_fingerprint =
+            infimount_mcp::storage_namespace::storage_namespace_fingerprint(&bound_storage)
+                .expect("storage namespace fingerprint");
         for relative in &workspace.memory_files {
             let path = join_path(&workspace.root_path, relative);
             if let Some(parent) = path.rsplit_once('/').map(|value| value.0) {
@@ -2797,11 +2519,15 @@ mod tests {
         let (temp_storage, op) = create_test_op();
         let (workspace_registry, storage_registry) = create_test_registries(&temp_config);
         let storage_id = create_test_storage(&storage_registry, &temp_storage);
-        let workspace =
+        let mut workspace =
             make_workspace_record("checkpoint-success", &storage_id, "/checkpoint-success");
-        let storage =
-            prepare_checkpoint_workspace(&op, &workspace_registry, &storage_registry, &workspace)
-                .await;
+        let storage = prepare_checkpoint_workspace(
+            &op,
+            &workspace_registry,
+            &storage_registry,
+            &mut workspace,
+        )
+        .await;
 
         let checkpoint = create_checkpoint_transaction(
             &op,
@@ -2832,14 +2558,18 @@ mod tests {
         let (temp_storage, op) = create_test_op();
         let (workspace_registry, storage_registry) = create_test_registries(&temp_config);
         let storage_id = create_test_storage(&storage_registry, &temp_storage);
-        let workspace = make_workspace_record(
+        let mut workspace = make_workspace_record(
             "checkpoint-create-rollback",
             &storage_id,
             "/create-rollback",
         );
-        let storage =
-            prepare_checkpoint_workspace(&op, &workspace_registry, &storage_registry, &workspace)
-                .await;
+        let storage = prepare_checkpoint_workspace(
+            &op,
+            &workspace_registry,
+            &storage_registry,
+            &mut workspace,
+        )
+        .await;
 
         let error = create_checkpoint_transaction(
             &op,
@@ -2876,14 +2606,18 @@ mod tests {
         let (temp_storage, op) = create_test_op();
         let (workspace_registry, storage_registry) = create_test_registries(&temp_config);
         let storage_id = create_test_storage(&storage_registry, &temp_storage);
-        let workspace = make_workspace_record(
+        let mut workspace = make_workspace_record(
             "checkpoint-restore-rollback",
             &storage_id,
             "/restore-rollback",
         );
-        let storage =
-            prepare_checkpoint_workspace(&op, &workspace_registry, &storage_registry, &workspace)
-                .await;
+        let storage = prepare_checkpoint_workspace(
+            &op,
+            &workspace_registry,
+            &storage_registry,
+            &mut workspace,
+        )
+        .await;
         let checkpoint = create_checkpoint_transaction(
             &op,
             &workspace_registry,
@@ -2936,10 +2670,14 @@ mod tests {
                 .code,
             McpErrorCode::ERR_STORAGE_NOT_FOUND
         );
-        let workspace = make_workspace_record("checkpoint-missing", &storage_id, "/missing");
-        let storage =
-            prepare_checkpoint_workspace(&op, &workspace_registry, &storage_registry, &workspace)
-                .await;
+        let mut workspace = make_workspace_record("checkpoint-missing", &storage_id, "/missing");
+        let storage = prepare_checkpoint_workspace(
+            &op,
+            &workspace_registry,
+            &storage_registry,
+            &mut workspace,
+        )
+        .await;
         let error = restore_checkpoint_transaction(
             &op,
             &storage,
@@ -2958,7 +2696,7 @@ mod tests {
         let (temp_storage, op) = create_test_op();
         let (workspace_registry, storage_registry) = create_test_registries(&temp_config);
         let storage_id = create_test_storage(&storage_registry, &temp_storage);
-        let workspace = make_workspace_record("checkpoint-denied", &storage_id, "/denied");
+        let mut workspace = make_workspace_record("checkpoint-denied", &storage_id, "/denied");
         for relative in &workspace.memory_files {
             let path = join_path(&workspace.root_path, relative);
             infimount_core::operations::create_directory(&op, path.rsplit_once('/').unwrap().0)
@@ -2968,6 +2706,11 @@ mod tests {
                 .await
                 .unwrap();
         }
+        let bound_storage = storage_registry.load_all().unwrap().remove(0);
+        workspace.storage_namespace_fingerprint =
+            infimount_mcp::storage_namespace::storage_namespace_fingerprint(&bound_storage)
+                .expect("storage namespace fingerprint");
+        storage_registry.save_all_atomic(&[bound_storage]).unwrap();
         workspace_registry.create(&workspace).unwrap();
         let mut storage = storage_registry.load_all().unwrap().remove(0);
         let checkpoint = create_checkpoint_transaction(
@@ -2993,10 +2736,14 @@ mod tests {
         let (temp_storage, op) = create_test_op();
         let (workspace_registry, storage_registry) = create_test_registries(&temp_config);
         let storage_id = create_test_storage(&storage_registry, &temp_storage);
-        let workspace = make_workspace_record("checkpoint-bounds", &storage_id, "/bounds");
-        let storage =
-            prepare_checkpoint_workspace(&op, &workspace_registry, &storage_registry, &workspace)
-                .await;
+        let mut workspace = make_workspace_record("checkpoint-bounds", &storage_id, "/bounds");
+        let storage = prepare_checkpoint_workspace(
+            &op,
+            &workspace_registry,
+            &storage_registry,
+            &mut workspace,
+        )
+        .await;
         infimount_core::operations::write_full(
             &op,
             &join_path(&workspace.root_path, &workspace.memory_files[0]),

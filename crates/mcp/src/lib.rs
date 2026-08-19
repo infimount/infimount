@@ -13,6 +13,7 @@ pub mod schemas;
 pub mod server;
 pub mod session;
 pub mod settings;
+pub mod storage_namespace;
 pub mod telemetry;
 pub mod tools_fs;
 pub mod tools_storage;

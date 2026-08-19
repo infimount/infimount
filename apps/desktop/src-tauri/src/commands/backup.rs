@@ -1406,6 +1406,14 @@ fn validate_restore_relationships(
             .iter()
             .find(|storage| storage.id == workspace.storage_id)
             .ok_or_else(|| malformed("backup workspace references a missing storage"))?;
+        let backup_fingerprint =
+            infimount_mcp::storage_namespace::storage_namespace_fingerprint(storage)
+                .map_err(|_| malformed("backup storage namespace could not be fingerprinted"))?;
+        if workspace.storage_namespace_fingerprint != backup_fingerprint {
+            return Err(malformed(
+                "backup workspace namespace does not match the referenced storage",
+            ));
+        }
         let expected_access = workspace_access_mode(&workspace.access_profile)
             .ok_or_else(|| malformed("backup workspace has an invalid access profile"))?;
         let expected_prefix = normalize_policy_path(&workspace.root_path)
@@ -1826,6 +1834,7 @@ mod tests {
             template_id: "custom".into(),
             access_profile: "read_only".into(),
             policy_rule_id: Some("workspace:workspace-1".into()),
+            storage_namespace_fingerprint: "fixture".into(),
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
             memory_files: Vec::new(),
@@ -1857,6 +1866,9 @@ mod tests {
             template_id: "custom".into(),
             access_profile: "read_only".into(),
             policy_rule_id: Some("workspace:workspace-1".into()),
+            storage_namespace_fingerprint:
+                infimount_mcp::storage_namespace::storage_namespace_fingerprint(&storage)
+                    .expect("storage namespace fingerprint"),
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
             memory_files: Vec::new(),
