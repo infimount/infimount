@@ -22,6 +22,7 @@ tokio-util = "0.7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+zeroize = "1.9"
 infimount_core = { path = "../core" }
 
 [target.'cfg(windows)'.dependencies]

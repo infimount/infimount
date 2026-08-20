@@ -1,7 +1,6 @@
 #![allow(non_snake_case)]
 
 use chrono::Utc;
-use fs2::FileExt;
 use infimount_core::{
     models::{ListEntriesPage, ReadFileRangeResult},
     operations,
@@ -16,14 +15,14 @@ use infimount_mcp::policy::{
 };
 use infimount_mcp::registry::{ensure_unique_name, validate_storage_name, StorageRecord};
 use infimount_mcp::tools_storage::{
-    apply_storage_import_with_validator, export_config, preview_storage_import,
-    validate_storage_record, ApplyStorageImportInput, ApplyStorageImportResult, ExportConfigOutput,
+    apply_storage_import_with_validator, cancel_storage_import_preview, export_config,
+    preview_storage_import, validate_storage_record, zeroize_all_storage_import_previews,
+    ApplyStorageImportInput, ApplyStorageImportResult, ExportConfigOutput,
     PreviewStorageImportInput, StorageImportPreview, ValidateStorageOutput,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::HashMap;
-use std::fs::OpenOptions;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -519,6 +518,7 @@ pub async fn create_activation_demo_storage(
 ) -> Result<StorageRecord, McpError> {
     state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
+    let _config_transaction = state.registry.acquire_configuration_transaction()?;
     let config_dir = state
         .registry
         .path()
@@ -679,6 +679,7 @@ pub async fn add_storage(
 ) -> Result<StorageRecord, McpError> {
     state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
+    let _config_transaction = state.registry.acquire_configuration_transaction()?;
     validate_storage_draft(&storage)?;
     let name = validate_storage_name(&storage.name)?;
     let schema_secret_names = secrets::discover_secret_field_names();
@@ -721,7 +722,7 @@ fn add_storage_with_config(
     name: String,
     storage: StorageDraft,
     config: Value,
-    schema_secret_names: &[String],
+    schema_secret_names: &HashSet<String>,
 ) -> Result<StorageRecord, McpError> {
     let mut record = StorageRecord::new(name.clone(), storage.backend.clone(), config);
     record.enabled = storage.enabled;
@@ -789,6 +790,16 @@ fn apply_secret_mutations_to_bundle(
         )
     })?;
     for (field, mutation) in mutations {
+        let key = match secrets::parse_secret_path(field) {
+            Ok(path) => secrets::canonical_secret_path(&path),
+            Err(_) => {
+                return Err(err_with_details(
+                    McpErrorCode::ERR_INVALID_PATH,
+                    "secret field path is invalid",
+                    serde_json::json!({ "field": field }),
+                ))
+            }
+        };
         match mutation {
             SecretMutation::Set { value } => {
                 let value = value.trim();
@@ -798,10 +809,10 @@ fn apply_secret_mutations_to_bundle(
                         "secret value must not be empty or masked",
                     ));
                 }
-                object.insert(field.clone(), Value::String(value.to_string()));
+                object.insert(key, Value::String(value.to_string()));
             }
             SecretMutation::Clear => {
-                object.remove(field);
+                object.remove(&key);
             }
             SecretMutation::Keep => {}
         }
@@ -825,6 +836,7 @@ pub async fn update_storage(
 ) -> Result<UpdateStorageResult, McpError> {
     state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
+    let _config_transaction = state.registry.acquire_configuration_transaction()?;
     let claimed = if let Some(oauth_id) = storage.oauth_session_id.as_deref() {
         let session = claim_oauth_session(&state, oauth_id)?;
         let expected_backend = if session.provider == "gdrive" {
@@ -908,6 +920,7 @@ fn build_prospective_storage_record(
     if let Some(object) = bundle.as_object_mut() {
         object.extend(extracted);
     }
+    secrets::canonicalize_bundle_keys(&mut bundle);
     apply_secret_mutations_to_bundle(&mut bundle, &storage.secret_mutations)?;
     let has_secrets = bundle.as_object().is_some_and(|object| !object.is_empty());
     let mut prospective = current.clone();
@@ -1050,6 +1063,7 @@ fn update_storage_with_draft(
             ));
         }
         let mut staged_bundle = previous_bundle.clone().unwrap_or_else(|| json!({}));
+        secrets::canonicalize_bundle_keys(&mut staged_bundle);
         let extracted = secrets::extract_secret_fields(&storage.config, &schema_secret_names);
         if let Some(object) = staged_bundle.as_object_mut() {
             object.extend(extracted);
@@ -1178,6 +1192,7 @@ pub async fn remove_storage(
 ) -> Result<RemoveStorageResult, McpError> {
     state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
+    let _config_transaction = state.registry.acquire_configuration_transaction()?;
     let secret_store = state.secret_store.clone();
     let mut secret_ref_to_delete: Option<String> = None;
 
@@ -1255,72 +1270,13 @@ fn ensure_storage_removable(state: &AppState, storage_id: &str) -> McpResult<()>
 }
 
 fn append_secret_cleanup(path: &std::path::Path, account: &str) -> McpResult<()> {
-    let lock_path = path.with_extension("lock");
-    if let Some(parent) = lock_path.parent() {
-        infimount_core::atomic_file::create_dir_all(parent)
-            .map_err(|_| err(McpErrorCode::ERR_INTERNAL, "failed to lock cleanup journal"))?;
-    }
-    let lock = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(lock_path)
-        .map_err(|_| err(McpErrorCode::ERR_INTERNAL, "failed to lock cleanup journal"))?;
-    let start = std::time::Instant::now();
-    loop {
-        match lock.try_lock_exclusive() {
-            Ok(()) => break,
-            Err(_) if start.elapsed() >= std::time::Duration::from_secs(2) => {
-                return Err(err(
-                    McpErrorCode::ERR_REGISTRY_LOCK_TIMEOUT,
-                    "timed out acquiring secret cleanup journal lock",
-                ));
-            }
-            Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
-        }
-    }
-    let mut document = if path.exists() {
-        serde_json::from_slice::<Value>(
-            &std::fs::read(path)
-                .map_err(|_| err(McpErrorCode::ERR_INTERNAL, "failed to read cleanup journal"))?,
-        )
-        .unwrap_or_else(|_| json!({ "pending": [] }))
-    } else {
-        json!({ "pending": [] })
-    };
-    let pending = document
-        .get_mut("pending")
-        .and_then(Value::as_array_mut)
-        .ok_or_else(|| {
-            err(
-                McpErrorCode::ERR_INTERNAL,
-                "secret cleanup journal is invalid",
-            )
-        })?;
-    if !pending
-        .iter()
-        .any(|item| item.get("account").and_then(Value::as_str) == Some(account))
-    {
-        pending.push(json!({ "account": account, "createdAt": Utc::now().to_rfc3339() }));
-    }
-    let payload = serde_json::to_vec_pretty(&document).map_err(|_| {
-        err(
-            McpErrorCode::ERR_INTERNAL,
-            "failed to create cleanup journal",
-        )
-    })?;
-    infimount_core::atomic_file::atomic_write_file(
-        path,
-        &payload,
-        infimount_core::atomic_file::FILE_MODE,
-    )
-    .map_err(|_| {
-        err(
-            McpErrorCode::ERR_INTERNAL,
-            "failed to persist cleanup journal",
-        )
-    })
+    // The callers pass the journal file path; derive the registry path from its
+    // parent directory and delegate to the shared strict cleanup-journal writer.
+    let registry_path = path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("storages.json");
+    infimount_mcp::registry::append_secret_cleanup_at(&registry_path, account)
 }
 
 #[tauri::command]
@@ -1331,6 +1287,7 @@ pub async fn update_mcp_storage_policy(
 ) -> Result<StorageRecord, McpError> {
     state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
+    let _config_transaction = state.registry.acquire_configuration_transaction()?;
     let workspace_roots = state
         .workspaces
         .load_all()
@@ -1521,6 +1478,16 @@ pub async fn preview_storage_import_cmd(
     request: PreviewStorageImportInput,
 ) -> Result<StorageImportPreview, McpError> {
     preview_storage_import(&state.fs_context()?, request).await
+}
+
+#[tauri::command]
+pub fn cancel_storage_import_preview_cmd(preview_id: String) -> Result<(), McpError> {
+    cancel_storage_import_preview(&preview_id)
+}
+
+#[tauri::command]
+pub fn zeroize_storage_import_previews_cmd() {
+    zeroize_all_storage_import_previews();
 }
 
 fn workspace_access_mode(profile: &str) -> Option<McpAccessMode> {

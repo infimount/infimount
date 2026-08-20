@@ -68,6 +68,7 @@ pub async fn create_recovery_backup(
     request: CreateBackupInput,
 ) -> Result<CreateBackupOutput, McpError> {
     let _transaction_guard = state.lifecycle_mutation.lock().await;
+    let _config_transaction = state.registry.acquire_configuration_transaction()?;
     let passphrase = SensitiveString::new(request.passphrase);
     if passphrase.as_str().len() < 8 {
         return Err(err(
@@ -314,6 +315,7 @@ pub async fn preview_recovery_restore(
     request: RestorePreviewInput,
 ) -> Result<RestorePreviewOutput, McpError> {
     let _transaction_guard = state.lifecycle_mutation.lock().await;
+    let _config_transaction = state.registry.acquire_configuration_transaction()?;
     let passphrase = SensitiveString::new(request.passphrase);
     let payload = backup::decrypt_backup(passphrase.as_str(), &request.armored)
         .map_err(map_backup_open_error)?;
@@ -418,6 +420,7 @@ pub async fn apply_recovery_restore(
     request: ApplyRestoreInput,
 ) -> Result<ApplyRestoreOutput, McpError> {
     let _transaction_guard = state.lifecycle_mutation.lock().await;
+    let _config_transaction = state.registry.acquire_configuration_transaction()?;
     let pending = pending_restores()
         .lock()
         .map_err(|_| {

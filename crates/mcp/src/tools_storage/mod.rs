@@ -13,9 +13,9 @@ pub use add_storage::{add_storage, AddStorageInput, AddStorageOutput};
 pub use edit_storage::{edit_storage, EditStorageInput, EditStorageOutput, EditStoragePatch};
 pub use export_config::{export_config, ExportConfigOutput};
 pub use import_config::{
-    apply_storage_import, apply_storage_import_with_validator, preview_storage_import,
-    ApplyStorageImportInput, ApplyStorageImportResult, PreviewStorageImportInput,
-    StorageImportPreview,
+    apply_storage_import, apply_storage_import_with_validator, cancel_storage_import_preview,
+    preview_storage_import, zeroize_all_storage_import_previews, ApplyStorageImportInput,
+    ApplyStorageImportResult, PreviewStorageImportInput, StorageImportPreview,
 };
 pub use list_storages::{list_storages, ListStoragesInput, ListStoragesOutput};
 pub use remove_storage::{remove_storage, RemoveStorageInput, RemoveStorageOutput};

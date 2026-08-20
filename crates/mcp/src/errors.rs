@@ -137,6 +137,28 @@ pub fn err_with_details(
     }
 }
 
+/// Convert a Serde parse failure into a sanitized error that exposes only a
+/// safe category and the line/column when available, never the raw Serde
+/// diagnostic (which can echo credential-bearing input) nor the offending value.
+pub fn sanitized_parse_error(
+    code: McpErrorCode,
+    message: impl Into<String>,
+    category: &str,
+    error: &serde_json::Error,
+) -> McpError {
+    let mut details = serde_json::Map::new();
+    details.insert("category".to_string(), json!(category));
+    let line = error.line();
+    let column = error.column();
+    if line > 0 {
+        details.insert("line".to_string(), json!(line));
+    }
+    if column > 0 {
+        details.insert("column".to_string(), json!(column));
+    }
+    err_with_details(code, message, serde_json::Value::Object(details))
+}
+
 pub fn map_opendal_error(err: &opendal::Error, fallback: McpErrorCode) -> McpError {
     let code = match err.kind() {
         opendal::ErrorKind::NotFound => McpErrorCode::ERR_PATH_NOT_FOUND,

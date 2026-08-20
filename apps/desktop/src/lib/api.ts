@@ -469,6 +469,8 @@ export interface StorageImportPreview {
   exposureChanges: StorageImportChange[];
   missingSecretFields: MissingSecretField[];
   warnings: string[];
+  requiresConfirmation: boolean;
+  confirmationReasons: string[];
 }
 
 export interface PreviewStorageImportRequest {

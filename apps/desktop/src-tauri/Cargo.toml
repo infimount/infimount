@@ -30,4 +30,5 @@ tauri-build = { version = "2", features = [] }
 tempfile = "3"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2.10.0"

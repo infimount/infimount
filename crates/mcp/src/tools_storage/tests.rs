@@ -16,6 +16,15 @@ fn sessions_in() -> crate::session::SessionManager {
     crate::session::SessionManager::new()
 }
 
+/// The import preview store is a process-global static shared by all tests.
+/// Serialize preview-affecting tests so count assertions are not racy.
+async fn serial_preview_store_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await
+}
+
 #[tokio::test]
 async fn list_storages_masks_secrets() {
     let dir = TempDir::new().unwrap();
@@ -42,6 +51,41 @@ async fn list_storages_masks_secrets() {
     assert_eq!(out.storages[0].config["access_key"], "********");
     assert_eq!(out.storages[0].config["service_account_json"], "********");
     assert_eq!(out.storages[0].config["region"], "us-east-1");
+}
+
+#[tokio::test]
+async fn list_storages_masks_secrets_inside_arrays_without_panicking() {
+    let dir = TempDir::new().unwrap();
+    let registry = registry_in(&dir);
+    let storage = crate::registry::StorageRecord::new(
+        "Profiles".to_string(),
+        "s3".to_string(),
+        serde_json::json!({
+            "profiles": [
+                { "name": "one", "accessKeyId": "AKIA-ONE", "public": 1 },
+                { "name": "two", "accessToken": "token-two", "public": 2 }
+            ]
+        }),
+    );
+    std::fs::write(
+        registry.path(),
+        serde_json::to_vec_pretty(&vec![storage]).unwrap(),
+    )
+    .unwrap();
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
+
+    let out = list_storages(&ctx).await.unwrap();
+    let config = &out.storages[0].config;
+    assert_eq!(config["profiles"][0]["accessKeyId"], "********");
+    assert_eq!(config["profiles"][1]["accessToken"], "********");
+    assert_eq!(config["profiles"][0]["public"], 1);
+    assert_eq!(config["profiles"][1]["public"], 2);
 }
 
 #[tokio::test]
@@ -493,6 +537,7 @@ async fn legacy_overwrite_increments_revision_without_bumping_untouched_records(
 
 #[tokio::test]
 async fn shareable_preview_and_apply_honor_policy_secrets_and_exposure() {
+    let _serial = serial_preview_store_guard().await;
     let dir = TempDir::new().unwrap();
     let registry = registry_in(&dir);
     let mut existing = crate::registry::StorageRecord::new(
@@ -569,7 +614,7 @@ async fn shareable_preview_and_apply_honor_policy_secrets_and_exposure() {
         &ctx,
         ApplyStorageImportInput {
             preview_id: preview.preview_id,
-            confirmed: false,
+            confirmed: true,
         },
     )
     .await
@@ -590,8 +635,8 @@ async fn shareable_preview_and_apply_honor_policy_secrets_and_exposure() {
         .get_json(stored.secret_ref.as_deref().unwrap())
         .unwrap()
         .unwrap();
-    assert_eq!(secret_bundle["accessKeyId"], "stored-key");
-    assert_eq!(secret_bundle["secretAccessKey"], "supplied-secret");
+    assert_eq!(secret_bundle["/accessKeyId"], "stored-key");
+    assert_eq!(secret_bundle["/secretAccessKey"], "supplied-secret");
     assert!(ctx
         .registry
         .secret_store()
@@ -600,7 +645,7 @@ async fn shareable_preview_and_apply_honor_policy_secrets_and_exposure() {
         .is_none());
     assert_eq!(
         stored.secret_fields,
-        vec!["accessKeyId".to_string(), "secretAccessKey".to_string()]
+        vec!["/accessKeyId".to_string(), "/secretAccessKey".to_string()]
     );
 
     let backups = std::fs::read_dir(dir.path().join("backups"))
@@ -619,6 +664,7 @@ async fn shareable_preview_and_apply_honor_policy_secrets_and_exposure() {
 
 #[tokio::test]
 async fn full_registry_change_invalidates_shareable_preview() {
+    let _serial = serial_preview_store_guard().await;
     let dir = TempDir::new().unwrap();
     let registry = registry_in(&dir);
     let existing = crate::registry::StorageRecord::new(
@@ -672,6 +718,7 @@ async fn full_registry_change_invalidates_shareable_preview() {
 
 #[tokio::test]
 async fn expired_shareable_preview_cannot_be_applied() {
+    let _serial = serial_preview_store_guard().await;
     let dir = TempDir::new().unwrap();
     let ctx = FsToolsContext {
         registry: registry_in(&dir),
@@ -707,6 +754,7 @@ async fn expired_shareable_preview_cannot_be_applied() {
 
 #[tokio::test]
 async fn missing_import_credentials_block_apply_without_consuming_preview() {
+    let _serial = serial_preview_store_guard().await;
     let dir = TempDir::new().unwrap();
     let ctx = FsToolsContext {
         registry: registry_in(&dir),
@@ -749,6 +797,7 @@ async fn missing_import_credentials_block_apply_without_consuming_preview() {
 
 #[tokio::test]
 async fn preview_is_bound_to_rename_strategy_and_replace_removals() {
+    let _serial = serial_preview_store_guard().await;
     let dir = TempDir::new().unwrap();
     let registry = registry_in(&dir);
     let existing = crate::registry::StorageRecord::new(
@@ -796,6 +845,7 @@ async fn preview_is_bound_to_rename_strategy_and_replace_removals() {
 
 #[tokio::test]
 async fn desktop_import_validator_runs_before_registry_or_secret_mutation() {
+    let _serial = serial_preview_store_guard().await;
     let dir = TempDir::new().unwrap();
     let registry = registry_in(&dir);
     let existing = crate::registry::StorageRecord::new(
@@ -846,6 +896,7 @@ async fn desktop_import_validator_runs_before_registry_or_secret_mutation() {
 
 #[tokio::test]
 async fn pre_import_backup_failure_preserves_registry() {
+    let _serial = serial_preview_store_guard().await;
     let dir = TempDir::new().unwrap();
     let registry = registry_in(&dir);
     let existing = crate::registry::StorageRecord::new(
@@ -891,6 +942,7 @@ async fn pre_import_backup_failure_preserves_registry() {
 
 #[tokio::test]
 async fn import_readback_failure_restores_registry_and_keeps_preview_recoverable() {
+    let _serial = serial_preview_store_guard().await;
     let dir = TempDir::new().unwrap();
     let registry = registry_in(&dir);
     let original = crate::registry::StorageRecord::new(
@@ -985,6 +1037,294 @@ fn conditional_import_rollback_preserves_later_process_mutation() {
         )
         .unwrap());
     assert_eq!(first.load_all().unwrap()[0].name, "Later process mutation");
+}
+
+#[tokio::test]
+async fn server_requires_confirmation_for_merge_overwrite() {
+    let _serial = serial_preview_store_guard().await;
+    super::import_config::clear_storage_import_previews_for_tests();
+    let dir = TempDir::new().unwrap();
+    let registry = registry_in(&dir);
+    let existing = crate::registry::StorageRecord::new(
+        "Docs".to_string(),
+        "local".to_string(),
+        serde_json::json!({"root": "/tmp/docs"}),
+    );
+    registry.save_all_atomic(&[existing]).unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+    let preview = preview_storage_import(
+        &ctx,
+        PreviewStorageImportInput {
+            json: serde_json::json!({"storages": [{
+                "name": "Docs",
+                "backend": "local",
+                "config": {"root": "/tmp/docs-new", "accessKeyId": "AKIA"},
+            }]})
+            .to_string(),
+            mode: "merge".to_string(),
+            on_conflict: "overwrite".to_string(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(preview.requires_confirmation);
+    assert!(preview
+        .confirmation_reasons
+        .iter()
+        .any(|reason| reason.contains("credentials will be replaced")));
+    assert!(preview
+        .confirmation_reasons
+        .iter()
+        .any(|reason| reason.contains("updated")));
+
+    let error = apply_storage_import(
+        &ctx,
+        ApplyStorageImportInput {
+            preview_id: preview.preview_id,
+            confirmed: false,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, McpErrorCode::ERR_IMPORT_CONFIRMATION_REQUIRED);
+    assert_eq!(ctx.registry.load_all().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn rename_only_import_does_not_require_destructive_confirmation() {
+    let _serial = serial_preview_store_guard().await;
+    super::import_config::clear_storage_import_previews_for_tests();
+    let dir = TempDir::new().unwrap();
+    let registry = registry_in(&dir);
+    let existing = crate::registry::StorageRecord::new(
+        "Docs".to_string(),
+        "local".to_string(),
+        serde_json::json!({"root": "/tmp/docs"}),
+    );
+    registry.save_all_atomic(&[existing]).unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+    let preview = preview_storage_import(
+        &ctx,
+        PreviewStorageImportInput {
+            json: serde_json::json!([{"name": "Docs", "backend": "local", "config": {"root": "/tmp/docs"}}])
+                .to_string(),
+            mode: "merge".to_string(),
+            on_conflict: "rename".to_string(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(!preview.requires_confirmation);
+    assert!(preview.confirmation_reasons.is_empty());
+
+    let result = apply_storage_import(
+        &ctx,
+        ApplyStorageImportInput {
+            preview_id: preview.preview_id,
+            confirmed: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.applied, 2);
+}
+
+#[tokio::test]
+async fn import_preview_store_is_bounded() {
+    let _serial = serial_preview_store_guard().await;
+    super::import_config::clear_storage_import_previews_for_tests();
+    let dir = TempDir::new().unwrap();
+    let ctx = FsToolsContext {
+        registry: registry_in(&dir),
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+    for i in 0..40 {
+        preview_storage_import(
+            &ctx,
+            PreviewStorageImportInput {
+                json: serde_json::json!([{
+                    "name": format!("Storage-{i}"),
+                    "backend": "local",
+                    "config": {"root": format!("/tmp/{i}")}
+                }])
+                .to_string(),
+                mode: "merge".to_string(),
+                on_conflict: "error".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    }
+    assert_eq!(
+        super::import_config::pending_preview_count(),
+        super::import_config::IMPORT_PREVIEW_MAX_ENTRIES
+    );
+}
+
+#[tokio::test]
+async fn expired_import_preview_is_removed_and_rejected() {
+    let _serial = serial_preview_store_guard().await;
+    super::import_config::clear_storage_import_previews_for_tests();
+    let dir = TempDir::new().unwrap();
+    let ctx = FsToolsContext {
+        registry: registry_in(&dir),
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+    let preview = preview_storage_import(
+        &ctx,
+        PreviewStorageImportInput {
+            json: serde_json::json!([{
+                "name": "SecretStore",
+                "backend": "s3",
+                "config": {"bucket": "docs", "accessKeyId": "AKIA-EXPLICIT"}
+            }])
+            .to_string(),
+            mode: "merge".to_string(),
+            on_conflict: "error".to_string(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(super::import_config::pending_preview_count(), 1);
+    super::import_config::expire_storage_import_preview(&preview.preview_id);
+
+    let error = apply_storage_import(
+        &ctx,
+        ApplyStorageImportInput {
+            preview_id: preview.preview_id,
+            confirmed: false,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, McpErrorCode::ERR_IMPORT_PREVIEW_EXPIRED);
+    assert_eq!(super::import_config::pending_preview_count(), 0);
+    assert!(ctx.registry.load_all().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn applied_import_consumes_preview() {
+    let _serial = serial_preview_store_guard().await;
+    super::import_config::clear_storage_import_previews_for_tests();
+    let dir = TempDir::new().unwrap();
+    let ctx = FsToolsContext {
+        registry: registry_in(&dir),
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+    let preview = preview_storage_import(
+        &ctx,
+        PreviewStorageImportInput {
+            json: serde_json::json!([{"name": "Local", "backend": "local", "config": {"root": "/tmp"}}])
+                .to_string(),
+            mode: "merge".to_string(),
+            on_conflict: "error".to_string(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(super::import_config::pending_preview_count(), 1);
+    apply_storage_import(
+        &ctx,
+        ApplyStorageImportInput {
+            preview_id: preview.preview_id,
+            confirmed: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(super::import_config::pending_preview_count(), 0);
+}
+
+#[test]
+fn zeroize_json_value_clears_strings() {
+    let mut value = serde_json::json!({
+        "token": "secret-token",
+        "nested": {"accessKeyId": "AKIA"},
+        "list": [{"apiKey": "k"}],
+        "plain": 42
+    });
+    super::import_config::zeroize_json_value_for_tests(&mut value);
+    let text = value["token"].as_str().unwrap();
+    assert!(text.bytes().all(|b| b == 0));
+    assert!(value["nested"]["accessKeyId"]
+        .as_str()
+        .unwrap()
+        .bytes()
+        .all(|b| b == 0));
+    assert!(value["list"][0]["apiKey"]
+        .as_str()
+        .unwrap()
+        .bytes()
+        .all(|b| b == 0));
+    assert_eq!(value["plain"], 42);
+}
+
+#[tokio::test]
+async fn import_parse_errors_are_sanitized_without_value_echo() {
+    let dir = TempDir::new().unwrap();
+    let ctx = FsToolsContext {
+        registry: registry_in(&dir),
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+    let preview = preview_storage_import(
+        &ctx,
+        PreviewStorageImportInput {
+            json: "{ \"config\": { \"accessKeyId\": \"AKIA-SECRET-VALUE\", ".to_string(),
+            mode: "merge".to_string(),
+            on_conflict: "error".to_string(),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(preview.code, McpErrorCode::ERR_INTERNAL);
+    let details = preview.details.to_string();
+    assert!(!details.contains("AKIA-SECRET-VALUE"));
+    assert!(details.contains("invalid_json"));
+}
+
+#[tokio::test]
+async fn import_entry_parse_errors_are_sanitized_without_value_echo() {
+    let dir = TempDir::new().unwrap();
+    let ctx = FsToolsContext {
+        registry: registry_in(&dir),
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+    let preview = preview_storage_import(
+        &ctx,
+        PreviewStorageImportInput {
+            json: serde_json::json!([{"name": "S3", "backend": "s3", "config": {"accessKeyId": "AKIA-SECRET"}}])
+                .to_string()
+                .replace("\"backend\"", "\"unknownField\""),
+            mode: "merge".to_string(),
+            on_conflict: "error".to_string(),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(preview.code, McpErrorCode::ERR_INTERNAL);
+    let details = preview.details.to_string();
+    assert!(!details.contains("AKIA-SECRET"));
+    assert!(details.contains("invalid_entry"));
 }
 
 #[tokio::test]

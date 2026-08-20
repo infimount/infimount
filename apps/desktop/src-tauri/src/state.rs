@@ -471,6 +471,7 @@ impl AppState {
     ) -> McpResult<McpRuntimeStatus> {
         self.require_operational()?;
         let _lifecycle = self.lifecycle_mutation.lock().await;
+        let _config_transaction = self.registry.acquire_configuration_transaction()?;
         let existing = self.settings_store.load()?;
         let old_was_running = self.http_runtime.lock().await.is_some();
         let account = MCP_AUTH_TOKEN_ACCOUNT;

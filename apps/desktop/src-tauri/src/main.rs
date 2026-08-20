@@ -22,6 +22,12 @@ fn main() {
 
     tauri::Builder::default()
         .manage(app_state)
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .setup(|app| {
             #[cfg(desktop)]
             app.handle()
@@ -101,6 +107,8 @@ fn main() {
             commands::export_shareable_config,
             commands::preview_storage_import_cmd,
             commands::apply_storage_import_cmd,
+            commands::cancel_storage_import_preview_cmd,
+            commands::zeroize_storage_import_previews_cmd,
             commands::upload_dropped_files,
             commands::plan_transfer_entries,
             commands::transfer_entries,
@@ -155,6 +163,11 @@ fn main() {
             commands::get_os_info,
             commands::run_activation_probe,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                commands::zeroize_storage_import_previews_cmd();
+            }
+        });
 }

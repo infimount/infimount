@@ -1058,6 +1058,7 @@ pub async fn update_workspace(
 ) -> Result<WorkspaceRecord, McpError> {
     state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
+    let _config_transaction = state.registry.acquire_configuration_transaction()?;
     let registry = &state.workspaces;
     let _transaction = registry.acquire_mutation_lock().map_err(|e| {
         err(
@@ -1183,6 +1184,7 @@ pub async fn update_workspace(
 pub async fn delete_workspace(state: State<'_, AppState>, id: String) -> Result<(), McpError> {
     state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
+    let _config_transaction = state.registry.acquire_configuration_transaction()?;
     let _transaction = state.workspaces.acquire_mutation_lock().map_err(|e| {
         err(
             McpErrorCode::ERR_INTERNAL,
@@ -1270,6 +1272,7 @@ pub async fn delete_workspace_with_files(
     state.require_operational()?;
     require_delete_files_confirmation(request.confirm_delete_files)?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
+    let _config_transaction = state.registry.acquire_configuration_transaction()?;
     let _transaction = state.workspaces.acquire_mutation_lock().map_err(|e| {
         err(
             McpErrorCode::ERR_INTERNAL,
