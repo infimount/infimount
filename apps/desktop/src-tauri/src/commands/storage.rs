@@ -23,7 +23,7 @@ use infimount_mcp::tools_storage::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex as StdMutex, OnceLock,
@@ -303,19 +303,122 @@ fn upload_cancel_flag(upload_id: &str) -> Result<Arc<AtomicBool>, CoreError> {
         .ok_or_else(|| CoreError::Config("upload session is not active".to_string()))
 }
 
-fn upload_staging_dir() -> PathBuf {
-    std::env::temp_dir().join("infimount-upload-staging")
+fn upload_staging_base() -> PathBuf {
+    if let Some(override_dir) =
+        std::env::var_os("INFIMOUNT_UPLOAD_STAGING_DIR").filter(|value| !value.is_empty())
+    {
+        return PathBuf::from(override_dir);
+    }
+    if let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR").filter(|value| !value.is_empty())
+    {
+        return PathBuf::from(runtime_dir)
+            .join("infimount")
+            .join("upload-staging");
+    }
+    dirs::cache_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("infimount")
+        .join("upload-staging")
+}
+
+/// Verify (or create) the per-user staging root.
+///
+/// The root must be a real directory owned by the current user with mode
+/// `0700`. Symlinks and reparse points are rejected so staged files can never
+/// be redirected outside the owned tree.
+fn verify_staging_root() -> Result<PathBuf, CoreError> {
+    let dir = upload_staging_base();
+    match std::fs::symlink_metadata(&dir) {
+        Ok(meta) => {
+            if meta.file_type().is_symlink() {
+                return Err(CoreError::Config(
+                    "upload staging root is a symlink".to_string(),
+                ));
+            }
+            if !meta.is_dir() {
+                return Err(CoreError::Config(
+                    "upload staging root is not a directory".to_string(),
+                ));
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                if meta.uid() != unsafe { libc::geteuid() } {
+                    return Err(CoreError::Config(
+                        "upload staging root is not owned by the current user".to_string(),
+                    ));
+                }
+                use std::os::unix::fs::PermissionsExt;
+                if meta.permissions().mode() & 0o777 != 0o700 {
+                    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+                }
+            }
+            Ok(dir)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir(&dir).map_err(|create_error| {
+                if create_error.kind() == std::io::ErrorKind::AlreadyExists {
+                    CoreError::Config(
+                        "upload staging root appeared as a symlink or file".to_string(),
+                    )
+                } else {
+                    CoreError::from(create_error)
+                }
+            })?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+            }
+            Ok(dir)
+        }
+        Err(error) => Err(CoreError::from(error)),
+    }
+}
+
+/// Cross-process exclusive lock for the staging directory.
+///
+/// The lock file itself is created inside the owned root and must not be a
+/// symlink. Lock ordering: this file lock is acquired before the in-process
+/// Tokio mutex so two processes cannot exceed the aggregate quota.
+fn acquire_staging_file_lock(dir: &Path) -> Result<std::fs::File, CoreError> {
+    let lock_path = dir.join(".lock");
+    if std::fs::symlink_metadata(&lock_path)
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err(CoreError::Config(
+            "upload staging lock is a symlink".to_string(),
+        ));
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&lock_path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    use fs2::FileExt;
+    file.lock_exclusive()?;
+    Ok(file)
+}
+
+fn upload_staging_dir() -> Result<PathBuf, CoreError> {
+    verify_staging_root()
 }
 
 fn upload_staging_path(upload_id: &str) -> Result<PathBuf, CoreError> {
     let id = Uuid::parse_str(upload_id)
         .map_err(|_| CoreError::Config("invalid upload session".to_string()))?;
-    Ok(upload_staging_dir().join(format!("{id}.part")))
+    Ok(upload_staging_dir()?.join(format!("{id}.part")))
 }
 
-async fn cleanup_stale_uploads_and_usage() -> Result<(usize, u64), CoreError> {
-    let dir = upload_staging_dir();
-    let mut entries = match tokio::fs::read_dir(&dir).await {
+async fn cleanup_stale_uploads_and_usage(dir: &Path) -> Result<(usize, u64), CoreError> {
+    let mut entries = match tokio::fs::read_dir(dir).await {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((0, 0)),
         Err(error) => return Err(error.into()),
@@ -331,7 +434,9 @@ async fn cleanup_stale_uploads_and_usage() -> Result<(usize, u64), CoreError> {
         if !tracked {
             continue;
         }
-        let metadata = match entry.metadata().await {
+        // `symlink_metadata` never follows a symlinked staged file, so a
+        // symlink inside the owned root is ignored and never traversed.
+        let metadata = match tokio::fs::symlink_metadata(&path).await {
             Ok(metadata) if metadata.is_file() => metadata,
             _ => continue,
         };
@@ -352,16 +457,11 @@ async fn cleanup_stale_uploads_and_usage() -> Result<(usize, u64), CoreError> {
 
 #[tauri::command]
 pub async fn begin_file_upload() -> Result<String, CoreError> {
+    let dir = upload_staging_dir()?;
+    let _file_lock = acquire_staging_file_lock(&dir)?;
     let _guard = upload_staging_lock().lock().await;
-    let dir = upload_staging_dir();
-    tokio::fs::create_dir_all(&dir).await?;
-    let (session_count, aggregate_bytes) = cleanup_stale_uploads_and_usage().await?;
+    let (session_count, aggregate_bytes) = cleanup_stale_uploads_and_usage(&dir).await?;
     validate_upload_usage(session_count, aggregate_bytes, 0)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        tokio::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).await?;
-    }
     let id = Uuid::new_v4();
     let path = dir.join(format!("{id}.part"));
     tokio::fs::OpenOptions::new()
@@ -393,6 +493,8 @@ pub async fn append_file_upload_chunk(uploadId: String, data: Vec<u8>) -> Result
             "upload chunk exceeds {MAX_UPLOAD_CHUNK_BYTES} bytes"
         )));
     }
+    let dir = upload_staging_dir()?;
+    let _file_lock = acquire_staging_file_lock(&dir)?;
     let _guard = upload_staging_lock().lock().await;
     let path = upload_staging_path(&uploadId)?;
     let current_len = tokio::fs::metadata(&path).await?.len();
@@ -401,7 +503,7 @@ pub async fn append_file_upload_chunk(uploadId: String, data: Vec<u8>) -> Result
             "staged upload exceeds 10 GiB".to_string(),
         ));
     }
-    let (_, aggregate_bytes) = cleanup_stale_uploads_and_usage().await?;
+    let (_, aggregate_bytes) = cleanup_stale_uploads_and_usage(&dir).await?;
     validate_upload_usage(0, aggregate_bytes, data.len() as u64)?;
     let mut file = tokio::fs::OpenOptions::new()
         .append(true)
@@ -429,6 +531,8 @@ async fn finish_file_upload_inner(
         return Err(CoreError::Config("upload cancelled".to_string()));
     }
     {
+        let dir = upload_staging_dir()?;
+        let _file_lock = acquire_staging_file_lock(&dir)?;
         let _guard = upload_staging_lock().lock().await;
         if let Err(error) = tokio::fs::rename(&path, &transfer_path).await {
             if let Ok(mut uploads) = active_uploads().lock() {
@@ -481,6 +585,8 @@ pub async fn cancel_file_upload(uploadId: String) -> Result<(), CoreError> {
         flag.store(true, Ordering::Release);
     }
 
+    let dir = upload_staging_dir()?;
+    let _file_lock = acquire_staging_file_lock(&dir)?;
     let _guard = upload_staging_lock().lock().await;
     let path = upload_staging_path(&uploadId)?;
     let uploading = path.with_extension("uploading");
@@ -1745,9 +1851,16 @@ pub async fn list_versions(
     limit: Option<u32>,
     cursor: Option<String>,
 ) -> Result<Value, CoreError> {
-    let op = state.operator_for_storage_id(&sourceId)?;
-    let result =
-        operations::list_file_versions(&op, &path, limit.unwrap_or(100), cursor.as_deref()).await?;
+    let (op, revision) = state.operator_and_revision_for_storage_id(&sourceId)?;
+    let result = operations::list_file_versions_page(
+        &op,
+        &sourceId,
+        &path,
+        limit.unwrap_or(100),
+        cursor.as_deref(),
+        revision,
+    )
+    .await?;
     Ok(serde_json::to_value(result).unwrap_or(Value::Null))
 }
 
@@ -1876,8 +1989,153 @@ mod tests {
         .is_ok());
     }
 
+    /// Serialize tests that touch the process-global staging override so the
+    /// `INFIMOUNT_UPLOAD_STAGING_DIR` value stays stable for a whole test.
+    struct StagingTestScope {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        _temp: tempfile::TempDir,
+    }
+
+    impl Drop for StagingTestScope {
+        fn drop(&mut self) {
+            std::env::remove_var("INFIMOUNT_UPLOAD_STAGING_DIR");
+        }
+    }
+
+    fn staging_test_scope() -> StagingTestScope {
+        static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
+        let lock = LOCK
+            .get_or_init(|| StdMutex::new(()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path().join("staging");
+        std::env::set_var("INFIMOUNT_UPLOAD_STAGING_DIR", &staging);
+        StagingTestScope {
+            _lock: lock,
+            _temp: dir,
+        }
+    }
+
+    #[test]
+    fn staging_root_rejects_pre_created_symlink() {
+        let _scope = staging_test_scope();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let base = upload_staging_base();
+            std::fs::create_dir_all(base.parent().unwrap()).unwrap();
+            symlink("/nonexistent-target", &base).unwrap();
+            assert!(verify_staging_root().is_err());
+        }
+    }
+
+    #[test]
+    fn staging_root_rejects_non_directory() {
+        let _scope = staging_test_scope();
+        let base = upload_staging_base();
+        std::fs::create_dir_all(base.parent().unwrap()).unwrap();
+        std::fs::write(&base, b"not a directory").unwrap();
+        assert!(verify_staging_root().is_err());
+    }
+
+    #[test]
+    fn staging_root_rejects_wrong_owner_when_chown_possible() {
+        let _scope = staging_test_scope();
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let base = upload_staging_base();
+            std::fs::create_dir_all(&base).unwrap();
+            let current_uid = unsafe { libc::geteuid() };
+            let result = unsafe {
+                libc::chown(
+                    base.as_os_str().as_bytes().as_ptr().cast(),
+                    current_uid.wrapping_add(1),
+                    u32::MAX,
+                )
+            };
+            if result == 0 {
+                assert!(verify_staging_root().is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn staging_root_accepts_regular_owned_directory_and_enforces_mode() {
+        let _scope = staging_test_scope();
+        let base = upload_staging_base();
+        let verified = verify_staging_root().expect("owned directory is accepted");
+        assert_eq!(verified, base);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let meta = std::fs::symlink_metadata(&verified).unwrap();
+            assert_eq!(meta.permissions().mode() & 0o777, 0o700);
+        }
+    }
+
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn stale_cleanup_ignores_symlinked_staged_file() {
+        let _scope = staging_test_scope();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let dir = verify_staging_root().unwrap();
+            std::fs::write(dir.join("dead.part"), b"stale").unwrap();
+            let target = dir.join("target.bin");
+            std::fs::write(&target, b"target").unwrap();
+            symlink(&target, dir.join("link.part")).unwrap();
+            let (count, _) = cleanup_stale_uploads_and_usage(&dir).await.unwrap();
+            // The real stale file is still counted (not yet stale-aged unless expired),
+            // but the symlinked entry is ignored entirely.
+            assert!(dir.join("link.part").exists());
+            assert!(dir.join("dead.part").exists());
+            assert!(target.exists());
+            assert_eq!(count, 1);
+        }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn stale_cleanup_never_leaves_owned_root() {
+        let _scope = staging_test_scope();
+        let dir = verify_staging_root().unwrap();
+        std::fs::write(dir.join("old.part"), b"data").unwrap();
+        let (count, total) = cleanup_stale_uploads_and_usage(&dir).await.unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(total, 4);
+        verify_staging_root().expect("root remains valid after stale cleanup");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn two_staged_uploads_respect_aggregate_quota_under_file_lock() {
+        let _scope = staging_test_scope();
+        let first = begin_file_upload().await.unwrap();
+        let second = begin_file_upload().await.unwrap();
+        let dir = verify_staging_root().unwrap();
+        let (session_count, _) = cleanup_stale_uploads_and_usage(&dir).await.unwrap();
+        assert_eq!(session_count, 2);
+        // The per-file cap still applies per staged file.
+        let oversized = vec![0; MAX_STAGED_UPLOAD_BYTES as usize + 1];
+        let result = append_file_upload_chunk(first.clone(), oversized).await;
+        assert!(result.is_err());
+        append_file_upload_chunk(first, b"a".to_vec())
+            .await
+            .unwrap();
+        append_file_upload_chunk(second, b"b".to_vec())
+            .await
+            .unwrap();
+        let (_, aggregate) = cleanup_stale_uploads_and_usage(&dir).await.unwrap();
+        assert_eq!(aggregate, 2);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn staged_upload_is_bounded_and_cancellable() {
+        let _scope = staging_test_scope();
         let upload_id = begin_file_upload().await.expect("begin upload");
         append_file_upload_chunk(upload_id.clone(), b"hello".to_vec())
             .await
@@ -1901,7 +2159,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn finish_upload_cleans_staging_when_storage_is_invalid() {
+        let _scope = staging_test_scope();
         use infimount_core::secrets::MemorySecretStore;
         use std::sync::Arc;
         let dir = tempfile::tempdir().unwrap();

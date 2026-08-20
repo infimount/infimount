@@ -1271,6 +1271,10 @@ const Index = () => {
             onConsentChange={(telemetryConsent) =>
               setAppSettings((current) => current ? { ...current, telemetryConsent } : current)
             }
+            localPersistence={appSettings.localEventPersistence}
+            onLocalPersistenceChange={(localEventPersistence) =>
+              setAppSettings((current) => current ? { ...current, localEventPersistence } : current)
+            }
           />
         ) : null}
         </Suspense>

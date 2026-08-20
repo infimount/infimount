@@ -2702,6 +2702,7 @@ dependencies = [
  "fs2",
  "infimount_core",
  "infimount_mcp",
+ "libc",
  "open",
  "opendal",
  "rand 0.9.5",

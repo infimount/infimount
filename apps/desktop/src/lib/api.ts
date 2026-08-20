@@ -110,6 +110,7 @@ export interface ListVersionsResult {
   path: string;
   versions: FileVersion[];
   next_cursor: string | null;
+  truncated: boolean;
 }
 
 export interface DeleteVersionResult {
@@ -542,12 +543,22 @@ export interface SetTelemetryConsentInput {
   consent: boolean;
 }
 
+export interface SetLocalEventPersistenceInput {
+  enabled: boolean;
+}
+
 export function saveWizardState(request: SaveWizardStateInput): Promise<AppSettings> {
   return invokeOrThrow<AppSettings>("save_wizard_state", { request });
 }
 
 export function setTelemetryConsent(request: SetTelemetryConsentInput): Promise<AppSettings> {
   return invokeOrThrow<AppSettings>("set_telemetry_consent", { request });
+}
+
+export function setLocalEventPersistence(
+  request: SetLocalEventPersistenceInput,
+): Promise<AppSettings> {
+  return invokeOrThrow<AppSettings>("set_local_event_persistence", { request });
 }
 
 export function listMcpAuditEvents(limit = 200): Promise<McpAuditEvent[]> {

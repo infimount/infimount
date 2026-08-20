@@ -155,6 +155,7 @@ fn main() {
             commands::restore_workspace_checkpoint,
             commands::save_wizard_state,
             commands::set_telemetry_consent,
+            commands::set_local_event_persistence,
             commands::export_diagnostics,
             commands::get_startup_health,
             commands::get_product_events,

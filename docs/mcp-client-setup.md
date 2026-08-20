@@ -190,5 +190,10 @@ Current tool groups include:
 - utility: `search_paths`, `generate_download_link`
 - sessions: `session_create`, `session_end`
 
+Version listing and write operations are bounded for safety:
+
+- `list_versions` scans at most 10,000 versions per path, returns at most 1,000 per page, and reports `truncated: true` when more versions may exist. Pagination uses a signed cursor bound to the storage, path, and storage revision.
+- `write_file` accepts at most 4 MiB of content and is disabled by default. No-overwrite writes require an atomic create-if-absent-capable backend; other backends return `ERR_BACKEND_UNSUPPORTED`.
+
 Storage-management operations are desktop-only and are never exposed as public MCP tools.
 For threat model details, see [Security Model](security.md).

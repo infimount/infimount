@@ -178,7 +178,7 @@ Infimount includes a Rust MCP server for local AI clients and agent workflows.
 - Scoped access: new storages are not exposed to MCP by default; expose only selected storages, disable individual MCP tools, and restrict storage paths with allow/deny prefixes
 - Risk controls: write/delete/presign/version-delete operations can require approval in Infimount before execution
 - Audit trail: local bounded MCP audit log records allowed, denied, confirmed, and failed tool activity without storing secrets or presigned URL signatures
-- Version-aware tools: supported where the backend and storage configuration support object versions
+- Version-aware tools: supported where the backend and storage configuration support object versions; version listing and `write_file` are bounded (10,000 scanned/1,000 per page and 4 MiB respectively)
 
 Setup guide: [MCP Client Setup](docs/mcp-client-setup.md)
 

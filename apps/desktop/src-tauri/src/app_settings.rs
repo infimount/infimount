@@ -41,7 +41,7 @@ impl<'de> Deserialize<'de> for TelemetryConsent {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AppSettings {
     pub onboarding_completed: bool,
@@ -52,6 +52,27 @@ pub struct AppSettings {
     pub wizard_completed_steps: Vec<String>,
     #[serde(alias = "telemetryEnabled")]
     pub telemetry_consent: TelemetryConsent,
+    #[serde(default = "default_true")]
+    pub local_event_persistence: bool,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            onboarding_completed: false,
+            onboarding_skipped: false,
+            onboarding_completed_at: None,
+            onboarding_skipped_at: None,
+            wizard_step: None,
+            wizard_completed_steps: Vec::new(),
+            telemetry_consent: TelemetryConsent::default(),
+            local_event_persistence: true,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone)]
@@ -139,6 +160,13 @@ impl AppSettingsStore {
         Ok(settings)
     }
 
+    pub fn set_local_event_persistence(&self, enabled: bool) -> McpResult<AppSettings> {
+        let mut settings = self.load()?;
+        settings.local_event_persistence = enabled;
+        self.save_atomic(&settings)?;
+        Ok(settings)
+    }
+
     #[allow(dead_code)]
     pub fn reset_all(&self) -> McpResult<AppSettings> {
         let settings = AppSettings::default();
@@ -208,5 +236,21 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(parsed.telemetry_consent, TelemetryConsent::Denied);
+        assert!(
+            parsed.local_event_persistence,
+            "legacy settings keep local persistence on"
+        );
+    }
+
+    #[test]
+    fn local_event_persistence_setting_round_trips() {
+        let dir = TempDir::new().unwrap();
+        let store = AppSettingsStore::new(Some(dir.path().join("app_settings.json")));
+        assert!(store.load().unwrap().local_event_persistence);
+        let disabled = store.set_local_event_persistence(false).unwrap();
+        assert!(!disabled.local_event_persistence);
+        assert!(!store.load().unwrap().local_event_persistence);
+        let enabled = store.set_local_event_persistence(true).unwrap();
+        assert!(enabled.local_event_persistence);
     }
 }

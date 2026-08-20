@@ -25,6 +25,7 @@ describe("FileVersionsTab", () => {
     vi.mocked(listVersions).mockResolvedValue({
       path: "/report.txt",
       next_cursor: null,
+      truncated: false,
       versions: [
         {
           version: "v2",
@@ -63,6 +64,7 @@ describe("FileVersionsTab", () => {
     vi.mocked(listVersions).mockResolvedValueOnce({
       path: "/empty.txt",
       next_cursor: null,
+      truncated: false,
       versions: [],
     });
 
@@ -94,6 +96,7 @@ describe("FileVersionsTab", () => {
     vi.mocked(listVersions).mockResolvedValue({
       path: "/report.txt",
       next_cursor: null,
+      truncated: false,
       versions: [
         {
           version: "v1",
@@ -138,6 +141,7 @@ describe("FileVersionsTab", () => {
     vi.mocked(listVersions).mockResolvedValue({
       path: "/report.txt",
       next_cursor: null,
+      truncated: false,
       versions: [
         {
           version: "v1",

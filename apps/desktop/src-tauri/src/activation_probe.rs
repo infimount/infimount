@@ -9,6 +9,7 @@ use infimount_core::workspaces::{WorkspaceRecord, WorkspaceRegistry};
 use infimount_mcp::audit::{AuditDecision, AuditStore};
 use infimount_mcp::policy::{McpAccessMode, McpRuleSource};
 use infimount_mcp::registry::{StorageRecord, StorageRegistry};
+use infimount_mcp::server::SAFE_DEFAULT_TOOLS;
 use infimount_mcp::telemetry::{build_os_arch, ProductEvent, ProductEventName, ProductEventStore};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -54,6 +55,9 @@ pub struct ActivationProbeOutput {
     pub mcp_allowed_op_ok: bool,
     pub mcp_denial_proven: bool,
     pub mcp_audit_ok: bool,
+    pub scope_isolation_passed: bool,
+    pub safe_default_profile_passed: bool,
+    pub advanced_tools_enabled: bool,
     pub overall_ok: bool,
     pub error_code: Option<String>,
 }
@@ -64,6 +68,27 @@ struct LocatedSidecar {
     version: String,
     sha256: String,
     checksum_verified: bool,
+}
+
+#[derive(Debug, Default)]
+struct ProbeFacts {
+    scope_isolation_passed: bool,
+    safe_default_profile_passed: bool,
+    advanced_tools_enabled: bool,
+}
+
+struct ProbeReport {
+    result: Result<(), String>,
+    facts: ProbeFacts,
+}
+
+impl ProbeReport {
+    fn failed(code: String) -> Self {
+        Self {
+            result: Err(code),
+            facts: ProbeFacts::default(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -728,7 +753,7 @@ pub async fn run_activation_probe(
 ) -> ActivationProbeOutput {
     let started = Instant::now();
     let sidecar = validate_sidecar_binary();
-    let probe_result = if sidecar.version_match && sidecar.doctor_healthy {
+    let report: ProbeReport = if sidecar.version_match && sidecar.doctor_healthy {
         match (
             locate_same_version_sidecar(),
             select_probe_target(&registry),
@@ -738,25 +763,28 @@ pub async fn run_activation_probe(
                     run_sidecar_probe(&located.path, &located.sha256, &target)
                 })
                 .await
-                .map_err(|_| "ERR_ACTIVATION_PROBE_FAILED")?
+                .map_err(|_| "ERR_ACTIVATION_PROBE_FAILED".to_string())
             })
             .await
-            .map_err(|_| "ERR_ACTIVATION_TIMEOUT")
+            .map_err(|_| "ERR_ACTIVATION_TIMEOUT".to_string())
             .and_then(|result| result),
-            (Err(code), _) | (_, Err(code)) => Err(code),
+            (Err(code), _) | (_, Err(code)) => Err(code.to_string()),
         }
+        .unwrap_or_else(ProbeReport::failed)
     } else {
-        Err(sidecar
-            .error_code
-            .as_deref()
-            .unwrap_or("ERR_SIDECAR_UNHEALTHY"))
+        ProbeReport::failed(
+            sidecar
+                .error_code
+                .clone()
+                .unwrap_or_else(|| "ERR_SIDECAR_UNHEALTHY".to_string()),
+        )
     };
 
-    let (handshake, allowed, denied, error_code) = match probe_result {
+    let (handshake, allowed, denied, error_code) = match &report.result {
         Ok(()) => (true, true, true, None),
         Err(code) => {
             let handshake = matches!(
-                code,
+                code.as_str(),
                 "ERR_ACTIVATION_TOOL_LIST_FAILED"
                     | "ERR_ACTIVATION_ADMIN_TOOL_EXPOSED"
                     | "ERR_ACTIVATION_SAFE_TOOLS_MISSING"
@@ -766,16 +794,16 @@ pub async fn run_activation_probe(
                     | "ERR_ACTIVATION_AUDIT_FAILED"
             );
             let allowed = matches!(
-                code,
+                code.as_str(),
                 "ERR_ACTIVATION_DENIAL_CHECK_FAILED"
                     | "ERR_ACTIVATION_POLICY_NOT_ENFORCED"
                     | "ERR_ACTIVATION_AUDIT_FAILED"
             );
             let denied = code == "ERR_ACTIVATION_AUDIT_FAILED";
-            (handshake, allowed, denied, Some(code.to_string()))
+            (handshake, allowed, denied, Some(code.clone()))
         }
     };
-    let overall_ok = sidecar.version_match && sidecar.doctor_healthy && probe_result.is_ok();
+    let overall_ok = sidecar.version_match && sidecar.doctor_healthy && report.result.is_ok();
     record_probe_events(
         product_events,
         &sidecar,
@@ -789,21 +817,34 @@ pub async fn run_activation_probe(
         mcp_handshake_ok: handshake,
         mcp_allowed_op_ok: allowed,
         mcp_denial_proven: denied,
-        mcp_audit_ok: probe_result.is_ok(),
+        mcp_audit_ok: report.result.is_ok(),
+        scope_isolation_passed: report.facts.scope_isolation_passed,
+        safe_default_profile_passed: report.facts.safe_default_profile_passed,
+        advanced_tools_enabled: report.facts.advanced_tools_enabled,
         overall_ok,
         error_code,
     }
 }
 
-fn run_sidecar_probe(
+fn run_sidecar_probe(path: &Path, expected_sha256: &str, target: &ProbeTarget) -> ProbeReport {
+    let mut facts = ProbeFacts::default();
+    let result = run_sidecar_probe_inner(path, expected_sha256, target, &mut facts)
+        .map_err(|code| code.to_string());
+    ProbeReport { result, facts }
+}
+
+fn run_sidecar_probe_inner(
     path: &Path,
     expected_sha256: &str,
     target: &ProbeTarget,
+    facts: &mut ProbeFacts,
 ) -> Result<(), &'static str> {
     revalidate_sidecar(path, expected_sha256)?;
+    let probe_id = Uuid::new_v4().to_string();
     let mut command = Command::new(path);
     command
         .args(["serve", "--transport", "stdio"])
+        .env("INFIMOUNT_ACTIVATION_PROBE_ID", &probe_id)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -877,10 +918,14 @@ fn run_sidecar_probe(
     if ADMIN_TOOLS.iter().any(|admin| tool_names.contains(admin)) {
         return Err("ERR_ACTIVATION_ADMIN_TOOL_EXPOSED");
     }
-    if !["list_dir", "read_file"]
+    facts.advanced_tools_enabled = tool_names
         .iter()
-        .all(|required| tool_names.contains(required))
-    {
+        .any(|tool| !SAFE_DEFAULT_TOOLS.contains(tool));
+    facts.safe_default_profile_passed = tool_names.len() == SAFE_DEFAULT_TOOLS.len()
+        && SAFE_DEFAULT_TOOLS
+            .iter()
+            .all(|required| tool_names.contains(required));
+    if !facts.safe_default_profile_passed {
         return Err("ERR_ACTIVATION_SAFE_TOOLS_MISSING");
     }
 
@@ -922,12 +967,13 @@ fn run_sidecar_probe(
         return Err("ERR_ACTIVATION_POLICY_NOT_ENFORCED");
     }
 
-    verify_probe_audit(target)?;
+    verify_probe_audit(target, &probe_id)?;
+    facts.scope_isolation_passed = true;
     guard.stop();
     Ok(())
 }
 
-fn verify_probe_audit(target: &ProbeTarget) -> Result<(), &'static str> {
+fn verify_probe_audit(target: &ProbeTarget, probe_id: &str) -> Result<(), &'static str> {
     let store = AuditStore::new(Some(target.config_dir.join("mcp_audit.json")));
     let deadline = Instant::now() + AUDIT_TIMEOUT;
     loop {
@@ -937,6 +983,7 @@ fn verify_probe_audit(target: &ProbeTarget) -> Result<(), &'static str> {
                     && event.path.as_deref() == Some(target.inside_path.as_str())
                     && event.storage_name.as_deref() == Some(target.storage_name.as_str())
                     && event.workspace_id.as_deref() == Some(target.workspace_id.as_str())
+                    && event.correlation_id.as_deref() == Some(probe_id)
                     && event.decision == AuditDecision::Allowed
                     && event.error_code.is_none()
             });
@@ -944,6 +991,7 @@ fn verify_probe_audit(target: &ProbeTarget) -> Result<(), &'static str> {
                 event.tool_name == "read_file"
                     && event.path.as_deref() == Some(target.outside_path.as_str())
                     && event.storage_name.as_deref() == Some(target.storage_name.as_str())
+                    && event.correlation_id.as_deref() == Some(probe_id)
                     && event.decision == AuditDecision::Denied
                     && event.error_code.as_deref() == Some("ERR_MCP_POLICY_DENIED")
             });
@@ -1322,20 +1370,49 @@ mod tests {
     fn activation_audit_requires_allowed_workspace_attribution_and_exact_denial() {
         let fixture = create_demo_fixture();
         let target = select_probe_target(&fixture.registry).unwrap();
+        let probe_id = Uuid::new_v4().to_string();
         let store = AuditStore::new(Some(target.config_dir.join("mcp_audit.json")));
         let mut allowed = AuditEvent::new("read_file", McpOperation::Read);
+        allowed.correlation_id = Some(probe_id.clone());
         allowed.path = Some(target.inside_path.clone());
         allowed.storage_name = Some(target.storage_name.clone());
         allowed.workspace_id = Some(target.workspace_id.clone());
         allowed.matched_rule_id = Some("rule-id".to_string());
         store.append(allowed).unwrap();
         let mut denied = AuditEvent::new("read_file", McpOperation::Read);
+        denied.correlation_id = Some(probe_id.clone());
         denied.path = Some(target.outside_path.clone());
         denied.storage_name = Some(target.storage_name.clone());
         denied.decision = AuditDecision::Denied;
         denied.error_code = Some("ERR_MCP_POLICY_DENIED".to_string());
         store.append(denied).unwrap();
-        verify_probe_audit(&target).unwrap();
+        verify_probe_audit(&target, &probe_id).unwrap();
+    }
+
+    #[test]
+    fn activation_audit_rejects_events_without_the_current_probe_id() {
+        let fixture = create_demo_fixture();
+        let target = select_probe_target(&fixture.registry).unwrap();
+        let probe_id = Uuid::new_v4().to_string();
+        let store = AuditStore::new(Some(target.config_dir.join("mcp_audit.json")));
+        let mut allowed = AuditEvent::new("read_file", McpOperation::Read);
+        allowed.correlation_id = Some("older-probe-id".to_string());
+        allowed.path = Some(target.inside_path.clone());
+        allowed.storage_name = Some(target.storage_name.clone());
+        allowed.workspace_id = Some(target.workspace_id.clone());
+        allowed.decision = AuditDecision::Allowed;
+        store.append(allowed).unwrap();
+        let mut denied = AuditEvent::new("read_file", McpOperation::Read);
+        denied.correlation_id = Some("older-probe-id".to_string());
+        denied.path = Some(target.outside_path.clone());
+        denied.storage_name = Some(target.storage_name.clone());
+        denied.decision = AuditDecision::Denied;
+        denied.error_code = Some("ERR_MCP_POLICY_DENIED".to_string());
+        store.append(denied).unwrap();
+        assert_eq!(
+            verify_probe_audit(&target, &probe_id),
+            Err("ERR_ACTIVATION_AUDIT_FAILED")
+        );
     }
 
     #[test]
@@ -1367,7 +1444,11 @@ mod tests {
         let fixture = create_demo_fixture();
         let target = select_probe_target(&fixture.registry).expect("valid activation target");
         let digest = sidecar_sha256(&binary).unwrap();
-        run_sidecar_probe(&binary, &digest, &target).expect("complete stdio activation proof");
+        let report = run_sidecar_probe(&binary, &digest, &target);
+        report.result.expect("complete stdio activation proof");
+        assert!(report.facts.scope_isolation_passed);
+        assert!(report.facts.safe_default_profile_passed);
+        assert!(!report.facts.advanced_tools_enabled);
     }
 
     struct DemoFixture {

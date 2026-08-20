@@ -37,6 +37,9 @@ pub struct WriteFileOutput {
     pub written_bytes: u64,
 }
 
+/// Maximum number of bytes an MCP `write_file` request may write.
+pub const MAX_MCP_WRITE_BYTES: usize = 4 * 1024 * 1024;
+
 pub async fn write_file(ctx: &FsToolsContext, input: WriteFileInput) -> McpResult<WriteFileOutput> {
     let parsed = parse_mcp_path(&input.path)?;
     enforce_root_operation(FsOp::WriteFile, &parsed)?;
@@ -94,25 +97,28 @@ pub async fn write_file(ctx: &FsToolsContext, input: WriteFileInput) -> McpResul
         ));
     }
 
-    match op.stat(&parsed.backend_path).await {
-        Ok(meta) => {
-            if meta.is_dir() {
+    let written_bytes = input.content.len() as u64;
+    if written_bytes as usize > MAX_MCP_WRITE_BYTES {
+        return Err(err_with_details(
+            McpErrorCode::ERR_INVALID_PATH,
+            "file content exceeds the 4 MiB write limit",
+            json!({ "path": parsed.normalized, "max_bytes": MAX_MCP_WRITE_BYTES }),
+        ));
+    }
+
+    if input.overwrite {
+        match op.stat(&parsed.backend_path).await {
+            Ok(meta) if meta.is_dir() => {
                 return Err(err_with_details(
                     McpErrorCode::ERR_IS_A_DIRECTORY,
                     "path is a directory",
                     json!({ "path": parsed.normalized }),
                 ));
             }
-            if !input.overwrite {
-                return Err(err_with_details(
-                    McpErrorCode::ERR_ALREADY_EXISTS,
-                    "path already exists",
-                    json!({ "path": parsed.normalized }),
-                ));
-            }
+            Ok(_) => {}
+            Err(err) if err.kind() == opendal::ErrorKind::NotFound => {}
+            Err(err) => return Err(map_opendal_error(&err, McpErrorCode::ERR_INTERNAL)),
         }
-        Err(err) if err.kind() == opendal::ErrorKind::NotFound => {}
-        Err(err) => return Err(map_opendal_error(&err, McpErrorCode::ERR_INTERNAL)),
     }
 
     if input.create_parents {
@@ -166,21 +172,57 @@ pub async fn write_file(ctx: &FsToolsContext, input: WriteFileInput) -> McpResul
     }
 
     let bytes = input.content.into_bytes();
+    if !input.overwrite {
+        if !supports_atomic_no_overwrite(&op.info().capability()) {
+            return Err(err_with_details(
+                McpErrorCode::ERR_BACKEND_UNSUPPORTED,
+                "storage backend cannot guarantee an atomic no-overwrite write",
+                json!({ "path": parsed.normalized, "storage_name": storage.name }),
+            ));
+        }
+        let write = op
+            .write_with(&parsed.backend_path, bytes)
+            .if_not_exists(true);
+        let write = match user_metadata {
+            Some(metadata) => write.user_metadata(metadata),
+            None => write,
+        };
+        write.await.map_err(|e| match e.kind() {
+            opendal::ErrorKind::AlreadyExists | opendal::ErrorKind::ConditionNotMatch => {
+                err_with_details(
+                    McpErrorCode::ERR_ALREADY_EXISTS,
+                    "path already exists",
+                    json!({ "path": parsed.normalized }),
+                )
+            }
+            _ => map_opendal_error(&e, McpErrorCode::ERR_INTERNAL),
+        })?;
+        return Ok(WriteFileOutput {
+            path: parsed.normalized,
+            written_bytes,
+        });
+    }
+
     if let Some(metadata) = user_metadata {
-        op.write_with(&parsed.backend_path, bytes.clone())
+        op.write_with(&parsed.backend_path, bytes)
             .user_metadata(metadata)
             .await
             .map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?;
     } else {
-        op.write(&parsed.backend_path, bytes.clone())
+        op.write(&parsed.backend_path, bytes)
             .await
             .map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?;
     }
 
     Ok(WriteFileOutput {
         path: parsed.normalized,
-        written_bytes: bytes.len() as u64,
+        written_bytes,
     })
+}
+
+/// Whether the backend can guarantee an atomic create-if-absent write.
+pub(crate) fn supports_atomic_no_overwrite(capability: &opendal::Capability) -> bool {
+    capability.write_with_if_not_exists
 }
 
 fn sanitize_user_metadata(

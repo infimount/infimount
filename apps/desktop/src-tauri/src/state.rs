@@ -297,6 +297,11 @@ impl AppState {
                 *startup_error = Some("ERR_STARTUP_RESTORE_RECOVERY".to_string());
             }
         }
+        if let Ok(settings) = state.app_settings_store.load() {
+            state
+                .product_events
+                .set_persistence(settings.local_event_persistence);
+        }
         let mut event = ProductEvent::new(ProductEventName::AppLaunched);
         event.success = Some(state.startup_error.lock().unwrap().is_none());
         let _ = state.product_events.record(event);

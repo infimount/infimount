@@ -152,6 +152,7 @@ describe("dual-pane browsing", () => {
       wizardStep: null,
       wizardCompletedSteps: [],
       telemetryConsent: "unknown",
+      localEventPersistence: true,
     });
     vi.mocked(getStartupHealth).mockResolvedValue({ operational: true, recoveryAvailable: true, errorCode: null, message: null });
     vi.mocked(getMcpStatus).mockResolvedValue(mcpStatus);

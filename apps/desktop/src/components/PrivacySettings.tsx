@@ -11,13 +11,19 @@ import {
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "@/hooks/use-toast";
-import { clearProductEvents, setTelemetryConsent } from "@/lib/api";
+import {
+  clearProductEvents,
+  setLocalEventPersistence,
+  setTelemetryConsent,
+} from "@/lib/api";
 
 interface PrivacySettingsProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   currentConsent: "unknown" | "granted" | "denied";
   onConsentChange: (consent: "granted" | "denied") => void;
+  localPersistence: boolean;
+  onLocalPersistenceChange: (enabled: boolean) => void;
 }
 
 export function PrivacySettings({
@@ -25,8 +31,11 @@ export function PrivacySettings({
   onOpenChange,
   currentConsent,
   onConsentChange,
+  localPersistence,
+  onLocalPersistenceChange,
 }: PrivacySettingsProps) {
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingLocal, setIsSavingLocal] = useState(false);
 
   const handleToggle = async () => {
     setIsSaving(true);
@@ -39,7 +48,7 @@ export function PrivacySettings({
         title: enabled ? "Telemetry enabled" : "Telemetry disabled",
         description: enabled
           ? "Schema-limited telemetry can be sent when an operator endpoint is configured."
-          : "Network telemetry is off. The bounded local event log is unchanged.",
+          : "Telemetry disabled: no network export.",
       });
     } catch {
       toast({
@@ -48,6 +57,27 @@ export function PrivacySettings({
       });
     }
     setIsSaving(false);
+  };
+
+  const handleLocalToggle = async () => {
+    setIsSavingLocal(true);
+    try {
+      const enabled = !localPersistence;
+      await setLocalEventPersistence({ enabled });
+      onLocalPersistenceChange(enabled);
+      toast({
+        title: enabled ? "Local events stored" : "Local events not stored",
+        description: enabled
+          ? "Local diagnostics events are written to the bounded local file."
+          : "Local diagnostics events are no longer written to disk. Network consent is unchanged.",
+      });
+    } catch {
+      toast({
+        title: "Failed to update preference",
+        variant: "destructive",
+      });
+    }
+    setIsSavingLocal(false);
   };
 
   return (
@@ -69,10 +99,13 @@ export function PrivacySettings({
               <div>
                 <div className="text-sm font-medium">Product telemetry</div>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  Infimount keeps a bounded local product-event log for diagnostics. When
-                  enabled, schema-limited product events and MCP operation metrics may be sent
-                  only if an operator has configured a valid telemetry endpoint. Storage names,
-                  file paths, storage endpoints, credentials, and file contents are excluded.
+                  {currentConsent === "granted"
+                    ? "Telemetry enabled: schema-limited events may be sent only if an operator has configured a valid endpoint."
+                    : "Telemetry disabled: no network export."}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  Storage names, file paths, storage endpoints, credentials, and file
+                  contents are excluded.
                 </p>
               </div>
               <button
@@ -83,6 +116,34 @@ export function PrivacySettings({
                 aria-label={currentConsent === "granted" ? "Disable telemetry" : "Enable telemetry"}
               >
                 {currentConsent === "granted" ? (
+                  <ToggleRight className="h-8 w-8 text-primary" />
+                ) : (
+                  <ToggleLeft className="h-8 w-8 text-muted-foreground" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border/80 bg-card p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-sm font-medium">Local diagnostics events</div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {localPersistence
+                    ? "Local diagnostics events: stored in a bounded local file and removable from Privacy settings."
+                    : "Local diagnostics events are not written to disk. Network telemetry consent is unchanged."}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleLocalToggle}
+                disabled={isSavingLocal}
+                className="shrink-0"
+                aria-label={
+                  localPersistence ? "Stop storing local events" : "Store local events"
+                }
+              >
+                {localPersistence ? (
                   <ToggleRight className="h-8 w-8 text-primary" />
                 ) : (
                   <ToggleLeft className="h-8 w-8 text-muted-foreground" />
