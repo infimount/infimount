@@ -1400,10 +1400,9 @@ pub async fn archive_unsupported_workspaces(
             })?
             .filter_map(Result::ok)
             .filter(|entry| {
-                entry
-                    .file_name()
-                    .to_str()
-                    .is_some_and(|name| name.starts_with("workspaces.archived.") && name.ends_with(".json"))
+                entry.file_name().to_str().is_some_and(|name| {
+                    name.starts_with("workspaces.archived.") && name.ends_with(".json")
+                })
             })
             .map(|entry| entry.path().to_string_lossy().into_owned())
             .collect();

@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   addStorage,
   approveMcpConfirmation,
+  archiveUnsupportedWorkspaces,
   cancelTransferJob,
   clearMcpAuditEvents,
   completeOnboarding,
@@ -136,6 +137,12 @@ describe("api wrappers", () => {
     ["deletePath", () => deletePath("s1", "/old"), "delete_path", { sourceId: "s1", path: "/old" }],
     ["cancelTransferJob", () => cancelTransferJob("transfer-1"), "cancel_transfer_job", { jobId: "transfer-1" }],
     ["listStorages", () => listStorages(), "list_storages", undefined],
+    [
+      "archiveUnsupportedWorkspaces",
+      () => archiveUnsupportedWorkspaces(),
+      "archive_unsupported_workspaces",
+      undefined,
+    ],
     ["addStorage", () => addStorage(draft), "add_storage", { storage: draft }],
     ["updateStorage", () => updateStorage("s1", draft), "update_storage", { storageId: "s1", storage: draft, confirmWorkspaceCredentialChange: false }],
     ["removeStorage", () => removeStorage("s1"), "remove_storage", { storageId: "s1" }],

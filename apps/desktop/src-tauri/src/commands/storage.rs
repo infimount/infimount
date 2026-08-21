@@ -854,6 +854,36 @@ pub async fn add_storage(
     add_storage_with_config(&state, name, storage, config, &schema_secret_names)
 }
 
+fn recover_secret_transaction_now(state: &AppState) -> McpResult<()> {
+    let storages = state.registry.load_all()?;
+    let settings = state.settings_store.load()?;
+    infimount_mcp::registry::recover_pending_secret_transactions(
+        state.registry.path(),
+        &storages,
+        state.secret_store.as_ref(),
+        settings.auth_token_ref.as_deref(),
+    )
+}
+
+fn rollback_staged_secret_transaction(
+    state: &AppState,
+    transaction_id: &str,
+    desired_ref: Option<&str>,
+) -> McpResult<()> {
+    if let Some(account) = desired_ref {
+        if state.secret_store.delete(account).is_err() {
+            return Err(err(
+                McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                "credential rollback failed; recovery will retry from the transaction journal",
+            ));
+        }
+    }
+    infimount_mcp::registry::abandon_secret_transaction_after_rollback(
+        state.registry.path(),
+        transaction_id,
+    )
+}
+
 fn add_storage_with_config(
     state: &State<'_, AppState>,
     name: String,
@@ -865,70 +895,106 @@ fn add_storage_with_config(
     record.enabled = storage.enabled;
     record.mcp_exposed = storage.mcp_exposed;
     record.read_only = storage.read_only;
+
     let extracted = secrets::extract_secret_fields(&record.config, schema_secret_names);
     secrets::strip_secret_fields(&mut record.config, schema_secret_names);
     let mut bundle = Value::Object(extracted.iter().cloned().collect());
     apply_secret_mutations_to_bundle(&mut bundle, &storage.secret_mutations)?;
-    let account = format!("storage/{}", record.id);
     let has_secrets = bundle.as_object().is_some_and(|object| !object.is_empty());
-    let config_dir = infimount_mcp::registry::default_config_dir();
-    if has_secrets {
-        let _ = infimount_mcp::registry::write_secret_transaction_journal(
-            &config_dir,
-            vec![infimount_mcp::registry::SecretTransactionEntry {
-                account: account.clone(),
-                storage_id: Some(record.id.clone()),
-                mcp_auth: false,
-                clear_ref: false,
-                replace_accounts: vec![],
-            }],
-        );
-        if state.secret_store.put_json(&account, &bundle).is_err() {
-            if state.secret_store.delete(&account).is_err() {
-                let journal_path =
-                    infimount_mcp::registry::default_config_dir().join("secret-cleanup.json");
-                append_secret_cleanup(&journal_path, &account).map_err(|_| {
-                    err(
-                        McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
-                        "credential rollback failed and could not be journaled",
-                    )
-                })?;
-                return Err(err(
+
+    let transaction_id = Uuid::new_v4().to_string();
+    let desired_ref =
+        has_secrets.then(|| format!("storage/{}/revision/1/{}", record.id, transaction_id));
+
+    if let Some(account) = desired_ref.as_deref() {
+        let journal = infimount_mcp::registry::SecretTransactionJournal {
+            version: infimount_mcp::registry::SECRET_TRANSACTION_JOURNAL_VERSION,
+            transaction_id: transaction_id.clone(),
+            created_at: Utc::now().to_rfc3339(),
+            state: infimount_mcp::registry::SecretTransactionState::Prepared,
+            target: infimount_mcp::registry::SecretTransactionTarget::Storage {
+                storage_id: record.id.clone(),
+            },
+            previous_ref: None,
+            desired_ref: Some(account.to_string()),
+            obsolete_refs: Vec::new(),
+        };
+        infimount_mcp::registry::begin_secret_transaction(state.registry.path(), &journal)?;
+
+        if state.secret_store.put_json(account, &bundle).is_err() {
+            let rollback =
+                rollback_staged_secret_transaction(state, &transaction_id, Some(account));
+            return Err(if rollback.is_ok() {
+                err(
+                    McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                    "failed to store credentials",
+                )
+            } else {
+                err(
                     McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
-                    "credential write failed; cleanup is pending",
-                ));
-            }
-            infimount_mcp::registry::clear_secret_transaction_journal(&config_dir);
-            return Err(err(
-                McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
-                "failed to store credentials",
-            ));
+                    "credential write failed and transaction recovery is pending",
+                )
+            });
         }
-        record.secret_ref = Some(account.clone());
-        record.secret_fields = bundle.as_object().unwrap().keys().cloned().collect();
+
+        if let Err(error) = infimount_mcp::registry::advance_secret_transaction(
+            state.registry.path(),
+            &transaction_id,
+            infimount_mcp::registry::SecretTransactionState::Prepared,
+            infimount_mcp::registry::SecretTransactionState::SecretWritten,
+        ) {
+            recover_secret_transaction_now(state)?;
+            return Err(error);
+        }
+
+        record.secret_ref = Some(account.to_string());
+        record.secret_fields = bundle
+            .as_object()
+            .map(|object| object.keys().cloned().collect())
+            .unwrap_or_default();
     }
+
     let result = state.registry.with_locked_mutation(|storages| {
         ensure_unique_name(storages, &name, None)?;
         storages.push(record.clone());
         Ok(record.clone())
     });
-    if result.is_err() && has_secrets && state.secret_store.delete(&account).is_err() {
-        let journal_path =
-            infimount_mcp::registry::default_config_dir().join("secret-cleanup.json");
-        append_secret_cleanup(&journal_path, &account)?;
-    }
+
+    let created = match result {
+        Ok(created) => created,
+        Err(error) => {
+            if has_secrets {
+                rollback_staged_secret_transaction(state, &transaction_id, desired_ref.as_deref())?;
+            }
+            return Err(error);
+        }
+    };
+
     if has_secrets {
-        infimount_mcp::registry::clear_secret_transaction_journal(&config_dir);
+        let finalized = infimount_mcp::registry::advance_secret_transaction(
+            state.registry.path(),
+            &transaction_id,
+            infimount_mcp::registry::SecretTransactionState::SecretWritten,
+            infimount_mcp::registry::SecretTransactionState::ReferenceCommitted,
+        )
+        .and_then(|_| {
+            infimount_mcp::registry::finish_secret_transaction(
+                state.registry.path(),
+                &transaction_id,
+            )
+        });
+        if finalized.is_err() {
+            recover_secret_transaction_now(state)?;
+        }
     }
-    if let Ok(created) = &result {
-        let mut event = infimount_mcp::telemetry::ProductEvent::new(
-            infimount_mcp::telemetry::ProductEventName::StorageAdded,
-        );
-        event.backend_type = Some(created.backend.clone());
-        event.success = Some(true);
-        let _ = state.product_events.record(event);
-    }
-    result
+
+    let mut event = infimount_mcp::telemetry::ProductEvent::new(
+        infimount_mcp::telemetry::ProductEventName::StorageAdded,
+    );
+    event.backend_type = Some(created.backend.clone());
+    event.success = Some(true);
+    let _ = state.product_events.record(event);
+    Ok(created)
 }
 
 fn apply_secret_mutations_to_bundle(
@@ -1185,19 +1251,57 @@ fn update_storage_with_draft(
     state: &AppState,
     storageId: String,
     storage: StorageDraft,
-    oauth_session_claimed: bool,
+    _oauth_session_claimed: bool,
     confirm_workspace_credential_change: bool,
 ) -> Result<(StorageRecord, Option<String>), McpError> {
     validate_storage_draft(&storage)?;
     let name = validate_storage_name(&storage.name)?;
-    let secret_store = state.secret_store.clone();
     let schema_secret_names = secrets::discover_secret_field_names();
-    let mut previous_account = String::new();
-    let mut staged_account = String::new();
-    let mut previous_bundle: Option<Value> = None;
-    let mut staged_secret = false;
-    let mut journal_written = false;
-    let config_dir = infimount_mcp::registry::default_config_dir();
+
+    let current = state.find_storage_by_id(&storageId)?;
+    let previous_ref = current.secret_ref.clone();
+    let previous_bundle = match previous_ref.as_deref() {
+        Some(account) => state
+            .secret_store
+            .get_json(account)
+            .map_err(|_| {
+                err(
+                    McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                    "failed to access stored credentials",
+                )
+            })?
+            .ok_or_else(|| {
+                err(
+                    McpErrorCode::ERR_SECRET_NOT_FOUND,
+                    "stored credentials are missing",
+                )
+            })?,
+        None => {
+            if !current.secret_fields.is_empty() {
+                return Err(err(
+                    McpErrorCode::ERR_SECRET_NOT_FOUND,
+                    "stored credentials are missing",
+                ));
+            }
+            json!({})
+        }
+    };
+
+    let mut previous_canonical = previous_bundle.clone();
+    secrets::canonicalize_bundle_keys(&mut previous_canonical);
+    let mut prospective_bundle = previous_canonical.clone();
+    let extracted = secrets::extract_secret_fields(&storage.config, &schema_secret_names);
+    if let Some(object) = prospective_bundle.as_object_mut() {
+        object.extend(extracted);
+    }
+    apply_secret_mutations_to_bundle(&mut prospective_bundle, &storage.secret_mutations)?;
+    secrets::canonicalize_bundle_keys(&mut prospective_bundle);
+
+    let credentials_changed = previous_canonical != prospective_bundle;
+    let has_secrets = prospective_bundle
+        .as_object()
+        .is_some_and(|object| !object.is_empty());
+
     let dependent = state
         .workspaces
         .load_all()
@@ -1210,8 +1314,138 @@ fn update_storage_with_draft(
         .into_iter()
         .filter(|workspace| workspace.storage_id == storageId)
         .collect::<Vec<_>>();
-    let credentials_changed =
-        effective_credentials_changed(state, &storageId, &storage, oauth_session_claimed)?;
+
+    let transaction_id = credentials_changed.then(|| Uuid::new_v4().to_string());
+    let desired_ref = if credentials_changed && has_secrets {
+        let transaction_id = transaction_id.as_deref().ok_or_else(|| {
+            err(
+                McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+                "storage credential transaction id is missing",
+            )
+        })?;
+        Some(format!(
+            "storage/{storageId}/revision/{}/{}",
+            current.revision.saturating_add(1),
+            transaction_id
+        ))
+    } else if credentials_changed {
+        None
+    } else {
+        previous_ref.clone()
+    };
+
+    let mut updated = current.clone();
+    updated.name = name.clone();
+    updated.backend = storage.backend.clone();
+    updated.enabled = storage.enabled;
+    updated.mcp_exposed = storage.mcp_exposed;
+    updated.read_only = storage.read_only;
+    updated.config = storage.config.clone();
+    secrets::strip_secret_fields(&mut updated.config, &schema_secret_names);
+    updated.secret_ref = desired_ref.clone();
+    updated.secret_fields = prospective_bundle
+        .as_object()
+        .map(|object| object.keys().cloned().collect())
+        .unwrap_or_default();
+    updated.revision = updated.revision.saturating_add(1);
+    updated.updated_at = Utc::now().to_rfc3339();
+
+    if !dependent.is_empty() {
+        let previous_namespace = infimount_mcp::storage_namespace::storage_namespace_fingerprint(
+            &current,
+        )
+        .map_err(|_| {
+            err(
+                McpErrorCode::ERR_INTERNAL,
+                "failed to fingerprint current storage",
+            )
+        })?;
+        let prospective_namespace =
+            infimount_mcp::storage_namespace::storage_namespace_fingerprint(&updated).map_err(
+                |_| {
+                    err(
+                        McpErrorCode::ERR_INTERNAL,
+                        "failed to fingerprint updated storage",
+                    )
+                },
+            )?;
+        if previous_namespace != prospective_namespace {
+            let workspaces = dependent
+                .iter()
+                .map(|workspace| {
+                    serde_json::json!({
+                        "workspaceId": workspace.id,
+                        "workspaceName": workspace.name,
+                    })
+                })
+                .collect::<Vec<_>>();
+            return Err(err_with_details(
+                McpErrorCode::ERR_STORAGE_NAMESPACE_IN_USE,
+                "storage namespace change is rejected while workspaces are bound; delete or recreate the workspaces first",
+                serde_json::json!({ "workspaces": workspaces }),
+            ));
+        }
+        if credentials_changed && !confirm_workspace_credential_change {
+            return Err(err_with_details(
+                McpErrorCode::ERR_CONFIRMATION_REQUIRED,
+                "changing credentials may point this storage at a different account; confirm the workspace credential change",
+                serde_json::json!({ "workspaceCount": dependent.len() }),
+            ));
+        }
+    }
+
+    if let Some(transaction_id) = transaction_id.as_deref() {
+        let obsolete_refs = previous_ref
+            .iter()
+            .filter(|account| desired_ref.as_deref() != Some(account.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let journal = infimount_mcp::registry::SecretTransactionJournal {
+            version: infimount_mcp::registry::SECRET_TRANSACTION_JOURNAL_VERSION,
+            transaction_id: transaction_id.to_string(),
+            created_at: Utc::now().to_rfc3339(),
+            state: infimount_mcp::registry::SecretTransactionState::Prepared,
+            target: infimount_mcp::registry::SecretTransactionTarget::Storage {
+                storage_id: storageId.clone(),
+            },
+            previous_ref: previous_ref.clone(),
+            desired_ref: desired_ref.clone(),
+            obsolete_refs,
+        };
+        infimount_mcp::registry::begin_secret_transaction(state.registry.path(), &journal)?;
+
+        if let Some(account) = desired_ref.as_deref() {
+            if state
+                .secret_store
+                .put_json(account, &prospective_bundle)
+                .is_err()
+            {
+                let rollback =
+                    rollback_staged_secret_transaction(state, transaction_id, Some(account));
+                return Err(if rollback.is_ok() {
+                    err(
+                        McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                        "failed to stage updated credentials",
+                    )
+                } else {
+                    err(
+                        McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+                        "credential staging failed and transaction recovery is pending",
+                    )
+                });
+            }
+            if let Err(error) = infimount_mcp::registry::advance_secret_transaction(
+                state.registry.path(),
+                transaction_id,
+                infimount_mcp::registry::SecretTransactionState::Prepared,
+                infimount_mcp::registry::SecretTransactionState::SecretWritten,
+            ) {
+                recover_secret_transaction_now(state)?;
+                return Err(error);
+            }
+        }
+    }
+
     let result = state.registry.with_locked_mutation(|storages| {
         let idx = storages
             .iter()
@@ -1223,156 +1457,82 @@ fn update_storage_with_draft(
                     json!({ "storage_id": storageId }),
                 )
             })?;
-        ensure_unique_name(storages, &name, Some(storageId.as_str()))?;
-
-        previous_account = storages[idx]
-            .secret_ref
-            .clone()
-            .unwrap_or_else(|| format!("storage/{storageId}"));
-        staged_account = format!(
-            "storage/{storageId}/revision/{}/{}",
-            storages[idx].revision.saturating_add(1),
-            uuid::Uuid::new_v4()
-        );
-        previous_bundle = secret_store.get_json(&previous_account).map_err(|_| {
-            err(
-                McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
-                "failed to access stored credentials",
-            )
-        })?;
-        if previous_bundle.is_none()
-            && (storages[idx].secret_ref.is_some() || !storages[idx].secret_fields.is_empty())
+        if storages[idx].revision != current.revision
+            || storages[idx].secret_ref != current.secret_ref
         {
             return Err(err(
-                McpErrorCode::ERR_SECRET_NOT_FOUND,
-                "stored credentials are missing",
+                McpErrorCode::ERR_INTERNAL,
+                "storage changed during credential transaction; retry the operation",
             ));
         }
-        let mut staged_bundle = previous_bundle.clone().unwrap_or_else(|| json!({}));
-        secrets::canonicalize_bundle_keys(&mut staged_bundle);
-        let extracted = secrets::extract_secret_fields(&storage.config, &schema_secret_names);
-        if let Some(object) = staged_bundle.as_object_mut() {
-            object.extend(extracted);
-        }
-        apply_secret_mutations_to_bundle(&mut staged_bundle, &storage.secret_mutations)?;
-        let has_secrets = staged_bundle
-            .as_object()
-            .is_some_and(|object| !object.is_empty());
-        if has_secrets {
-            let _ = infimount_mcp::registry::write_secret_transaction_journal(
-                &config_dir,
-                vec![infimount_mcp::registry::SecretTransactionEntry {
-                    account: staged_account.clone(),
-                    storage_id: Some(storageId.clone()),
-                    mcp_auth: false,
-                    clear_ref: false,
-                    replace_accounts: vec![previous_account.clone()],
-                }],
-            );
-            journal_written = true;
-            if secret_store
-                .put_json(&staged_account, &staged_bundle)
-                .is_err()
-            {
-                if secret_store.delete(&staged_account).is_err() {
-                    let cleanup_path = config_dir.join("secret-cleanup.json");
-                    append_secret_cleanup(&cleanup_path, &staged_account)?;
-                }
-                return Err(err(
-                    McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
-                    "failed to stage updated credentials",
-                ));
-            }
-            staged_secret = true;
-        }
-
-        let mut updated = storages[idx].clone();
-        updated.name = name.clone();
-        updated.backend = storage.backend.clone();
-        updated.enabled = storage.enabled;
-        updated.mcp_exposed = storage.mcp_exposed;
-        updated.read_only = storage.read_only;
-        updated.config = storage.config.clone();
-        secrets::strip_secret_fields(&mut updated.config, &schema_secret_names);
-        updated.secret_ref = has_secrets.then(|| staged_account.clone());
-        updated.secret_fields = staged_bundle
-            .as_object()
-            .map(|object| object.keys().cloned().collect())
-            .unwrap_or_default();
-        updated.revision = updated.revision.saturating_add(1);
-        updated.updated_at = Utc::now().to_rfc3339();
-        if !dependent.is_empty() {
-            let previous_namespace =
-                infimount_mcp::storage_namespace::storage_namespace_fingerprint(&storages[idx])
-                    .map_err(|e| {
-                        err(
-                            McpErrorCode::ERR_INTERNAL,
-                            format!("failed to fingerprint current storage: {e}"),
-                        )
-                    })?;
-            let prospective_namespace =
-                infimount_mcp::storage_namespace::storage_namespace_fingerprint(&updated)
-                    .map_err(|e| {
-                        err(
-                            McpErrorCode::ERR_INTERNAL,
-                            format!("failed to fingerprint updated storage: {e}"),
-                        )
-                    })?;
-            if previous_namespace != prospective_namespace {
-                let workspaces = dependent
-                    .iter()
-                    .map(|workspace| {
-                        serde_json::json!({
-                            "workspaceId": workspace.id,
-                            "workspaceName": workspace.name,
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                return Err(err_with_details(
-                    McpErrorCode::ERR_STORAGE_NAMESPACE_IN_USE,
-                    "storage namespace change is rejected while workspaces are bound; delete or recreate the workspaces first",
-                    serde_json::json!({ "workspaces": workspaces }),
-                ));
-            }
-            if credentials_changed && !confirm_workspace_credential_change {
-                return Err(err_with_details(
-                    McpErrorCode::ERR_CONFIRMATION_REQUIRED,
-                    "changing credentials may point this storage at a different account; confirm the workspace credential change",
-                    serde_json::json!({ "workspaceCount": dependent.len() }),
-                ));
-            }
-        }
+        ensure_unique_name(storages, &name, Some(storageId.as_str()))?;
         storages[idx] = updated.clone();
-        Ok(updated)
+        Ok(updated.clone())
     });
-    if result.is_err() && staged_secret && secret_store.delete(&staged_account).is_err() {
-        let cleanup_path = config_dir.join("secret-cleanup.json");
-        append_secret_cleanup(&cleanup_path, &staged_account)?;
-    }
+
+    let persisted = match result {
+        Ok(persisted) => persisted,
+        Err(error) => {
+            if let Some(transaction_id) = transaction_id.as_deref() {
+                rollback_staged_secret_transaction(state, transaction_id, desired_ref.as_deref())?;
+            }
+            return Err(error);
+        }
+    };
+
+    state.operator_cache.invalidate(&storageId);
 
     let mut warning = None;
-    if result.is_ok()
-        && previous_bundle.is_some()
-        && previous_account != staged_account
-        && secret_store.delete(&previous_account).is_err()
-    {
-        let cleanup_path = config_dir.join("secret-cleanup.json");
-        warning = Some(
-            if append_secret_cleanup(&cleanup_path, &previous_account).is_ok() {
-                "Previous credential cleanup is pending and will be retried."
-            } else {
-                "Previous credential cleanup failed and could not be journaled; remove the old native secret-store entry manually."
+    if let Some(transaction_id) = transaction_id.as_deref() {
+        let expected_state = if desired_ref.is_some() {
+            infimount_mcp::registry::SecretTransactionState::SecretWritten
+        } else {
+            infimount_mcp::registry::SecretTransactionState::Prepared
+        };
+        if infimount_mcp::registry::advance_secret_transaction(
+            state.registry.path(),
+            transaction_id,
+            expected_state,
+            infimount_mcp::registry::SecretTransactionState::ReferenceCommitted,
+        )
+        .is_err()
+        {
+            recover_secret_transaction_now(state)?;
+        } else {
+            if let Some(previous) = previous_ref
+                .as_deref()
+                .filter(|previous| desired_ref.as_deref() != Some(*previous))
+            {
+                if state.secret_store.delete(previous).is_err() {
+                    if infimount_mcp::registry::append_secret_cleanup_at(
+                        state.registry.path(),
+                        previous,
+                    )
+                    .is_err()
+                    {
+                        return Err(err(
+                            McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+                            "previous credential cleanup failed and transaction recovery is pending",
+                        ));
+                    }
+                    warning = Some(
+                        "Previous credential cleanup is pending and will be retried.".to_string(),
+                    );
+                }
             }
-            .to_string(),
-        );
+
+            if infimount_mcp::registry::finish_secret_transaction(
+                state.registry.path(),
+                transaction_id,
+            )
+            .is_err()
+            {
+                recover_secret_transaction_now(state)?;
+            }
+        }
     }
-    if journal_written {
-        infimount_mcp::registry::clear_secret_transaction_journal(&config_dir);
-    }
-    if result.is_ok() {
-        state.operator_cache.invalidate(&storageId);
-    }
-    result.map(|storage| (storage, warning))
+
+    Ok((persisted, warning))
 }
 
 #[derive(Debug, serde::Serialize)]

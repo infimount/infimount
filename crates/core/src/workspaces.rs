@@ -479,9 +479,8 @@ impl WorkspaceRegistry {
         let backup_path = self.dir.join(&backup_name);
         let source_path = self.path();
         if source_path.exists() {
-            fs::copy(&source_path, &backup_path).map_err(|e| {
-                CoreError::Config(format!("failed to back up workspace file: {e}"))
-            })?;
+            fs::copy(&source_path, &backup_path)
+                .map_err(|e| CoreError::Config(format!("failed to back up workspace file: {e}")))?;
         }
 
         // Write a fresh empty registry.

@@ -167,7 +167,7 @@ async fn run_server(serve: ServeArgs) -> Result<(), Box<dyn std::error::Error>> 
     let secret_store: std::sync::Arc<dyn infimount_core::secrets::SecretStore> =
         std::sync::Arc::new(infimount_core::secrets::NativeSecretStore::new());
     let registry = StorageRegistry::with_secret_store(None, secret_store.clone());
-    let _config_transaction = registry
+    let config_transaction = registry
         .acquire_configuration_transaction()
         .map_err(|error| std::io::Error::other(error.message))?;
     registry
@@ -181,17 +181,17 @@ async fn run_server(serve: ServeArgs) -> Result<(), Box<dyn std::error::Error>> 
     let settings = McpSettingsStore::with_secret_store(None, secret_store.clone())
         .load()
         .map_err(|error| std::io::Error::other(error.message))?;
-    // Recover any secret-transaction crash journal left by a prior process
-    // termination. Non-fatal: orphaned accounts are harmless keyring cruft
-    // if this recovery step fails.
-    let _ = infimount_mcp::registry::recover_pending_secret_transactions(
-        &infimount_mcp::registry::default_config_dir(),
+    infimount_mcp::registry::recover_pending_secret_transactions(
+        registry.path(),
         &storages,
         secret_store.as_ref(),
         settings.auth_token_ref.as_deref(),
-    );
+    )
+    .map_err(|error| std::io::Error::other(error.message))?;
     let persisted_auth_token = resolve_auth_token(&settings.auth_token_ref, secret_store.as_ref())
         .map_err(|error| std::io::Error::other(error.message))?;
+
+    drop(config_transaction);
 
     let effective_auth_token = std::env::var("INFIMOUNT_AUTH_TOKEN")
         .ok()

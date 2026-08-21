@@ -262,15 +262,12 @@ impl AppState {
                 migrate_legacy_sources_if_needed(&registry)?;
                 let storages = registry.load_all()?;
                 let settings = settings_store.load()?;
-                // Recover any secret-transaction crash journal left by a prior
-                // process termination. Non-fatal: orphaned accounts are harmless
-                // keyring cruft if this recovery step fails.
-                let _ = infimount_mcp::registry::recover_pending_secret_transactions(
-                    &config_dir,
+                infimount_mcp::registry::recover_pending_secret_transactions(
+                    registry.path(),
                     &storages,
                     secret_store.as_ref(),
                     settings.auth_token_ref.as_deref(),
-                );
+                )?;
                 Ok(())
             })();
             if let Err(error) = initialization {
@@ -489,30 +486,40 @@ impl AppState {
         let _config_transaction = self.registry.acquire_configuration_transaction()?;
         let existing = self.settings_store.load()?;
         let old_was_running = self.http_runtime.lock().await.is_some();
-        let account = MCP_AUTH_TOKEN_ACCOUNT;
-        let mutation_account = match &auth_mutation {
-            AuthTokenMutation::Clear => existing.auth_token_ref.as_deref().unwrap_or(account),
-            _ => account,
+        let previous_ref = existing.auth_token_ref.clone();
+        let previous_secret = match previous_ref.as_deref() {
+            Some(account) => Some(
+                self.secret_store
+                    .get_json(account)
+                    .map_err(|_| {
+                        err(
+                            McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                            "failed to access native secret storage",
+                        )
+                    })?
+                    .ok_or_else(|| {
+                        err(
+                            McpErrorCode::ERR_SECRET_NOT_FOUND,
+                            "configured HTTP auth token is missing",
+                        )
+                    })?,
+            ),
+            None => None,
         };
-
-        let previous_secret = self.secret_store.get_json(mutation_account).map_err(|_| {
-            err(
-                McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
-                "failed to access native secret storage",
-            )
-        })?;
         let old_token = resolve_auth_token(&existing.auth_token_ref, self.secret_store.as_ref())?;
 
         let mut final_settings = settings;
-        final_settings.auth_token_ref = existing.auth_token_ref.clone();
+        final_settings.auth_token_ref = previous_ref.clone();
         final_settings.auth_token = None;
 
-        let (new_secret, expected_token, secret_changed) = match auth_mutation {
-            AuthTokenMutation::Keep => {
-                let token =
-                    resolve_auth_token(&existing.auth_token_ref, self.secret_store.as_ref())?;
-                (previous_secret.clone(), token, false)
-            }
+        let mut transaction_id: Option<String> = None;
+        let mut desired_ref = previous_ref.clone();
+        let mut desired_secret: Option<Value> = None;
+        let mut expected_token = old_token.clone();
+        let mut secret_changed = false;
+
+        match auth_mutation {
+            AuthTokenMutation::Keep => {}
             AuthTokenMutation::Set { ref value } => {
                 let token = value.trim();
                 if token.is_empty() || token == "********" {
@@ -521,15 +528,27 @@ impl AppState {
                         "auth token must not be empty or masked",
                     ));
                 }
-                final_settings.auth_token_ref = Some(account.to_string());
-                (Some(json!({"token": token})), Some(token.to_string()), true)
+                let id = uuid::Uuid::new_v4().to_string();
+                desired_ref = Some(format!("{MCP_AUTH_TOKEN_ACCOUNT}/revision/{id}"));
+                desired_secret = Some(json!({"token": token}));
+                expected_token = Some(token.to_string());
+                transaction_id = Some(id);
+                secret_changed = true;
             }
             AuthTokenMutation::Clear => {
-                final_settings.auth_token_ref = None;
-                (None, None, previous_secret.is_some())
+                desired_ref = None;
+                desired_secret = None;
+                expected_token = std::env::var("INFIMOUNT_AUTH_TOKEN")
+                    .ok()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty());
+                secret_changed = previous_ref.is_some();
+                if secret_changed {
+                    transaction_id = Some(uuid::Uuid::new_v4().to_string());
+                }
             }
             AuthTokenMutation::Rotate => {
-                if existing.auth_token_ref.is_none()
+                if previous_ref.is_none()
                     && std::env::var("INFIMOUNT_AUTH_TOKEN")
                         .map(|value| !value.trim().is_empty())
                         .unwrap_or(false)
@@ -539,7 +558,7 @@ impl AppState {
                         "cannot rotate an environment-provided auth token",
                     ));
                 }
-                if existing.auth_token_ref.as_deref() != Some(account) {
+                if previous_ref.is_none() {
                     return Err(err(
                         McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
                         "cannot rotate: no managed auth token is configured",
@@ -553,62 +572,99 @@ impl AppState {
                     ));
                 }
                 let token = generate_auth_token();
-                final_settings.auth_token_ref = Some(account.to_string());
-                (Some(json!({"token": token})), Some(token), true)
+                let id = uuid::Uuid::new_v4().to_string();
+                desired_ref = Some(format!("{MCP_AUTH_TOKEN_ACCOUNT}/revision/{id}"));
+                desired_secret = Some(json!({"token": token}));
+                expected_token = desired_secret
+                    .as_ref()
+                    .and_then(|value| value.get("token"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                transaction_id = Some(id);
+                secret_changed = true;
             }
-        };
+        }
+
+        final_settings.auth_token_ref = desired_ref.clone();
 
         if secret_changed {
-            let config_dir = infimount_mcp::registry::default_config_dir();
-            let is_clear = matches!(auth_mutation, AuthTokenMutation::Clear);
-            let _ = infimount_mcp::registry::write_secret_transaction_journal(
-                &config_dir,
-                vec![infimount_mcp::registry::SecretTransactionEntry {
-                    account: mutation_account.to_string(),
-                    storage_id: None,
-                    mcp_auth: true,
-                    clear_ref: is_clear,
-                    replace_accounts: vec![],
-                }],
-            );
-            persist_secret_bundle(
-                self.secret_store.as_ref(),
-                mutation_account,
-                new_secret.as_ref(),
-            )?;
-            if let Err(error) = self.settings_store.save_atomic(&final_settings) {
-                let rollback = persist_secret_bundle(
-                    self.secret_store.as_ref(),
-                    mutation_account,
-                    previous_secret.as_ref(),
-                );
-                infimount_mcp::registry::clear_secret_transaction_journal(&config_dir);
-                return match rollback {
-                    Ok(()) => Err(error),
-                    Err(_) => Err(auth_rollback_error(&["secret"])),
-                };
-            }
-            infimount_mcp::registry::clear_secret_transaction_journal(&config_dir);
-        } else if let Err(error) = self.settings_store.save_atomic(&final_settings) {
-            let rollback = persist_secret_bundle(
-                self.secret_store.as_ref(),
-                mutation_account,
-                previous_secret.as_ref(),
-            );
-            return match rollback {
-                Ok(()) => Err(error),
-                Err(_) => Err(auth_rollback_error(&["secret"])),
+            let transaction_id = transaction_id.as_deref().ok_or_else(|| {
+                err(
+                    McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+                    "secret transaction id is missing",
+                )
+            })?;
+            let obsolete_refs = previous_ref
+                .iter()
+                .filter(|account| desired_ref.as_deref() != Some(account.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            let journal = infimount_mcp::registry::SecretTransactionJournal {
+                version: infimount_mcp::registry::SECRET_TRANSACTION_JOURNAL_VERSION,
+                transaction_id: transaction_id.to_string(),
+                created_at: Utc::now().to_rfc3339(),
+                state: infimount_mcp::registry::SecretTransactionState::Prepared,
+                target: infimount_mcp::registry::SecretTransactionTarget::McpAuth,
+                previous_ref: previous_ref.clone(),
+                desired_ref: desired_ref.clone(),
+                obsolete_refs,
             };
+            infimount_mcp::registry::begin_secret_transaction(self.registry.path(), &journal)?;
+
+            if let (Some(account), Some(secret)) = (desired_ref.as_deref(), desired_secret.as_ref())
+            {
+                if let Err(error) =
+                    persist_secret_bundle(self.secret_store.as_ref(), account, Some(secret))
+                {
+                    let cleaned =
+                        persist_secret_bundle(self.secret_store.as_ref(), account, None).is_ok();
+                    if cleaned {
+                        infimount_mcp::registry::abandon_secret_transaction_after_rollback(
+                            self.registry.path(),
+                            transaction_id,
+                        )?;
+                    }
+                    return Err(error);
+                }
+                if let Err(error) = infimount_mcp::registry::advance_secret_transaction(
+                    self.registry.path(),
+                    transaction_id,
+                    infimount_mcp::registry::SecretTransactionState::Prepared,
+                    infimount_mcp::registry::SecretTransactionState::SecretWritten,
+                ) {
+                    self.recover_secret_transaction_locked()?;
+                    return Err(error);
+                }
+            }
+
+            if let Err(error) = self.settings_store.save_atomic(&final_settings) {
+                let rollback_errors = self
+                    .rollback_auth_reference_transaction_async(
+                        &existing,
+                        desired_ref.as_deref(),
+                        Some(transaction_id),
+                        old_was_running,
+                        old_token.as_deref(),
+                    )
+                    .await;
+                return Err(if rollback_errors.is_empty() {
+                    error
+                } else {
+                    auth_rollback_error(&rollback_errors)
+                });
+            }
+        } else {
+            self.settings_store.save_atomic(&final_settings)?;
         }
 
         let persisted = match self.settings_store.load() {
             Ok(settings) => settings,
             Err(error) => {
                 let rollback_errors = self
-                    .rollback_auth_transaction_async(
+                    .rollback_auth_reference_transaction_async(
                         &existing,
-                        mutation_account,
-                        previous_secret.as_ref(),
+                        desired_ref.as_deref(),
+                        transaction_id.as_deref(),
                         old_was_running,
                         old_token.as_deref(),
                     )
@@ -627,10 +683,10 @@ impl AppState {
                 Ok(token) => token,
                 Err(error) => {
                     let rollback_errors = self
-                        .rollback_auth_transaction_async(
+                        .rollback_auth_reference_transaction_async(
                             &existing,
-                            mutation_account,
-                            previous_secret.as_ref(),
+                            desired_ref.as_deref(),
+                            transaction_id.as_deref(),
                             old_was_running,
                             old_token.as_deref(),
                         )
@@ -644,10 +700,10 @@ impl AppState {
             };
         if persisted_json != expected_json || readback_token != expected_token {
             let rollback_errors = self
-                .rollback_auth_transaction_async(
+                .rollback_auth_reference_transaction_async(
                     &existing,
-                    mutation_account,
-                    previous_secret.as_ref(),
+                    desired_ref.as_deref(),
+                    transaction_id.as_deref(),
                     old_was_running,
                     old_token.as_deref(),
                 )
@@ -667,10 +723,10 @@ impl AppState {
             .await
         {
             let rollback_errors = self
-                .rollback_auth_transaction_async(
+                .rollback_auth_reference_transaction_async(
                     &existing,
-                    mutation_account,
-                    previous_secret.as_ref(),
+                    desired_ref.as_deref(),
+                    transaction_id.as_deref(),
                     old_was_running,
                     old_token.as_deref(),
                 )
@@ -696,10 +752,10 @@ impl AppState {
             };
             if !new_accepted || !old_rejected {
                 let rollback_errors = self
-                    .rollback_auth_transaction_async(
+                    .rollback_auth_reference_transaction_async(
                         &existing,
-                        mutation_account,
-                        previous_secret.as_ref(),
+                        desired_ref.as_deref(),
+                        transaction_id.as_deref(),
                         old_was_running,
                         old_token.as_deref(),
                     )
@@ -715,7 +771,56 @@ impl AppState {
             }
         }
 
+        if let Some(transaction_id) = transaction_id.as_deref() {
+            let expected_state = if desired_ref.is_some() {
+                infimount_mcp::registry::SecretTransactionState::SecretWritten
+            } else {
+                infimount_mcp::registry::SecretTransactionState::Prepared
+            };
+            if infimount_mcp::registry::advance_secret_transaction(
+                self.registry.path(),
+                transaction_id,
+                expected_state,
+                infimount_mcp::registry::SecretTransactionState::ReferenceCommitted,
+            )
+            .is_err()
+            {
+                self.recover_secret_transaction_locked()?;
+            } else {
+                if let Some(previous) = previous_ref
+                    .as_deref()
+                    .filter(|previous| desired_ref.as_deref() != Some(*previous))
+                {
+                    if self.secret_store.delete(previous).is_err() {
+                        return Err(err(
+                            McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                            "previous MCP authentication cleanup is pending recovery",
+                        ));
+                    }
+                }
+                if infimount_mcp::registry::finish_secret_transaction(
+                    self.registry.path(),
+                    transaction_id,
+                )
+                .is_err()
+                {
+                    self.recover_secret_transaction_locked()?;
+                }
+            }
+        }
+
         self.mcp_status().await
+    }
+
+    fn recover_secret_transaction_locked(&self) -> McpResult<()> {
+        let storages = self.registry.load_all()?;
+        let settings = self.settings_store.load()?;
+        infimount_mcp::registry::recover_pending_secret_transactions(
+            self.registry.path(),
+            &storages,
+            self.secret_store.as_ref(),
+            settings.auth_token_ref.as_deref(),
+        )
     }
 
     pub async fn start_http_server(&self) -> McpResult<McpRuntimeStatus> {
@@ -855,11 +960,11 @@ impl AppState {
         Ok(())
     }
 
-    async fn rollback_auth_transaction_async(
+    async fn rollback_auth_reference_transaction_async(
         &self,
         settings: &McpSettings,
-        secret_account: &str,
-        secret: Option<&Value>,
+        desired_ref: Option<&str>,
+        transaction_id: Option<&str>,
         runtime_was_running: bool,
         token: Option<&str>,
     ) -> Vec<&'static str> {
@@ -867,12 +972,22 @@ impl AppState {
         if self.stop_http_server_inner().await.is_err() {
             failures.push("stop_runtime");
         }
-        if persist_secret_bundle(self.secret_store.as_ref(), secret_account, secret).is_err() {
-            failures.push("restore_secret");
-        }
-        if self.settings_store.save_atomic(settings).is_err() {
+
+        let settings_restored = self.settings_store.save_atomic(settings).is_ok();
+        if !settings_restored {
             failures.push("restore_settings");
         }
+
+        if settings_restored {
+            if let Some(desired_ref) =
+                desired_ref.filter(|desired| settings.auth_token_ref.as_deref() != Some(*desired))
+            {
+                if self.secret_store.delete(desired_ref).is_err() {
+                    failures.push("remove_staged_secret");
+                }
+            }
+        }
+
         if runtime_was_running && failures.is_empty() {
             if self.reconcile_runtime_inner(settings, token).await.is_err() {
                 failures.push("restore_runtime");
@@ -892,9 +1007,22 @@ impl AppState {
                 }
             }
         }
-        if !failures.is_empty() {
+
+        if failures.is_empty() {
+            if let Some(transaction_id) = transaction_id {
+                if infimount_mcp::registry::abandon_secret_transaction_after_rollback(
+                    self.registry.path(),
+                    transaction_id,
+                )
+                .is_err()
+                {
+                    failures.push("remove_transaction_journal");
+                }
+            }
+        } else {
             let _ = self.stop_http_server_inner().await;
         }
+
         failures
     }
 
@@ -1448,12 +1576,12 @@ mod tests {
             .await
             .expect("rotate live token");
         let endpoint = rotated.endpoint.expect("running endpoint");
-        let rotated_token = resolve_auth_token(
-            &Some(MCP_AUTH_TOKEN_ACCOUNT.to_string()),
-            secret_store.as_ref(),
-        )
-        .unwrap()
-        .unwrap();
+        let rotated_settings = state.settings_store.load().unwrap();
+        let rotated_ref = rotated_settings.auth_token_ref.clone().unwrap();
+        assert!(rotated_ref.starts_with("mcp/http-auth/revision/"));
+        let rotated_token = resolve_auth_token(&Some(rotated_ref), secret_store.as_ref())
+            .unwrap()
+            .unwrap();
         assert_ne!(rotated_token, "old-token");
         assert!(verify_auth_token_accepted(&endpoint, &rotated_token).await);
         assert!(verify_auth_token_rejected(&endpoint, "old-token").await);
@@ -1512,12 +1640,12 @@ mod tests {
         assert!(first_result.is_ok());
         assert!(second_result.is_ok());
 
-        let final_token = resolve_auth_token(
-            &Some(MCP_AUTH_TOKEN_ACCOUNT.to_string()),
-            secret_store.as_ref(),
-        )
-        .unwrap()
-        .unwrap();
+        let final_settings = state.settings_store.load().unwrap();
+        let final_ref = final_settings.auth_token_ref.clone().unwrap();
+        assert!(final_ref.starts_with("mcp/http-auth/revision/"));
+        let final_token = resolve_auth_token(&Some(final_ref), secret_store.as_ref())
+            .unwrap()
+            .unwrap();
         let endpoint = state.mcp_status().await.unwrap().endpoint.unwrap();
         assert!(verify_auth_token_accepted(&endpoint, &final_token).await);
         assert!(final_token == "first-token" || final_token == "second-token");

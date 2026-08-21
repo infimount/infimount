@@ -342,10 +342,12 @@ fn kill_process_tree(child: &mut Child) {
     {
         use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
         use windows_sys::Win32::System::JobObjects::{
-            AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         };
-        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+        };
 
         unsafe {
             let job: HANDLE = CreateJobObjectW(std::ptr::null(), std::ptr::null());
@@ -358,11 +360,8 @@ fn kill_process_tree(child: &mut Child) {
                     &info as *const _ as *const _,
                     std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
                 );
-                let process_handle: HANDLE = OpenProcess(
-                    PROCESS_TERMINATE | PROCESS_SET_QUOTA,
-                    0,
-                    child.id(),
-                );
+                let process_handle: HANDLE =
+                    OpenProcess(PROCESS_TERMINATE | PROCESS_SET_QUOTA, 0, child.id());
                 if process_handle != 0 {
                     let _ = AssignProcessToJobObject(job, process_handle);
                     CloseHandle(process_handle);
