@@ -145,7 +145,7 @@ describe("ActivationWizard client adapters", () => {
     const onOpenMcpSettings = vi.fn();
     const onValidateSidecar = vi.mocked(runActivationProbe).mockResolvedValue({
       sidecar: { binaryFound: true, executable: true, canonicalPath: "/mcp", version: "0.8.0", versionMatch: true, doctorHealthy: true, sha256: "hash", checksumVerified: true, errorCode: null },
-      mcpHandshakeOk: true, mcpAllowedOpOk: true, mcpDenialProven: true, mcpAuditOk: true, overallOk: true, errorCode: null,
+      mcpHandshakeOk: true, mcpAllowedOpOk: true, mcpDenialProven: true, mcpAuditOk: true, scopeIsolationPassed: true, safeDefaultProfilePassed: true, advancedToolsEnabled: false, overallOk: true, errorCode: null,
     });
     renderWizard({ initialStep: "mcp", initialCompletedSteps: ["welcome", "storage", "workspace"], onOpenMcpSettings });
     fireEvent.click(screen.getByRole("button", { name: "Open MCP settings" }));
@@ -158,7 +158,7 @@ describe("ActivationWizard client adapters", () => {
   it("runs the safety probe and renders every verification check", async () => {
     vi.mocked(runActivationProbe).mockResolvedValue({
       sidecar: { binaryFound: true, executable: true, canonicalPath: "/mcp", version: "0.8.0", versionMatch: true, doctorHealthy: true, sha256: "hash", checksumVerified: true, errorCode: null },
-      mcpHandshakeOk: true, mcpAllowedOpOk: true, mcpDenialProven: true, mcpAuditOk: true, overallOk: true, errorCode: null,
+      mcpHandshakeOk: true, mcpAllowedOpOk: true, mcpDenialProven: true, mcpAuditOk: true, scopeIsolationPassed: true, safeDefaultProfilePassed: true, advancedToolsEnabled: false, overallOk: true, errorCode: null,
     });
     renderWizard({ initialStep: "verify", initialCompletedSteps: ["welcome", "storage", "workspace", "mcp"] });
     expect(screen.getByText(/Run the safety probe/)).toBeInTheDocument();

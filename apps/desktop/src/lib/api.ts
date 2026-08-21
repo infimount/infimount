@@ -110,6 +110,7 @@ export interface ListVersionsResult {
   path: string;
   versions: FileVersion[];
   next_cursor: string | null;
+  truncated: boolean;
 }
 
 export interface DeleteVersionResult {
@@ -410,8 +411,16 @@ export interface UpdateStorageResult {
   warning?: string | null;
 }
 
-export function updateStorage(storageId: string, storage: StorageDraft): Promise<UpdateStorageResult> {
-  return invokeOrThrow<UpdateStorageResult>("update_storage", { storageId, storage });
+export function updateStorage(
+  storageId: string,
+  storage: StorageDraft,
+  confirmWorkspaceCredentialChange = false,
+): Promise<UpdateStorageResult> {
+  return invokeOrThrow<UpdateStorageResult>("update_storage", {
+    storageId,
+    storage,
+    confirmWorkspaceCredentialChange,
+  });
 }
 
 export interface RemoveStorageResult {
@@ -461,6 +470,8 @@ export interface StorageImportPreview {
   exposureChanges: StorageImportChange[];
   missingSecretFields: MissingSecretField[];
   warnings: string[];
+  requiresConfirmation: boolean;
+  confirmationReasons: string[];
 }
 
 export interface PreviewStorageImportRequest {
@@ -532,12 +543,22 @@ export interface SetTelemetryConsentInput {
   consent: boolean;
 }
 
+export interface SetLocalEventPersistenceInput {
+  enabled: boolean;
+}
+
 export function saveWizardState(request: SaveWizardStateInput): Promise<AppSettings> {
   return invokeOrThrow<AppSettings>("save_wizard_state", { request });
 }
 
 export function setTelemetryConsent(request: SetTelemetryConsentInput): Promise<AppSettings> {
   return invokeOrThrow<AppSettings>("set_telemetry_consent", { request });
+}
+
+export function setLocalEventPersistence(
+  request: SetLocalEventPersistenceInput,
+): Promise<AppSettings> {
+  return invokeOrThrow<AppSettings>("set_local_event_persistence", { request });
 }
 
 export function listMcpAuditEvents(limit = 200): Promise<McpAuditEvent[]> {
@@ -757,6 +778,15 @@ export function deleteWorkspaceWithFiles(id: string, confirmDeleteFiles: boolean
   return invokeOrThrow<void>("delete_workspace_with_files", {
     request: { id, confirmDeleteFiles },
   });
+}
+
+export interface ArchiveUnsupportedWorkspacesResult {
+  archivedCount: number;
+  backupPath: string | null;
+}
+
+export function archiveUnsupportedWorkspaces(): Promise<ArchiveUnsupportedWorkspacesResult> {
+  return invokeOrThrow<ArchiveUnsupportedWorkspacesResult>("archive_unsupported_workspaces");
 }
 
 export function importLegacyWorkspaces(request: ImportLegacyWorkspacesInput): Promise<number> {

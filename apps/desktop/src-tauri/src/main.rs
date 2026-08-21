@@ -22,6 +22,12 @@ fn main() {
 
     tauri::Builder::default()
         .manage(app_state)
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .setup(|app| {
             #[cfg(desktop)]
             app.handle()
@@ -101,6 +107,8 @@ fn main() {
             commands::export_shareable_config,
             commands::preview_storage_import_cmd,
             commands::apply_storage_import_cmd,
+            commands::cancel_storage_import_preview_cmd,
+            commands::zeroize_storage_import_previews_cmd,
             commands::upload_dropped_files,
             commands::plan_transfer_entries,
             commands::transfer_entries,
@@ -133,6 +141,7 @@ fn main() {
             commands::create_recovery_backup,
             commands::preview_recovery_restore,
             commands::apply_recovery_restore,
+            commands::cancel_recovery_restore_preview,
             commands::list_versions,
             commands::read_file_version,
             commands::delete_version,
@@ -142,12 +151,13 @@ fn main() {
             commands::update_workspace,
             commands::delete_workspace,
             commands::delete_workspace_with_files,
-            commands::import_legacy_workspaces,
+            commands::archive_unsupported_workspaces,
             commands::list_workspace_checkpoints,
             commands::create_workspace_checkpoint,
             commands::restore_workspace_checkpoint,
             commands::save_wizard_state,
             commands::set_telemetry_consent,
+            commands::set_local_event_persistence,
             commands::export_diagnostics,
             commands::get_startup_health,
             commands::get_product_events,
@@ -156,6 +166,12 @@ fn main() {
             commands::get_os_info,
             commands::run_activation_probe,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                commands::zeroize_storage_import_previews_cmd();
+                commands::zeroize_recovery_restore_previews_cmd();
+            }
+        });
 }

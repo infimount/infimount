@@ -189,6 +189,7 @@ describe("release zero-manual smoke path", () => {
       wizardStep: null,
       wizardCompletedSteps: [],
       telemetryConsent: "unknown",
+      localEventPersistence: true,
     });
     vi.mocked(listStorageSchemas).mockResolvedValue([
       {
@@ -217,6 +218,9 @@ describe("release zero-manual smoke path", () => {
       mcpAllowedOpOk: true,
       mcpDenialProven: true,
       mcpAuditOk: true,
+      scopeIsolationPassed: true,
+      safeDefaultProfilePassed: true,
+      advancedToolsEnabled: false,
       overallOk: true,
       errorCode: null,
     });

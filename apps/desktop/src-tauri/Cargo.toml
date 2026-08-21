@@ -22,6 +22,7 @@ dirs = "6"
 urlencoding = "2.1"
 open = "5"
 uuid = { version = "1", features = ["v4"] }
+libc = "0.2"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -30,4 +31,12 @@ tauri-build = { version = "2", features = [] }
 tempfile = "3"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2.10.0"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }

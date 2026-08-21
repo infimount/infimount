@@ -68,7 +68,7 @@ pub struct ToolDefinition {
     pub default_enabled: bool,
 }
 
-const SAFE_DEFAULT_TOOLS: &[&str] = &[
+pub const SAFE_DEFAULT_TOOLS: &[&str] = &[
     "list_dir",
     "stat_path",
     "read_file",

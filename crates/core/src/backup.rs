@@ -174,30 +174,6 @@ pub fn decrypt_backup(passphrase: &str, armored: &str) -> Result<BackupPayload, 
     Ok(payload)
 }
 
-pub fn encrypt_backup_to_file(
-    passphrase: &str,
-    payload: &BackupPayload,
-    path: &std::path::Path,
-) -> Result<(), BackupError> {
-    let armored = encrypt_backup(passphrase, payload)?;
-    let parent = path.parent().unwrap_or(std::path::Path::new(""));
-    if !parent.as_os_str().is_empty() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp_path = path.with_extension("tmp");
-    std::fs::write(&tmp_path, armored.as_bytes())?;
-    std::fs::rename(&tmp_path, path)?;
-    Ok(())
-}
-
-pub fn decrypt_backup_from_file(
-    passphrase: &str,
-    path: &std::path::Path,
-) -> Result<BackupPayload, BackupError> {
-    let armored = std::fs::read_to_string(path)?;
-    decrypt_backup(passphrase, &armored)
-}
-
 pub fn zeroize(value: &mut String) {
     value.zeroize();
 }

@@ -159,6 +159,12 @@ export function McpPolicySection({
                       Add rule
                     </Button>
                   </div>
+                  {policy.rules.some((rule) => rule.source.kind !== "manual") ? (
+                    <p className="text-[11px] text-muted-foreground">
+                      Rules marked <span className="text-[10px] font-semibold text-muted-foreground/70">WS</span> are
+                      managed by a bound workspace and cannot be edited here.
+                    </p>
+                  ) : null}
                   {policy.rules.length > 0 ? (
                     <div className="space-y-2">
                       {policy.rules.map((rule, index) => (
@@ -170,6 +176,7 @@ export function McpPolicySection({
                             <Input
                               value={rule.prefix}
                               placeholder="Path prefix (e.g. projects)"
+                              disabled={rule.source.kind !== "manual"}
                               className={`h-8 border-border/80 font-mono text-xs ${FIELD_FOCUS_CLASS}`}
                               onChange={(event) =>
                                 onUpdatePolicyDraft(storage.id, (current) => {
@@ -195,6 +202,7 @@ export function McpPolicySection({
                           </div>
                           <Select
                             value={rule.access}
+                            disabled={rule.source.kind !== "manual"}
                             onValueChange={(value) =>
                               onUpdatePolicyDraft(storage.id, (current) => {
                                 const next = [...current.rules];

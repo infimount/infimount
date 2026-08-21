@@ -1881,6 +1881,139 @@ async fn copy_path_cross_storage_streams_large_file() {
 }
 
 #[tokio::test]
+async fn copy_path_rejects_alias_copy_into_own_child() {
+    let dir = TempDir::new().unwrap();
+    let shared_root = dir.path().join("shared");
+    std::fs::create_dir_all(shared_root.join("foo")).unwrap();
+    std::fs::write(shared_root.join("foo").join("file.txt"), "hello").unwrap();
+
+    let registry = registry_in(&dir);
+    let mut a = StorageRecord::new(
+        "A".to_string(),
+        "local".to_string(),
+        json!({"root": shared_root.clone()}),
+    );
+    a.mcp_exposed = true;
+    a.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    let mut b = StorageRecord::new(
+        "B".to_string(),
+        "local".to_string(),
+        json!({"root": shared_root}),
+    );
+    b.mcp_exposed = true;
+    b.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    registry.save_all_atomic(&[a, b]).unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+
+    let error = copy_path(
+        &ctx,
+        CopyPathInput {
+            session_id: None,
+            confirmation_id: None,
+            src: "/A/foo".to_string(),
+            dst: "/B/foo/child".to_string(),
+            overwrite: false,
+            recursive: true,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, McpErrorCode::ERR_TRANSFER_NAMESPACE_CONFLICT);
+    assert!(
+        !dir.path().join("shared/foo/child").exists(),
+        "rejected before destination creation"
+    );
+}
+
+#[tokio::test]
+async fn copy_path_rejects_alias_into_nested_root() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("root");
+    let nested = root.join("foo");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(nested.join("file.txt"), "hello").unwrap();
+
+    let registry = registry_in(&dir);
+    let mut a = StorageRecord::new("A".to_string(), "local".to_string(), json!({"root": root}));
+    a.mcp_exposed = true;
+    a.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    let mut b = StorageRecord::new(
+        "B".to_string(),
+        "local".to_string(),
+        json!({"root": nested}),
+    );
+    b.mcp_exposed = true;
+    b.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    registry.save_all_atomic(&[a, b]).unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+
+    let error = copy_path(
+        &ctx,
+        CopyPathInput {
+            session_id: None,
+            confirmation_id: None,
+            src: "/A/foo".to_string(),
+            dst: "/B/child".to_string(),
+            overwrite: false,
+            recursive: true,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, McpErrorCode::ERR_TRANSFER_NAMESPACE_CONFLICT);
+}
+
+#[tokio::test]
+async fn copy_path_rejects_copy_into_own_subdirectory_same_storage() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir_all(root.join("foo")).unwrap();
+    std::fs::write(root.join("foo").join("file.txt"), "hello").unwrap();
+
+    let registry = registry_in(&dir);
+    let mut storage = StorageRecord::new(
+        "Local".to_string(),
+        "local".to_string(),
+        json!({"root": root.clone()}),
+    );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    registry.save_all_atomic(&[storage]).unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+
+    let error = copy_path(
+        &ctx,
+        CopyPathInput {
+            session_id: None,
+            confirmation_id: None,
+            src: "/Local/foo".to_string(),
+            dst: "/Local/foo/child".to_string(),
+            overwrite: false,
+            recursive: true,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, McpErrorCode::ERR_TRANSFER_NAMESPACE_CONFLICT);
+    assert!(!root.join("foo/child").exists());
+}
+
+#[tokio::test]
 async fn copy_path_recursive_preserves_structure() {
     let dir = TempDir::new().unwrap();
     let src_root = dir.path().join("src");
@@ -2458,71 +2591,6 @@ async fn generate_download_link_local_backend_returns_presign_not_supported() {
 }
 
 #[tokio::test]
-async fn list_versions_cursor_stability() {
-    use crate::tools_fs::list_versions::{decode_cursor, encode_cursor};
-
-    let versions = vec![
-        VersionEntry {
-            version: "v3".to_string(),
-            size_bytes: Some(300),
-            modified_at: Some("2024-01-03T10:00:00Z".to_string()),
-            etag: None,
-        },
-        VersionEntry {
-            version: "v1".to_string(),
-            size_bytes: Some(100),
-            modified_at: Some("2024-01-01T10:00:00Z".to_string()),
-            etag: None,
-        },
-        VersionEntry {
-            version: "v2".to_string(),
-            size_bytes: Some(200),
-            modified_at: Some("2024-01-02T10:00:00Z".to_string()),
-            etag: None,
-        },
-    ];
-
-    let mut sorted = versions.clone();
-    sorted.sort_by(|a, b| {
-        let a_time = a.modified_at.as_deref().unwrap_or("");
-        let b_time = b.modified_at.as_deref().unwrap_or("");
-        b_time.cmp(a_time).then_with(|| a.version.cmp(&b.version))
-    });
-
-    assert_eq!(sorted[0].version, "v3");
-    assert_eq!(sorted[1].version, "v2");
-    assert_eq!(sorted[2].version, "v1");
-
-    let limit = 2;
-
-    let page1_start = 0;
-    let page1_end = limit.min(sorted.len());
-    let page1 = sorted[page1_start..page1_end].to_vec();
-    let next_cursor = if page1_end < sorted.len() {
-        Some(encode_cursor(page1_end))
-    } else {
-        None
-    };
-
-    assert_eq!(page1[0].version, "v3");
-    assert_eq!(page1[1].version, "v2");
-    assert!(next_cursor.is_some());
-
-    let offset = decode_cursor(next_cursor.as_deref()).unwrap();
-    let page2_start = offset;
-    let page2_end = (page2_start + limit).min(sorted.len());
-    let page2 = sorted[page2_start..page2_end].to_vec();
-
-    assert_eq!(page2[0].version, "v1");
-    assert!(
-        page2.is_empty()
-            || page1
-                .iter()
-                .all(|v| !page2.iter().any(|p| p.version == v.version))
-    );
-}
-
-#[tokio::test]
 async fn list_versions_local_backend_returns_not_supported() {
     let dir = TempDir::new().unwrap();
     let local_root = dir.path().join("local");
@@ -2559,4 +2627,145 @@ async fn list_versions_local_backend_returns_not_supported() {
     .unwrap_err();
 
     assert_eq!(err.code, McpErrorCode::ERR_VERSIONS_NOT_SUPPORTED);
+}
+
+#[tokio::test]
+async fn write_file_enforces_four_mib_cap() {
+    let dir = TempDir::new().unwrap();
+    let local_root = dir.path().join("local");
+    std::fs::create_dir_all(&local_root).unwrap();
+
+    let registry = registry_in(&dir);
+    let mut storage = StorageRecord::new(
+        "Local".to_string(),
+        "local".to_string(),
+        json!({"root": local_root}),
+    );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    registry.save_all_atomic(&[storage]).unwrap();
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
+
+    let max = super::write_file::MAX_MCP_WRITE_BYTES;
+    let ok = write_file(
+        &ctx,
+        WriteFileInput {
+            session_id: None,
+            user_metadata: None,
+            confirmation_id: None,
+            path: "/Local/at-limit.txt".to_string(),
+            content: "x".repeat(max),
+            encoding: "utf-8".to_string(),
+            overwrite: false,
+            create_parents: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(ok.written_bytes as usize, max);
+
+    let err = write_file(
+        &ctx,
+        WriteFileInput {
+            session_id: None,
+            user_metadata: None,
+            confirmation_id: None,
+            path: "/Local/over-limit.txt".to_string(),
+            content: "x".repeat(max + 1),
+            encoding: "utf-8".to_string(),
+            overwrite: false,
+            create_parents: false,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, McpErrorCode::ERR_INVALID_PATH);
+    assert!(!local_root.join("over-limit.txt").exists());
+}
+
+#[tokio::test]
+async fn write_file_atomic_create_succeeds_and_never_overwrites() {
+    let dir = TempDir::new().unwrap();
+    let local_root = dir.path().join("local");
+    std::fs::create_dir_all(&local_root).unwrap();
+    std::fs::write(local_root.join("existing.txt"), "original").unwrap();
+
+    let registry = registry_in(&dir);
+    let mut storage = StorageRecord::new(
+        "Local".to_string(),
+        "local".to_string(),
+        json!({"root": local_root}),
+    );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    registry.save_all_atomic(&[storage]).unwrap();
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
+
+    let fresh = write_file(
+        &ctx,
+        WriteFileInput {
+            session_id: None,
+            user_metadata: None,
+            confirmation_id: None,
+            path: "/Local/fresh.txt".to_string(),
+            content: "first".to_string(),
+            encoding: "utf-8".to_string(),
+            overwrite: false,
+            create_parents: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(fresh.written_bytes, 5);
+
+    // A concurrent second creator gets AlreadyExists and never overwrites.
+    let err = write_file(
+        &ctx,
+        WriteFileInput {
+            session_id: None,
+            user_metadata: None,
+            confirmation_id: None,
+            path: "/Local/fresh.txt".to_string(),
+            content: "overwritten".to_string(),
+            encoding: "utf-8".to_string(),
+            overwrite: false,
+            create_parents: false,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, McpErrorCode::ERR_ALREADY_EXISTS);
+    assert_eq!(
+        std::fs::read_to_string(local_root.join("fresh.txt")).unwrap(),
+        "first"
+    );
+    assert_eq!(
+        std::fs::read_to_string(local_root.join("existing.txt")).unwrap(),
+        "original"
+    );
+}
+
+#[test]
+fn write_file_rejects_unsupported_atomic_no_overwrite_backend() {
+    let capability = opendal::Capability::default();
+    assert!(!super::write_file::supports_atomic_no_overwrite(
+        &capability
+    ));
+    let supported = opendal::Capability {
+        write_with_if_not_exists: true,
+        ..Default::default()
+    };
+    assert!(super::write_file::supports_atomic_no_overwrite(&supported));
 }

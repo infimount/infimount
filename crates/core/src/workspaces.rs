@@ -12,7 +12,7 @@ use crate::atomic_file;
 use crate::models::{CoreError, Result};
 
 pub const WORKSPACES_SCHEMA_VERSION: u32 = 1;
-pub const WORKSPACE_RECORD_SCHEMA_VERSION: u32 = 1;
+pub const WORKSPACE_RECORD_SCHEMA_VERSION: u32 = 2;
 pub const WORKSPACES_FILE: &str = "workspaces.json";
 pub const MAX_CHECKPOINT_IDS: usize = 200;
 const WORKSPACE_MUTATION_LOCK_FILE: &str = "workspace-mutations.lock";
@@ -40,10 +40,21 @@ pub struct WorkspaceRecord {
     pub access_profile: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy_rule_id: Option<String>,
+    /// Namespace identity of the storage this workspace grant refers to. Empty
+    /// for pre-v0.8 records, which are intentionally not migrated.
+    #[serde(default)]
+    pub storage_namespace_fingerprint: String,
     pub created_at: String,
     pub updated_at: String,
     pub memory_files: Vec<String>,
     pub checkpoint_ids: Vec<String>,
+}
+
+/// True only for current-schema records that carry a namespace fingerprint.
+/// Legacy Agent Workspace records must be recreated, never auto-upgraded.
+pub fn workspace_schema_supported(workspace: &WorkspaceRecord) -> bool {
+    workspace.schema_version == WORKSPACE_RECORD_SCHEMA_VERSION
+        && !workspace.storage_namespace_fingerprint.is_empty()
 }
 
 fn default_schema_version() -> u32 {
@@ -102,6 +113,11 @@ pub struct TemplateFile {
 }
 
 pub fn validate_workspace_metadata(workspace: &WorkspaceRecord) -> Result<()> {
+    if !workspace_schema_supported(workspace) {
+        return Err(CoreError::Config(
+            "workspace schema is unsupported; recreate the workspace after upgrading".to_string(),
+        ));
+    }
     let expected_memory_files = memory_files_for(&workspace.template_id);
     if workspace.memory_files != expected_memory_files {
         return Err(CoreError::Config(
@@ -240,6 +256,10 @@ impl WorkspaceRegistry {
             cache: Mutex::new(HashMap::new()),
             cached_revision: Mutex::new(0),
         }
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.dir
     }
 
     fn path(&self) -> PathBuf {
@@ -431,6 +451,49 @@ impl WorkspaceRegistry {
         Ok(())
     }
 
+    /// Back up the workspace file and replace it with an empty registry so
+    /// the user can recreate current-schema workspaces.
+    ///
+    /// - Only archives when unsupported (pre-v0.8) records exist.
+    /// - Never deletes user workspace files on storage.
+    /// - Never migrates or trusts old policy bindings.
+    pub fn archive_unsupported(&self) -> Result<usize> {
+        let _lock = self
+            .file_lock
+            .lock()
+            .map_err(|e| CoreError::Config(format!("workspace registry lock poisoned: {e}")))?;
+        let _disk_lock = self.acquire_disk_lock()?;
+        let file = self.load_raw()?;
+        let unsupported_count = file
+            .workspaces
+            .iter()
+            .filter(|w| !workspace_schema_supported(w))
+            .count();
+        if unsupported_count == 0 {
+            return Ok(0);
+        }
+
+        // Back up the existing file with a timestamp suffix.
+        let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+        let backup_name = format!("workspaces.archived.{timestamp}.json");
+        let backup_path = self.dir.join(&backup_name);
+        let source_path = self.path();
+        if source_path.exists() {
+            fs::copy(&source_path, &backup_path)
+                .map_err(|e| CoreError::Config(format!("failed to back up workspace file: {e}")))?;
+        }
+
+        // Write a fresh empty registry.
+        let empty = WorkspacesFile {
+            schema_version: WORKSPACES_SCHEMA_VERSION,
+            revision: file.revision.saturating_add(1),
+            workspaces: Vec::new(),
+        };
+        self.save_raw(&empty)?;
+        self.sync_cache(&empty)?;
+        Ok(unsupported_count)
+    }
+
     pub fn import_legacy(&self, legacy_workspaces: Vec<WorkspaceRecord>) -> Result<usize> {
         let _lock = self
             .file_lock
@@ -506,6 +569,7 @@ mod tests {
             template_id: "coding".to_string(),
             access_profile: "read_write".to_string(),
             policy_rule_id: Some(format!("workspace:{id}")),
+            storage_namespace_fingerprint: format!("fingerprint-{id}"),
             created_at: "2025-01-01T00:00:00Z".to_string(),
             updated_at: "2025-01-01T00:00:00Z".to_string(),
             memory_files: memory_files_for("coding"),

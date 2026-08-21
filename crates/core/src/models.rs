@@ -35,6 +35,14 @@ pub enum CoreError {
 
     #[error("backup error: {0}")]
     Backup(#[from] crate::backup::BackupError),
+
+    /// A transfer failed and its transaction-created destination could not be
+    /// fully removed. The destination is partially populated and requires
+    /// manual cleanup.
+    #[error(
+        "transfer partially completed; partialDestination: true, cleanupRequired: true; the new destination was not present before the transfer and could not be fully removed"
+    )]
+    TransferCleanupRequired,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -68,6 +76,7 @@ impl CoreError {
             },
             CoreError::Serde(_) => ErrorCode::Unknown,
             CoreError::Backup(_) => ErrorCode::Unknown,
+            CoreError::TransferCleanupRequired => ErrorCode::Unknown,
         }
     }
 }
@@ -78,9 +87,15 @@ impl Serialize for CoreError {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("CoreError", 2)?;
+        let partial_destination = matches!(self, CoreError::TransferCleanupRequired);
+        let mut state =
+            serializer.serialize_struct("CoreError", if partial_destination { 4 } else { 2 })?;
         state.serialize_field("code", &self.code())?;
         state.serialize_field("message", &self.to_string())?;
+        if partial_destination {
+            state.serialize_field("partialDestination", &true)?;
+            state.serialize_field("cleanupRequired", &true)?;
+        }
         state.end()
     }
 }

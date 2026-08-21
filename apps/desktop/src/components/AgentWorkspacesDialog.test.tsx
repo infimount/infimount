@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentWorkspacesDialog } from "./AgentWorkspacesDialog";
 import {
   listWorkspaces,
+  archiveUnsupportedWorkspaces,
   createWorkspaceAtomic as apiCreateWorkspaceAtomic,
   updateWorkspace as apiUpdateWorkspace,
   createWorkspaceCheckpointCommand,
@@ -23,6 +24,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     listWorkspaces: vi.fn().mockResolvedValue([]),
+    archiveUnsupportedWorkspaces: vi.fn().mockResolvedValue({
+      archivedCount: 0,
+      backupPath: null,
+    }),
     createWorkspaceAtomic: vi.fn().mockResolvedValue({
       workspace: {},
       policyUpdated: false,
@@ -134,6 +139,10 @@ describe("AgentWorkspacesDialog", () => {
       },
     ]);
     (listWorkspaces as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    vi.mocked(archiveUnsupportedWorkspaces).mockResolvedValue({
+      archivedCount: 0,
+      backupPath: null,
+    });
     (apiCreateWorkspaceAtomic as ReturnType<typeof vi.fn>).mockResolvedValue({
       workspace: {
         id: "ws-1",
@@ -183,6 +192,32 @@ describe("AgentWorkspacesDialog", () => {
 
     await waitFor(() => {
       expect(screen.getAllByText("Agent Research").length).toBeGreaterThan(0);
+    });
+  });
+
+  it("archives unsupported workspace metadata and reloads the workspace list", async () => {
+    vi.mocked(archiveUnsupportedWorkspaces).mockResolvedValue({
+      archivedCount: 2,
+      backupPath: "/tmp/workspaces.archived.20260821.json",
+    });
+    (listWorkspaces as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    render(
+      <AgentWorkspacesDialog
+        open
+        storages={[storage]}
+        onOpenChange={vi.fn()}
+        onSelectStorage={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTitle("Archive unsupported workspaces"));
+
+    await waitFor(() => {
+      expect(archiveUnsupportedWorkspaces).toHaveBeenCalledTimes(1);
+      expect(listWorkspaces).toHaveBeenCalledTimes(2);
     });
   });
 

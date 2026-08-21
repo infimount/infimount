@@ -165,3 +165,33 @@ Some capabilities are backend-dependent:
 - Google Drive, WebDAV, SFTP, and FTP do not expose object-version tools. OneDrive version tools require `versioning` to be enabled and supported by the account.
 
 See [Backend Capability Matrix](backend-capabilities.md) for the public support matrix.
+
+## Bounded MCP Version Listing
+
+`list_versions` is enabled in the safe default tool set because the implementation is bounded:
+
+- at most **10,000** versions are scanned per path;
+- at most **1,000** versions are returned per page;
+- results are sorted only from the bounded collected set;
+- a `truncated: true` flag is returned when more versions may exist;
+- pagination continues through an HMAC-signed cursor bound to the storage, the normalized path, and the storage revision.
+
+The cursor cannot be replayed on another path or storage, cannot survive a storage revision change, and never returns a continuation beyond the scan cap. Desktop and MCP share this single bounded implementation.
+
+## Upload Staging
+
+Desktop uploads are staged in a per-user application-owned directory before the destination is created:
+
+```text
+$XDG_RUNTIME_DIR/infimount/upload-staging
+```
+
+with fallback to the per-user application cache directory. The staging root is verified with `symlink_metadata`, rejects symlinks and non-directories, and on Unix requires the directory owner to match the current effective UID with mode `0700`. Staged files use UUID names created with `create_new` and mode `0600`, and stale cleanup traverses only the verified owned root without following symlinks. A cross-process file lock enforces an aggregate staging quota across processes.
+
+## Bounded and Atomic MCP `write_file`
+
+`write_file` accepts at most **4 MiB** of text content and is disabled by default. A no-overwrite write uses the backend's atomic create-if-absent operation; a backend that cannot guarantee atomic no-overwrite returns `ERR_BACKEND_UNSUPPORTED` rather than risking a stat-then-write race that could silently overwrite an existing object.
+
+## Transactional Directory Transfers
+
+Directory transfers that create a previously absent destination are transactional: the tree is staged and committed with a rename where the backend supports it. On failure or cancellation the transaction-created destination is removed; a destination that existed before the operation is never deleted. If cleanup itself fails, the error reports `partialDestination: true` and `cleanupRequired: true` without exposing local absolute roots or credentials.

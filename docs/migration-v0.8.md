@@ -18,7 +18,9 @@ Restart stdio clients after upgrade. Desktop-generated client snippets point to 
 
 ## Workspaces
 
-Browser-local workspace metadata moves into `~/.infimount/workspaces.json`. Imported records are normalized and should be reviewed in Agent Workspaces. Workspace access is represented by policy rules named `workspace:<id>`. New workspaces default to read-only access.
+Workspace metadata is stored in `~/.infimount/workspaces.json` using schema version 2. Each workspace is bound to the namespace identity (a fingerprint of the backend, account authority, container, and canonical root) of the storage it references, so a workspace always points at the same underlying namespace even if the storage record is recreated. Workspace access is represented by policy rules named `workspace:<id>`. New workspaces default to read-only access.
+
+Pre-v0.8 browser-local workspace metadata is **not migrated**. The legacy import command and its startup flow are disabled; the old `infimount:agent-workspaces:v1` and `infimount:agent-workspace-checkpoints:v1` browser keys are never read or removed. After upgrading, recreate any workspaces you need in Agent Workspaces and verify each one against the correct storage namespace.
 
 ## Recovery and rollback
 

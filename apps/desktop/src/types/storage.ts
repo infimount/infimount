@@ -233,6 +233,7 @@ export interface AppSettings {
   wizardStep: string | null;
   wizardCompletedSteps: string[];
   telemetryConsent: "unknown" | "granted" | "denied";
+  localEventPersistence: boolean;
 }
 
 export interface McpAuditExportManifest {
@@ -333,6 +334,9 @@ export interface ActivationProbeOutput {
   mcpAllowedOpOk: boolean;
   mcpDenialProven: boolean;
   mcpAuditOk: boolean;
+  scopeIsolationPassed: boolean;
+  safeDefaultProfilePassed: boolean;
+  advancedToolsEnabled: boolean;
   overallOk: boolean;
   errorCode: string | null;
 }

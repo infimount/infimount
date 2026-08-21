@@ -7,7 +7,6 @@ import {
   restoreWorkspaceCheckpointCommand,
   deleteWorkspace as apiDeleteWorkspace,
   deleteWorkspaceWithFiles as apiDeleteWorkspaceWithFiles,
-  importLegacyWorkspaces as apiImportLegacy,
   type WorkspaceCheckpoint,
   type WorkspaceRecord,
 } from "@/lib/api";
@@ -38,8 +37,6 @@ export interface CreateAgentWorkspaceInput {
   applyPolicy?: boolean;
 }
 
-const LEGACY_STORAGE_KEY = "infimount:agent-workspaces:v1";
-const LEGACY_CHECKPOINTS_STORAGE_KEY = "infimount:agent-workspace-checkpoints:v1";
 const MAX_CHECKPOINT_FILE_BYTES = 1024 * 1024;
 
 export const AGENT_WORKSPACE_TEMPLATES: AgentWorkspaceTemplate[] = [
@@ -384,6 +381,11 @@ export async function deleteAgentWorkspaceWithFiles(id: string): Promise<void> {
   await apiDeleteWorkspaceWithFiles(id, true);
 }
 
+export async function archiveUnsupportedAgentWorkspaces(): Promise<{ archivedCount: number; backupPath: string | null }> {
+  const { archiveUnsupportedWorkspaces: apiArchive } = await import("@/lib/api");
+  return apiArchive();
+}
+
 export interface LegacyWorkspaceMigrationOutcome {
   index: number;
   id: string | null;
@@ -397,59 +399,10 @@ export interface LegacyWorkspaceMigrationResult {
 
 export async function migrateLegacyWorkspaces(): Promise<LegacyWorkspaceMigrationResult> {
   const empty: LegacyWorkspaceMigrationResult = { imported: 0, outcomes: [] };
-  if (typeof window === "undefined") return empty;
-  window.localStorage.removeItem(LEGACY_CHECKPOINTS_STORAGE_KEY);
-  const raw = window.localStorage.getItem(LEGACY_STORAGE_KEY);
-  if (!raw) return empty;
-
-  let legacy: unknown[];
-  try {
-    legacy = JSON.parse(raw);
-    if (!Array.isArray(legacy)) return empty;
-  } catch {
-    return empty;
-  }
-
-  let imported = 0;
-  const outcomes: LegacyWorkspaceMigrationOutcome[] = [];
-  const remaining: unknown[] = [];
-  for (const [index, item] of legacy.entries()) {
-    if (!isLegacyWorkspace(item)) {
-      outcomes.push({ index, id: null, status: "invalid" });
-      remaining.push(item);
-      continue;
-    }
-    const record: WorkspaceRecord = {
-      id: item.id,
-      storageId: item.storageId,
-      name: item.name,
-      rootPath: item.rootPath,
-      templateId: item.templateId,
-      createdAt: item.createdAt,
-      updatedAt: item.updatedAt,
-      memoryFiles: item.memoryFiles || [],
-      checkpointIds: item.checkpointIds || [],
-    };
-    try {
-      const count = await apiImportLegacy({ workspaces: [record] });
-      imported += count;
-      outcomes.push({
-        index,
-        id: record.id,
-        status: count > 0 ? "imported" : "already_present",
-      });
-    } catch {
-      outcomes.push({ index, id: record.id, status: "failed" });
-      remaining.push(item);
-    }
-  }
-
-  if (remaining.length === 0) {
-    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
-  } else {
-    window.localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(remaining));
-  }
-  return { imported, outcomes };
+  // Pre-v0.8 Agent Workspaces are not migrated. The browser storage keys are
+  // never read or removed; the migration path is intentionally disabled so the
+  // old state is neither trusted nor silently cleared.
+  return empty;
 }
 
 async function writeTextFile(storageId: string, path: string, content: string): Promise<void> {
@@ -460,20 +413,6 @@ function assertSafeMemoryPath(path: string, allowedPaths: string[]): void {
   if (!allowedPaths.includes(path) || !/^memory\/[A-Za-z0-9._-]+\.md$/.test(path)) {
     throw new Error(`Unsafe workspace memory path: ${path}`);
   }
-}
-
-function isLegacyWorkspace(value: unknown): value is WorkspaceRecord {
-  if (!value || typeof value !== "object") return false;
-  const item = value as WorkspaceRecord;
-  return (
-    typeof item.id === "string" &&
-    typeof item.storageId === "string" &&
-    typeof item.name === "string" &&
-    typeof item.rootPath === "string" &&
-    typeof item.templateId === "string" &&
-    Array.isArray(item.memoryFiles) &&
-    Array.isArray(item.checkpointIds)
-  );
 }
 
 function joinRelativePath(base: string, name: string): string {

@@ -29,11 +29,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Set `withGlobalTauri` to `false` with restrictive CSP for hardened security.
 - Replaced flat onboarding dialog with multi-step ActivationWizard.
 - Migrated workspace storage from `localStorage` to Tauri-backed `WorkspaceRegistry`.
+- Bound workspaces to the storage namespace identity (fingerprint of backend, account, container, and root) and verified the binding whenever workspace access or policy rules change.
+- Rejected storage namespace edits and storage removal while workspaces remain bound, and required explicit confirmation plus validation before committing storage credential changes that affect bound workspaces.
+- Disabled pre-v0.8 Agent Workspaces migration: the legacy import command is unregistered and the browser storage keys are never read or removed.
+- Bounded version listing across desktop and MCP to a single shared implementation: at most 10,000 versions are scanned per path and 1,000 returned per page, with an HMAC-signed cursor bound to the storage, path, and storage revision.
+- Staged desktop uploads under a per-user owned staging directory (`$XDG_RUNTIME_DIR/infimount/upload-staging` or the per-user cache directory) instead of a shared predictable path, with a cross-process lock and verified stale-cleanup that never follows symlinks.
+- Bound MCP `write_file` to 4 MiB and required atomic create-if-absent semantics for no-overwrite writes; backends that cannot guarantee atomic no-overwrite now return an explicit unsupported-backend error instead of a stat-then-write race.
+- Made directory transfers transactional: new destinations are staged and committed with a rename where the backend supports it, and failed or cancelled transfers remove the transaction-created destination while never deleting a destination that existed beforehand.
+- Hardened MCP client command integration: installed client CLIs are captured by identity (canonical path and digest), run under a 30-second timeout with process-tree cleanup, roll back configuration on failure, and never surface raw command output in errors.
+- Made activation reporting explicit: the wizard now reports scope-isolation and safe-default-profile outcomes and ties activation probe events to the current probe run in the MCP audit log.
+- Added a local product-event persistence toggle that is independent of network telemetry consent; disabling it stops local event writes without changing network export behavior.
 
 ### Security
 
 - Reinforced OAuth secret handling so access tokens, refresh tokens, client secrets, authorization codes, device codes, and PKCE verifiers remain masked from UI text, validation output, logs, audit exports, and token-exchange errors.
 - Preserved explicit MCP opt-in: connecting Google Drive or OneDrive does not expose the storage to MCP clients by default.
+- Rejected copy/move transfers that would nest a storage into its own or a peer storage's subtree, and rejected manual storage-policy edits that would override workspace-managed rules.
+- Removed unused file-based backup helpers (`encrypt_backup_to_file`/`decrypt_backup_from_file`) that were not reachable from production paths.
 
 ## [0.7.1] - 2026-06-05
 

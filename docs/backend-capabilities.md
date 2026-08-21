@@ -29,6 +29,10 @@ For backend expansion, a backend is not considered product-ready until it has an
 | SFTP                      | Yes               | No                       | No                       | Linux/macOS only. Key-based SFTP through OpenDAL. Password login is not exposed because the OpenDAL SFTP backend does not support it. Optional remote copy depends on server extension support and `enableCopy`. |
 | FTP                       | Yes               | No                       | No                       | FTP through OpenDAL with username/password auth. Generic copy and rename are not exposed by the backend, so Infimount falls back to stream-copy plus delete for moves where safe. |
 
+## Atomic No-Overwrite Writes
+
+MCP `write_file` with `overwrite=false` requires an atomic create-if-absent write (`write_with_if_not_exists`). Backends that cannot guarantee atomic no-overwrite return `ERR_BACKEND_UNSUPPORTED` for no-overwrite writes instead of falling back to a stat-then-write sequence that could race and silently overwrite an existing object. Use the desktop **Validate** action to check a storage's effective capabilities, including atomic create-if-absent support.
+
 ## Error Semantics
 
 Version-aware tools return deterministic MCP errors:

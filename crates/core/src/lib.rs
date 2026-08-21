@@ -14,7 +14,8 @@ pub use crate::models::{CoreError, Entry, Result, Source, SourceKind};
 pub use crate::registry::OperatorRegistry;
 pub use crate::runtime::{get_or_create_operator, invalidate_source, CacheKey, OperatorCache};
 pub use crate::secrets::{
-    contains_plaintext_secrets, discover_secret_field_names, extract_secret_fields,
-    merge_secret_config, strip_secret_fields, MemorySecretStore, NativeSecretStore, SecretStore,
-    SecretStoreStatus, UnavailableSecretStore, KEYRING_SERVICE,
+    canonical_secret_path, contains_plaintext_secrets, discover_secret_field_names,
+    extract_secret_fields, is_secret_field_name, mask_secret_paths, merge_secret_config,
+    parse_secret_path, strip_secret_fields, MemorySecretStore, NativeSecretStore, SecretPath,
+    SecretStore, SecretStoreStatus, UnavailableSecretStore, KEYRING_SERVICE,
 };

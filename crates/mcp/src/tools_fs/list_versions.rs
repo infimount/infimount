@@ -1,10 +1,7 @@
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine;
-use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::errors::{err_with_details, map_opendal_error, McpErrorCode, McpResult};
+use crate::errors::{err_with_details, map_core_error, map_opendal_error, McpErrorCode, McpResult};
 use crate::opendal_adapter;
 use crate::path::{enforce_root_operation, parse_mcp_path, resolve_storage_path, FsOp};
 use crate::policy::McpOperation;
@@ -28,6 +25,7 @@ pub struct ListVersionsOutput {
     pub path: String,
     pub versions: Vec<VersionEntry>,
     pub next_cursor: Option<String>,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,12 +34,6 @@ pub struct VersionEntry {
     pub size_bytes: Option<u64>,
     pub modified_at: Option<String>,
     pub etag: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct CursorV1 {
-    v: u8,
-    offset: usize,
 }
 
 pub async fn list_versions(
@@ -58,7 +50,6 @@ pub async fn list_versions(
 
     let parsed = parse_mcp_path(&input.path)?;
     enforce_root_operation(FsOp::ListVersions, &parsed)?;
-    let offset = decode_cursor(input.cursor.as_deref())?;
 
     if parsed.is_root {
         return Err(err_with_details(
@@ -123,111 +114,37 @@ pub async fn list_versions(
         ));
     }
 
-    let versions = collect_versions(&op, &parsed.backend_path).await?;
-
-    let mut sorted_versions = versions;
-    sorted_versions.sort_by(|a, b| {
-        let a_time = a.modified_at.as_deref().unwrap_or("");
-        let b_time = b.modified_at.as_deref().unwrap_or("");
-        b_time.cmp(a_time).then_with(|| a.version.cmp(&b.version))
-    });
-
-    let start = offset.min(sorted_versions.len());
-    let end = (start + input.limit as usize).min(sorted_versions.len());
-    let page = sorted_versions[start..end].to_vec();
-    let next_cursor = if end < sorted_versions.len() {
-        Some(encode_cursor(end))
-    } else {
-        None
-    };
+    let result = infimount_core::operations::list_file_versions_page(
+        &op,
+        &resolved.storage.id,
+        &parsed.backend_path,
+        input.limit,
+        input.cursor.as_deref(),
+        resolved.storage.revision,
+    )
+    .await
+    .map_err(|e| match &e {
+        infimount_core::CoreError::Config(_) => err_with_details(
+            McpErrorCode::ERR_INVALID_PATH,
+            "invalid version cursor or path",
+            json!({ "path": parsed.normalized }),
+        ),
+        _ => map_core_error(&e),
+    })?;
 
     Ok(ListVersionsOutput {
         path: parsed.normalized,
-        versions: page,
-        next_cursor,
+        versions: result
+            .versions
+            .into_iter()
+            .map(|v| VersionEntry {
+                version: v.version,
+                size_bytes: v.size_bytes,
+                modified_at: v.modified_at,
+                etag: v.etag,
+            })
+            .collect(),
+        next_cursor: result.next_cursor,
+        truncated: result.truncated,
     })
-}
-
-async fn collect_versions(
-    op: &opendal::Operator,
-    backend_path: &str,
-) -> McpResult<Vec<VersionEntry>> {
-    let mut versions = Vec::new();
-
-    let lister = op
-        .lister_with(backend_path)
-        .versions(true)
-        .await
-        .map_err(|e| {
-            if e.kind() == opendal::ErrorKind::Unsupported {
-                err_with_details(
-                    McpErrorCode::ERR_VERSIONS_NOT_SUPPORTED,
-                    "version listing not supported for this storage backend",
-                    json!({ "kind": "Unsupported", "temporary": e.is_temporary() }),
-                )
-            } else {
-                map_opendal_error(&e, McpErrorCode::ERR_INTERNAL)
-            }
-        })?;
-
-    let mut stream = lister;
-    while let Some(entry_result) = stream.next().await {
-        let entry = entry_result.map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?;
-
-        let meta = entry.metadata();
-        let version = meta
-            .version()
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "default".to_string());
-
-        if version != "default" {
-            let modified_at = meta.last_modified().map(|t| t.to_string());
-            let etag = meta.etag().map(|e| e.to_string());
-            versions.push(VersionEntry {
-                version,
-                size_bytes: Some(meta.content_length()),
-                modified_at,
-                etag,
-            });
-        }
-    }
-
-    Ok(versions)
-}
-
-pub(crate) fn decode_cursor(cursor: Option<&str>) -> McpResult<usize> {
-    let Some(cursor) = cursor else {
-        return Ok(0);
-    };
-
-    let raw = URL_SAFE_NO_PAD.decode(cursor).map_err(|_| {
-        err_with_details(
-            McpErrorCode::ERR_INVALID_PATH,
-            "invalid cursor encoding",
-            json!({ "cursor": cursor }),
-        )
-    })?;
-
-    let parsed: CursorV1 = serde_json::from_slice(&raw).map_err(|_| {
-        err_with_details(
-            McpErrorCode::ERR_INVALID_PATH,
-            "invalid cursor payload",
-            json!({ "cursor": cursor }),
-        )
-    })?;
-
-    if parsed.v != 1 {
-        return Err(err_with_details(
-            McpErrorCode::ERR_INVALID_PATH,
-            "unsupported cursor version",
-            json!({ "cursor_version": parsed.v }),
-        ));
-    }
-
-    Ok(parsed.offset)
-}
-
-pub(crate) fn encode_cursor(offset: usize) -> String {
-    let payload = serde_json::to_vec(&CursorV1 { v: 1, offset }).unwrap_or_else(|_| b"{}".to_vec());
-    URL_SAFE_NO_PAD.encode(payload)
 }

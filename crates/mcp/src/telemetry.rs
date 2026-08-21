@@ -217,26 +217,43 @@ pub struct ProductEventStore {
     path: PathBuf,
     lock_path: PathBuf,
     exporter: NetworkExporter,
+    persist: std::sync::atomic::AtomicBool,
 }
 
 impl ProductEventStore {
     pub fn new(path: Option<PathBuf>) -> Self {
-        Self::with_exporter(path, NetworkExporter::from_persisted_config())
+        Self::with_exporter(path, NetworkExporter::from_persisted_config(), true)
     }
 
-    fn with_exporter(path: Option<PathBuf>, exporter: NetworkExporter) -> Self {
+    pub fn with_persistence(path: Option<PathBuf>, persist: bool) -> Self {
+        Self::with_exporter(path, NetworkExporter::from_persisted_config(), persist)
+    }
+
+    fn with_exporter(path: Option<PathBuf>, exporter: NetworkExporter, persist: bool) -> Self {
         let path = path.unwrap_or_else(default_product_events_path);
         let lock_path = path.with_extension("lock");
         Self {
             path,
             lock_path,
             exporter,
+            persist: std::sync::atomic::AtomicBool::new(persist),
         }
+    }
+
+    pub fn set_persistence(&self, persist: bool) {
+        self.persist
+            .store(persist, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn persistence(&self) -> bool {
+        self.persist.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn record(&self, event: ProductEvent) -> McpResult<()> {
         event.validate()?;
-        self.flush_batch(std::slice::from_ref(&event))?;
+        if self.persistence() {
+            self.flush_batch(std::slice::from_ref(&event))?;
+        }
         self.exporter.send(ExportEvent::Product {
             event: Box::new(event),
         });
@@ -906,6 +923,26 @@ mod tests {
         let events = store.read_all().unwrap();
         assert_eq!(events.len(), 1);
         assert!(matches!(events[0].name, ProductEventName::AppLaunched));
+    }
+
+    #[test]
+    fn persistence_can_be_disabled_without_touching_network_consent() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        let store = ProductEventStore::with_persistence(Some(path.clone()), false);
+        let event = ProductEvent::new(ProductEventName::AppLaunched);
+        store.record(event).unwrap();
+        assert!(!store.persistence());
+        assert!(
+            !path.exists(),
+            "no local event file when persistence is disabled"
+        );
+
+        store.set_persistence(true);
+        let persisted = ProductEvent::new(ProductEventName::AppLaunched);
+        store.record(persisted).unwrap();
+        assert!(path.exists(), "persistence resumes when re-enabled");
+        assert_eq!(store.read_all().unwrap().len(), 1);
     }
 
     #[test]

@@ -82,6 +82,7 @@ export function StorageImportDialog({ open, onOpenChange, onImportComplete, init
     try {
       const p = await previewStorageImport({ json: jsonInput, mode, onConflict });
       setPreview(p);
+      setConfirmed(false);
       setStep("preview");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
@@ -235,14 +236,19 @@ export function StorageImportDialog({ open, onOpenChange, onImportComplete, init
               This preview is bound to {preview.mode} mode and the {preview.onConflict} conflict strategy.
             </p>
 
-            {mode === "replace" && (
+            {preview.requiresConfirmation && (
               <div className="flex items-start gap-2 text-sm text-amber-600 bg-amber-50 p-3 rounded">
                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                 <div>
-                  <p className="font-medium">Replace mode will remove all existing storages not in the import.</p>
-                  <label className="flex items-center gap-2 mt-1 cursor-pointer">
+                  <p className="font-medium">This import changes existing configuration.</p>
+                  <ul className="text-xs mt-1 list-disc pl-4 space-y-0.5">
+                    {preview.confirmationReasons.map((reason, i) => (
+                      <li key={i}>{reason}</li>
+                    ))}
+                  </ul>
+                  <label className="flex items-center gap-2 mt-2 cursor-pointer">
                     <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} className="rounded" />
-                    <span className="text-xs">I understand, proceed with replace</span>
+                    <span className="text-xs">I understand and confirm these changes</span>
                   </label>
                 </div>
               </div>
@@ -261,7 +267,7 @@ export function StorageImportDialog({ open, onOpenChange, onImportComplete, init
               </Button>
               <Button
                 onClick={handleApply}
-                disabled={(mode === "replace" && !confirmed) || preview.missingSecretFields.length > 0}
+                disabled={(preview.requiresConfirmation && !confirmed) || preview.missingSecretFields.length > 0}
               >
                 <CheckCircle2 className="h-4 w-4 mr-1" /> Apply Import
               </Button>

@@ -99,6 +99,24 @@ pub async fn set_telemetry_consent(
         .set_telemetry_consent(request.consent)
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetLocalEventPersistenceRequest {
+    pub enabled: bool,
+}
+
+#[tauri::command]
+pub async fn set_local_event_persistence(
+    state: State<'_, AppState>,
+    request: SetLocalEventPersistenceRequest,
+) -> Result<AppSettings, McpError> {
+    let _lifecycle = state.lifecycle_mutation.lock().await;
+    state.product_events.set_persistence(request.enabled);
+    state
+        .app_settings_store
+        .set_local_event_persistence(request.enabled)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,6 +139,9 @@ mod tests {
             mcp_allowed_op_ok: overall_ok,
             mcp_denial_proven: overall_ok,
             mcp_audit_ok: overall_ok,
+            scope_isolation_passed: overall_ok,
+            safe_default_profile_passed: overall_ok,
+            advanced_tools_enabled: false,
             overall_ok,
             error_code: (!overall_ok).then(|| "ERR_ACTIVATION_PROBE_FAILED".to_string()),
         }

@@ -778,6 +778,8 @@ function VerifyStep({
   const checks = [
     { label: "Bundled sidecar verified", ok: probe?.sidecar.versionMatch === true },
     { label: "MCP handshake completed", ok: probe?.mcpHandshakeOk === true },
+    { label: "Scope isolation proven", ok: probe?.scopeIsolationPassed === true },
+    { label: "Safe default profile active", ok: probe?.safeDefaultProfilePassed === true },
     { label: "Workspace access allowed", ok: probe?.mcpAllowedOpOk === true },
     { label: "Outside-workspace access denied", ok: probe?.mcpDenialProven === true },
     { label: "Allowed and denied operations audited", ok: probe?.mcpAuditOk === true },

@@ -63,7 +63,7 @@ pub fn schema_write_file() -> serde_json::Value {
       "type": "object",
       "properties": {
         "path": { "type": "string", "description": "Absolute file path." },
-        "content": { "type": "string", "description": "Text content. Only utf-8 encoding is supported in v1." },
+        "content": { "type": "string", "description": "Text content. Only utf-8 encoding is supported in v1.", "maxLength": 4194304 },
         "encoding": { "type": "string", "default": "utf-8", "description": "Text encoding. Only utf-8 is supported in v1." },
         "overwrite": { "type": "boolean", "default": true },
         "create_parents": { "type": "boolean", "default": false },

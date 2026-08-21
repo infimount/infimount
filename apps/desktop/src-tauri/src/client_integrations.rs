@@ -4,13 +4,19 @@ use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command as StdCommand, ExitStatus, Stdio};
 use std::sync::{Mutex, OnceLock};
+use std::thread;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 const PREVIEW_TTL: Duration = Duration::from_secs(10 * 60);
+const CLIENT_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_CAPTURED_OUTPUT: usize = 8 * 1024;
+const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_REPORTED_VERSION_LEN: usize = 160;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -84,13 +90,21 @@ enum InstallAction {
         before: Option<Vec<u8>>,
         after: Vec<u8>,
     },
-    Command {
-        executable: PathBuf,
-        args: Vec<String>,
-        sidecar: PathBuf,
-        rollback_target: PathBuf,
-        before: Option<Vec<u8>>,
-    },
+    Command(ClientCommand),
+}
+
+#[derive(Clone)]
+struct ClientCommand {
+    name: String,
+    executable: PathBuf,
+    executable_digest: String,
+    #[allow(dead_code)]
+    reported_version: String,
+    target_digest: String,
+    args: Vec<String>,
+    sidecar: PathBuf,
+    rollback_target: PathBuf,
+    before: Option<Vec<u8>>,
 }
 
 #[derive(Clone)]
@@ -249,6 +263,163 @@ fn find_executable(name: &str) -> Option<PathBuf> {
     std::env::split_paths(&path)
         .map(|dir| dir.join(format!("{name}{suffix}")))
         .find(|candidate| is_executable(candidate))
+}
+
+fn capture_stdout(pipe: impl Read, cap: usize) -> String {
+    let mut buf = Vec::with_capacity(cap.min(64 * 1024));
+    let mut chunk = [0_u8; 4096];
+    let mut handle = pipe;
+    loop {
+        match handle.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                if buf.len() < cap {
+                    let keep = n.min(cap - buf.len());
+                    buf.extend_from_slice(&chunk[..keep]);
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+fn run_with_timeout(
+    executable: &Path,
+    args: &[String],
+    timeout: Duration,
+    max_output: usize,
+) -> (Option<ExitStatus>, String, String, bool) {
+    let mut command = StdCommand::new(executable);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(_) => return (None, String::new(), String::new(), false),
+    };
+    let stdout = child.stdout.take().expect("stdout is piped");
+    let stderr = child.stderr.take().expect("stderr is piped");
+    let stdout_handle = thread::spawn(move || capture_stdout(stdout, max_output));
+    let stderr_handle = thread::spawn(move || capture_stdout(stderr, max_output));
+
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {}
+            Err(_) => break None,
+        }
+        if Instant::now() >= deadline {
+            kill_process_tree(&mut child);
+            let _ = child.wait();
+            let _ = stdout_handle.join();
+            let _ = stderr_handle.join();
+            return (None, String::new(), String::new(), true);
+        }
+        thread::sleep(Duration::from_millis(25));
+    };
+    let stdout = stdout_handle.join().unwrap_or_default();
+    let stderr = stderr_handle.join().unwrap_or_default();
+    (status, stdout, stderr, false)
+}
+
+fn kill_process_tree(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        unsafe {
+            let _ = libc::kill(-(child.id() as i32), libc::SIGKILL);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        };
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+        };
+
+        unsafe {
+            let job: HANDLE = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job != 0 {
+                let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                let _ = windows_sys::Win32::System::JobObjects::SetInformationJobObject(
+                    job,
+                    JobObjectExtendedLimitInformation,
+                    &info as *const _ as *const _,
+                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                );
+                let process_handle: HANDLE =
+                    OpenProcess(PROCESS_TERMINATE | PROCESS_SET_QUOTA, 0, child.id());
+                if process_handle != 0 {
+                    let _ = AssignProcessToJobObject(job, process_handle);
+                    CloseHandle(process_handle);
+                }
+                // Closing the job handle triggers JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+                // terminating all processes in the job (parent + descendants).
+                CloseHandle(job);
+            }
+        }
+        // Fallback: also kill the direct child in case Job Object creation failed.
+        let _ = child.kill();
+    }
+    #[cfg(not(unix))]
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = child.kill();
+    }
+}
+
+fn command_identity(
+    executable: &Path,
+    name: &str,
+    version_args: &[String],
+) -> Option<ClientCommandBase> {
+    let canonical = fs::canonicalize(executable).ok()?;
+    let bytes = fs::read(&canonical).ok()?;
+    let (status, stdout, _, timed_out) =
+        run_with_timeout(&canonical, version_args, VERSION_PROBE_TIMEOUT, 8 * 1024);
+    // Reject probes that timed out, failed to execute, or exited unsuccessfully.
+    if timed_out || status.is_none() || !status.unwrap().success() {
+        return None;
+    }
+    let reported_version = stdout
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .chars()
+        .take(MAX_REPORTED_VERSION_LEN)
+        .collect::<String>();
+    let reported_version = if reported_version.is_empty() {
+        "unknown".to_string()
+    } else {
+        reported_version
+    };
+    Some(ClientCommandBase {
+        name: name.to_string(),
+        executable: canonical,
+        executable_digest: digest(&bytes),
+        reported_version,
+    })
+}
+
+struct ClientCommandBase {
+    name: String,
+    executable: PathBuf,
+    executable_digest: String,
+    reported_version: String,
 }
 
 fn is_executable(path: &Path) -> bool {
@@ -557,6 +728,8 @@ pub fn preview_mcp_client_install(
                     .ok_or_else(|| "Claude Code config path is unavailable".to_string())?;
                 let before = read_optional(&rollback_target)?;
                 let before_display = before.as_ref().map(|bytes| display_config(bytes));
+                let base = command_identity(&executable, "claude", &["--version".to_string()])
+                    .ok_or_else(|| "Claude CLI could not be verified".to_string())?;
                 (
                     "execute",
                     Some(rollback_target.clone()),
@@ -564,8 +737,12 @@ pub fn preview_mcp_client_install(
                     command,
                     true,
                     true,
-                    InstallAction::Command {
-                        executable,
+                    InstallAction::Command(ClientCommand {
+                        name: base.name,
+                        executable: base.executable,
+                        executable_digest: base.executable_digest,
+                        reported_version: base.reported_version,
+                        target_digest: digest(before.as_deref().unwrap_or_default()),
                         sidecar: sidecar.clone(),
                         rollback_target,
                         before,
@@ -579,7 +756,7 @@ pub fn preview_mcp_client_install(
                             "--transport".into(),
                             "stdio".into(),
                         ],
-                    },
+                    }),
                 )
             }
             McpClientKind::VsCode
@@ -591,6 +768,8 @@ pub fn preview_mcp_client_install(
                     .ok_or_else(|| "VS Code user MCP config path is unavailable".to_string())?;
                 let before = read_optional(&rollback_target)?;
                 let before_display = before.as_ref().map(|bytes| display_config(bytes));
+                let base = command_identity(&executable, "code", &["--version".to_string()])
+                    .ok_or_else(|| "VS Code CLI could not be verified".to_string())?;
                 (
                     "execute",
                     Some(rollback_target.clone()),
@@ -598,13 +777,17 @@ pub fn preview_mcp_client_install(
                     format!("code --add-mcp {snippet}"),
                     true,
                     true,
-                    InstallAction::Command {
-                        executable,
+                    InstallAction::Command(ClientCommand {
+                        name: base.name,
+                        executable: base.executable,
+                        executable_digest: base.executable_digest,
+                        reported_version: base.reported_version,
+                        target_digest: digest(before.as_deref().unwrap_or_default()),
                         sidecar: sidecar.clone(),
                         rollback_target,
                         before,
                         args: vec!["--add-mcp".into(), snippet],
-                    },
+                    }),
                 )
             }
             McpClientKind::Cursor | McpClientKind::VsCode | McpClientKind::OpenCode => {
@@ -739,77 +922,24 @@ pub fn apply_mcp_client_install(
         InstallAction::CopyOnly => {
             Err("copy-only adapters cannot be applied automatically".to_string())
         }
-        InstallAction::Command {
-            executable,
-            args,
-            sidecar,
-            rollback_target,
-            before,
-        } => {
+        InstallAction::Command(command) => {
             if !input.confirm_execution {
                 return Err(
                     "explicit confirmation is required before executing a client command"
                         .to_string(),
                 );
             }
-            let verified = crate::activation_probe::verified_sidecar_path()
-                .map_err(|code| format!("bundled MCP sidecar is unavailable ({code})"))?;
-            if verified != sidecar {
-                return Err("bundled MCP sidecar changed after preview; preview again".to_string());
-            }
-            let current = read_optional(&rollback_target)?;
-            if current != before {
-                return Err("client config changed after preview; preview again".to_string());
-            }
-            let backup = if let Some(bytes) = before.as_ref() {
-                let path = backup_path(&rollback_target);
-                write_config_atomic(&path, bytes)?;
-                Some(path)
-            } else {
-                None
-            };
-            let status = match Command::new(executable).args(args).status() {
-                Ok(status) => status,
-                Err(_) => {
-                    restore_client_config(&rollback_target, before.as_deref())?;
-                    return Err(
-                        "failed to execute client command; config was rolled back".to_string()
-                    );
-                }
-            };
-            if !status.success() {
-                restore_client_config(&rollback_target, before.as_deref())?;
-                return Err("client command failed; config was rolled back".to_string());
-            }
-            let after = match fs::read(&rollback_target) {
-                Ok(after) => after,
-                Err(_) => {
-                    restore_client_config(&rollback_target, before.as_deref())?;
-                    return Err(
-                        "client command change could not be verified and was rolled back"
-                            .to_string(),
-                    );
-                }
-            };
-            let sidecar_text = sidecar.to_string_lossy();
-            if !String::from_utf8_lossy(&after).contains(sidecar_text.as_ref()) {
-                restore_client_config(&rollback_target, before.as_deref())?;
-                return Err(
-                    "client command did not install the verified sidecar and was rolled back"
-                        .to_string(),
-                );
-            }
-            let rollback_id = store_rollback(rollback_target.clone(), before, &after)?;
+            let result = apply_client_command(
+                command,
+                &crate::activation_probe::verified_sidecar_path()
+                    .map_err(|code| format!("bundled MCP sidecar is unavailable ({code})"))?,
+                input.confirm_execution,
+            )?;
             record_client_event(
                 preview.kind,
                 infimount_mcp::telemetry::ProductEventName::ClientConfigApplied,
             );
-            Ok(ClientInstallResult {
-                applied: true,
-                target_path: Some(rollback_target.to_string_lossy().to_string()),
-                backup_path: backup.map(|path| path.to_string_lossy().to_string()),
-                rollback_id: Some(rollback_id),
-            })
+            Ok(result)
         }
         InstallAction::File {
             target,
@@ -845,6 +975,92 @@ pub fn apply_mcp_client_install(
             })
         }
     }
+}
+
+fn apply_client_command(
+    command: ClientCommand,
+    verified_sidecar: &Path,
+    confirmed: bool,
+) -> Result<ClientInstallResult, String> {
+    if !confirmed {
+        return Err(
+            "explicit confirmation is required before executing a client command".to_string(),
+        );
+    }
+    if verified_sidecar != command.sidecar {
+        return Err("bundled MCP sidecar changed after preview; preview again".to_string());
+    }
+    let current = read_optional(&command.rollback_target)?;
+    if digest(current.as_deref().unwrap_or_default()) != command.target_digest {
+        return Err("client config changed after preview; preview again".to_string());
+    }
+    let rechecked = fs::canonicalize(&command.executable)
+        .map_err(|_| "client executable is no longer accessible; preview again".to_string())?;
+    if rechecked != command.executable {
+        return Err(format!(
+            "{} executable changed after preview; preview again",
+            command.name
+        ));
+    }
+    let bytes = fs::read(&command.executable)
+        .map_err(|_| "client executable could not be re-read; preview again".to_string())?;
+    if digest(&bytes) != command.executable_digest {
+        return Err(format!(
+            "{} executable changed after preview; preview again",
+            command.name
+        ));
+    }
+    let backup = if let Some(bytes) = command.before.as_ref() {
+        let path = backup_path(&command.rollback_target);
+        write_config_atomic(&path, bytes)?;
+        Some(path)
+    } else {
+        None
+    };
+    let (status, _, _, timed_out) = run_with_timeout(
+        &command.executable,
+        &command.args,
+        CLIENT_COMMAND_TIMEOUT,
+        MAX_CAPTURED_OUTPUT,
+    );
+    if timed_out {
+        restore_client_config(&command.rollback_target, command.before.as_deref())?;
+        return Err("client command timed out and the config change was rolled back".to_string());
+    }
+    let status = match status {
+        Some(status) => status,
+        None => {
+            restore_client_config(&command.rollback_target, command.before.as_deref())?;
+            return Err("failed to execute client command; config was rolled back".to_string());
+        }
+    };
+    if !status.success() {
+        restore_client_config(&command.rollback_target, command.before.as_deref())?;
+        return Err("client command failed; config was rolled back".to_string());
+    }
+    let after = match fs::read(&command.rollback_target) {
+        Ok(after) => after,
+        Err(_) => {
+            restore_client_config(&command.rollback_target, command.before.as_deref())?;
+            return Err(
+                "client command change could not be verified and was rolled back".to_string(),
+            );
+        }
+    };
+    let sidecar_text = command.sidecar.to_string_lossy();
+    if !String::from_utf8_lossy(&after).contains(sidecar_text.as_ref()) {
+        restore_client_config(&command.rollback_target, command.before.as_deref())?;
+        return Err(
+            "client command did not install the verified sidecar and was rolled back".to_string(),
+        );
+    }
+    let rollback_id = store_rollback(command.rollback_target.clone(), command.before, &after)?;
+    Ok(ClientInstallResult {
+        applied: true,
+        target_path: Some(command.rollback_target.to_string_lossy().to_string()),
+        backup_path: backup.map(|path| path.to_string_lossy().to_string()),
+        rollback_id: Some(rollback_id),
+    })
 }
 
 #[tauri::command]
@@ -1015,13 +1231,17 @@ mod tests {
             StoredPreview {
                 created_at: Instant::now(),
                 kind: McpClientKind::ClaudeCode,
-                action: InstallAction::Command {
+                action: InstallAction::Command(ClientCommand {
+                    name: "claude".to_string(),
                     executable: PathBuf::from("ignored"),
+                    executable_digest: String::new(),
+                    reported_version: "unknown".to_string(),
+                    target_digest: String::new(),
                     args: vec![],
                     sidecar: fake_sidecar(),
                     rollback_target: dir.path().join(".claude.json"),
                     before: None,
-                },
+                }),
             },
         );
         let error = apply_mcp_client_install(ApplyClientInstallInput {
@@ -1030,5 +1250,151 @@ mod tests {
         })
         .unwrap_err();
         assert!(error.contains("explicit confirmation"));
+    }
+
+    #[cfg(unix)]
+    fn write_executable_script(dir: &Path, name: &str, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    fn test_command(
+        script: &Path,
+        args: Vec<String>,
+        rollback_target: PathBuf,
+        before: Option<Vec<u8>>,
+    ) -> ClientCommand {
+        let canonical = fs::canonicalize(script).unwrap();
+        let bytes = fs::read(&canonical).unwrap();
+        ClientCommand {
+            name: "fake-cli".to_string(),
+            executable: canonical,
+            executable_digest: digest(&bytes),
+            reported_version: "test".to_string(),
+            target_digest: digest(before.as_deref().unwrap_or_default()),
+            args,
+            sidecar: fake_sidecar(),
+            rollback_target,
+            before,
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn client_cli_replaced_after_preview_is_rejected() {
+        let dir = tempdir().unwrap();
+        let script = write_executable_script(dir.path(), "fake-cli", "exit 0");
+        let target = dir.path().join(".claude.json");
+        let before = b"{}".to_vec();
+        fs::write(&target, &before).unwrap();
+        let command = test_command(&script, vec![], target.clone(), Some(before));
+        write_executable_script(dir.path(), "fake-cli", "exit 0 # replaced after preview");
+        let error = apply_client_command(command, &fake_sidecar(), true).unwrap_err();
+        assert!(error.contains("executable changed after preview"));
+        assert_eq!(fs::read(&target).unwrap(), b"{}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn client_config_changed_after_preview_is_rejected() {
+        let dir = tempdir().unwrap();
+        let script = write_executable_script(dir.path(), "fake-cli", "exit 0");
+        let target = dir.path().join(".claude.json");
+        let before = b"{}".to_vec();
+        fs::write(&target, &before).unwrap();
+        let command = test_command(&script, vec![], target.clone(), Some(before));
+        fs::write(&target, b"{\"changed\":true}").unwrap();
+        let error = apply_client_command(command, &fake_sidecar(), true).unwrap_err();
+        assert!(error.contains("config changed after preview"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn client_cli_exits_nonzero_rolls_back_config() {
+        let dir = tempdir().unwrap();
+        let script = write_executable_script(
+            dir.path(),
+            "fake-cli",
+            "printf 'raw stderr line' >&2\nexit 3",
+        );
+        let target = dir.path().join(".claude.json");
+        let before = b"{}".to_vec();
+        fs::write(&target, &before).unwrap();
+        let command = test_command(&script, vec![], target.clone(), Some(before));
+        let error = apply_client_command(command, &fake_sidecar(), true).unwrap_err();
+        assert!(error.contains("rolled back"));
+        assert!(
+            !error.contains("raw stderr line"),
+            "raw output must not leak"
+        );
+        assert_eq!(fs::read(&target).unwrap(), b"{}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn client_cli_that_hangs_is_killed_within_timeout() {
+        let dir = tempdir().unwrap();
+        let script = write_executable_script(dir.path(), "fake-cli", "sleep 60");
+        let started = Instant::now();
+        let (status, _, _, timed_out) = run_with_timeout(
+            &script,
+            &[],
+            Duration::from_millis(400),
+            MAX_CAPTURED_OUTPUT,
+        );
+        assert!(timed_out);
+        assert!(status.is_none());
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "hung child must be killed promptly, took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn client_cli_output_is_capped_at_eight_kibibytes() {
+        let dir = tempdir().unwrap();
+        let script = write_executable_script(
+            dir.path(),
+            "fake-cli",
+            "head -c 200000 /dev/zero | tr '\\0' 'x'; head -c 200000 /dev/zero | tr '\\0' 'y' >&2",
+        );
+        let (status, stdout, stderr, timed_out) =
+            run_with_timeout(&script, &[], Duration::from_secs(10), MAX_CAPTURED_OUTPUT);
+        assert!(!timed_out);
+        assert!(status.is_some() && status.unwrap().success());
+        assert!(stdout.len() <= MAX_CAPTURED_OUTPUT);
+        assert!(stderr.len() <= MAX_CAPTURED_OUTPUT);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn client_command_rollback_succeeds() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join(".claude.json");
+        let before = b"{}".to_vec();
+        fs::write(&target, &before).unwrap();
+        let script = write_executable_script(
+            dir.path(),
+            "fake-cli",
+            "printf '%s\\n' '/verified/Infimount Sidecar/mcp' > \"$1\"",
+        );
+        let command = test_command(
+            &script,
+            vec![target.to_string_lossy().to_string()],
+            target.clone(),
+            Some(before.clone()),
+        );
+        let result = apply_client_command(command, &fake_sidecar(), true).unwrap();
+        assert!(result.applied);
+        assert!(String::from_utf8_lossy(&fs::read(&target).unwrap())
+            .contains("/verified/Infimount Sidecar/mcp"));
+        rollback_mcp_client_install(result.rollback_id.unwrap()).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), before);
     }
 }

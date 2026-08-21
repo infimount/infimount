@@ -39,6 +39,7 @@ import {
   updateMcpSettings,
   updateMcpStoragePolicy,
   updateStorage as apiUpdateStorage,
+  TauriApiError,
   verifyStorage as apiVerifyStorage,
 } from "@/lib/api";
 import { backendToStorageType } from "@/lib/storageMapping";
@@ -402,18 +403,6 @@ const Index = () => {
   }, [reloadStorages]);
 
   useEffect(() => {
-    if (!startupHealth?.operational) return;
-    void import("@/lib/agentWorkspaces")
-      .then(({ migrateLegacyWorkspaces }) => migrateLegacyWorkspaces())
-      .then((result) => {
-        if (result.imported > 0) void reloadStorages();
-      })
-      .catch(() => {
-        // Preserve legacy browser state for a later retry.
-      });
-  }, [reloadStorages, startupHealth?.operational]);
-
-  useEffect(() => {
     void (async () => {
       try {
         setAppSettings(await getAppSettings());
@@ -533,8 +522,12 @@ const Index = () => {
   };
 
   const handleUpdateStorage = async (id: string, draft: StorageDraft) => {
-    try {
-      const result = await apiUpdateStorage(id, mapDraftForBackend(draft));
+    const commit = async (confirmCredentialChange: boolean) => {
+      const result = await apiUpdateStorage(
+        id,
+        mapDraftForBackend(draft),
+        confirmCredentialChange,
+      );
       await reloadStorages();
       setStorageRefreshTick((current) => ({
         ...current,
@@ -546,7 +539,33 @@ const Index = () => {
           ? `Successfully updated "${draft.name}". ${result.warning}`
           : `Successfully updated "${draft.name}".`,
       });
+    };
+
+    try {
+      await commit(false);
     } catch (error: unknown) {
+      if (error instanceof TauriApiError && error.code === "ERR_CONFIRMATION_REQUIRED") {
+        const confirmed = window.confirm(
+          "This change replaces the storage credentials for workspaces bound to it. " +
+            "After saving, verify each bound workspace still maps to the same account and namespace.",
+        );
+        if (!confirmed) {
+          setEditingStorage(null);
+          return;
+        }
+        try {
+          await commit(true);
+          return;
+        } catch (retryError: unknown) {
+          toast({
+            title: "Failed to update storage",
+            description:
+              retryError instanceof Error ? retryError.message : String(retryError),
+            variant: "destructive",
+          });
+          throw retryError;
+        }
+      }
       toast({
         title: "Failed to update storage",
         description: error instanceof Error ? error.message : String(error),
@@ -786,13 +805,27 @@ const Index = () => {
     storageId: string,
     policy: McpStoragePolicy,
   ) => {
-    const updated = await updateMcpStoragePolicy(storageId, policy);
-    const mapped = mapWireStorage(updated as unknown as StorageRecordWire);
-    setStorages((current) => current.map((storage) => (storage.id === storageId ? mapped : storage)));
-    toast({
-      title: "MCP policy updated",
-      description: "Path rules will apply to new MCP requests immediately.",
-    });
+    try {
+      const updated = await updateMcpStoragePolicy(storageId, policy);
+      const mapped = mapWireStorage(updated as unknown as StorageRecordWire);
+      setStorages((current) => current.map((storage) => (storage.id === storageId ? mapped : storage)));
+      toast({
+        title: "MCP policy updated",
+        description: "Path rules will apply to new MCP requests immediately.",
+      });
+    } catch (error: unknown) {
+      toast({
+        title: "MCP policy not updated",
+        description:
+          error instanceof TauriApiError && error.code === "ERR_WORKSPACE_POLICY_MANAGED"
+            ? "Workspace-managed path rules are enforced by the bound workspace and cannot be edited here."
+            : error instanceof Error
+              ? error.message
+              : String(error),
+        variant: "destructive",
+      });
+      throw error;
+    }
   };
 
   const currentStorage = storages.find((storage) => storage.id === selectedStorage);
@@ -1237,6 +1270,10 @@ const Index = () => {
             currentConsent={appSettings.telemetryConsent}
             onConsentChange={(telemetryConsent) =>
               setAppSettings((current) => current ? { ...current, telemetryConsent } : current)
+            }
+            localPersistence={appSettings.localEventPersistence}
+            onLocalPersistenceChange={(localEventPersistence) =>
+              setAppSettings((current) => current ? { ...current, localEventPersistence } : current)
             }
           />
         ) : null}

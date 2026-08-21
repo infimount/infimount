@@ -1,10 +1,38 @@
 #![allow(non_snake_case)]
 
 use infimount_core::{operations, CoreError};
+use infimount_mcp::registry::StorageRecord;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::state::AppState;
+
+fn reject_namespace_conflicts(
+    from_storage: &StorageRecord,
+    to_storage: &StorageRecord,
+    paths: &[String],
+    target_dir: &str,
+) -> Result<(), CoreError> {
+    if from_storage.id == to_storage.id {
+        return Ok(());
+    }
+    for path in paths {
+        let destination = operations::transfer_destination_path(path, target_dir);
+        let relation = infimount_mcp::storage_namespace::transfer_namespace_relation(
+            from_storage,
+            path,
+            to_storage,
+            &destination,
+        )
+        .map_err(|error| CoreError::Config(error.to_string()))?;
+        if infimount_mcp::storage_namespace::transfer_has_namespace_conflict(&relation) {
+            return Err(CoreError::Config(format!(
+                "transfer destination overlaps the source namespace: {path} -> {destination}"
+            )));
+        }
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,6 +85,13 @@ pub async fn plan_transfer_entries(
 ) -> Result<operations::TransferPlan, CoreError> {
     let from_op = state.operator_for_storage_id(&fromSourceId)?;
     let to_op = state.operator_for_storage_id(&toSourceId)?;
+    let from_storage = state
+        .find_storage_by_id(&fromSourceId)
+        .map_err(crate::state::mcp_error_to_core_error)?;
+    let to_storage = state
+        .find_storage_by_id(&toSourceId)
+        .map_err(crate::state::mcp_error_to_core_error)?;
+    reject_namespace_conflicts(&from_storage, &to_storage, &paths, &targetDir)?;
     if let Some(job_id) = jobId {
         let cancel_job_id = job_id.clone();
         let result = operations::plan_transfer_entries_cancellable(
@@ -102,6 +137,13 @@ pub async fn transfer_entries(
 ) -> Result<(), CoreError> {
     let from_op = state.operator_for_storage_id(&fromSourceId)?;
     let to_op = state.operator_for_storage_id(&toSourceId)?;
+    let from_storage = state
+        .find_storage_by_id(&fromSourceId)
+        .map_err(crate::state::mcp_error_to_core_error)?;
+    let to_storage = state
+        .find_storage_by_id(&toSourceId)
+        .map_err(crate::state::mcp_error_to_core_error)?;
+    reject_namespace_conflicts(&from_storage, &to_storage, &paths, &targetDir)?;
 
     let op = parse_transfer_operation(&operation)?;
     let policy = parse_transfer_conflict_policy(&conflictPolicy)?;
@@ -153,4 +195,62 @@ pub async fn transfer_entries(
 #[tauri::command]
 pub fn cancel_transfer_job(state: State<'_, AppState>, jobId: String) {
     state.request_transfer_cancel(&jobId);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tempfile::tempdir;
+
+    fn local_storage(id: &str, root: &str) -> StorageRecord {
+        let mut record =
+            StorageRecord::new(id.to_string(), "local".to_string(), json!({ "root": root }));
+        record.enabled = true;
+        record
+    }
+
+    #[test]
+    fn move_with_overwrite_through_two_ids_to_same_root_is_rejected() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().to_string_lossy().to_string();
+        std::fs::create_dir_all(temp.path().join("docs")).unwrap();
+        let committed = temp.path().join("committed.bin");
+        std::fs::write(&committed, b"keep me").unwrap();
+
+        let a = local_storage("alias-a", &root);
+        let b = local_storage("alias-b", &root);
+
+        // The destination is resolved against the actual target path, not just
+        // the target directory, so overwriting `docs` onto the shared root is
+        // rejected even though the target directory itself does not overlap.
+        let error = reject_namespace_conflicts(&a, &b, &["docs".to_string()], "").unwrap_err();
+        assert!(error.to_string().contains("docs"));
+
+        // Rejection happens before any mutation: committed data is untouched.
+        assert_eq!(std::fs::read(&committed).unwrap(), b"keep me");
+        assert!(temp.path().join("docs").is_dir());
+    }
+
+    #[test]
+    fn move_to_unrelated_destination_through_same_root_is_allowed() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().to_string_lossy().to_string();
+        std::fs::create_dir_all(temp.path().join("docs")).unwrap();
+        std::fs::create_dir_all(temp.path().join("archive")).unwrap();
+
+        let a = local_storage("alias-a", &root);
+        let b = local_storage("alias-b", &root);
+
+        // Moving `docs` into a sibling directory does not alias the source.
+        reject_namespace_conflicts(&a, &b, &["docs".to_string()], "archive").unwrap();
+    }
+
+    #[test]
+    fn self_transfer_is_not_blocked_by_alias_guard() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().to_string_lossy().to_string();
+        let a = local_storage("alias-a", &root);
+        reject_namespace_conflicts(&a, &a, &["docs".to_string()], "").unwrap();
+    }
 }

@@ -88,7 +88,7 @@ pub struct TransferProgress {
     pub current_path: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct TransferProgressState {
     completed_items: u64,
     total_items: u64,
@@ -190,7 +190,7 @@ where
     F: Fn(&str) -> Result<bool>,
 {
     let root = normalize_list_path(path);
-    let mut out = Vec::new();
+    let mut out: Vec<Entry> = Vec::new();
     let mut stack = vec![root];
 
     while let Some(base) = stack.pop() {
@@ -215,6 +215,10 @@ where
                 full_path.clone()
             };
 
+            if out.len() >= MAX_RECURSIVE_ITEMS as usize {
+                out.sort_by(|a, b| a.path.cmp(&b.path));
+                return Ok(out);
+            }
             out.push(Entry {
                 path: entry_path,
                 name,
@@ -223,10 +227,6 @@ where
                 modified_at: meta.last_modified().map(|dt| dt.to_string()),
                 etag: meta.etag().map(|s| s.to_string()),
             });
-            if out.len() > MAX_RECURSIVE_ITEMS as usize {
-                out.sort_by(|a, b| a.path.cmp(&b.path));
-                return Ok(out);
-            }
 
             if is_dir {
                 stack.push(ensure_dir_path(&full_path));
@@ -329,8 +329,12 @@ const MAX_CURSOR_BYTES: usize = 8 * 1024;
 const MIN_PAGE_SCAN_BUDGET: usize = 256;
 const MAX_PAGE_SCAN_BUDGET: usize = 4_096;
 // Cursor replay on backends without `start_after` is bounded by this signed total.
-// Keep this aligned with the product's 10k traversal cap.
+// Keep this aligned with the product's 10k traversal cap for recursive listings.
 const MAX_PAGE_TOTAL_SCANNED: usize = MAX_RECURSIVE_ITEMS as usize;
+// Non-recursive listings on backends without `start_after` fall back to cursor
+// replay; this separate documented maximum bounds that replay. Backends with
+// `start_after` continue indefinitely via position-based continuation.
+const MAX_PAGE_NON_RECURSIVE_SCANNED: usize = 100_000;
 const PAGE_SCAN_MULTIPLIER: usize = 32;
 
 fn page_scan_budget(limit: u32) -> usize {
@@ -398,6 +402,7 @@ fn decode_page_cursor(
     path: &str,
     recursive: bool,
     revision: u64,
+    max_scanned: usize,
 ) -> Result<PageCursor> {
     if encoded.len() > MAX_CURSOR_BYTES {
         return Err(crate::models::CoreError::Config(
@@ -436,7 +441,7 @@ fn decode_page_cursor(
         || cursor.recursive != recursive
         || cursor.revision != revision
         || !valid_position
-        || cursor.scanned > MAX_PAGE_TOTAL_SCANNED
+        || cursor.scanned > max_scanned
     {
         return Err(crate::models::CoreError::Config(
             "list cursor does not match the current query or storage revision".to_string(),
@@ -552,8 +557,15 @@ where
             "list limit must be between 1 and {MAX_LIST_LIMIT}"
         )));
     }
+    let max_scanned = if recursive {
+        MAX_PAGE_TOTAL_SCANNED
+    } else if op.info().capability().list_with_start_after {
+        usize::MAX
+    } else {
+        MAX_PAGE_NON_RECURSIVE_SCANNED
+    };
     let cursor = match encoded_cursor.as_deref() {
-        Some(cursor) => decode_page_cursor(cursor, path, recursive, revision)?,
+        Some(cursor) => decode_page_cursor(cursor, path, recursive, revision, max_scanned)?,
         None => PageCursor {
             version: 2,
             path: normalize_list_path(path),
@@ -564,6 +576,16 @@ where
         },
     };
     let supports_start_after = op.info().capability().list_with_start_after;
+    // Recursive listings keep the cumulative 10k scan cap. Non-recursive
+    // listings continue past it via start_after when the backend supports it;
+    // otherwise cursor replay is bounded by a separate documented maximum.
+    let scan_ceiling = if recursive {
+        Some(MAX_PAGE_TOTAL_SCANNED)
+    } else if supports_start_after {
+        None
+    } else {
+        Some(MAX_PAGE_NON_RECURSIVE_SCANNED)
+    };
     let resume_position = supports_start_after
         .then_some(cursor.position.as_deref())
         .flatten();
@@ -600,12 +622,14 @@ where
             has_more = true;
             break;
         }
-        if scanned >= MAX_PAGE_TOTAL_SCANNED {
-            capped = true;
-            // The signed cursor's cumulative scan ceiling also bounds replay on
-            // backends without start-after. Never issue a cursor beyond it.
-            has_more = false;
-            break;
+        if let Some(ceiling) = scan_ceiling {
+            if scanned >= ceiling {
+                capped = true;
+                // The signed cursor's cumulative scan ceiling also bounds replay on
+                // backends without start-after. Never issue a cursor beyond it.
+                has_more = false;
+                break;
+            }
         }
 
         let previous_scanned = scanned;
@@ -729,6 +753,14 @@ async fn delete_recursive(op: &Operator, path: &str) -> Result<()> {
     Ok(())
 }
 
+/// Whether a cleanup failure is only because the target never existed.
+fn is_not_found_cleanup(error: &crate::models::CoreError) -> bool {
+    matches!(
+        error,
+        crate::models::CoreError::Storage(e) if e.kind() == ErrorKind::NotFound
+    )
+}
+
 /// Upload files from local paths to the target directory.
 pub async fn upload_files_from_paths(
     op: &Operator,
@@ -785,6 +817,17 @@ fn normalize_transfer_inputs(paths: Vec<String>, target_dir: &str) -> (Vec<Strin
             .collect(),
         normalize_opendal_path(target_dir),
     )
+}
+
+/// The exact destination a transfer plan produces for a single source path when
+/// moving or copying it into `target_dir`, including appending the source
+/// basename. Mirrors the destination computation used by the transfer planner so
+/// namespace-conflict checks can validate the real destination rather than the
+/// bare target directory.
+pub fn transfer_destination_path(source_path: &str, target_dir: &str) -> String {
+    let normalized = normalize_opendal_path(source_path);
+    let name = extract_filename(&normalized);
+    join_target_dir(target_dir, &name)
 }
 
 async fn ensure_no_batch_destination_conflicts(
@@ -1484,57 +1527,6 @@ where
     Ok(())
 }
 
-async fn transfer_dir_recursive(
-    from_op: &Operator,
-    to_op: &Operator,
-    from_dir: &str,
-    to_dir: &str,
-    operation: TransferOperation,
-    same_source: bool,
-) -> Result<()> {
-    ensure_not_folder_into_descendant(from_dir, to_dir, same_source)?;
-    let from_root = ensure_dir_path(from_dir);
-    let to_root = ensure_dir_path(to_dir);
-    to_op.create_dir(&to_root).await?;
-
-    let mut stack = vec![(from_root.clone(), to_root)];
-    while let Some((from_base, to_base)) = stack.pop() {
-        let mut lister = from_op.lister(&from_base).await?;
-        while let Some(obj) = lister.try_next().await? {
-            let child_path = obj.path().to_string();
-            if is_current_dir_marker(&from_base, &child_path) {
-                continue;
-            }
-            let meta = stat_for_transfer(from_op, &child_path).await?;
-            let name = extract_filename(&child_path);
-
-            if meta.is_dir() {
-                let child_src_dir = ensure_dir_path(&child_path);
-                let child_dst_dir = ensure_dir_path(&join_target_dir(&to_base, &name));
-                to_op.create_dir(&child_dst_dir).await?;
-                stack.push((child_src_dir, child_dst_dir));
-            } else {
-                let child_dst_file = join_target_dir(&to_base, &name);
-                transfer_file(
-                    from_op,
-                    to_op,
-                    &child_path,
-                    &child_dst_file,
-                    TransferOperation::Copy,
-                    same_source,
-                )
-                .await?;
-            }
-        }
-    }
-
-    if operation == TransferOperation::Move {
-        delete_recursive(from_op, &from_root).await?;
-    }
-
-    Ok(())
-}
-
 #[allow(clippy::too_many_arguments)]
 async fn transfer_dir_recursive_with_progress<P, C>(
     from_op: &Operator,
@@ -1601,7 +1593,160 @@ where
     Ok(())
 }
 
-/// Build a backend-agnostic dry-run manifest for a copy or move.
+/// Copy a directory into a sibling staging path and commit it via rename.
+///
+/// The staging path is a sibling of `to_dir` that did not exist before, so a
+/// failed staging or rename never corrupts an existing destination. When the
+/// rename commits, the staged tree atomically becomes the destination for
+/// backends that support it.
+#[allow(clippy::too_many_arguments)]
+async fn transactional_create_transfer<P, C>(
+    from_op: &Operator,
+    to_op: &Operator,
+    from_dir: &str,
+    to_dir: &str,
+    operation: TransferOperation,
+    same_source: bool,
+    state: &mut TransferProgressState,
+    progress: &mut P,
+    is_cancelled: &C,
+) -> Result<()>
+where
+    P: FnMut(TransferProgress),
+    C: Fn() -> bool + Sync,
+{
+    let destination = to_dir.trim_end_matches('/');
+    let suffix = uuid::Uuid::new_v4();
+    let staged = format!("{destination}.infimount-transfer-stage-{suffix}");
+    let staged_path = ensure_dir_path(&staged);
+
+    let staged_result = transfer_dir_recursive_with_progress(
+        from_op,
+        to_op,
+        from_dir,
+        &staged_path,
+        TransferOperation::Copy,
+        same_source,
+        state,
+        progress,
+        is_cancelled,
+    )
+    .await;
+
+    if let Err(error) = staged_result {
+        return match delete_recursive(to_op, &staged_path).await {
+            Ok(()) => Err(error),
+            Err(cleanup) if is_not_found_cleanup(&cleanup) => Err(error),
+            Err(_) => Err(crate::models::CoreError::TransferCleanupRequired),
+        };
+    }
+
+    if is_cancelled() {
+        return match delete_recursive(to_op, &staged_path).await {
+            Ok(()) => Err(crate::models::CoreError::Config(
+                "transfer cancelled".to_string(),
+            )),
+            Err(cleanup) if is_not_found_cleanup(&cleanup) => Err(
+                crate::models::CoreError::Config("transfer cancelled".to_string()),
+            ),
+            Err(_) => Err(crate::models::CoreError::TransferCleanupRequired),
+        };
+    }
+
+    if let Err(error) = to_op.rename(&staged, to_dir.trim_end_matches('/')).await {
+        return match delete_recursive(to_op, &staged_path).await {
+            Ok(()) => Err(error.into()),
+            Err(cleanup) if is_not_found_cleanup(&cleanup) => Err(error.into()),
+            Err(_) => Err(crate::models::CoreError::TransferCleanupRequired),
+        };
+    }
+
+    if operation == TransferOperation::Move {
+        ensure_not_cancelled(is_cancelled)?;
+        delete_recursive(from_op, from_dir).await?;
+    }
+
+    Ok(())
+}
+
+/// Transfer a directory into a transaction-created destination.
+///
+/// The top-level destination is guarded to not pre-exist: a destination that
+/// existed before the operation is never deleted. Backends with rename support
+/// stage the whole tree and commit with a rename; other backends copy directly
+/// and remove the destination on failure or cancellation. If cleanup fails the
+/// error is `CoreError::TransferCleanupRequired`, which reports
+/// `partialDestination: true, cleanupRequired: true` without exposing a local
+/// absolute root or credentials.
+#[allow(clippy::too_many_arguments)]
+async fn transfer_dir_transactional<P, C>(
+    from_op: &Operator,
+    to_op: &Operator,
+    from_dir: &str,
+    to_dir: &str,
+    operation: TransferOperation,
+    same_source: bool,
+    state: &mut TransferProgressState,
+    progress: &mut P,
+    is_cancelled: &C,
+) -> Result<()>
+where
+    P: FnMut(TransferProgress),
+    C: Fn() -> bool + Sync,
+{
+    let to_root = ensure_dir_path(to_dir);
+
+    if path_exists_for_transfer(to_op, &to_root).await? {
+        return Err(opendal::Error::new(
+            ErrorKind::AlreadyExists,
+            "Destination directory already exists",
+        )
+        .into());
+    }
+
+    if to_op.info().capability().rename {
+        return transactional_create_transfer(
+            from_op,
+            to_op,
+            from_dir,
+            &to_root,
+            operation,
+            same_source,
+            state,
+            progress,
+            is_cancelled,
+        )
+        .await;
+    }
+
+    let result = transfer_dir_recursive_with_progress(
+        from_op,
+        to_op,
+        from_dir,
+        &to_root,
+        TransferOperation::Copy,
+        same_source,
+        state,
+        progress,
+        is_cancelled,
+    )
+    .await;
+
+    match result {
+        Ok(()) => {
+            if operation == TransferOperation::Move {
+                ensure_not_cancelled(is_cancelled)?;
+                delete_recursive(from_op, from_dir).await?;
+            }
+            Ok(())
+        }
+        Err(error) => match delete_recursive(to_op, &to_root).await {
+            Ok(()) => Err(error),
+            Err(cleanup) if is_not_found_cleanup(&cleanup) => Err(error),
+            Err(_) => Err(crate::models::CoreError::TransferCleanupRequired),
+        },
+    }
+}
 ///
 /// The plan performs only OpenDAL stat/list/exists calls. It does not mutate storage.
 pub async fn plan_transfer_entries(
@@ -1747,13 +1892,16 @@ pub async fn transfer_path(
             }
         }
 
-        transfer_dir_recursive(
+        transfer_dir_transactional(
             from_op,
             to_op,
             &normalized_src,
             &normalized_dest,
             operation,
             same_source,
+            &mut TransferProgressState::default(),
+            &mut |_| {},
+            &|| false,
         )
         .await?;
     } else {
@@ -1895,12 +2043,12 @@ where
     let staged_path = if is_dir {
         ensure_dir_path(&staged)
     } else {
-        staged
+        staged.clone()
     };
     let backup_path = if is_dir {
         ensure_dir_path(&backup)
     } else {
-        backup
+        backup.clone()
     };
 
     if let Err(error) = stage_transfer_source(
@@ -1933,7 +2081,7 @@ where
             "transfer cancelled".to_string(),
         ));
     }
-    if let Err(error) = to_op.rename(destination_path, &backup_path).await {
+    if let Err(error) = to_op.rename(normalized_destination, &backup).await {
         delete_recursive(to_op, &staged_path).await.map_err(|cleanup| {
             crate::models::CoreError::Config(format!(
                 "destination preservation failed ({error}); staged destination is preserved at {staged_path}: {cleanup}"
@@ -1941,8 +2089,8 @@ where
         })?;
         return Err(error.into());
     }
-    if let Err(error) = to_op.rename(&staged_path, destination_path).await {
-        to_op.rename(&backup_path, destination_path).await.map_err(|rollback| {
+    if let Err(error) = to_op.rename(&staged, normalized_destination).await {
+        to_op.rename(&backup, normalized_destination).await.map_err(|rollback| {
             crate::models::CoreError::Config(format!(
                 "transfer commit failed ({error}); rollback failed and previous destination is preserved at {backup_path}: {rollback}"
             ))
@@ -1961,7 +2109,7 @@ where
                 "transfer backup cleanup failed ({error}); new destination cleanup failed and previous destination remains at {backup_path}: {rollback}"
             ))
         })?;
-        to_op.rename(&backup_path, destination_path).await.map_err(|rollback| {
+        to_op.rename(&backup, normalized_destination).await.map_err(|rollback| {
             crate::models::CoreError::Config(format!(
                 "transfer backup cleanup failed ({error}); rollback failed and previous destination is preserved at {backup_path}: {rollback}"
             ))
@@ -2128,13 +2276,16 @@ pub async fn transfer_entries(
                 dest_dir
             };
 
-            transfer_dir_recursive(
+            transfer_dir_transactional(
                 from_op,
                 to_op,
                 &ensure_dir_path(&from_path),
                 &dest_dir,
                 operation,
                 same_source,
+                &mut TransferProgressState::default(),
+                &mut |_| {},
+                &|| false,
             )
             .await?;
         } else {
@@ -2371,7 +2522,7 @@ where
                 dest_dir
             };
 
-            transfer_dir_recursive_with_progress(
+            transfer_dir_transactional(
                 from_op,
                 to_op,
                 &ensure_dir_path(&from_path),
@@ -2863,7 +3014,7 @@ async fn upload_path_recursive(op: &Operator, src: &Path, target_dir: &str) -> R
     Ok(())
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileVersion {
     pub version: String,
     pub size_bytes: Option<u64>,
@@ -2876,58 +3027,177 @@ pub struct ListVersionsResult {
     pub path: String,
     pub versions: Vec<FileVersion>,
     pub next_cursor: Option<String>,
+    pub truncated: bool,
 }
 
-pub async fn list_file_versions(
+/// Maximum number of versions a single version-listing scan may collect.
+pub const MAX_VERSIONS_SCANNED: usize = 10_000;
+/// Maximum page size for a single version-listing request.
+pub const MAX_VERSIONS_PAGE: u32 = 1_000;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct VersionCursor {
+    version: u8,
+    storage_id: String,
+    path: String,
+    revision: u64,
+    offset: usize,
+    scan_cap: usize,
+}
+
+/// Bounded version listing shared by the desktop and the MCP server.
+///
+/// The cursor is HMAC-signed, bound to the storage id, the normalized path and
+/// the storage revision, and never continues beyond the scan cap.
+pub async fn list_file_versions_page(
     op: &Operator,
+    storage_id: &str,
     path: &str,
     limit: u32,
-    _cursor: Option<&str>,
+    cursor: Option<&str>,
+    revision: u64,
 ) -> Result<ListVersionsResult> {
+    if limit == 0 || limit > MAX_VERSIONS_PAGE {
+        return Err(crate::models::CoreError::Config(format!(
+            "version limit must be between 1 and {MAX_VERSIONS_PAGE}"
+        )));
+    }
     let normalized = normalize_opendal_path(path);
-    let mut versions = Vec::new();
+    let offset = decode_version_cursor(cursor, storage_id, &normalized, revision)?;
 
     let mut lister = match op.lister_with(&normalized).versions(true).await {
         Ok(l) => l,
         Err(e) if e.kind() == ErrorKind::NotFound => {
             return Ok(ListVersionsResult {
-                path: path.to_string(),
+                path: normalized,
                 versions: vec![],
                 next_cursor: None,
+                truncated: false,
             });
         }
         Err(e) => return Err(e.into()),
     };
 
+    let mut collected = Vec::new();
+    let mut scanned = 0usize;
+    let mut hit_cap = false;
     while let Some(entry) = lister.try_next().await? {
         let meta = entry.metadata();
-        if let Some(version) = meta.version() {
-            let modified_at = meta.last_modified().map(|dt| dt.to_string());
-            let etag = meta.etag().map(|s| s.to_string());
-            versions.push(FileVersion {
-                version: version.to_string(),
-                size_bytes: Some(meta.content_length()),
-                modified_at,
-                etag,
-            });
+        let Some(version) = meta.version() else {
+            continue;
+        };
+        scanned = scanned.saturating_add(1);
+        if scanned > MAX_VERSIONS_SCANNED {
+            hit_cap = true;
+            break;
         }
+        if version == "default" {
+            continue;
+        }
+        collected.push(FileVersion {
+            version: version.to_string(),
+            size_bytes: Some(meta.content_length()),
+            modified_at: meta.last_modified().map(|dt| dt.to_string()),
+            etag: meta.etag().map(|s| s.to_string()),
+        });
     }
 
-    versions.sort_by(|a, b| {
+    collected.sort_by(|a, b| {
         let a_time = a.modified_at.as_deref().unwrap_or("");
         let b_time = b.modified_at.as_deref().unwrap_or("");
         b_time.cmp(a_time).then_with(|| a.version.cmp(&b.version))
     });
 
-    if limit > 0 && versions.len() > limit as usize {
-        versions.truncate(limit as usize);
-    }
+    let start = offset.min(collected.len());
+    let end = (start + limit as usize).min(collected.len());
+    let page = collected[start..end].to_vec();
+    // More versions may exist beyond the scan cap; report truncation without
+    // ever issuing a continuation that would scan beyond the cap.
+    let next_cursor = if end < collected.len() {
+        Some(encode_version_cursor(
+            storage_id,
+            &normalized,
+            revision,
+            end,
+        )?)
+    } else {
+        None
+    };
 
     Ok(ListVersionsResult {
-        path: path.to_string(),
-        versions,
-        next_cursor: None,
+        path: normalized,
+        versions: page,
+        next_cursor,
+        truncated: hit_cap,
     })
+}
+
+fn encode_version_cursor(
+    storage_id: &str,
+    path: &str,
+    revision: u64,
+    offset: usize,
+) -> Result<String> {
+    let cursor = VersionCursor {
+        version: 1,
+        storage_id: storage_id.to_string(),
+        path: path.to_string(),
+        revision,
+        offset,
+        scan_cap: MAX_VERSIONS_SCANNED,
+    };
+    let bytes = serde_json::to_vec(&cursor)?;
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&bytes);
+    let signature = hmac_sha256(cursor_signing_key(), payload.as_bytes());
+    Ok(format!(
+        "{payload}.{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(signature)
+    ))
+}
+
+fn decode_version_cursor(
+    encoded: Option<&str>,
+    storage_id: &str,
+    path: &str,
+    revision: u64,
+) -> Result<usize> {
+    let Some(encoded) = encoded else {
+        return Ok(0);
+    };
+    if encoded.len() > MAX_CURSOR_BYTES {
+        return Err(crate::models::CoreError::Config(
+            "invalid version cursor".to_string(),
+        ));
+    }
+    let (payload, encoded_signature) = encoded
+        .split_once('.')
+        .ok_or_else(|| crate::models::CoreError::Config("invalid version cursor".to_string()))?;
+    let signature = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded_signature)
+        .map_err(|_| crate::models::CoreError::Config("invalid version cursor".to_string()))?;
+    let expected = hmac_sha256(cursor_signing_key(), payload.as_bytes());
+    if !constant_time_eq(&signature, &expected) {
+        return Err(crate::models::CoreError::Config(
+            "invalid version cursor".to_string(),
+        ));
+    }
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .map_err(|_| crate::models::CoreError::Config("invalid version cursor".to_string()))?;
+    let cursor: VersionCursor = serde_json::from_slice(&bytes)
+        .map_err(|_| crate::models::CoreError::Config("invalid version cursor".to_string()))?;
+    if cursor.version != 1
+        || cursor.storage_id != storage_id
+        || cursor.path != path
+        || cursor.revision != revision
+        || cursor.scan_cap != MAX_VERSIONS_SCANNED
+        || cursor.offset > MAX_VERSIONS_SCANNED
+    {
+        return Err(crate::models::CoreError::Config(
+            "version cursor does not match the current query or storage revision".to_string(),
+        ));
+    }
+    Ok(cursor.offset)
 }
 
 pub async fn read_file_version(op: &Operator, path: &str, version: &str) -> Result<Vec<u8>> {
@@ -3039,6 +3309,88 @@ mod tests {
             .is_err());
     }
 
+    #[test]
+    fn version_cursor_is_bound_to_storage_path_and_revision() {
+        let cursor = encode_version_cursor("storage-1", "dir/file.txt", 7, 10).unwrap();
+        assert_eq!(
+            decode_version_cursor(Some(&cursor), "storage-1", "dir/file.txt", 7).unwrap(),
+            10
+        );
+
+        // Replay on another storage id is rejected.
+        assert!(decode_version_cursor(Some(&cursor), "storage-2", "dir/file.txt", 7).is_err());
+        // Replay on another path is rejected.
+        assert!(decode_version_cursor(Some(&cursor), "storage-1", "dir/other.txt", 7).is_err());
+        // Replay after a storage revision change is rejected.
+        assert!(decode_version_cursor(Some(&cursor), "storage-1", "dir/file.txt", 8).is_err());
+        // An absent cursor starts at the beginning.
+        assert_eq!(
+            decode_version_cursor(None, "storage-1", "dir/file.txt", 7).unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn version_cursor_rejects_forged_signature_and_oversized_scan() {
+        let cursor = encode_version_cursor("storage-1", "dir/file.txt", 7, 10).unwrap();
+        let (payload, signature) = cursor.split_once('.').unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(payload)
+                .unwrap(),
+        )
+        .unwrap();
+        value["offset"] = serde_json::json!(99);
+        let forged_payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&value).unwrap());
+        let forged = format!("{forged_payload}.{signature}");
+        assert!(decode_version_cursor(Some(&forged), "storage-1", "dir/file.txt", 7).is_err());
+
+        // A validly signed cursor beyond the scan cap is rejected.
+        let over_cap =
+            encode_version_cursor("storage-1", "dir/file.txt", 7, MAX_VERSIONS_SCANNED + 1)
+                .unwrap();
+        assert!(decode_version_cursor(Some(&over_cap), "storage-1", "dir/file.txt", 7).is_err());
+
+        // A cursor signed for a different scan cap is rejected.
+        let mut stale: serde_json::Value = serde_json::from_slice(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(payload)
+                .unwrap(),
+        )
+        .unwrap();
+        stale["scan_cap"] = serde_json::json!(5_000);
+        let stale_payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&stale).unwrap());
+        let stale_cursor = format!("{stale_payload}.{signature}");
+        assert!(
+            decode_version_cursor(Some(&stale_cursor), "storage-1", "dir/file.txt", 7).is_err()
+        );
+    }
+
+    #[test]
+    fn version_scan_cap_is_never_exceeded() {
+        // The bounded collection loop must stop before exceeding the cap, so the
+        // collected page is never larger than the cap even for a full scan.
+        let cap = MAX_VERSIONS_SCANNED;
+        let mut collected = Vec::with_capacity(cap + 1);
+        let mut scanned = 0usize;
+        for _ in 0..(cap + 100) {
+            scanned = scanned.saturating_add(1);
+            if scanned > MAX_VERSIONS_SCANNED {
+                break;
+            }
+            collected.push(FileVersion {
+                version: format!("v{scanned}"),
+                size_bytes: Some(1),
+                modified_at: None,
+                etag: None,
+            });
+        }
+        assert_eq!(collected.len(), MAX_VERSIONS_SCANNED);
+        assert!(collected.len() <= MAX_VERSIONS_SCANNED);
+    }
+
     #[tokio::test]
     async fn paginated_cursor_rejects_forged_scanned_and_position_state() {
         let op = create_test_operator().await;
@@ -3069,13 +3421,13 @@ mod tests {
         let over_ceiling = encode_page_cursor(&PageCursor {
             version: 2,
             path: String::new(),
-            recursive: false,
+            recursive: true,
             revision: 9,
             scanned: MAX_PAGE_TOTAL_SCANNED + 1,
             position: Some("z.txt".to_string()),
         })
         .unwrap();
-        assert!(decode_page_cursor(&over_ceiling, "/", false, 9).is_err());
+        assert!(decode_page_cursor(&over_ceiling, "/", true, 9, MAX_PAGE_TOTAL_SCANNED).is_err());
     }
 
     #[tokio::test]
@@ -3181,7 +3533,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn filtered_pagination_stops_at_signed_total_scan_ceiling() {
+    async fn filtered_recursive_pagination_stops_at_signed_total_scan_ceiling() {
         let op = create_test_operator().await;
         for index in 0..=MAX_PAGE_TOTAL_SCANNED {
             op.write(&format!("denied-{index:05}.txt"), b"x".as_slice())
@@ -3193,7 +3545,7 @@ mod tests {
         let mut pages = 0usize;
         loop {
             let page =
-                list_entries_page_with_filter(&op, "/", MAX_LIST_LIMIT, cursor, false, 45, |_| {
+                list_entries_page_with_filter(&op, "/", MAX_LIST_LIMIT, cursor, true, 45, |_| {
                     Ok(false)
                 })
                 .await
@@ -4059,7 +4411,7 @@ mod tests {
         assert!(result.is_err());
         assert!(op.exists("docs/a.txt").await.unwrap());
         assert!(op.exists("docs/nested/b.txt").await.unwrap());
-        assert!(op.exists("target/docs/").await.unwrap());
+        assert!(!op.exists("target/docs/").await.unwrap());
     }
 
     #[tokio::test]
@@ -4152,5 +4504,524 @@ mod tests {
 
         assert_eq!(op.read("source.txt").await.unwrap().to_vec(), b"new");
         assert_eq!(op.read("target/source.txt").await.unwrap().to_vec(), b"old");
+    }
+
+    #[tokio::test]
+    async fn cancellation_removes_transaction_created_destination() {
+        let from_op = create_test_operator().await;
+        let to_op = create_test_operator().await;
+        from_op.write("docs/a.txt", "a".as_bytes()).await.unwrap();
+        from_op
+            .write("docs/nested/b.txt", "b".as_bytes())
+            .await
+            .unwrap();
+
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let set_cancelled = Arc::clone(&cancelled);
+        let result = transfer_entries_with_progress(
+            &from_op,
+            &to_op,
+            vec!["docs".to_string()],
+            "target",
+            TransferOperation::Copy,
+            false,
+            TransferConflictPolicy::Fail,
+            move |progress| {
+                if progress.completed_items > 0 {
+                    set_cancelled.store(true, Ordering::SeqCst);
+                }
+            },
+            || cancelled.load(Ordering::SeqCst),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(!to_op.exists("target/docs/").await.unwrap());
+        assert!(!to_op.exists("target/docs/a.txt").await.unwrap());
+
+        let mut lister = to_op.lister("target/").await.unwrap();
+        let mut leftover = Vec::new();
+        while let Some(obj) = lister.try_next().await.unwrap() {
+            leftover.push(obj.path().to_string());
+        }
+        assert!(
+            leftover
+                .iter()
+                .all(|p| !p.contains("infimount-transfer-stage")),
+            "staging leftovers remain: {leftover:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn failure_in_middle_of_directory_copy_removes_new_destination() {
+        let src_root = unique_temp_dir("mid-fail-src");
+        fs::create_dir_all(src_root.join("docs")).unwrap();
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            fs::write(src_root.join("docs").join(name), name).unwrap();
+        }
+        let dst_root = unique_temp_dir("mid-fail-dst");
+        fs::create_dir_all(dst_root.join("target")).unwrap();
+
+        let from_op = Operator::new(Fs::default().root(src_root.to_str().unwrap())).unwrap();
+        let to_op = Operator::new(Fs::default().root(dst_root.to_str().unwrap())).unwrap();
+
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cancel_flag = cancelled.clone();
+        let result = transfer_entries_with_progress(
+            &from_op,
+            &to_op,
+            vec!["docs".to_string()],
+            "target",
+            TransferOperation::Copy,
+            false,
+            TransferConflictPolicy::Fail,
+            move |progress| {
+                if progress.completed_items > 0 {
+                    cancel_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+            },
+            move || cancelled.load(std::sync::atomic::Ordering::SeqCst),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(!to_op.exists("target/docs/").await.unwrap());
+        assert!(!dst_root.join("target/docs").exists());
+
+        fs::remove_dir_all(&src_root).unwrap();
+        fs::remove_dir_all(&dst_root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cleanup_failure_reports_partial_destination() {
+        let src_root = unique_temp_dir("cleanup-fail-src");
+        fs::create_dir_all(src_root.join("docs")).unwrap();
+        for name in ["a.txt", "b.txt"] {
+            fs::write(src_root.join("docs").join(name), name).unwrap();
+        }
+        let dst_root = unique_temp_dir("cleanup-fail-dst");
+        let target = dst_root.join("target");
+        fs::create_dir_all(&target).unwrap();
+
+        let from_op = Operator::new(Fs::default().root(src_root.to_str().unwrap())).unwrap();
+        let to_op = Operator::new(Fs::default().root(dst_root.to_str().unwrap())).unwrap();
+
+        let lock_target = target.clone();
+        let result = transfer_entries_with_progress(
+            &from_op,
+            &to_op,
+            vec!["docs".to_string()],
+            "target",
+            TransferOperation::Copy,
+            false,
+            TransferConflictPolicy::Fail,
+            move |progress| {
+                if progress.completed_items > 0 {
+                    let _ = fs::set_permissions(&lock_target, fs::Permissions::from_mode(0o500));
+                }
+            },
+            || false,
+        )
+        .await;
+
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert!(matches!(
+            result,
+            Err(crate::models::CoreError::TransferCleanupRequired)
+        ));
+        assert!(!to_op.exists("target/docs/").await.unwrap());
+
+        let mut lister = to_op.lister("target/").await.unwrap();
+        let mut leftover = Vec::new();
+        while let Some(obj) = lister.try_next().await.unwrap() {
+            leftover.push(obj.path().to_string());
+        }
+        assert!(
+            leftover
+                .iter()
+                .any(|p| p.contains("infimount-transfer-stage")),
+            "expected a staging leftover requiring manual cleanup"
+        );
+
+        fs::remove_dir_all(&src_root).unwrap();
+        fs::remove_dir_all(&dst_root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn existing_destination_is_never_removed_accidentally() {
+        let op = create_test_operator().await;
+        op.write("docs/a.txt", "new".as_bytes()).await.unwrap();
+        create_directory(&op, "target").await.unwrap();
+        op.write("target/docs/old.txt", "old".as_bytes())
+            .await
+            .unwrap();
+
+        let fail_policy = transfer_entries(
+            &op,
+            &op,
+            vec!["docs".to_string()],
+            "target",
+            TransferOperation::Copy,
+            true,
+            TransferConflictPolicy::Fail,
+        )
+        .await;
+        assert!(fail_policy.is_err());
+        assert!(op.exists("target/docs/").await.unwrap());
+        assert_eq!(
+            op.read("target/docs/old.txt").await.unwrap().to_vec(),
+            b"old"
+        );
+
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let set_cancelled = Arc::clone(&cancelled);
+        let overwrite_cancelled = transfer_entries_with_progress(
+            &op,
+            &op,
+            vec!["docs".to_string()],
+            "target",
+            TransferOperation::Copy,
+            true,
+            TransferConflictPolicy::Overwrite,
+            move |progress| {
+                if progress.completed_items > 0 {
+                    set_cancelled.store(true, Ordering::SeqCst);
+                }
+            },
+            || cancelled.load(Ordering::SeqCst),
+        )
+        .await;
+        assert!(overwrite_cancelled.is_err());
+        assert!(op.exists("target/docs/").await.unwrap());
+        assert_eq!(
+            op.read("target/docs/old.txt").await.unwrap().to_vec(),
+            b"old"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn source_of_move_remains_until_complete_copy_succeeds() {
+        let src_root = unique_temp_dir("move-src-preserved");
+        fs::create_dir_all(src_root.join("docs/nested")).unwrap();
+        fs::write(src_root.join("docs/a.txt"), "a").unwrap();
+        fs::write(src_root.join("docs/nested/b.txt"), "b").unwrap();
+        let dst_root = unique_temp_dir("move-dst-blocked");
+        let target = dst_root.join("target");
+        fs::create_dir_all(&target).unwrap();
+
+        let from_op = Operator::new(Fs::default().root(src_root.to_str().unwrap())).unwrap();
+        let to_op = Operator::new(Fs::default().root(dst_root.to_str().unwrap())).unwrap();
+
+        let lock_target = target.clone();
+        let result = transfer_entries_with_progress(
+            &from_op,
+            &to_op,
+            vec!["docs".to_string()],
+            "target",
+            TransferOperation::Move,
+            false,
+            TransferConflictPolicy::Fail,
+            move |progress| {
+                if progress.completed_items > 0 {
+                    let _ = fs::set_permissions(&lock_target, fs::Permissions::from_mode(0o500));
+                }
+            },
+            || false,
+        )
+        .await;
+
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert!(result.is_err());
+        assert!(from_op.exists("docs/a.txt").await.unwrap());
+        assert!(from_op.exists("docs/nested/b.txt").await.unwrap());
+        assert!(!to_op.exists("target/docs/").await.unwrap());
+
+        fs::remove_dir_all(&src_root).unwrap();
+        fs::remove_dir_all(&dst_root).unwrap();
+    }
+
+    /// A minimal flat service that advertises optional `start_after` continuation.
+    ///
+    /// Entries are stored as a sorted map of relative paths. Listing emits keys
+    /// strictly after `OpList::start_after`, mirroring S3/GCS-style services.
+    struct FlatSimService {
+        entries: std::collections::BTreeMap<String, u64>,
+        info: opendal::raw::ServiceInfo,
+        capability: opendal::Capability,
+    }
+
+    impl std::fmt::Debug for FlatSimService {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter
+                .debug_struct("FlatSimService")
+                .finish_non_exhaustive()
+        }
+    }
+
+    impl FlatSimService {
+        fn new(
+            supports_start_after: bool,
+            entries: std::collections::BTreeMap<String, u64>,
+        ) -> Self {
+            let capability = opendal::Capability {
+                list: true,
+                list_with_recursive: true,
+                list_with_start_after: supports_start_after,
+                stat: true,
+                ..Default::default()
+            };
+            let info = opendal::raw::ServiceInfo::new(
+                "flat-sim",
+                "/",
+                format!("flat-sim-{}", entries.len()),
+            );
+            Self {
+                entries,
+                info,
+                capability,
+            }
+        }
+    }
+
+    struct FlatSimLister {
+        entries: std::vec::IntoIter<(String, u64)>,
+        start_after: Option<String>,
+    }
+
+    impl opendal::raw::oio::List for FlatSimLister {
+        async fn next(&mut self) -> opendal::Result<Option<opendal::raw::oio::Entry>> {
+            loop {
+                let Some((path, size)) = self.entries.next() else {
+                    return Ok(None);
+                };
+                if let Some(after) = &self.start_after {
+                    if path.as_str() <= after.as_str() {
+                        continue;
+                    }
+                }
+                return Ok(Some(opendal::raw::oio::Entry::new(
+                    &path,
+                    opendal::Metadata::new(opendal::EntryMode::FILE).with_content_length(size),
+                )));
+            }
+        }
+    }
+
+    impl opendal::raw::Service for FlatSimService {
+        type Reader = opendal::raw::oio::Reader;
+        type Writer = opendal::raw::oio::Writer;
+        type Lister = opendal::raw::oio::HierarchyLister<FlatSimLister>;
+        type Deleter = ();
+        type Copier = ();
+
+        fn info(&self) -> opendal::raw::ServiceInfo {
+            self.info.clone()
+        }
+
+        fn capability(&self) -> opendal::Capability {
+            self.capability
+        }
+
+        async fn create_dir(
+            &self,
+            _: &opendal::OperationContext,
+            _: &str,
+            _: opendal::raw::OpCreateDir,
+        ) -> opendal::Result<opendal::raw::RpCreateDir> {
+            Err(opendal::Error::new(
+                opendal::ErrorKind::Unsupported,
+                "unsupported",
+            ))
+        }
+
+        async fn stat(
+            &self,
+            _: &opendal::OperationContext,
+            path: &str,
+            _: opendal::raw::OpStat,
+        ) -> opendal::Result<opendal::raw::RpStat> {
+            let path = path.trim_end_matches('/');
+            if path.is_empty() {
+                return Ok(opendal::raw::RpStat::new(opendal::Metadata::new(
+                    opendal::EntryMode::DIR,
+                )));
+            }
+            match self.entries.get(path) {
+                Some(size) => Ok(opendal::raw::RpStat::new(
+                    opendal::Metadata::new(opendal::EntryMode::FILE).with_content_length(*size),
+                )),
+                None => Err(opendal::Error::new(
+                    opendal::ErrorKind::NotFound,
+                    "not found",
+                )),
+            }
+        }
+
+        fn read(
+            &self,
+            _: &opendal::OperationContext,
+            _: &str,
+            _: opendal::raw::OpRead,
+        ) -> opendal::Result<Self::Reader> {
+            Err(opendal::Error::new(
+                opendal::ErrorKind::Unsupported,
+                "unsupported",
+            ))
+        }
+
+        fn write(
+            &self,
+            _: &opendal::OperationContext,
+            _: &str,
+            _: opendal::raw::OpWrite,
+        ) -> opendal::Result<Self::Writer> {
+            Err(opendal::Error::new(
+                opendal::ErrorKind::Unsupported,
+                "unsupported",
+            ))
+        }
+
+        fn delete(&self, _: &opendal::OperationContext) -> opendal::Result<Self::Deleter> {
+            Err(opendal::Error::new(
+                opendal::ErrorKind::Unsupported,
+                "unsupported",
+            ))
+        }
+
+        fn list(
+            &self,
+            _: &opendal::OperationContext,
+            path: &str,
+            args: opendal::raw::OpList,
+        ) -> opendal::Result<Self::Lister> {
+            let entries = self.entries.clone().into_iter().collect::<Vec<_>>();
+            Ok(opendal::raw::oio::HierarchyLister::new(
+                FlatSimLister {
+                    entries: entries.into_iter(),
+                    start_after: args.start_after().map(str::to_string),
+                },
+                path,
+                args.recursive(),
+            ))
+        }
+
+        fn copy(
+            &self,
+            _: &opendal::OperationContext,
+            _: &str,
+            _: &str,
+            _: opendal::raw::OpCopy,
+            _: opendal::raw::OpCopier,
+        ) -> opendal::Result<Self::Copier> {
+            Err(opendal::Error::new(
+                opendal::ErrorKind::Unsupported,
+                "unsupported",
+            ))
+        }
+
+        async fn rename(
+            &self,
+            _: &opendal::OperationContext,
+            _: &str,
+            _: &str,
+            _: opendal::raw::OpRename,
+        ) -> opendal::Result<opendal::raw::RpRename> {
+            Err(opendal::Error::new(
+                opendal::ErrorKind::Unsupported,
+                "unsupported",
+            ))
+        }
+
+        async fn presign(
+            &self,
+            _: &opendal::OperationContext,
+            _: &str,
+            _: opendal::raw::OpPresign,
+        ) -> opendal::Result<opendal::raw::RpPresign> {
+            Err(opendal::Error::new(
+                opendal::ErrorKind::Unsupported,
+                "unsupported",
+            ))
+        }
+    }
+
+    fn flat_sim_operator(
+        supports_start_after: bool,
+        entries: std::collections::BTreeMap<String, u64>,
+    ) -> Operator {
+        let service = Arc::new(FlatSimService::new(supports_start_after, entries));
+        Operator::from_parts(
+            opendal::OperationContext::default(),
+            service as opendal::raw::Servicer,
+        )
+    }
+
+    #[tokio::test]
+    async fn non_recursive_simulator_reaches_entries_beyond_ten_thousand_with_start_after() {
+        let entries = (0..10_001_u32)
+            .map(|index| (format!("entry-{index:05}.txt"), 1u64))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let op = flat_sim_operator(true, entries);
+
+        let mut cursor = None;
+        let mut seen = 0usize;
+        let mut saw_last = false;
+        let mut truncated_any = false;
+        loop {
+            let page = list_entries_page(&op, "/", MAX_LIST_LIMIT, cursor, false, 1)
+                .await
+                .unwrap();
+            seen += page.entries.len();
+            truncated_any |= page.truncated;
+            if page
+                .entries
+                .iter()
+                .any(|entry| entry.path == "entry-10000.txt")
+            {
+                saw_last = true;
+            }
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        assert_eq!(seen, 10_001, "entries after 10,000 must remain reachable");
+        assert!(saw_last, "entry #10000 must be reachable via continuation");
+        assert!(!truncated_any, "no scan cap should truncate the listing");
+    }
+
+    #[tokio::test]
+    async fn non_recursive_replay_is_explicitly_truncated_at_documented_maximum() {
+        let entries = (0..=MAX_PAGE_NON_RECURSIVE_SCANNED as u32)
+            .map(|index| (format!("entry-{index:05}.txt"), 1u64))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let op = flat_sim_operator(false, entries);
+
+        let mut cursor = None;
+        let mut seen = 0usize;
+        loop {
+            let page = list_entries_page(&op, "/", MAX_LIST_LIMIT, cursor, false, 1)
+                .await
+                .unwrap();
+            seen += page.entries.len();
+            let next_cursor = page.next_cursor.clone();
+            if next_cursor.is_none() {
+                assert!(
+                    page.truncated,
+                    "stopping at the documented maximum must be explicit"
+                );
+                break;
+            }
+            cursor = next_cursor;
+        }
+        assert_eq!(
+            seen, MAX_PAGE_NON_RECURSIVE_SCANNED,
+            "replay-based non-recursive listing must stop at the documented maximum"
+        );
     }
 }

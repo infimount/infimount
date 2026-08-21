@@ -329,6 +329,15 @@ pub(super) fn core_error_to_mcp_error(err: infimount_core::CoreError) -> crate::
             "invalid or stale list cursor",
             json!({}),
         ),
+        infimount_core::CoreError::TransferCleanupRequired => err_with_details(
+            McpErrorCode::ERR_INTERNAL,
+            "transfer partially completed; the new destination was not present before the transfer and could not be fully removed",
+            json!({
+                "partialDestination": true,
+                "cleanupRequired": true,
+                "temporary": false
+            }),
+        ),
         _ => err_with_details(
             McpErrorCode::ERR_INTERNAL,
             "storage operation failed",

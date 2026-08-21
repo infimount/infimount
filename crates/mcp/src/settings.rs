@@ -1,4 +1,6 @@
-use crate::errors::{err, err_with_details, map_io_error, McpErrorCode, McpResult};
+use crate::errors::{
+    err, err_with_details, map_io_error, sanitized_parse_error, McpErrorCode, McpResult,
+};
 use crate::registry::default_config_dir;
 use crate::server::{all_tool_names, default_enabled_tool_names};
 use fs2::FileExt;
@@ -113,10 +115,11 @@ impl McpSettingsStore {
         let data = fs::read_to_string(&self.path)
             .map_err(|e| map_io_error(&e, McpErrorCode::ERR_INTERNAL))?;
         let settings: McpSettings = serde_json::from_str(&data).map_err(|e| {
-            err_with_details(
+            sanitized_parse_error(
                 McpErrorCode::ERR_INTERNAL,
                 "failed to parse MCP settings",
-                serde_json::json!({ "serde_error": e.to_string(), "path": self.path }),
+                "invalid_mcp_settings",
+                &e,
             )
         })?;
         let legacy_token = settings

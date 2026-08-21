@@ -61,7 +61,7 @@ run_desktop_for_migration() {
   log_file="$(mktemp)"
   make_smoke_home "$tmp_home"
 
-  setsid xvfb-run -a env \
+  setsid dbus-run-session -- xvfb-run -a env \
     HOME="$tmp_home" \
     XDG_CONFIG_HOME="$tmp_home/.config" \
     APPIMAGE_EXTRACT_AND_RUN=1 \

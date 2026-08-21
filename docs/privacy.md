@@ -6,6 +6,8 @@ Infimount is local-first. Storage configuration, credentials, MCP settings, audi
 
 Infimount always keeps a bounded local product-event log for diagnostics. Local events describe application flows such as activation steps and outcomes. The local log is separate from network consent: revoking consent stops future network export but does not delete local events. Use the separate Privacy control to clear them.
 
+Local event persistence can also be turned off independently in Privacy settings. Disabling it stops new local event writes (and pauses local log rotation) while leaving network telemetry consent unchanged; enabling it resumes local writes. The two controls are independent, so you can keep local diagnostics with no network export, or keep network consent with no local event file.
+
 Network telemetry is off by default. It sends nothing unless both conditions are true:
 
 1. the persisted Privacy preference is **granted**; and

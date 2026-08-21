@@ -72,6 +72,19 @@ pub async fn copy_path(ctx: &FsToolsContext, input: CopyPathInput) -> McpResult<
         ));
     }
     let same_storage = src_resolved.storage.id == dst_resolved.storage.id;
+    let namespace_relation = crate::storage_namespace::transfer_namespace_relation(
+        &src_resolved.storage,
+        &src_parsed.backend_path,
+        &dst_resolved.storage,
+        &dst_parsed.backend_path,
+    )?;
+    if crate::storage_namespace::transfer_has_namespace_conflict(&namespace_relation) {
+        return Err(err_with_details(
+            McpErrorCode::ERR_TRANSFER_NAMESPACE_CONFLICT,
+            "copy destination overlaps the source namespace",
+            json!({ "src": src_parsed.normalized, "dst": dst_parsed.normalized }),
+        ));
+    }
     enforce_storage_policy(
         &src_resolved.storage,
         &src_resolved.parsed.backend_path,
@@ -195,7 +208,7 @@ pub async fn copy_path(ctx: &FsToolsContext, input: CopyPathInput) -> McpResult<
         &src_parsed.backend_path,
         &dst_parsed.backend_path,
         TransferOperation::Copy,
-        same_storage,
+        namespace_relation.same_operator_scope,
         if input.overwrite {
             TransferConflictPolicy::Overwrite
         } else {
