@@ -563,7 +563,7 @@ pub fn strip_secret_fields(config: &mut Value, schema_secret_names: &HashSet<Str
                 }
             }
             Value::Array(items) => {
-                for child in items {
+                for child in items.iter_mut() {
                     visit(child, schema_names);
                 }
             }
@@ -571,6 +571,41 @@ pub fn strip_secret_fields(config: &mut Value, schema_secret_names: &HashSet<Str
         }
     }
     visit(config, schema_secret_names);
+}
+
+/// Drop empty objects and arrays that remain after secret stripping so a
+/// secret-only change never alters namespace identity. Used by fingerprinting,
+/// not by stored configs, which must keep parent containers so secret paths
+/// keep their object/array typing when merged back.
+pub fn prune_empty_containers(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            let keys = map.keys().cloned().collect::<Vec<_>>();
+            for key in keys {
+                let emptied = map
+                    .get_mut(&key)
+                    .map(|child| {
+                        prune_empty_containers(child);
+                        matches!(child, Value::Object(m) if m.is_empty())
+                            || matches!(child, Value::Array(a) if a.is_empty())
+                    })
+                    .unwrap_or(false);
+                if emptied {
+                    map.remove(&key);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for child in items.iter_mut() {
+                prune_empty_containers(child);
+            }
+            items.retain(|child| {
+                !(child.is_object() && child.as_object().unwrap().is_empty()
+                    || child.is_array() && child.as_array().unwrap().is_empty())
+            });
+        }
+        _ => {}
+    }
 }
 
 pub fn merge_secret_config(public: &Value, secret_bundle: &Value) -> Value {

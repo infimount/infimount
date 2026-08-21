@@ -94,7 +94,12 @@ pub fn storage_namespace_address(
     storage: &StorageRecord,
     backend_path: &str,
 ) -> McpResult<Option<StorageNamespaceAddress>> {
-    let (kind, fields) = resolve_fields(storage)?;
+    let (kind, mut fields) = resolve_fields(storage)?;
+    fields.authority = infimount_core::registry::canonicalize_provider_default_authority(
+        &kind,
+        &storage.config,
+        &fields.authority,
+    );
     let key = namespace_key(&kind, &fields, storage);
     let Some(key) = key else {
         return Ok(None);
@@ -319,14 +324,16 @@ fn paths_equal(left: &str, right: &str) -> bool {
 }
 
 fn normalize_compare(value: &str) -> String {
-    let trimmed = value.trim_end_matches('/').to_string();
     #[cfg(windows)]
     {
-        trimmed.to_lowercase()
+        value
+            .replace('\\', "/")
+            .trim_end_matches('/')
+            .to_lowercase()
     }
     #[cfg(not(windows))]
     {
-        trimmed
+        value.trim_end_matches('/').to_string()
     }
 }
 
@@ -387,6 +394,10 @@ fn public_config_for_fingerprint(storage: &StorageRecord) -> McpResult<serde_jso
     let mut config = storage.config.clone();
     let schema_names = secrets::discover_secret_field_names();
     secrets::strip_secret_fields(&mut config, &schema_names);
+    // Secret stripping can leave empty containers behind (nested-array secrets).
+    // They carry no identity and must not make a secret-only edit look like a
+    // namespace change.
+    secrets::prune_empty_containers(&mut config);
     Ok(config)
 }
 
@@ -610,5 +621,91 @@ mod tests {
         let relation = transfer_namespace_relation(&a, "foo", &b, "foo/child").unwrap();
         assert!(!relation.same_underlying_namespace);
         assert!(!transfer_has_namespace_conflict(&relation));
+    }
+
+    #[test]
+    fn s3_region_only_and_default_endpoint_are_the_same_namespace() {
+        let region_only = storage(
+            "one",
+            "s3",
+            json!({ "bucket": "bucket", "region": "eu-west-1" }),
+        );
+        let explicit_default = storage(
+            "two",
+            "s3",
+            json!({ "bucket": "bucket", "region": "eu-west-1", "endpoint": "https://s3.eu-west-1.amazonaws.com" }),
+        );
+        let relation =
+            transfer_namespace_relation(&region_only, "foo", &explicit_default, "foo/child")
+                .unwrap();
+        assert!(relation.same_underlying_namespace);
+        assert!(transfer_has_namespace_conflict(&relation));
+    }
+
+    #[test]
+    fn s3_default_region_with_and_without_endpoint_are_the_same_namespace() {
+        let legacy_default = storage("one", "s3", json!({ "bucket": "bucket" }));
+        let explicit_us_east_1 = storage(
+            "two",
+            "s3",
+            json!({ "bucket": "bucket", "endpoint": "https://s3.amazonaws.com" }),
+        );
+        let relation =
+            transfer_namespace_relation(&legacy_default, "foo", &explicit_us_east_1, "foo/child")
+                .unwrap();
+        assert!(relation.same_underlying_namespace);
+        assert!(transfer_has_namespace_conflict(&relation));
+    }
+
+    #[test]
+    fn azure_account_and_default_endpoint_are_the_same_namespace() {
+        let account_only = storage(
+            "one",
+            "azblob",
+            json!({ "accountName": "demoacct", "container": "bucket" }),
+        );
+        let explicit_default = storage(
+            "two",
+            "azblob",
+            json!({ "accountName": "demoacct", "container": "bucket", "endpoint": "https://demoacct.blob.core.windows.net" }),
+        );
+        let relation =
+            transfer_namespace_relation(&account_only, "foo", &explicit_default, "foo/child")
+                .unwrap();
+        assert!(relation.same_underlying_namespace);
+        assert!(transfer_has_namespace_conflict(&relation));
+    }
+
+    #[test]
+    fn azure_explicit_custom_endpoint_does_not_collapse_to_account() {
+        let account_only = storage(
+            "one",
+            "azblob",
+            json!({ "accountName": "demoacct", "container": "bucket" }),
+        );
+        let custom_endpoint = storage(
+            "two",
+            "azblob",
+            json!({ "accountName": "demoacct", "container": "bucket", "endpoint": "https://storage.internal.example.com" }),
+        );
+        let relation =
+            transfer_namespace_relation(&account_only, "foo", &custom_endpoint, "foo/child")
+                .unwrap();
+        assert!(!relation.same_underlying_namespace);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_local_descendant_uses_component_boundary() {
+        let a = storage("one", "local", json!({ "root": "C:\\root" }));
+        let b = storage("two", "local", json!({ "root": "C:\\root" }));
+        // Backslash-separated roots combined with forward-slash backend paths
+        // must still be detected as an equal/descendant conflict.
+        let relation = transfer_namespace_relation(&a, "foo", &b, "foo/child").unwrap();
+        assert!(relation.same_underlying_namespace);
+        assert!(transfer_has_namespace_conflict(&relation));
+        // A sibling whose name merely shares the prefix must not conflict.
+        let sibling = transfer_namespace_relation(&a, "foo2", &b, "foo2").unwrap();
+        assert!(!transfer_has_namespace_conflict(&sibling));
     }
 }

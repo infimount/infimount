@@ -26,6 +26,7 @@ use crate::app_settings::AppSettings;
 use crate::state::AppState;
 
 const RESTORE_PREVIEW_TTL: Duration = Duration::from_secs(5 * 60);
+const RESTORE_PREVIEW_EXPIRY_INTERVAL: Duration = Duration::from_secs(60);
 const MAX_PENDING_RESTORE_PREVIEWS: usize = 8;
 const RESTORE_JOURNAL_VERSION: u32 = 1;
 const RESTORE_JOURNAL_KEY_ACCOUNT: &str = "recovery/restore-transaction";
@@ -297,6 +298,16 @@ struct ValidatedRestore {
     created_at: String,
 }
 
+impl ValidatedRestore {
+    fn zeroize(&mut self) {
+        for value in self.secrets.values_mut() {
+            zeroize_json_value(value);
+        }
+        self.secrets.clear();
+        backup::zeroize(&mut self.created_at);
+    }
+}
+
 struct PendingRestore {
     validated: ValidatedRestore,
     base_digest: String,
@@ -304,9 +315,123 @@ struct PendingRestore {
     expires_at: Instant,
 }
 
+impl PendingRestore {
+    fn zeroize(&mut self) {
+        self.validated.zeroize();
+        backup::zeroize(&mut self.base_digest);
+    }
+}
+
 fn pending_restores() -> &'static Mutex<HashMap<String, PendingRestore>> {
     static PENDING: OnceLock<Mutex<HashMap<String, PendingRestore>>> = OnceLock::new();
     PENDING.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn insert_restore_preview_entry(preview_id: String, entry: PendingRestore) {
+    let mut pending = pending_restores().lock().unwrap();
+    pending.retain(|_, existing| {
+        let keep = existing.expires_at > Instant::now();
+        if !keep {
+            existing.zeroize();
+        }
+        keep
+    });
+    if pending.len() >= MAX_PENDING_RESTORE_PREVIEWS {
+        let oldest = pending
+            .iter()
+            .min_by_key(|(_, existing)| existing.created_at)
+            .map(|(id, _)| id.clone());
+        if let Some(oldest) = oldest {
+            if let Some(mut evicted) = pending.remove(&oldest) {
+                evicted.zeroize();
+            }
+        }
+    }
+    pending.insert(preview_id, entry);
+}
+
+fn ensure_restore_preview_expiry_task() {
+    static STARTED: OnceLock<()> = OnceLock::new();
+    STARTED.get_or_init(|| {
+        tauri::async_runtime::spawn(async {
+            let mut interval = tokio::time::interval(RESTORE_PREVIEW_EXPIRY_INTERVAL);
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                let Ok(mut pending) = pending_restores().lock() else {
+                    continue;
+                };
+                pending.retain(|_, existing| {
+                    let keep = existing.expires_at > Instant::now();
+                    if !keep {
+                        existing.zeroize();
+                    }
+                    keep
+                });
+            }
+        });
+    });
+}
+
+/// Explicitly cancel a pending restore preview and zeroize its decrypted secrets.
+#[tauri::command]
+pub fn cancel_recovery_restore_preview(preview_id: String) -> Result<(), McpError> {
+    let mut pending = pending_restores().lock().map_err(|_| {
+        err(
+            McpErrorCode::ERR_INTERNAL,
+            "restore preview state is unavailable",
+        )
+    })?;
+    match pending.remove(&preview_id) {
+        Some(mut entry) => {
+            entry.zeroize();
+            Ok(())
+        }
+        None => Err(err(
+            McpErrorCode::ERR_INTERNAL,
+            "restore preview not found; it may have expired",
+        )),
+    }
+}
+
+/// Zeroize every pending restore preview. Intended for application shutdown.
+pub fn zeroize_all_recovery_restore_previews() {
+    let Ok(mut pending) = pending_restores().lock() else {
+        return;
+    };
+    for (_, entry) in pending.iter_mut() {
+        entry.zeroize();
+    }
+    pending.clear();
+}
+
+#[tauri::command]
+pub fn zeroize_recovery_restore_previews_cmd() {
+    zeroize_all_recovery_restore_previews();
+}
+
+#[cfg(test)]
+pub(super) fn expire_recovery_restore_preview(preview_id: &str) {
+    if let Some(entry) = pending_restores().lock().unwrap().get_mut(preview_id) {
+        entry.expires_at = Instant::now() - Duration::from_millis(1);
+    }
+}
+
+#[cfg(test)]
+pub(super) fn pending_recovery_restore_count() -> usize {
+    pending_restores().lock().unwrap().len()
+}
+
+#[cfg(test)]
+pub(super) fn pending_recovery_restore_secret_zeroized(preview_id: &str) -> bool {
+    let pending = pending_restores().lock().unwrap();
+    let Some(entry) = pending.get(preview_id) else {
+        return true;
+    };
+    entry.validated.secrets.values().all(|value| match value {
+        Value::String(text) => text.as_bytes().iter().all(|byte| *byte == 0),
+        _ => false,
+    })
 }
 
 #[tauri::command]
@@ -338,35 +463,8 @@ pub async fn preview_recovery_restore(
     let removals = existing_ids.difference(&incoming_ids).count();
 
     let preview_id = Uuid::new_v4().to_string();
-    let mut pending = pending_restores().lock().map_err(|_| {
-        err(
-            McpErrorCode::ERR_INTERNAL,
-            "restore preview state is unavailable",
-        )
-    })?;
-    pending.retain(|_, item| item.expires_at > Instant::now());
-    while pending.len() >= MAX_PENDING_RESTORE_PREVIEWS {
-        let Some(oldest) = pending
-            .iter()
-            .min_by_key(|(_, item)| item.created_at)
-            .map(|(id, _)| id.clone())
-        else {
-            break;
-        };
-        pending.remove(&oldest);
-    }
-    pending.insert(
-        preview_id.clone(),
-        PendingRestore {
-            validated: validated.clone(),
-            base_digest,
-            created_at: Instant::now(),
-            expires_at: Instant::now() + RESTORE_PREVIEW_TTL,
-        },
-    );
-
-    Ok(RestorePreviewOutput {
-        preview_id,
+    let output = RestorePreviewOutput {
+        preview_id: preview_id.clone(),
         storage_count: validated.storages.len(),
         storage_additions: additions,
         storage_updates: updates,
@@ -375,11 +473,23 @@ pub async fn preview_recovery_restore(
         has_app_settings: validated.app_settings.is_some(),
         has_workspaces: validated.workspaces.is_some(),
         has_secrets: !validated.secrets.is_empty(),
-        created_at: validated.created_at,
+        created_at: validated.created_at.clone(),
         checksum_valid: true,
         unsupported_version: false,
         expires_in_seconds: RESTORE_PREVIEW_TTL.as_secs(),
-    })
+    };
+    insert_restore_preview_entry(
+        preview_id.clone(),
+        PendingRestore {
+            validated,
+            base_digest,
+            created_at: Instant::now(),
+            expires_at: Instant::now() + RESTORE_PREVIEW_TTL,
+        },
+    );
+    ensure_restore_preview_expiry_task();
+
+    Ok(output)
 }
 
 #[derive(Debug, Deserialize)]
@@ -517,6 +627,7 @@ pub async fn apply_recovery_restore(
         if rollback_errors.is_empty() {
             cleanup_restore_journal(&state);
         }
+        validated.zeroize();
         return Err(err_with_details(
             McpErrorCode::ERR_INTERNAL,
             "restore transaction failed",
@@ -533,6 +644,7 @@ pub async fn apply_recovery_restore(
         if rollback_errors.is_empty() {
             cleanup_restore_journal(&state);
         }
+        validated.zeroize();
         return Err(err_with_details(
             McpErrorCode::ERR_INTERNAL,
             "restore transaction could not be committed",
@@ -540,7 +652,7 @@ pub async fn apply_recovery_restore(
         ));
     }
 
-    Ok(ApplyRestoreOutput {
+    let output = ApplyRestoreOutput {
         storages_restored: validated.storages.len(),
         mcp_settings_restored: request.restore_mcp_settings && validated.mcp_settings.is_some(),
         app_settings_restored: request.restore_app_settings && validated.app_settings.is_some(),
@@ -550,7 +662,9 @@ pub async fn apply_recovery_restore(
         } else {
             0
         },
-    })
+    };
+    validated.zeroize();
+    Ok(output)
 }
 
 fn fresh_restore_secret_account(state: &AppState, category: &str) -> Result<String, McpError> {
@@ -1130,6 +1244,7 @@ fn cleanup_restore_journal(state: &AppState) {
 }
 
 pub(crate) fn recover_interrupted_restore(state: &AppState) -> Result<(), McpError> {
+    let _config_transaction = state.registry.acquire_configuration_transaction()?;
     let path = restore_journal_path(state);
     if !path.exists() {
         let _ = state.secret_store.delete(RESTORE_JOURNAL_KEY_ACCOUNT);
@@ -2119,6 +2234,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn interrupted_restore_recovery_requires_the_configuration_transaction_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, _) = test_state(&dir);
+        let snapshot = snapshot_current_state(&state, std::iter::empty())
+            .await
+            .unwrap();
+        persist_restore_journal(&state, &snapshot).unwrap();
+
+        let _held = state.registry.acquire_configuration_transaction().unwrap();
+        let error = recover_interrupted_restore(&state).unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_REGISTRY_LOCK_TIMEOUT);
+        assert!(restore_journal_path(&state).exists());
+        drop(_held);
+
+        recover_interrupted_restore(&state).unwrap();
+        assert!(!restore_journal_path(&state).exists());
+    }
+
+    #[tokio::test]
     async fn malformed_registry_can_be_replaced_and_rolled_back_as_opaque_bytes() {
         let dir = tempfile::tempdir().unwrap();
         let storage_root = dir.path().join("restored-root");
@@ -2203,5 +2337,76 @@ mod tests {
         assert!(rollback_restore(&state, &snapshot).await.is_empty());
         assert!(!state.is_http_running().await);
         assert!(!state.settings_store.load().unwrap().enabled);
+    }
+
+    fn pending_restore_fixture(created_at: Instant) -> PendingRestore {
+        PendingRestore {
+            validated: ValidatedRestore {
+                storages: Vec::new(),
+                mcp_settings: None,
+                app_settings: None,
+                workspaces: None,
+                secrets: HashMap::from([(
+                    "storage/secret".into(),
+                    serde_json::json!({ "token": "sensitive-value" }),
+                )]),
+                created_at: "2026-01-01T00:00:00Z".into(),
+            },
+            base_digest: "digest".into(),
+            created_at,
+            expires_at: created_at + RESTORE_PREVIEW_TTL,
+        }
+    }
+
+    static RESTORE_PREVIEW_TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn serial_restore_preview() -> std::sync::MutexGuard<'static, ()> {
+        RESTORE_PREVIEW_TEST_SERIAL.lock().unwrap()
+    }
+
+    #[test]
+    fn restore_preview_cancel_zeroizes_decrypted_secrets() {
+        let _serial = serial_restore_preview();
+        zeroize_all_recovery_restore_previews();
+        let preview_id = "preview-cancel".to_string();
+        insert_restore_preview_entry(preview_id.clone(), pending_restore_fixture(Instant::now()));
+        assert_eq!(pending_recovery_restore_count(), 1);
+        cancel_recovery_restore_preview(preview_id.clone()).unwrap();
+        assert_eq!(pending_recovery_restore_count(), 0);
+        assert!(pending_recovery_restore_secret_zeroized(&preview_id));
+        assert!(cancel_recovery_restore_preview(preview_id).is_err());
+    }
+
+    #[test]
+    fn restore_preview_expiry_evicts_and_zeroizes_on_next_insert() {
+        let _serial = serial_restore_preview();
+        zeroize_all_recovery_restore_previews();
+        let expired_id = "preview-expired".to_string();
+        insert_restore_preview_entry(expired_id.clone(), pending_restore_fixture(Instant::now()));
+        expire_recovery_restore_preview(&expired_id);
+        insert_restore_preview_entry(
+            "preview-new".to_string(),
+            pending_restore_fixture(Instant::now()),
+        );
+        assert_eq!(pending_recovery_restore_count(), 1);
+        assert!(pending_recovery_restore_secret_zeroized(&expired_id));
+    }
+
+    #[test]
+    fn restore_preview_bounded_to_max_entries_and_shutdown_clears_all() {
+        let _serial = serial_restore_preview();
+        zeroize_all_recovery_restore_previews();
+        for index in 0..(MAX_PENDING_RESTORE_PREVIEWS + 3) {
+            insert_restore_preview_entry(
+                format!("preview-{index}"),
+                pending_restore_fixture(Instant::now()),
+            );
+        }
+        assert_eq!(
+            pending_recovery_restore_count(),
+            MAX_PENDING_RESTORE_PREVIEWS
+        );
+        zeroize_all_recovery_restore_previews();
+        assert_eq!(pending_recovery_restore_count(), 0);
     }
 }

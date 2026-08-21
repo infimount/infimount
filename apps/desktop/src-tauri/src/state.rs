@@ -252,15 +252,25 @@ impl AppState {
         // native store: a valid encrypted recovery backup may be the only safe repair.
         if native_available {
             let initialization = (|| -> McpResult<()> {
+                let _config_transaction = registry.acquire_configuration_transaction()?;
                 infimount_mcp::migration_cleanup::retry_pending_plaintext_cleanup(&config_dir)?;
-                registry.recover_pending_imports()?;
+                registry.recover_pending_imports_locked()?;
                 infimount_mcp::registry::retry_pending_secret_cleanup_at(
                     registry.path(),
                     secret_store.as_ref(),
                 )?;
                 migrate_legacy_sources_if_needed(&registry)?;
-                registry.load_all()?;
-                settings_store.load()?;
+                let storages = registry.load_all()?;
+                let settings = settings_store.load()?;
+                // Recover any secret-transaction crash journal left by a prior
+                // process termination. Non-fatal: orphaned accounts are harmless
+                // keyring cruft if this recovery step fails.
+                let _ = infimount_mcp::registry::recover_pending_secret_transactions(
+                    &config_dir,
+                    &storages,
+                    secret_store.as_ref(),
+                    settings.auth_token_ref.as_deref(),
+                );
                 Ok(())
             })();
             if let Err(error) = initialization {
@@ -503,7 +513,7 @@ impl AppState {
                     resolve_auth_token(&existing.auth_token_ref, self.secret_store.as_ref())?;
                 (previous_secret.clone(), token, false)
             }
-            AuthTokenMutation::Set { value } => {
+            AuthTokenMutation::Set { ref value } => {
                 let token = value.trim();
                 if token.is_empty() || token == "********" {
                     return Err(err(
@@ -549,13 +559,37 @@ impl AppState {
         };
 
         if secret_changed {
+            let config_dir = infimount_mcp::registry::default_config_dir();
+            let is_clear = matches!(auth_mutation, AuthTokenMutation::Clear);
+            let _ = infimount_mcp::registry::write_secret_transaction_journal(
+                &config_dir,
+                vec![infimount_mcp::registry::SecretTransactionEntry {
+                    account: mutation_account.to_string(),
+                    storage_id: None,
+                    mcp_auth: true,
+                    clear_ref: is_clear,
+                    replace_accounts: vec![],
+                }],
+            );
             persist_secret_bundle(
                 self.secret_store.as_ref(),
                 mutation_account,
                 new_secret.as_ref(),
             )?;
-        }
-        if let Err(error) = self.settings_store.save_atomic(&final_settings) {
+            if let Err(error) = self.settings_store.save_atomic(&final_settings) {
+                let rollback = persist_secret_bundle(
+                    self.secret_store.as_ref(),
+                    mutation_account,
+                    previous_secret.as_ref(),
+                );
+                infimount_mcp::registry::clear_secret_transaction_journal(&config_dir);
+                return match rollback {
+                    Ok(()) => Err(error),
+                    Err(_) => Err(auth_rollback_error(&["secret"])),
+                };
+            }
+            infimount_mcp::registry::clear_secret_transaction_journal(&config_dir);
+        } else if let Err(error) = self.settings_store.save_atomic(&final_settings) {
             let rollback = persist_secret_bundle(
                 self.secret_store.as_ref(),
                 mutation_account,

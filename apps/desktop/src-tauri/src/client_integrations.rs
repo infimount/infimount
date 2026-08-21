@@ -338,7 +338,45 @@ fn kill_process_tree(child: &mut Child) {
             let _ = libc::kill(-(child.id() as i32), libc::SIGKILL);
         }
     }
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        };
+        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE};
+
+        unsafe {
+            let job: HANDLE = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job != 0 {
+                let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                let _ = windows_sys::Win32::System::JobObjects::SetInformationJobObject(
+                    job,
+                    JobObjectExtendedLimitInformation,
+                    &info as *const _ as *const _,
+                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                );
+                let process_handle: HANDLE = OpenProcess(
+                    PROCESS_TERMINATE | PROCESS_SET_QUOTA,
+                    0,
+                    child.id(),
+                );
+                if process_handle != 0 {
+                    let _ = AssignProcessToJobObject(job, process_handle);
+                    CloseHandle(process_handle);
+                }
+                // Closing the job handle triggers JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+                // terminating all processes in the job (parent + descendants).
+                CloseHandle(job);
+            }
+        }
+        // Fallback: also kill the direct child in case Job Object creation failed.
+        let _ = child.kill();
+    }
     #[cfg(not(unix))]
+    #[cfg(not(target_os = "windows"))]
     {
         let _ = child.kill();
     }
@@ -351,8 +389,12 @@ fn command_identity(
 ) -> Option<ClientCommandBase> {
     let canonical = fs::canonicalize(executable).ok()?;
     let bytes = fs::read(&canonical).ok()?;
-    let (_, stdout, _, _) =
+    let (status, stdout, _, timed_out) =
         run_with_timeout(&canonical, version_args, VERSION_PROBE_TIMEOUT, 8 * 1024);
+    // Reject probes that timed out, failed to execute, or exited unsuccessfully.
+    if timed_out || status.is_none() || !status.unwrap().success() {
+        return None;
+    }
     let reported_version = stdout
         .lines()
         .next()

@@ -533,6 +533,80 @@ pub fn normalize_endpoint_authority(raw: &str) -> String {
     format!("{scheme}://{host}{port_str}")
 }
 
+/// Canonicalize a provider's default endpoint authority to its minimal
+/// region/account identity so two records that either omit or spell out the
+/// standard default endpoint represent the same underlying namespace during
+/// transfer alias checks. Non-default endpoints are returned unchanged.
+pub fn canonicalize_provider_default_authority(
+    kind: &SourceKind,
+    config: &Value,
+    authority: &str,
+) -> String {
+    match *kind {
+        SourceKind::S3 => {
+            let region = config
+                .get("region")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
+            let region = if region.is_empty() {
+                "us-east-1".to_string()
+            } else {
+                region
+            };
+            let bare_authority = authority
+                .strip_prefix("https://")
+                .or_else(|| authority.strip_prefix("http://"))
+                .unwrap_or(authority);
+            let default_endpoints = [
+                format!("https://s3.{region}.amazonaws.com"),
+                format!("https://s3-{region}.amazonaws.com"),
+                format!("http://s3.{region}.amazonaws.com"),
+                format!("http://s3-{region}.amazonaws.com"),
+            ];
+            if default_endpoints
+                .iter()
+                .any(|endpoint| endpoint == authority)
+                || matches!(
+                    authority,
+                    "https://s3.amazonaws.com" | "http://s3.amazonaws.com"
+                )
+                || matches!(bare_authority, "aws" | "s3" | "us-east-1")
+                || bare_authority == region
+            {
+                return region;
+            }
+            authority.to_string()
+        }
+        SourceKind::AzureBlob => {
+            let account = config
+                .get("accountName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
+            let normalized = authority.to_ascii_lowercase();
+            for prefix in ["https://", "http://"] {
+                if let Some(host) = normalized.strip_prefix(prefix) {
+                    if let Some(host_account) = host.strip_suffix(".blob.core.windows.net") {
+                        if !host_account.is_empty()
+                            && (account.is_empty() || account == host_account)
+                        {
+                            return host_account.to_string();
+                        }
+                    }
+                    if !account.is_empty() && host == account {
+                        return account.to_string();
+                    }
+                }
+            }
+            authority.to_string()
+        }
+        _ => authority.to_string(),
+    }
+}
+
 fn build_local_operator(source: &Source) -> Result<Operator> {
     let root = local_root(source);
     let root = root.as_str();

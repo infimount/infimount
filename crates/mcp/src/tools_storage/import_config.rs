@@ -1327,25 +1327,40 @@ where
         }
         Ok(failed)
     });
+    let mut cleanup_durable = true;
     match cleanup_result {
         Ok(failed) => {
-            for account in failed {
-                if append_cleanup_journal_at(ctx.registry.path(), &account).is_err() {
-                    warnings.push("Credential cleanup failed and could not be journaled; remove the native secret-store entry manually.".to_string());
+            for account in &failed {
+                if append_cleanup_journal_at(ctx.registry.path(), account).is_err() {
+                    cleanup_durable = false;
                 }
             }
-            if !cleanup_accounts.is_empty() {
+            // Emit "cleanup pending" only when an account actually failed
+            // deletion, not merely because a cleanup pass was attempted.
+            if !failed.is_empty() {
                 warnings.push("Credential cleanup is pending and will be retried.".to_string());
             }
         }
-        Err(error) => warnings.push(format!(
-            "The completed import transaction remains journaled for recovery: {}",
-            error.message
-        )),
+        Err(error) => {
+            cleanup_durable = false;
+            warnings.push(format!(
+                "The completed import transaction remains journaled for recovery: {}",
+                error.message
+            ));
+        }
     }
-    // The import is committed. Remove the durable journal; if it cannot be
-    // removed, block further configuration mutations until recovery resolves it.
-    if remove_pending_backup(&pending_backup).is_err() {
+    // The import is committed. The durable journal may be removed only when
+    // every obsolete account was either deleted or durably journaled to the
+    // strict cleanup file. Removing it otherwise would lose the only durable
+    // list of the remaining cleanup obligation.
+    if cleanup_durable {
+        if remove_pending_backup(&pending_backup).is_err() {
+            let _ = ctx.registry.mark_configuration_blocked();
+            warnings.push(
+                "Import committed, but configuration mutations are blocked until the pending import journal is recovered.".to_string(),
+            );
+        }
+    } else {
         let _ = ctx.registry.mark_configuration_blocked();
         warnings.push(
             "Import committed, but configuration mutations are blocked until the pending import journal is recovered.".to_string(),

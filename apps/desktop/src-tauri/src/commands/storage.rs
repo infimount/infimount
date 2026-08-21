@@ -289,6 +289,12 @@ fn upload_staging_lock() -> &'static tokio::sync::Mutex<()> {
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
+/// Pure per-file quota check: appending `incoming` bytes to a file that holds
+/// `current_len` bytes must never exceed the staged upload cap.
+fn exceeds_staged_quota(current_len: u64, incoming: usize) -> bool {
+    current_len.saturating_add(incoming as u64) > MAX_STAGED_UPLOAD_BYTES
+}
+
 fn active_uploads() -> &'static StdMutex<HashMap<String, Arc<AtomicBool>>> {
     static UPLOADS: OnceLock<StdMutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
     UPLOADS.get_or_init(|| StdMutex::new(HashMap::new()))
@@ -325,42 +331,53 @@ fn upload_staging_base() -> PathBuf {
 ///
 /// The root must be a real directory owned by the current user with mode
 /// `0700`. Symlinks and reparse points are rejected so staged files can never
-/// be redirected outside the owned tree.
+/// be redirected outside the owned tree. The app-owned `infimount/` parent is
+/// created too so a clean profile still works.
 fn verify_staging_root() -> Result<PathBuf, CoreError> {
     let dir = upload_staging_base();
-    match std::fs::symlink_metadata(&dir) {
+    let parent = dir.parent().ok_or_else(|| {
+        CoreError::Config("upload staging root has no parent directory".to_string())
+    })?;
+    ensure_owned_dir(parent)?;
+    ensure_owned_dir(&dir)?;
+    Ok(dir)
+}
+
+fn ensure_owned_dir(path: &Path) -> Result<(), CoreError> {
+    match std::fs::symlink_metadata(path) {
         Ok(meta) => {
-            if meta.file_type().is_symlink() {
-                return Err(CoreError::Config(
-                    "upload staging root is a symlink".to_string(),
-                ));
+            if meta.file_type().is_symlink() || is_reparse_point(&meta) {
+                return Err(CoreError::Config(format!(
+                    "{} is a symlink or reparse point",
+                    path.display()
+                )));
             }
             if !meta.is_dir() {
-                return Err(CoreError::Config(
-                    "upload staging root is not a directory".to_string(),
-                ));
+                return Err(CoreError::Config(format!(
+                    "{} is not a directory",
+                    path.display()
+                )));
             }
             #[cfg(unix)]
             {
                 use std::os::unix::fs::MetadataExt;
                 if meta.uid() != unsafe { libc::geteuid() } {
-                    return Err(CoreError::Config(
-                        "upload staging root is not owned by the current user".to_string(),
-                    ));
+                    return Err(CoreError::Config(format!(
+                        "{} is not owned by the current user",
+                        path.display()
+                    )));
                 }
                 use std::os::unix::fs::PermissionsExt;
                 if meta.permissions().mode() & 0o777 != 0o700 {
-                    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+                    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
                 }
             }
-            Ok(dir)
+            Ok(())
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            std::fs::create_dir(&dir).map_err(|create_error| {
+            std::fs::create_dir(path).map_err(|create_error| {
                 if create_error.kind() == std::io::ErrorKind::AlreadyExists {
-                    CoreError::Config(
-                        "upload staging root appeared as a symlink or file".to_string(),
-                    )
+                    CoreError::Config(format!("{} appeared as a symlink or file", path.display()))
                 } else {
                     CoreError::from(create_error)
                 }
@@ -368,12 +385,26 @@ fn verify_staging_root() -> Result<PathBuf, CoreError> {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
             }
-            Ok(dir)
+            Ok(())
         }
         Err(error) => Err(CoreError::from(error)),
     }
+}
+
+/// Windows reports junctions and other non-symlink reparse points separately;
+/// `FileType::is_symlink()` alone would miss them.
+#[cfg(windows)]
+fn is_reparse_point(meta: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+    meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point(_meta: &std::fs::Metadata) -> bool {
+    false
 }
 
 /// Cross-process exclusive lock for the staging directory.
@@ -384,11 +415,11 @@ fn verify_staging_root() -> Result<PathBuf, CoreError> {
 fn acquire_staging_file_lock(dir: &Path) -> Result<std::fs::File, CoreError> {
     let lock_path = dir.join(".lock");
     if std::fs::symlink_metadata(&lock_path)
-        .map(|meta| meta.file_type().is_symlink())
+        .map(|meta| meta.file_type().is_symlink() || is_reparse_point(&meta))
         .unwrap_or(false)
     {
         return Err(CoreError::Config(
-            "upload staging lock is a symlink".to_string(),
+            "upload staging lock is a symlink or reparse point".to_string(),
         ));
     }
     let file = std::fs::OpenOptions::new()
@@ -498,7 +529,7 @@ pub async fn append_file_upload_chunk(uploadId: String, data: Vec<u8>) -> Result
     let _guard = upload_staging_lock().lock().await;
     let path = upload_staging_path(&uploadId)?;
     let current_len = tokio::fs::metadata(&path).await?.len();
-    if current_len.saturating_add(data.len() as u64) > MAX_STAGED_UPLOAD_BYTES {
+    if exceeds_staged_quota(current_len, data.len()) {
         return Err(CoreError::Config(
             "staged upload exceeds 10 GiB".to_string(),
         ));
@@ -840,7 +871,18 @@ fn add_storage_with_config(
     apply_secret_mutations_to_bundle(&mut bundle, &storage.secret_mutations)?;
     let account = format!("storage/{}", record.id);
     let has_secrets = bundle.as_object().is_some_and(|object| !object.is_empty());
+    let config_dir = infimount_mcp::registry::default_config_dir();
     if has_secrets {
+        let _ = infimount_mcp::registry::write_secret_transaction_journal(
+            &config_dir,
+            vec![infimount_mcp::registry::SecretTransactionEntry {
+                account: account.clone(),
+                storage_id: Some(record.id.clone()),
+                mcp_auth: false,
+                clear_ref: false,
+                replace_accounts: vec![],
+            }],
+        );
         if state.secret_store.put_json(&account, &bundle).is_err() {
             if state.secret_store.delete(&account).is_err() {
                 let journal_path =
@@ -856,6 +898,7 @@ fn add_storage_with_config(
                     "credential write failed; cleanup is pending",
                 ));
             }
+            infimount_mcp::registry::clear_secret_transaction_journal(&config_dir);
             return Err(err(
                 McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
                 "failed to store credentials",
@@ -873,6 +916,9 @@ fn add_storage_with_config(
         let journal_path =
             infimount_mcp::registry::default_config_dir().join("secret-cleanup.json");
         append_secret_cleanup(&journal_path, &account)?;
+    }
+    if has_secrets {
+        infimount_mcp::registry::clear_secret_transaction_journal(&config_dir);
     }
     if let Ok(created) = &result {
         let mut event = infimount_mcp::telemetry::ProductEvent::new(
@@ -974,11 +1020,8 @@ pub async fn update_storage(
         None
     };
 
-    let credentials_changed = claimed.is_some()
-        || storage
-            .secret_mutations
-            .values()
-            .any(|mutation| !matches!(mutation, SecretMutation::Keep));
+    let credentials_changed =
+        effective_credentials_changed(&state, &storageId, &storage, claimed.is_some())?;
     if credentials_changed && confirmWorkspaceCredentialChange {
         validate_confirmed_credential_change(&state, &storageId, &storage, claimed.is_some())
             .await?;
@@ -999,6 +1042,47 @@ pub async fn update_storage(
         }
     }
     result.map(|(storage, warning)| UpdateStorageResult { storage, warning })
+}
+
+/// Whether the update changes credentials, derived from the effective
+/// prospective secret bundle rather than the request shape. Secret fields may
+/// be carried in `StorageDraft.config` (OAuth merge or direct config secrets),
+/// so `secretMutations` alone is not a reliable signal.
+fn effective_credentials_changed(
+    state: &AppState,
+    storage_id: &str,
+    storage: &StorageDraft,
+    oauth_session_claimed: bool,
+) -> Result<bool, McpError> {
+    if oauth_session_claimed {
+        return Ok(true);
+    }
+    let current = state.find_storage_by_id(storage_id)?;
+    let previous_account = current
+        .secret_ref
+        .clone()
+        .unwrap_or_else(|| format!("storage/{storage_id}"));
+    let previous_bundle = state
+        .secret_store
+        .get_json(&previous_account)
+        .map_err(|_| {
+            err(
+                McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                "failed to access stored credentials",
+            )
+        })?
+        .unwrap_or_else(|| json!({}));
+    let schema_secret_names = secrets::discover_secret_field_names();
+    let mut staged_bundle = previous_bundle.clone();
+    secrets::canonicalize_bundle_keys(&mut staged_bundle);
+    let extracted = secrets::extract_secret_fields(&storage.config, &schema_secret_names);
+    if let Some(object) = staged_bundle.as_object_mut() {
+        object.extend(extracted);
+    }
+    apply_secret_mutations_to_bundle(&mut staged_bundle, &storage.secret_mutations)?;
+    let mut previous = previous_bundle;
+    secrets::canonicalize_bundle_keys(&mut previous);
+    Ok(previous != staged_bundle)
 }
 
 fn build_prospective_storage_record(
@@ -1050,11 +1134,8 @@ async fn validate_confirmed_credential_change(
     storage: &StorageDraft,
     oauth_session_claimed: bool,
 ) -> McpResult<()> {
-    let credentials_changed = oauth_session_claimed
-        || storage
-            .secret_mutations
-            .values()
-            .any(|mutation| !matches!(mutation, SecretMutation::Keep));
+    let credentials_changed =
+        effective_credentials_changed(state, storage_id, storage, oauth_session_claimed)?;
     if !credentials_changed {
         return Ok(());
     }
@@ -1115,6 +1196,8 @@ fn update_storage_with_draft(
     let mut staged_account = String::new();
     let mut previous_bundle: Option<Value> = None;
     let mut staged_secret = false;
+    let mut journal_written = false;
+    let config_dir = infimount_mcp::registry::default_config_dir();
     let dependent = state
         .workspaces
         .load_all()
@@ -1127,11 +1210,8 @@ fn update_storage_with_draft(
         .into_iter()
         .filter(|workspace| workspace.storage_id == storageId)
         .collect::<Vec<_>>();
-    let credentials_changed = oauth_session_claimed
-        || storage
-            .secret_mutations
-            .values()
-            .any(|mutation| !matches!(mutation, SecretMutation::Keep));
+    let credentials_changed =
+        effective_credentials_changed(state, &storageId, &storage, oauth_session_claimed)?;
     let result = state.registry.with_locked_mutation(|storages| {
         let idx = storages
             .iter()
@@ -1179,14 +1259,24 @@ fn update_storage_with_draft(
             .as_object()
             .is_some_and(|object| !object.is_empty());
         if has_secrets {
+            let _ = infimount_mcp::registry::write_secret_transaction_journal(
+                &config_dir,
+                vec![infimount_mcp::registry::SecretTransactionEntry {
+                    account: staged_account.clone(),
+                    storage_id: Some(storageId.clone()),
+                    mcp_auth: false,
+                    clear_ref: false,
+                    replace_accounts: vec![previous_account.clone()],
+                }],
+            );
+            journal_written = true;
             if secret_store
                 .put_json(&staged_account, &staged_bundle)
                 .is_err()
             {
                 if secret_store.delete(&staged_account).is_err() {
-                    let journal_path =
-                        infimount_mcp::registry::default_config_dir().join("secret-cleanup.json");
-                    append_secret_cleanup(&journal_path, &staged_account)?;
+                    let cleanup_path = config_dir.join("secret-cleanup.json");
+                    append_secret_cleanup(&cleanup_path, &staged_account)?;
                 }
                 return Err(err(
                     McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
@@ -1256,9 +1346,8 @@ fn update_storage_with_draft(
         Ok(updated)
     });
     if result.is_err() && staged_secret && secret_store.delete(&staged_account).is_err() {
-        let journal_path =
-            infimount_mcp::registry::default_config_dir().join("secret-cleanup.json");
-        append_secret_cleanup(&journal_path, &staged_account)?;
+        let cleanup_path = config_dir.join("secret-cleanup.json");
+        append_secret_cleanup(&cleanup_path, &staged_account)?;
     }
 
     let mut warning = None;
@@ -1267,16 +1356,18 @@ fn update_storage_with_draft(
         && previous_account != staged_account
         && secret_store.delete(&previous_account).is_err()
     {
-        let journal_path =
-            infimount_mcp::registry::default_config_dir().join("secret-cleanup.json");
+        let cleanup_path = config_dir.join("secret-cleanup.json");
         warning = Some(
-            if append_secret_cleanup(&journal_path, &previous_account).is_ok() {
+            if append_secret_cleanup(&cleanup_path, &previous_account).is_ok() {
                 "Previous credential cleanup is pending and will be retried."
             } else {
                 "Previous credential cleanup failed and could not be journaled; remove the old native secret-store entry manually."
             }
             .to_string(),
         );
+    }
+    if journal_written {
+        infimount_mcp::registry::clear_secret_transaction_journal(&config_dir);
     }
     if result.is_ok() {
         state.operator_cache.invalidate(&storageId);
@@ -1444,16 +1535,47 @@ fn assert_generic_policy_respects_workspace_rules(
             serde_json::json!({}),
         ));
     }
+    let normalized_roots = workspace_roots
+        .iter()
+        .filter_map(|root| infimount_mcp::policy::normalize_policy_path(root).ok())
+        .collect::<Vec<_>>();
     for rule in &prospective.rules {
-        if matches!(rule.source, McpRuleSource::Manual) && workspace_roots.contains(&rule.prefix) {
+        if !matches!(rule.source, McpRuleSource::Manual) {
+            continue;
+        }
+        let Ok(manual) = infimount_mcp::policy::normalize_policy_path(&rule.prefix) else {
+            continue;
+        };
+        if normalized_roots
+            .iter()
+            .any(|workspace| policy_prefix_overlaps(&manual, workspace))
+        {
             return Err(err_with_details(
                 McpErrorCode::ERR_WORKSPACE_POLICY_MANAGED,
-                "a manual policy rule cannot be created at a workspace root",
-                serde_json::json!({}),
+                "a manual policy rule cannot overlap a workspace-managed root",
+                serde_json::json!({ "prefix": rule.prefix }),
             ));
         }
     }
     Ok(())
+}
+
+/// True when `candidate` sits strictly inside the `ancestor` prefix at a
+/// component boundary.
+fn policy_path_is_descendant(candidate: &str, ancestor: &str) -> bool {
+    candidate.len() > ancestor.len()
+        && candidate.starts_with(ancestor)
+        && candidate.as_bytes().get(ancestor.len()) == Some(&b'/')
+}
+
+/// The generic editor must not create a manual rule that shares any part of a
+/// workspace-managed subtree: equal, manual-under-workspace, or
+/// workspace-under-manual. Policy evaluation selects the longest prefix, so a
+/// manual descendant could otherwise weaken a read-only workspace.
+fn policy_prefix_overlaps(manual: &str, workspace: &str) -> bool {
+    manual == workspace
+        || policy_path_is_descendant(manual, workspace)
+        || policy_path_is_descendant(workspace, manual)
 }
 
 fn workspace_rule_signatures(policy: &McpStoragePolicy) -> Vec<String> {
@@ -2003,13 +2125,17 @@ mod tests {
     }
 
     fn staging_test_scope() -> StagingTestScope {
+        staging_test_scope_for("staging")
+    }
+
+    fn staging_test_scope_for(leaf: &str) -> StagingTestScope {
         static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
         let lock = LOCK
             .get_or_init(|| StdMutex::new(()))
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = tempfile::tempdir().unwrap();
-        let staging = dir.path().join("staging");
+        let staging = dir.path().join(leaf);
         std::env::set_var("INFIMOUNT_UPLOAD_STAGING_DIR", &staging);
         StagingTestScope {
             _lock: lock,
@@ -2075,6 +2201,49 @@ mod tests {
         }
     }
 
+    #[test]
+    fn clean_profile_nested_staging_parent_chain_is_created() {
+        let _scope = staging_test_scope_for("infimount/upload-staging");
+        let leaf = upload_staging_base();
+        // The override points at the real nested shape: the app-owned parent
+        // `<base>/infimount` does not exist yet, exactly like a clean profile.
+        assert!(!leaf.parent().unwrap().exists());
+        let verified = verify_staging_root().expect("clean profile staging is created");
+        assert_eq!(verified, leaf);
+        assert!(leaf.parent().unwrap().is_dir());
+        assert!(leaf.is_dir());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let parent_meta = std::fs::symlink_metadata(leaf.parent().unwrap()).unwrap();
+            assert_eq!(parent_meta.permissions().mode() & 0o777, 0o700);
+            let leaf_meta = std::fs::symlink_metadata(&leaf).unwrap();
+            assert_eq!(leaf_meta.permissions().mode() & 0o777, 0o700);
+        }
+    }
+
+    #[test]
+    fn staging_root_rejects_symlinked_parent() {
+        let _scope = staging_test_scope();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let parent = upload_staging_base().parent().unwrap().to_path_buf();
+            std::fs::create_dir_all(&parent).unwrap();
+            std::fs::remove_dir_all(&parent).unwrap();
+            symlink("/nonexistent-target", &parent).unwrap();
+            assert!(verify_staging_root().is_err());
+        }
+    }
+
+    #[test]
+    fn staged_quota_helper_bounds_at_ten_gibibytes() {
+        assert!(!exceeds_staged_quota(0, 0));
+        assert!(!exceeds_staged_quota(MAX_STAGED_UPLOAD_BYTES - 1, 1));
+        assert!(exceeds_staged_quota(MAX_STAGED_UPLOAD_BYTES, 1));
+        assert!(exceeds_staged_quota(0, usize::MAX));
+    }
+
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn stale_cleanup_ignores_symlinked_staged_file() {
@@ -2118,8 +2287,10 @@ mod tests {
         let dir = verify_staging_root().unwrap();
         let (session_count, _) = cleanup_stale_uploads_and_usage(&dir).await.unwrap();
         assert_eq!(session_count, 2);
-        // The per-file cap still applies per staged file.
-        let oversized = vec![0; MAX_STAGED_UPLOAD_BYTES as usize + 1];
+        // The per-file chunk bound still applies per staged file. The quota
+        // itself is covered by the pure helper test below, without a 10 GiB
+        // allocation.
+        let oversized = vec![0; MAX_UPLOAD_CHUNK_BYTES + 1];
         let result = append_file_upload_chunk(first.clone(), oversized).await;
         assert!(result.is_err());
         append_file_upload_chunk(first, b"a".to_vec())
@@ -2467,6 +2638,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn config_embedded_secrets_require_confirmation_when_workspaces_bound() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, storage, _workspace) = workspace_bound_state(&dir);
+        let secret_shapes = [
+            json!({ "root": "/tmp", "apiKey": "replacement" }),
+            json!({ "root": "/tmp", "authToken": "replacement" }),
+            json!({ "root": "/tmp", "oauthToken": "replacement" }),
+            json!({
+                "root": "/tmp",
+                "scopes": [ { "token": "first" }, { "token": "second" } ]
+            }),
+        ];
+        for config in secret_shapes {
+            let draft = StorageDraft {
+                storage_id: None,
+                name: storage.name.clone(),
+                backend: "local".to_string(),
+                config,
+                enabled: true,
+                mcp_exposed: false,
+                read_only: false,
+                oauth_session_id: None,
+                secret_mutations: HashMap::new(),
+            };
+            let error = update_storage_with_draft(&state, storage.id.clone(), draft, false, false)
+                .unwrap_err();
+            assert_eq!(
+                error.code,
+                McpErrorCode::ERR_CONFIRMATION_REQUIRED,
+                "config-embedded secret must not bypass confirmation"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn config_embedded_secret_with_confirmation_is_accepted_when_valid() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, storage, _workspace) = workspace_bound_state(&dir);
+        let draft = StorageDraft {
+            storage_id: None,
+            name: storage.name.clone(),
+            backend: "local".to_string(),
+            config: json!({ "root": "/tmp", "oauthToken": "replacement" }),
+            enabled: true,
+            mcp_exposed: false,
+            read_only: false,
+            oauth_session_id: None,
+            secret_mutations: HashMap::new(),
+        };
+        let (updated, _) =
+            update_storage_with_draft(&state, storage.id.clone(), draft, false, true).unwrap();
+        assert_eq!(updated.id, storage.id);
+        assert!(updated.secret_fields.contains(&"/oauthToken".to_string()));
+    }
+
+    #[tokio::test]
     async fn confirmed_credential_change_with_bound_workspaces_rejects_invalid_prospective_storage()
     {
         let dir = tempfile::tempdir().unwrap();
@@ -2585,6 +2812,80 @@ mod tests {
         )
         .unwrap();
         let _ = state;
+    }
+
+    #[test]
+    fn manual_descendant_rule_cannot_override_read_only_workspace() {
+        let policy = infimount_mcp::policy::McpStoragePolicy::default();
+        let workspace_rule = infimount_mcp::policy::McpPathRule {
+            id: "workspace:bound-ws".to_string(),
+            prefix: "workspace".to_string(),
+            access: McpAccessMode::ReadOnly,
+            source: McpRuleSource::Workspace {
+                workspace_id: "bound-ws".to_string(),
+            },
+            confirmation_rules: None,
+        };
+        let mut prospective = policy.clone();
+        prospective.rules.push(workspace_rule);
+
+        for prefix in [
+            "workspace".to_string(),
+            "workspace/output".to_string(),
+            "workspace/output/deep".to_string(),
+        ] {
+            let mut with_descendant = prospective.clone();
+            with_descendant
+                .rules
+                .push(infimount_mcp::policy::McpPathRule {
+                    id: "manual-descendant".to_string(),
+                    prefix,
+                    access: McpAccessMode::ReadWrite,
+                    source: McpRuleSource::Manual,
+                    confirmation_rules: None,
+                });
+            let error = assert_generic_policy_respects_workspace_rules(
+                &prospective,
+                &with_descendant,
+                &["workspace".to_string()],
+            )
+            .unwrap_err();
+            assert_eq!(error.code, McpErrorCode::ERR_WORKSPACE_POLICY_MANAGED);
+        }
+    }
+
+    #[test]
+    fn manual_ancestor_rule_cannot_wrap_a_workspace_root() {
+        let policy = infimount_mcp::policy::McpStoragePolicy::default();
+        let workspace_rule = infimount_mcp::policy::McpPathRule {
+            id: "workspace:bound-ws".to_string(),
+            prefix: "workspace/output".to_string(),
+            access: McpAccessMode::ReadOnly,
+            source: McpRuleSource::Workspace {
+                workspace_id: "bound-ws".to_string(),
+            },
+            confirmation_rules: None,
+        };
+        let mut prospective = policy.clone();
+        prospective.rules.push(workspace_rule);
+
+        for prefix in ["workspace".to_string(), "workspace/output".to_string()] {
+            let mut with_manual = prospective.clone();
+            with_manual.rules.push(infimount_mcp::policy::McpPathRule {
+                id: "manual-ancestor".to_string(),
+                prefix,
+                access: McpAccessMode::ReadWrite,
+                source: McpRuleSource::Manual,
+                confirmation_rules: None,
+            });
+            let error = assert_generic_policy_respects_workspace_rules(
+                &prospective,
+                &with_manual,
+                &["workspace/output".to_string()],
+            )
+            .unwrap_err();
+            assert_eq!(error.code, McpErrorCode::ERR_WORKSPACE_POLICY_MANAGED);
+        }
     }
 
     #[test]

@@ -141,6 +141,7 @@ fn main() {
             commands::create_recovery_backup,
             commands::preview_recovery_restore,
             commands::apply_recovery_restore,
+            commands::cancel_recovery_restore_preview,
             commands::list_versions,
             commands::read_file_version,
             commands::delete_version,
@@ -150,6 +151,7 @@ fn main() {
             commands::update_workspace,
             commands::delete_workspace,
             commands::delete_workspace_with_files,
+            commands::archive_unsupported_workspaces,
             commands::list_workspace_checkpoints,
             commands::create_workspace_checkpoint,
             commands::restore_workspace_checkpoint,
@@ -169,6 +171,7 @@ fn main() {
         .run(|_app_handle, event| {
             if let tauri::RunEvent::Exit = event {
                 commands::zeroize_storage_import_previews_cmd();
+                commands::zeroize_recovery_restore_previews_cmd();
             }
         });
 }

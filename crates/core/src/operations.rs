@@ -819,6 +819,17 @@ fn normalize_transfer_inputs(paths: Vec<String>, target_dir: &str) -> (Vec<Strin
     )
 }
 
+/// The exact destination a transfer plan produces for a single source path when
+/// moving or copying it into `target_dir`, including appending the source
+/// basename. Mirrors the destination computation used by the transfer planner so
+/// namespace-conflict checks can validate the real destination rather than the
+/// bare target directory.
+pub fn transfer_destination_path(source_path: &str, target_dir: &str) -> String {
+    let normalized = normalize_opendal_path(source_path);
+    let name = extract_filename(&normalized);
+    join_target_dir(target_dir, &name)
+}
+
 async fn ensure_no_batch_destination_conflicts(
     from_op: &Operator,
     paths: &[String],

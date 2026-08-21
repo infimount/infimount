@@ -1360,6 +1360,63 @@ pub async fn delete_workspace_with_files(
     Ok(())
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveUnsupportedWorkspacesResult {
+    pub archived_count: usize,
+    pub backup_path: Option<String>,
+}
+
+/// Back up and reset workspace metadata that predates the current schema.
+/// This allows the user to recreate workspaces that were blocked by stale
+/// records. User workspace files on storage are never deleted.
+#[tauri::command]
+pub async fn archive_unsupported_workspaces(
+    state: State<'_, AppState>,
+) -> Result<ArchiveUnsupportedWorkspacesResult, McpError> {
+    state.require_operational()?;
+    let _lifecycle = state.lifecycle_mutation.lock().await;
+    let _config_transaction = state.registry.acquire_configuration_transaction()?;
+    let _transaction = state.workspaces.acquire_mutation_lock().map_err(|e| {
+        err(
+            McpErrorCode::ERR_INTERNAL,
+            format!("failed to lock workspace mutation: {e}"),
+        )
+    })?;
+    let count = state.workspaces.archive_unsupported().map_err(|e| {
+        err_with_details(
+            McpErrorCode::ERR_INTERNAL,
+            format!("failed to archive unsupported workspaces: {e}"),
+            serde_json::json!({}),
+        )
+    })?;
+    let backup_path = if count > 0 {
+        let entries: Vec<_> = std::fs::read_dir(state.workspaces.dir())
+            .map_err(|e| {
+                err(
+                    McpErrorCode::ERR_INTERNAL,
+                    format!("failed to list workspace directory: {e}"),
+                )
+            })?
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with("workspaces.archived.") && name.ends_with(".json"))
+            })
+            .map(|entry| entry.path().to_string_lossy().into_owned())
+            .collect();
+        entries.into_iter().max()
+    } else {
+        None
+    };
+    Ok(ArchiveUnsupportedWorkspacesResult {
+        archived_count: count,
+        backup_path,
+    })
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateWorkspaceCheckpointRequest {

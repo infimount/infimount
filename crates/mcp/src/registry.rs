@@ -7,7 +7,7 @@ use crate::policy::{
 };
 use chrono::Utc;
 use fs2::FileExt;
-use infimount_core::atomic_file::{atomic_write_file, ensure_parent};
+use infimount_core::atomic_file::{atomic_write_file, ensure_parent, FILE_MODE};
 use infimount_core::secrets::{
     discover_secret_field_names, extract_secret_fields, is_secret_field_name, merge_secret_config,
     strip_secret_fields, NativeSecretStore, SecretStore,
@@ -32,6 +32,173 @@ pub const MAX_REGISTRY_SNAPSHOT_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_IMPORT_JOURNAL_BYTES: usize = 24 * 1024 * 1024;
 pub const MAX_SECRET_TRANSITIONS: usize = 1024;
 const MAX_SECRET_ACCOUNT_SEGMENT_BYTES: usize = 128;
+
+// ---------------------------------------------------------------------------
+// Secret-transaction crash journal
+// ---------------------------------------------------------------------------
+
+pub const SECRET_TRANSACTION_JOURNAL_VERSION: u32 = 1;
+pub const MAX_SECRET_TRANSACTION_ENTRIES: usize = 16;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SecretTransactionEntry {
+    /// The secret account being written or deleted.
+    pub account: String,
+    /// If set, the storage record with this id is expected to hold
+    /// `secret_ref == account` after the transition commits.
+    pub storage_id: Option<String>,
+    /// The mutation targets the managed MCP auth-token account.
+    pub mcp_auth: bool,
+    /// The mutation deletes the secret (e.g. MCP auth `Clear`).
+    pub clear_ref: bool,
+    /// Accounts made obsolete by a successful commit (e.g. the previous
+    /// revision keyring entry after an update).
+    pub replace_accounts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SecretTransactionJournal {
+    pub version: u32,
+    pub created_at: String,
+    pub entries: Vec<SecretTransactionEntry>,
+}
+
+fn secret_transaction_journal_path(config_dir: &Path) -> PathBuf {
+    config_dir.join("secret-transactions.json")
+}
+
+/// Persist a secret-transaction journal so a crash can be recovered at startup.
+pub fn write_secret_transaction_journal(
+    config_dir: &Path,
+    entries: Vec<SecretTransactionEntry>,
+) -> McpResult<()> {
+    if entries.len() > MAX_SECRET_TRANSACTION_ENTRIES {
+        return Err(err(
+            McpErrorCode::ERR_INTERNAL,
+            "secret transaction journal exceeds the configured entry limit",
+        ));
+    }
+    for entry in &entries {
+        for segment in entry.account.split('/') {
+            if !valid_account_segment(segment) {
+                return Err(err(
+                    McpErrorCode::ERR_INTERNAL,
+                    "secret transaction journal contains an invalid account",
+                ));
+            }
+        }
+        for replace in &entry.replace_accounts {
+            for segment in replace.split('/') {
+                if !valid_account_segment(segment) {
+                    return Err(err(
+                        McpErrorCode::ERR_INTERNAL,
+                        "secret transaction journal contains an invalid replace account",
+                    ));
+                }
+            }
+        }
+    }
+    let journal = SecretTransactionJournal {
+        version: SECRET_TRANSACTION_JOURNAL_VERSION,
+        created_at: Utc::now().to_rfc3339(),
+        entries,
+    };
+    let bytes = serde_json::to_vec_pretty(&journal).map_err(|error| {
+        err_with_details(
+            McpErrorCode::ERR_INTERNAL,
+            "failed to serialize secret transaction journal",
+            json!({ "serde_error": error.to_string() }),
+        )
+    })?;
+    if bytes.len() > MAX_IMPORT_JOURNAL_BYTES {
+        return Err(err(
+            McpErrorCode::ERR_INTERNAL,
+            "secret transaction journal exceeds the configured size limit",
+        ));
+    }
+    let path = secret_transaction_journal_path(config_dir);
+    ensure_parent(&path).map_err(|error| map_core_error(&error))?;
+    atomic_write_file(&path, &bytes, FILE_MODE).map_err(|error| map_core_error(&error))
+}
+
+/// Remove the secret-transaction journal file. Called after a transition
+/// completes (success or in-process rollback) or after startup recovery.
+pub fn clear_secret_transaction_journal(config_dir: &Path) {
+    let path = secret_transaction_journal_path(config_dir);
+    let _ = fs::remove_file(&path);
+}
+
+/// Resolve a leftover secret-transaction journal left by a prior crash.
+///
+/// Must be called while the caller holds the configuration transaction lock
+/// and after `recover_pending_imports` so the registry is consistent.
+pub fn recover_pending_secret_transactions(
+    config_dir: &Path,
+    storages: &[StorageRecord],
+    secret_store: &dyn SecretStore,
+    settings_auth_token_ref: Option<&str>,
+) -> McpResult<()> {
+    let path = secret_transaction_journal_path(config_dir);
+    if !path.exists() {
+        return Ok(());
+    }
+    let bytes =
+        fs::read(&path).map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))?;
+    let journal: SecretTransactionJournal = serde_json::from_slice(&bytes).map_err(|_| {
+        err(
+            McpErrorCode::ERR_INTERNAL,
+            "secret transaction journal is malformed",
+        )
+    })?;
+    if journal.version != SECRET_TRANSACTION_JOURNAL_VERSION {
+        return Err(err(
+            McpErrorCode::ERR_INTERNAL,
+            "secret transaction journal has an unsupported version",
+        ));
+    }
+    if journal.entries.len() > MAX_SECRET_TRANSACTION_ENTRIES {
+        return Err(err(
+            McpErrorCode::ERR_INTERNAL,
+            "secret transaction journal exceeds the configured entry limit",
+        ));
+    }
+
+    for entry in &journal.entries {
+        let committed = if entry.mcp_auth {
+            settings_auth_token_ref == Some(entry.account.as_str())
+        } else if let Some(storage_id) = &entry.storage_id {
+            storages.iter().any(|s| {
+                s.id == *storage_id && s.secret_ref.as_deref() == Some(entry.account.as_str())
+            })
+        } else {
+            false
+        };
+
+        if !committed {
+            let _ = secret_store.delete(&entry.account);
+        } else if entry.mcp_auth && entry.clear_ref {
+            // The in-process Clear mutated the keyring but crashed before
+            // persisting the settings update. The keyring entry is already
+            // gone; nothing more to do — the caller will reconcile the
+            // settings auth_token_ref field on the next successful startup
+            // settings load.
+        } else if committed && !entry.replace_accounts.is_empty() {
+            for replace in &entry.replace_accounts {
+                let still_referenced = storages
+                    .iter()
+                    .any(|s| s.secret_ref.as_deref() == Some(replace.as_str()));
+                if !still_referenced {
+                    let _ = secret_store.delete(replace);
+                }
+            }
+        }
+    }
+
+    clear_secret_transaction_journal(config_dir);
+    Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StorageSecretAccount {
@@ -464,12 +631,16 @@ impl StorageRegistry {
         atomic_write_file(path, &bytes, 0o600).map_err(|error| map_core_error(&error))
     }
 
+    /// Recover unfinished import transactions. Callers holding the configuration
+    /// transaction lock use `recover_pending_imports_locked`.
     pub fn recover_pending_imports(&self) -> McpResult<()> {
         let _transaction = self.acquire_configuration_transaction()?;
         self.recover_pending_imports_locked()
     }
 
-    fn recover_pending_imports_locked(&self) -> McpResult<()> {
+    /// Recover unfinished import transactions while the caller already holds the
+    /// configuration transaction lock.
+    pub fn recover_pending_imports_locked(&self) -> McpResult<()> {
         let Some(parent) = self.path.parent() else {
             return Ok(());
         };
@@ -2512,5 +2683,137 @@ mod tests {
         assert_eq!(current.schema_version, STORAGE_RECORD_SCHEMA_VERSION);
         assert_eq!(current.mcp_policy.version, MCP_POLICY_VERSION);
         assert_eq!(current.mcp_policy.default_access, McpAccessMode::ReadOnly);
+    }
+
+    #[test]
+    fn secret_transaction_journal_round_trip_and_recovery() {
+        let dir = TempDir::new().expect("temp dir");
+        let config_dir = dir.path();
+        let secrets = Arc::new(infimount_core::secrets::MemorySecretStore::new());
+        let registry = StorageRegistry::with_secret_store(None, secrets.clone());
+
+        // No journal file — recovery is a no-op.
+        let storages = registry.load_all().unwrap_or_default();
+        recover_pending_secret_transactions(config_dir, &storages, secrets.as_ref(), None).unwrap();
+        assert!(!secret_transaction_journal_path(config_dir).exists());
+
+        // Write a journal entry for an add that never committed to the registry.
+        let entry = SecretTransactionEntry {
+            account: "storage/orphan-add".to_string(),
+            storage_id: Some("orphan-add".to_string()),
+            mcp_auth: false,
+            clear_ref: false,
+            replace_accounts: vec![],
+        };
+        secrets
+            .put_json(&entry.account, &json!({"key": "value"}))
+            .unwrap();
+        assert!(secrets.get_json(&entry.account).unwrap().is_some());
+        write_secret_transaction_journal(config_dir, vec![entry.clone()]).unwrap();
+        assert!(secret_transaction_journal_path(config_dir).exists());
+
+        // Recovery should delete the orphan and remove the journal.
+        recover_pending_secret_transactions(config_dir, &storages, secrets.as_ref(), None).unwrap();
+        assert!(secrets.get_json(&entry.account).unwrap().is_none());
+        assert!(!secret_transaction_journal_path(config_dir).exists());
+
+        // Write a journal entry for a committed add — the registry references it.
+        let committed_entry = SecretTransactionEntry {
+            account: "storage/committed-add".to_string(),
+            storage_id: Some("committed-add".to_string()),
+            mcp_auth: false,
+            clear_ref: false,
+            replace_accounts: vec![],
+        };
+        secrets
+            .put_json(&committed_entry.account, &json!({"key": "keep"}))
+            .unwrap();
+        write_secret_transaction_journal(config_dir, vec![committed_entry.clone()]).unwrap();
+
+        let committed_storages = vec![StorageRecord {
+            id: "committed-add".to_string(),
+            secret_ref: Some("storage/committed-add".to_string()),
+            ..StorageRecord::new("test".into(), "local".into(), json!({}))
+        }];
+
+        recover_pending_secret_transactions(
+            config_dir,
+            &committed_storages,
+            secrets.as_ref(),
+            None,
+        )
+        .unwrap();
+        // The committed account should survive.
+        assert!(secrets
+            .get_json(&committed_entry.account)
+            .unwrap()
+            .is_some());
+        assert!(!secret_transaction_journal_path(config_dir).exists());
+    }
+
+    #[test]
+    fn secret_transaction_journal_update_replaces_old_account() {
+        let dir = TempDir::new().expect("temp dir");
+        let config_dir = dir.path();
+        let secrets = Arc::new(infimount_core::secrets::MemorySecretStore::new());
+
+        // Simulate a committed update: staged account is referenced, old account is not.
+        let entry = SecretTransactionEntry {
+            account: "storage/s1/revision/2/tx1".to_string(),
+            storage_id: Some("s1".to_string()),
+            mcp_auth: false,
+            clear_ref: false,
+            replace_accounts: vec!["storage/s1".to_string()],
+        };
+        secrets
+            .put_json(&entry.account, &json!({"key": "new"}))
+            .unwrap();
+        secrets
+            .put_json("storage/s1", &json!({"key": "old"}))
+            .unwrap();
+        write_secret_transaction_journal(config_dir, vec![entry]).unwrap();
+
+        let storages = vec![StorageRecord {
+            id: "s1".to_string(),
+            secret_ref: Some("storage/s1/revision/2/tx1".to_string()),
+            ..StorageRecord::new("test".into(), "local".into(), json!({}))
+        }];
+
+        recover_pending_secret_transactions(config_dir, &storages, secrets.as_ref(), None).unwrap();
+        // Staged account kept, old account deleted.
+        assert!(secrets
+            .get_json("storage/s1/revision/2/tx1")
+            .unwrap()
+            .is_some());
+        assert!(secrets.get_json("storage/s1").unwrap().is_none());
+    }
+
+    #[test]
+    fn secret_transaction_journal_auth_orphan_is_cleaned() {
+        let dir = TempDir::new().expect("temp dir");
+        let config_dir = dir.path();
+        let secrets = Arc::new(infimount_core::secrets::MemorySecretStore::new());
+
+        let entry = SecretTransactionEntry {
+            account: "mcp/http-auth".to_string(),
+            storage_id: None,
+            mcp_auth: true,
+            clear_ref: false,
+            replace_accounts: vec![],
+        };
+        secrets
+            .put_json(&entry.account, &json!({"token": "orphan"}))
+            .unwrap();
+        write_secret_transaction_journal(config_dir, vec![entry]).unwrap();
+
+        // Settings don't reference the account — orphan.
+        recover_pending_secret_transactions(
+            config_dir,
+            &[],
+            secrets.as_ref(),
+            Some("other-account"),
+        )
+        .unwrap();
+        assert!(secrets.get_json("mcp/http-auth").unwrap().is_none());
     }
 }

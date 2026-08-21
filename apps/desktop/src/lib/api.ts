@@ -780,6 +780,15 @@ export function deleteWorkspaceWithFiles(id: string, confirmDeleteFiles: boolean
   });
 }
 
+export interface ArchiveUnsupportedWorkspacesResult {
+  archivedCount: number;
+  backupPath: string | null;
+}
+
+export function archiveUnsupportedWorkspaces(): Promise<ArchiveUnsupportedWorkspacesResult> {
+  return invokeOrThrow<ArchiveUnsupportedWorkspacesResult>("archive_unsupported_workspaces");
+}
+
 export function importLegacyWorkspaces(request: ImportLegacyWorkspacesInput): Promise<number> {
   return invokeOrThrow<number>("import_legacy_workspaces", { request });
 }

@@ -381,6 +381,11 @@ export async function deleteAgentWorkspaceWithFiles(id: string): Promise<void> {
   await apiDeleteWorkspaceWithFiles(id, true);
 }
 
+export async function archiveUnsupportedAgentWorkspaces(): Promise<{ archivedCount: number; backupPath: string | null }> {
+  const { archiveUnsupportedWorkspaces: apiArchive } = await import("@/lib/api");
+  return apiArchive();
+}
+
 export interface LegacyWorkspaceMigrationOutcome {
   index: number;
   id: string | null;

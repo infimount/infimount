@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  Archive,
   Bot,
   CheckCircle2,
   Clock3,
@@ -45,6 +46,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/hooks/use-toast";
 import {
   AGENT_WORKSPACE_TEMPLATES,
+  archiveUnsupportedAgentWorkspaces,
   appendWorkspaceMemory,
   createAgentWorkspace,
   createWorkspaceCheckpoint,
@@ -99,6 +101,12 @@ export function AgentWorkspacesDialog({
   const [activityEvents, setActivityEvents] = useState<ActivityLogEvent[]>([]);
   const [deleteMode, setDeleteMode] = useState<"registration" | "files" | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  const reloadWorkspaces = async () => {
+    const next = await listAgentWorkspaces();
+    setWorkspaces(next);
+    setSelectedWorkspaceId((current) => current ?? next[0]?.id ?? null);
+  };
 
   const selectedWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,
@@ -348,8 +356,38 @@ export function AgentWorkspacesDialog({
         <div className="grid min-h-0 flex-1 grid-cols-[260px_1fr]">
           <aside className="min-h-0 border-r bg-muted/20">
             <div className="border-b px-4 py-3">
-              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Workspaces
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Workspaces
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                  onClick={async () => {
+                    try {
+                      const result = await archiveUnsupportedAgentWorkspaces();
+                      if (result.archivedCount === 0) {
+                        toast({ title: "No unsupported workspaces found" });
+                        return;
+                      }
+                      const msg = result.backupPath
+                        ? `${result.archivedCount} archived. Backup: ${result.backupPath}`
+                        : `${result.archivedCount} archived.`;
+                      toast({ title: msg });
+                      await reloadWorkspaces();
+                    } catch (error) {
+                      toast({
+                        variant: "destructive",
+                        title: "Failed to archive",
+                        description: String(error),
+                      });
+                    }
+                  }}
+                  title="Archive unsupported workspaces"
+                >
+                  <Archive className="h-3.5 w-3.5" />
+                </Button>
               </div>
             </div>
             <ScrollArea className="h-[58vh]">

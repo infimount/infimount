@@ -258,6 +258,10 @@ impl WorkspaceRegistry {
         }
     }
 
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
     fn path(&self) -> PathBuf {
         self.dir.join(WORKSPACES_FILE)
     }
@@ -445,6 +449,50 @@ impl WorkspaceRegistry {
         self.save_raw(&file)?;
         self.sync_cache(&file)?;
         Ok(())
+    }
+
+    /// Back up the workspace file and replace it with an empty registry so
+    /// the user can recreate current-schema workspaces.
+    ///
+    /// - Only archives when unsupported (pre-v0.8) records exist.
+    /// - Never deletes user workspace files on storage.
+    /// - Never migrates or trusts old policy bindings.
+    pub fn archive_unsupported(&self) -> Result<usize> {
+        let _lock = self
+            .file_lock
+            .lock()
+            .map_err(|e| CoreError::Config(format!("workspace registry lock poisoned: {e}")))?;
+        let _disk_lock = self.acquire_disk_lock()?;
+        let file = self.load_raw()?;
+        let unsupported_count = file
+            .workspaces
+            .iter()
+            .filter(|w| !workspace_schema_supported(w))
+            .count();
+        if unsupported_count == 0 {
+            return Ok(0);
+        }
+
+        // Back up the existing file with a timestamp suffix.
+        let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+        let backup_name = format!("workspaces.archived.{timestamp}.json");
+        let backup_path = self.dir.join(&backup_name);
+        let source_path = self.path();
+        if source_path.exists() {
+            fs::copy(&source_path, &backup_path).map_err(|e| {
+                CoreError::Config(format!("failed to back up workspace file: {e}"))
+            })?;
+        }
+
+        // Write a fresh empty registry.
+        let empty = WorkspacesFile {
+            schema_version: WORKSPACES_SCHEMA_VERSION,
+            revision: file.revision.saturating_add(1),
+            workspaces: Vec::new(),
+        };
+        self.save_raw(&empty)?;
+        self.sync_cache(&empty)?;
+        Ok(unsupported_count)
     }
 
     pub fn import_legacy(&self, legacy_workspaces: Vec<WorkspaceRecord>) -> Result<usize> {

@@ -1431,3 +1431,209 @@ async fn remove_storage_missing_returns_not_found() {
 
     assert_eq!(err.code, McpErrorCode::ERR_STORAGE_NOT_FOUND);
 }
+
+#[derive(Debug)]
+struct DeleteFailingSecretStore {
+    inner: infimount_core::secrets::MemorySecretStore,
+    fail_delete: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl infimount_core::secrets::SecretStore for DeleteFailingSecretStore {
+    fn status(&self) -> infimount_core::secrets::SecretStoreStatus {
+        infimount_core::secrets::SecretStoreStatus::Available
+    }
+    fn put_json(
+        &self,
+        account: &str,
+        value: &serde_json::Value,
+    ) -> infimount_core::models::Result<()> {
+        self.inner.put_json(account, value)
+    }
+    fn get_json(&self, account: &str) -> infimount_core::models::Result<Option<serde_json::Value>> {
+        self.inner.get_json(account)
+    }
+    fn delete(&self, account: &str) -> infimount_core::models::Result<()> {
+        if self.fail_delete.load(std::sync::atomic::Ordering::Acquire) {
+            Err(infimount_core::models::CoreError::Config(
+                "injected delete failure".to_string(),
+            ))
+        } else {
+            self.inner.delete(account)
+        }
+    }
+}
+
+/// Seed a committed import scenario where an existing storage with stored
+/// credentials is replaced so the old account becomes obsolete.
+fn obsolete_account_ctx(
+    dir: &TempDir,
+) -> (
+    FsToolsContext,
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+    let fail_delete = Arc::new(AtomicBool::new(false));
+    let store = Arc::new(DeleteFailingSecretStore {
+        inner: infimount_core::secrets::MemorySecretStore::new(),
+        fail_delete: fail_delete.clone(),
+    });
+    let registry = crate::registry::StorageRegistry::with_secret_store(
+        Some(dir.path().join("storages.json")),
+        store,
+    );
+    let mut existing = crate::registry::StorageRecord::new(
+        "Old".to_string(),
+        "s3".to_string(),
+        serde_json::json!({"bucket": "docs"}),
+    );
+    existing.id = "old-id".to_string();
+    existing.secret_ref = Some("storage/old-id".to_string());
+    existing.secret_fields = vec!["/secretAccessKey".to_string()];
+    registry.save_all_atomic(&[existing]).unwrap();
+    registry
+        .secret_store()
+        .put_json(
+            "storage/old-id",
+            &serde_json::json!({"/secretAccessKey": "old-secret"}),
+        )
+        .unwrap();
+    let sessions = sessions_in();
+    let ctx = FsToolsContext {
+        registry,
+        sessions,
+        allow_insecure: true,
+        auth_token: None,
+    };
+    (ctx, fail_delete)
+}
+
+async fn apply_replace_import(
+    ctx: &FsToolsContext,
+) -> super::import_config::ApplyStorageImportResult {
+    let preview = super::import_config::preview_storage_import(
+        ctx,
+        super::import_config::PreviewStorageImportInput {
+            json: serde_json::json!({"storages": [{
+                "name": "New",
+                "backend": "local",
+                "config": {"root": "/tmp/new"}
+            }]})
+            .to_string(),
+            mode: "replace".to_string(),
+            on_conflict: "error".to_string(),
+        },
+    )
+    .await
+    .unwrap();
+    super::import_config::apply_storage_import(
+        ctx,
+        super::import_config::ApplyStorageImportInput {
+            preview_id: preview.preview_id,
+            confirmed: true,
+        },
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn committed_import_cleanup_obligation_stays_durable_when_delete_fails() {
+    let _serial = serial_preview_store_guard().await;
+    let dir = TempDir::new().unwrap();
+    let (ctx, fail_delete) = obsolete_account_ctx(&dir);
+    fail_delete.store(true, std::sync::atomic::Ordering::Release);
+
+    let out = apply_replace_import(&ctx).await;
+    assert!(out
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("pending")));
+
+    // The obsolete account could not be deleted but is durably recorded in the
+    // strict cleanup journal, so the import journal may be retired.
+    assert!(ctx
+        .registry
+        .secret_store()
+        .get_json("storage/old-id")
+        .unwrap()
+        .is_some());
+    let cleanup = std::fs::read_to_string(dir.path().join("secret-cleanup.json")).unwrap();
+    assert!(cleanup.contains("storage/old-id"));
+    let backups = dir.path().join("backups");
+    let pending = std::fs::read_dir(&backups)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.starts_with("storages.import-pending.") && name.ends_with(".json")
+                })
+        })
+        .count();
+    assert_eq!(
+        pending, 0,
+        "durable journal must be retired when obligation is journaled"
+    );
+}
+
+#[tokio::test]
+async fn committed_import_keeps_journal_and_blocks_when_cleanup_cannot_be_journaled() {
+    let _serial = serial_preview_store_guard().await;
+    let dir = TempDir::new().unwrap();
+    let (ctx, fail_delete) = obsolete_account_ctx(&dir);
+    fail_delete.store(true, std::sync::atomic::Ordering::Release);
+
+    // Fill the strict cleanup journal so appending the obsolete account fails.
+    let cleanup_path = dir.path().join("secret-cleanup.json");
+    let full_journal = serde_json::json!({
+        "version": 1,
+        "pending": (0..1024u32).map(|index| serde_json::json!({
+            "account": format!("storage/obsolete-{index}"),
+            "createdAt": "2026-01-01T00:00:00Z"
+        })).collect::<Vec<_>>()
+    });
+    std::fs::write(
+        &cleanup_path,
+        serde_json::to_vec_pretty(&full_journal).unwrap(),
+    )
+    .unwrap();
+
+    let out = apply_replace_import(&ctx).await;
+    assert!(out
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("blocked until the pending import journal is recovered")));
+
+    // The only durable list of obsolete accounts is the import journal, so it
+    // must be retained and configuration mutations blocked.
+    let backups = dir.path().join("backups");
+    let pending = std::fs::read_dir(&backups)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.starts_with("storages.import-pending.") && name.ends_with(".json")
+                })
+        })
+        .count();
+    assert_eq!(
+        pending, 1,
+        "import journal must be retained as the durable obligation"
+    );
+    assert!(dir
+        .path()
+        .join("configuration-recovery-blocked.json")
+        .exists());
+    assert!(ctx
+        .registry
+        .secret_store()
+        .get_json("storage/old-id")
+        .unwrap()
+        .is_some());
+}
