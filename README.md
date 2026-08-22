@@ -339,3 +339,8 @@ chmod +x Infimount-*.AppImage
 <p align="center">
   Made with ❤️ by the Infimount community
 </p>
+
+
+> **RC security boundary:** local MCP operations reject symlink and reparse-point
+> components. Built-in MCP HTTP is loopback-only; use a TLS reverse proxy for
+> remote deployments.

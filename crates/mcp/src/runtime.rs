@@ -129,10 +129,10 @@ pub async fn start_http_server(
 ) -> io::Result<McpHttpServerHandle> {
     let auth_token = normalize_auth_token(auth_token);
 
-    if allow_insecure && !is_loopback_bind_address(bind_address) {
+    if !is_loopback_bind_address(bind_address) {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            "unauthenticated HTTP transport is only allowed on loopback bind addresses",
+            "built-in MCP HTTP transport is loopback-only; use a TLS reverse proxy for remote access",
         ));
     }
 
@@ -231,12 +231,18 @@ pub async fn start_http_server_from_settings(
     .await
 }
 
-fn is_loopback_bind_address(value: &str) -> bool {
-    let normalized = value.trim().to_ascii_lowercase();
-    normalized == "localhost"
-        || normalized == "::1"
-        || normalized == "[::1]"
-        || normalized.starts_with("127.")
+pub fn is_loopback_bind_address(value: &str) -> bool {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    let unbracketed = value
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(value);
+    unbracketed
+        .parse::<std::net::IpAddr>()
+        .is_ok_and(|address| address.is_loopback())
 }
 
 fn display_host(addr: SocketAddr) -> String {
@@ -334,6 +340,31 @@ mod tests {
             })
     }
 
+    #[test]
+    fn loopback_parser_rejects_hostnames_that_only_start_with_127() {
+        for address in [
+            "127.0.0.1",
+            "127.255.255.255",
+            "::1",
+            "[::1]",
+            "localhost",
+            "LOCALHOST",
+        ] {
+            assert!(is_loopback_bind_address(address), "{address}");
+        }
+
+        for address in [
+            "127.example.com",
+            "127.0.0.1.example.com",
+            "0.0.0.0",
+            "192.168.1.2",
+            "::",
+            "example.com",
+        ] {
+            assert!(!is_loopback_bind_address(address), "{address}");
+        }
+    }
+
     #[tokio::test]
     async fn http_server_requires_auth_without_insecure_override() {
         let temp_dir = TempDir::new().expect("create temp dir");
@@ -358,6 +389,32 @@ mod tests {
         };
         assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
         assert!(error.to_string().contains("INFIMOUNT_AUTH_TOKEN"));
+    }
+
+    #[tokio::test]
+    async fn http_server_rejects_authenticated_non_loopback_bind() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let result = start_http_server(
+            temp_registry(&temp_dir),
+            "0.0.0.0",
+            0,
+            all_tool_names(),
+            false,
+            Some("test-token".to_string()),
+            ConfirmationManager::new(),
+            SessionManager::new(),
+        )
+        .await;
+
+        let error = match result {
+            Ok(server) => {
+                let _ = server.stop().await;
+                panic!("server should reject remote plaintext HTTP");
+            }
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().contains("loopback-only"));
     }
 
     #[tokio::test]

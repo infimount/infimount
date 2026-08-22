@@ -224,3 +224,26 @@ First stable release of Infimount — a unified desktop storage browser powered 
 [0.3.0]: https://github.com/infimount/infimount/releases/tag/v0.3.0
 [0.2.3]: https://github.com/infimount/infimount/compare/v0.1.0...v0.2.3
 [0.1.0]: https://github.com/infimount/infimount/releases/tag/v0.1.0
+
+
+### Post-merge RC hardening
+
+- Reject symlink and Windows reparse-point components for local MCP paths.
+- Block new configuration mutations until pending import, restore, secret, and
+  cleanup transactions are recovered.
+- Make built-in MCP HTTP loopback-only and keep environment tokens headless-only.
+- Remove obsolete credential references after successful recovery restore.
+- Fail closed when deleting a workspace whose managed policy grant is missing.
+- Extend advanced credential-name detection and add safe download commit fallback.
+- Move GitHub Actions validation to Node.js 24.
+
+### Final transaction and HTTP corrections
+
+- Hold one configuration transaction across workspace creation and storage-import
+  workspace validation/commit.
+- Separate restore commit from credential cleanup and persist obsolete references
+  in the committed restore journal for deterministic startup retry.
+- Preserve active secret-cleanup entries until their persisted references are
+  removed.
+- Parse loopback bind addresses as IP addresses instead of accepting arbitrary
+  hostnames beginning with `127.`.

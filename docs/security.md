@@ -125,7 +125,7 @@ For desktop and local development, keep HTTP bound to loopback:
 127.0.0.1
 ```
 
-Desktop HTTP can run unauthenticated only on loopback for local development. If you bind desktop HTTP to `0.0.0.0` or a LAN address, Infimount requires a bearer token before the server can start.
+Desktop HTTP can run unauthenticated only on loopback for local development. The built-in desktop and sidecar HTTP transports reject non-loopback bind addresses.
 
 Headless HTTP mode also requires bearer-token authentication unless explicitly started with `--allow-insecure` on loopback. Set a token with either CLI or environment:
 
@@ -139,7 +139,7 @@ Clients must send:
 Authorization: Bearer replace-with-a-random-token
 ```
 
-Only bind to `0.0.0.0` or a LAN address when you intentionally expose the server and have a strong token plus a network boundary in place. Desktop bearer tokens are stored in native secret storage; generated snippets use an `INFIMOUNT_AUTH_TOKEN` placeholder and never reveal the stored value. If native secret storage is unavailable or locked, Infimount fails with an actionable error instead of persisting or using plaintext fallback credentials.
+The built-in server does not bind to `0.0.0.0` or LAN addresses. Remote deployment requires a TLS-terminating authenticated reverse proxy. Desktop bearer tokens are stored in native secret storage; generated snippets use an `INFIMOUNT_AUTH_TOKEN` placeholder and never reveal the stored value. If native secret storage is unavailable or locked, Infimount fails with an actionable error instead of persisting or using plaintext fallback credentials.
 
 ## Sessions and Scoped Access
 
@@ -195,3 +195,19 @@ with fallback to the per-user application cache directory. The staging root is v
 ## Transactional Directory Transfers
 
 Directory transfers that create a previously absent destination are transactional: the tree is staged and committed with a rename where the backend supports it. On failure or cancellation the transaction-created destination is removed; a destination that existed before the operation is never deleted. If cleanup itself fails, the error reports `partialDestination: true` and `cleanupRequired: true` without exposing local absolute roots or credentials.
+
+
+## Local-filesystem MCP confinement
+
+Before every policy-authorized local MCP operation, Infimount rejects existing
+symlink and Windows reparse-point components beneath the configured storage
+root. This prevents persistent project links from redirecting an agent outside
+the approved namespace. The current RC threat model assumes another trusted
+local process does not replace path components during the brief operation
+window; handle-relative, race-free confinement remains planned hardening.
+
+## HTTP transport boundary
+
+The built-in Streamable HTTP transport is loopback-only. Remote access requires
+a TLS-terminating authenticated reverse proxy. A bearer token alone is not
+treated as transport encryption.

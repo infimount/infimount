@@ -335,6 +335,16 @@ fn persist_secret_transaction_journal(
     Ok(())
 }
 
+pub fn ensure_no_pending_secret_transaction(registry_path: &Path) -> McpResult<()> {
+    if load_secret_transaction_journal(registry_path)?.is_some() {
+        return Err(err(
+            McpErrorCode::ERR_SECRET_MIGRATION_FAILED,
+            "configuration mutation is blocked by a pending secret transaction",
+        ));
+    }
+    Ok(())
+}
+
 pub fn begin_secret_transaction(
     registry_path: &Path,
     journal: &SecretTransactionJournal,
@@ -479,13 +489,8 @@ fn cleanup_transaction_account(
     if secret_store.delete(account).is_ok() {
         return Ok(());
     }
-    if matches!(target, SecretTransactionTarget::Storage { .. }) {
-        return append_secret_cleanup_at(registry_path, account);
-    }
-    Err(err(
-        McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
-        "pending MCP authentication cleanup could not be completed",
-    ))
+    let _ = target;
+    append_secret_cleanup_at(registry_path, account)
 }
 
 /// Resolve a leftover secret-reference transaction.
@@ -1715,6 +1720,34 @@ where
     result
 }
 
+fn valid_cleanup_secret_account(account: &str) -> bool {
+    valid_secret_account(account) || parse_mcp_auth_secret_account(account).is_ok()
+}
+
+fn active_mcp_auth_ref(registry_path: &Path) -> McpResult<Option<String>> {
+    let settings_path = registry_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("mcp_settings.json");
+    if !settings_path.exists() {
+        return Ok(None);
+    }
+    let bytes = fs::read(&settings_path)
+        .map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| {
+        err(
+            McpErrorCode::ERR_INTERNAL,
+            "MCP settings are invalid; credential cleanup was preserved",
+        )
+    })?;
+    Ok(value
+        .get("authTokenRef")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string))
+}
+
 fn read_cleanup_journal(path: &Path) -> McpResult<SecretCleanupJournal> {
     let bytes = fs::read(path).map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))?;
     if bytes.len() > MAX_CLEANUP_JOURNAL_BYTES {
@@ -1734,7 +1767,7 @@ fn read_cleanup_journal(path: &Path) -> McpResult<SecretCleanupJournal> {
         || journal
             .pending
             .iter()
-            .any(|entry| !valid_secret_account(&entry.account))
+            .any(|entry| !valid_cleanup_secret_account(&entry.account))
     {
         return Err(err(
             McpErrorCode::ERR_INTERNAL,
@@ -1748,7 +1781,7 @@ fn read_cleanup_journal(path: &Path) -> McpResult<SecretCleanupJournal> {
 /// journal is preserved (never replaced with an empty list) and surfaces an
 /// error so the caller can fall back to a manual-repair warning.
 pub fn append_secret_cleanup_at(registry_path: &Path, account: &str) -> McpResult<()> {
-    if !valid_secret_account(account) {
+    if !valid_cleanup_secret_account(account) {
         return Err(err(
             McpErrorCode::ERR_INTERNAL,
             "refusing to journal an invalid secret account",
@@ -1811,7 +1844,7 @@ pub fn retry_pending_secret_cleanup_at(
     }
     with_cleanup_journal_lock(registry_path, || {
         let journal = read_cleanup_journal(&path)?;
-        let active_secret_refs = if registry_path.exists() {
+        let mut active_secret_refs = if registry_path.exists() {
             serde_json::from_slice::<Vec<StorageRecord>>(
                 &fs::read(registry_path)
                     .map_err(|error| map_io_error(&error, McpErrorCode::ERR_INTERNAL))?,
@@ -1823,12 +1856,20 @@ pub fn retry_pending_secret_cleanup_at(
         } else {
             std::collections::HashSet::new()
         };
+        if let Some(auth_ref) = active_mcp_auth_ref(registry_path)? {
+            active_secret_refs.insert(auth_ref);
+        }
         let remaining = journal
             .pending
             .into_iter()
-            .filter(|entry| {
-                !active_secret_refs.contains(&entry.account)
-                    && secret_store.delete(&entry.account).is_err()
+            .filter_map(|entry| {
+                if active_secret_refs.contains(&entry.account) {
+                    return Some(entry);
+                }
+                secret_store
+                    .delete(&entry.account)
+                    .is_err()
+                    .then_some(entry)
             })
             .collect::<Vec<_>>();
         if remaining.is_empty() {
@@ -2509,10 +2550,45 @@ mod tests {
     }
 
     #[test]
+    fn cleanup_journal_preserves_active_account_until_unreferenced() {
+        let dir = TempDir::new().unwrap();
+        let registry_path = dir.path().join("storages.json");
+        let secrets = std::sync::Arc::new(infimount_core::secrets::MemorySecretStore::new());
+        let registry =
+            StorageRegistry::with_secret_store(Some(registry_path.clone()), secrets.clone());
+        let account = "storage/active";
+
+        secrets
+            .put_json(account, &json!({ "token": "active" }))
+            .unwrap();
+        let mut storage = StorageRecord::new(
+            "Active".into(),
+            "local".into(),
+            json!({ "root": dir.path().to_string_lossy() }),
+        );
+        storage.secret_ref = Some(account.into());
+        registry.save_all_atomic(&[storage.clone()]).unwrap();
+        append_secret_cleanup_at(&registry_path, account).unwrap();
+
+        retry_pending_secret_cleanup_at(&registry_path, secrets.as_ref()).unwrap();
+        assert!(cleanup_journal_path(&registry_path).exists());
+        assert!(secrets.get_json(account).unwrap().is_some());
+
+        storage.secret_ref = None;
+        registry.save_all_atomic(&[storage]).unwrap();
+        retry_pending_secret_cleanup_at(&registry_path, secrets.as_ref()).unwrap();
+
+        assert!(secrets.get_json(account).unwrap().is_none());
+        assert!(!cleanup_journal_path(&registry_path).exists());
+    }
+
+    #[test]
     fn cleanup_journal_rejects_foreign_account() {
         let dir = TempDir::new().unwrap();
         let registry_path = dir.path().join("storages.json");
-        assert!(append_secret_cleanup_at(&registry_path, "mcp/http-auth").is_err());
+        // "mcp/http-auth" is now a valid legacy MCP auth account format.
+        // Use an account with an invalid segment (whitespace) to test rejection.
+        assert!(append_secret_cleanup_at(&registry_path, "invalid account").is_err());
     }
 
     #[test]

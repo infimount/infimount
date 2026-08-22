@@ -184,6 +184,8 @@ pub async fn create_workspace_atomic(
 ) -> Result<CreateWorkspaceAtomicOutput, McpError> {
     state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
+    let _config_transaction = state.registry.acquire_configuration_transaction()?;
+    state.recover_and_require_clean_configuration_locked()?;
     let _transaction = state.workspaces.acquire_mutation_lock().map_err(|e| {
         err(
             McpErrorCode::ERR_INTERNAL,
@@ -793,14 +795,20 @@ fn remove_workspace_policy_rule(
                 .find(|rule| rule.id == rule_id)
                 .cloned()
             else {
-                // No bound rule exists; revocation is a no-op so deleting or
-                // disabling the workspace can always proceed.
-                snapshot = Some(PolicySnapshot {
-                    rule: None,
-                    applied_rule: None,
-                    revision: storage.revision,
-                });
-                return Ok(());
+                if workspace.access_profile == "none"
+                    && workspace.policy_rule_id.is_none()
+                {
+                    snapshot = Some(PolicySnapshot {
+                        rule: None,
+                        applied_rule: None,
+                        revision: storage.revision,
+                    });
+                    return Ok(());
+                }
+                return Err(err(
+                    McpErrorCode::ERR_INVALID_POLICY,
+                    "workspace policy grant is missing; repair the policy before deleting the workspace",
+                ));
             };
             match &rule.source {
                 McpRuleSource::Workspace { workspace_id }
@@ -818,18 +826,14 @@ fn remove_workspace_policy_rule(
                     storage.updated_at = chrono::Utc::now().to_rfc3339();
                     Ok(())
                 }
-                // A manual rule that the user created independently is never
-                // removed by workspace operations. The workspace still detaches
-                // from it; the grant itself remains under manual control.
                 McpRuleSource::Manual
-                    if rule.prefix.trim_matches('/') == workspace.root_path.trim_matches('/') =>
+                    if rule.prefix.trim_matches('/')
+                        == workspace.root_path.trim_matches('/') =>
                 {
-                    snapshot = Some(PolicySnapshot {
-                        rule: None,
-                        applied_rule: None,
-                        revision: storage.revision,
-                    });
-                    Ok(())
+                    Err(err(
+                        McpErrorCode::ERR_INVALID_POLICY,
+                        "a manual grant still overlaps this workspace; remove it before deleting the workspace",
+                    ))
                 }
                 _ => Err(err(
                     McpErrorCode::ERR_INTERNAL,
@@ -1059,6 +1063,7 @@ pub async fn update_workspace(
     state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
     let _config_transaction = state.registry.acquire_configuration_transaction()?;
+    state.recover_and_require_clean_configuration_locked()?;
     let registry = &state.workspaces;
     let _transaction = registry.acquire_mutation_lock().map_err(|e| {
         err(
@@ -1185,6 +1190,7 @@ pub async fn delete_workspace(state: State<'_, AppState>, id: String) -> Result<
     state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
     let _config_transaction = state.registry.acquire_configuration_transaction()?;
+    state.recover_and_require_clean_configuration_locked()?;
     let _transaction = state.workspaces.acquire_mutation_lock().map_err(|e| {
         err(
             McpErrorCode::ERR_INTERNAL,
@@ -1273,6 +1279,7 @@ pub async fn delete_workspace_with_files(
     require_delete_files_confirmation(request.confirm_delete_files)?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
     let _config_transaction = state.registry.acquire_configuration_transaction()?;
+    state.recover_and_require_clean_configuration_locked()?;
     let _transaction = state.workspaces.acquire_mutation_lock().map_err(|e| {
         err(
             McpErrorCode::ERR_INTERNAL,
@@ -1377,6 +1384,7 @@ pub async fn archive_unsupported_workspaces(
     state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
     let _config_transaction = state.registry.acquire_configuration_transaction()?;
+    state.recover_and_require_clean_configuration_locked()?;
     let _transaction = state.workspaces.acquire_mutation_lock().map_err(|e| {
         err(
             McpErrorCode::ERR_INTERNAL,
@@ -2338,7 +2346,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_policy_deletion_is_tolerant_of_missing_and_manual_rules() {
+    fn workspace_policy_deletion_fails_closed_for_missing_and_manual_rules() {
         let temp_config = tempdir().unwrap();
         let (temp_storage, _op) = create_test_op();
         let (_workspace_registry, storage_registry) = create_test_registries(&temp_config);
@@ -2348,8 +2356,8 @@ mod tests {
             ..make_workspace_record("no-op", &storage_id, "/protected")
         };
 
-        // A manual rule at the same prefix is never deleted, but revocation is a
-        // no-op so the workspace can always be deleted or disabled.
+        // A same-root manual grant is not owned by the workspace and must
+        // prevent deletion until the policy inconsistency is repaired.
         storage_registry
             .with_locked_mutation(|storages| {
                 storages[0].mcp_policy.rules.push(McpPathRule {
@@ -2362,7 +2370,9 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        remove_workspace_policy_rule(&storage_registry, &storage_id, &workspace).unwrap();
+        let manual_error =
+            remove_workspace_policy_rule(&storage_registry, &storage_id, &workspace).unwrap_err();
+        assert!(manual_error.message.contains("manual grant still overlaps"));
         assert_eq!(
             storage_registry.load_all().unwrap()[0]
                 .mcp_policy
@@ -2371,16 +2381,21 @@ mod tests {
             1
         );
 
-        // A missing rule is also a no-op.
+        // A read-enabled current workspace with a missing managed rule is
+        // also inconsistent and must fail closed.
         storage_registry
             .with_locked_mutation(|storages| {
                 storages[0].mcp_policy.rules.clear();
                 Ok(())
             })
             .unwrap();
-        remove_workspace_policy_rule(&storage_registry, &storage_id, &workspace).unwrap();
+        let missing_error =
+            remove_workspace_policy_rule(&storage_registry, &storage_id, &workspace).unwrap_err();
+        assert!(missing_error
+            .message
+            .contains("workspace policy grant is missing"));
 
-        // A workspace rule owned by a DIFFERENT workspace is still fail-closed.
+        // A rule owned by a different workspace remains fail-closed.
         storage_registry
             .with_locked_mutation(|storages| {
                 storages[0].mcp_policy.rules.push(McpPathRule {
@@ -2395,10 +2410,10 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        assert!(remove_workspace_policy_rule(&storage_registry, &storage_id, &workspace).is_err());
+        assert!(remove_workspace_policy_rule(&storage_registry, &storage_id, &workspace,).is_err());
 
-        // A manual rule at a DIFFERENT prefix is also fail-closed: the identity
-        // does not match the workspace binding.
+        // A manual rule at a different prefix does not satisfy the expected
+        // workspace rule identity and is likewise rejected.
         storage_registry
             .with_locked_mutation(|storages| {
                 storages[0].mcp_policy.rules.clear();
@@ -2412,7 +2427,7 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        assert!(remove_workspace_policy_rule(&storage_registry, &storage_id, &workspace).is_err());
+        assert!(remove_workspace_policy_rule(&storage_registry, &storage_id, &workspace,).is_err());
     }
 
     #[test]

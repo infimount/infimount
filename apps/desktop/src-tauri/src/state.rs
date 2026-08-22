@@ -9,7 +9,8 @@ use infimount_mcp::confirmation::ConfirmationManager;
 use infimount_mcp::errors::{err, err_with_details, McpError, McpErrorCode, McpResult};
 use infimount_mcp::registry::{StorageRecord, StorageRegistry};
 use infimount_mcp::runtime::{
-    start_http_server_from_settings, McpHttpServerHandle, HTTP_ENDPOINT_PATH,
+    is_loopback_bind_address, start_http_server_from_settings, McpHttpServerHandle,
+    HTTP_ENDPOINT_PATH,
 };
 use infimount_mcp::session::SessionManager;
 use infimount_mcp::settings::{
@@ -366,6 +367,29 @@ impl AppState {
         }
     }
 
+    /// Recover every durable configuration transaction before a
+    /// new mutation. The caller must already hold the cross-process
+    /// configuration transaction lock.
+    pub(crate) fn recover_and_require_clean_configuration_locked(&self) -> McpResult<()> {
+        self.registry.ensure_no_configuration_blocked()?;
+        self.registry.recover_pending_imports_locked()?;
+        infimount_mcp::registry::retry_pending_secret_cleanup_at(
+            self.registry.path(),
+            self.secret_store.as_ref(),
+        )?;
+        let storages = self.registry.load_all()?;
+        let settings = self.settings_store.load()?;
+        infimount_mcp::registry::recover_pending_secret_transactions(
+            self.registry.path(),
+            &storages,
+            self.secret_store.as_ref(),
+            settings.auth_token_ref.as_deref(),
+        )?;
+        infimount_mcp::registry::ensure_no_pending_secret_transaction(self.registry.path())?;
+        crate::commands::backup::ensure_no_pending_restore_transaction(self)?;
+        self.registry.ensure_no_configuration_blocked()
+    }
+
     #[cfg(test)]
     pub(crate) fn new_for_test(
         config_dir: &std::path::Path,
@@ -484,6 +508,7 @@ impl AppState {
         self.require_operational()?;
         let _lifecycle = self.lifecycle_mutation.lock().await;
         let _config_transaction = self.registry.acquire_configuration_transaction()?;
+        self.recover_and_require_clean_configuration_locked()?;
         let existing = self.settings_store.load()?;
         let old_was_running = self.http_runtime.lock().await.is_some();
         let previous_ref = existing.auth_token_ref.clone();
@@ -538,10 +563,9 @@ impl AppState {
             AuthTokenMutation::Clear => {
                 desired_ref = None;
                 desired_secret = None;
-                expected_token = std::env::var("INFIMOUNT_AUTH_TOKEN")
-                    .ok()
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty());
+                // Desktop-managed HTTP authentication is keyring-managed
+                // only. INFIMOUNT_AUTH_TOKEN is a headless-sidecar override.
+                expected_token = None;
                 secret_changed = previous_ref.is_some();
                 if secret_changed {
                     transaction_id = Some(uuid::Uuid::new_v4().to_string());
@@ -1046,10 +1070,7 @@ impl AppState {
             "stdio transport".to_string()
         };
 
-        let auth_token_configured = settings.auth_token_ref.is_some()
-            || std::env::var("INFIMOUNT_AUTH_TOKEN")
-                .map(|value| !value.trim().is_empty())
-                .unwrap_or(false);
+        let auth_token_configured = settings.auth_token_ref.is_some();
 
         let public_settings = McpRuntimeSettings {
             enabled: settings.enabled,
@@ -1085,14 +1106,6 @@ fn http_client_snippet(endpoint: &str, auth_token_configured: bool) -> Value {
             "infimount": Value::Object(server)
         }
     })
-}
-
-fn is_loopback_bind_address(value: &str) -> bool {
-    let normalized = value.trim().to_ascii_lowercase();
-    normalized == "localhost"
-        || normalized == "::1"
-        || normalized == "[::1]"
-        || normalized.starts_with("127.")
 }
 
 fn persist_secret_bundle(

@@ -446,6 +446,14 @@ const SENSITIVE_TOKEN_PATTERNS: &[&[&str]] = &[
     &["device", "code"],
     &["application", "key"],
     &["application", "key", "id"],
+    &["bearer", "token"],
+    &["personal", "access", "token"],
+    &["sas", "token"],
+    &["connection", "string"],
+    &["api", "secret"],
+    &["consumer", "secret"],
+    &["secret", "id"],
+    &["shared", "access", "signature"],
 ];
 
 fn tokens_contain_pattern(tokens: &[String], pattern: &[&str]) -> bool {
@@ -978,5 +986,35 @@ mod tests {
 
         let schema: HashSet<String> = ["accessKeyId"].into_iter().map(String::from).collect();
         assert!(is_secret_field_name("access_key_id", &schema));
+    }
+}
+
+#[cfg(test)]
+mod advanced_secret_name_regression_tests {
+    use super::*;
+
+    #[test]
+    fn advanced_credential_names_are_classified_safely() {
+        let schema = HashSet::new();
+        for name in [
+            "bearerToken",
+            "personalAccessToken",
+            "sasToken",
+            "connectionString",
+            "apiSecret",
+            "consumerSecret",
+            "secretId",
+            "sharedAccessSignature",
+        ] {
+            assert!(is_secret_field_name(name, &schema), "{name}");
+        }
+        for name in [
+            "tokenBucketSize",
+            "connectionPoolSize",
+            "consumerGroup",
+            "apiVersion",
+        ] {
+            assert!(!is_secret_field_name(name, &schema), "{name}");
+        }
     }
 }
