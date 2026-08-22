@@ -170,6 +170,47 @@ fn unique_download_path(directory: &std::path::Path, file_name: &str) -> PathBuf
     unreachable!("unbounded download suffix search")
 }
 
+async fn commit_staged_download(staging: &Path, destination: &Path) -> Result<(), CoreError> {
+    match tokio::fs::hard_link(staging, destination).await {
+        Ok(()) => {
+            tokio::fs::remove_file(staging).await?;
+            return Ok(());
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let _ = tokio::fs::remove_file(staging).await;
+            return Err(error.into());
+        }
+        Err(_) => {}
+    }
+
+    let mut source = tokio::fs::File::open(staging).await?;
+    let mut target = match tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)
+        .await
+    {
+        Ok(file) => file,
+        Err(error) => {
+            let _ = tokio::fs::remove_file(staging).await;
+            return Err(error.into());
+        }
+    };
+
+    if let Err(error) = tokio::io::copy(&mut source, &mut target).await {
+        let _ = tokio::fs::remove_file(destination).await;
+        let _ = tokio::fs::remove_file(staging).await;
+        return Err(error.into());
+    }
+    if let Err(error) = target.sync_all().await {
+        let _ = tokio::fs::remove_file(destination).await;
+        let _ = tokio::fs::remove_file(staging).await;
+        return Err(error.into());
+    }
+    tokio::fs::remove_file(staging).await?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn download_file_to_downloads(
     state: State<'_, AppState>,
@@ -190,11 +231,7 @@ pub async fn download_file_to_downloads(
     let staging = directory.join(format!(".infimount-download-{}.part", Uuid::new_v4()));
     let op = state.operator_for_storage_id(&sourceId)?;
     let bytes = operations::download_file_to_local_path(&op, &path, &staging).await?;
-    if let Err(error) = tokio::fs::hard_link(&staging, &destination).await {
-        let _ = tokio::fs::remove_file(&staging).await;
-        return Err(error.into());
-    }
-    tokio::fs::remove_file(&staging).await?;
+    commit_staged_download(&staging, &destination).await?;
     Ok(DownloadFileResult {
         file_name: destination
             .file_name()
@@ -233,11 +270,7 @@ pub async fn download_file_version_to_downloads(
     let op = state.operator_for_storage_id(&sourceId)?;
     let bytes =
         operations::download_file_version_to_local_path(&op, &path, &version, &staging).await?;
-    if let Err(error) = tokio::fs::hard_link(&staging, &destination).await {
-        let _ = tokio::fs::remove_file(&staging).await;
-        return Err(error.into());
-    }
-    tokio::fs::remove_file(&staging).await?;
+    commit_staged_download(&staging, &destination).await?;
     Ok(DownloadFileResult {
         file_name: destination
             .file_name()
@@ -656,6 +689,7 @@ pub async fn create_activation_demo_storage(
     state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
     let _config_transaction = state.registry.acquire_configuration_transaction()?;
+    state.recover_and_require_clean_configuration_locked()?;
     let config_dir = state
         .registry
         .path()
@@ -817,6 +851,7 @@ pub async fn add_storage(
     state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
     let _config_transaction = state.registry.acquire_configuration_transaction()?;
+    state.recover_and_require_clean_configuration_locked()?;
     validate_storage_draft(&storage)?;
     let name = validate_storage_name(&storage.name)?;
     let schema_secret_names = secrets::discover_secret_field_names();
@@ -1055,6 +1090,7 @@ pub async fn update_storage(
     state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
     let _config_transaction = state.registry.acquire_configuration_transaction()?;
+    state.recover_and_require_clean_configuration_locked()?;
     let claimed = if let Some(oauth_id) = storage.oauth_session_id.as_deref() {
         let session = claim_oauth_session(&state, oauth_id)?;
         let expected_backend = if session.provider == "gdrive" {
@@ -1351,6 +1387,18 @@ fn update_storage_with_draft(
     updated.updated_at = Utc::now().to_rfc3339();
 
     if !dependent.is_empty() {
+        if credentials_changed
+            && matches!(current.backend.as_str(), "gdrive" | "onedrive")
+            && infimount_mcp::storage_namespace::stable_drive_identity(&current).is_none()
+        {
+            return Err(err_with_details(
+                McpErrorCode::ERR_STORAGE_NAMESPACE_IN_USE,
+                "Drive credentials cannot be changed while workspaces are bound without a stable provider account identity; recreate the workspaces first",
+                serde_json::json!({
+                    "workspaceCount": dependent.len()
+                }),
+            ));
+        }
         let previous_namespace = infimount_mcp::storage_namespace::storage_namespace_fingerprint(
             &current,
         )
@@ -1550,6 +1598,7 @@ pub async fn remove_storage(
     state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
     let _config_transaction = state.registry.acquire_configuration_transaction()?;
+    state.recover_and_require_clean_configuration_locked()?;
     let secret_store = state.secret_store.clone();
     let mut secret_ref_to_delete: Option<String> = None;
 
@@ -1574,9 +1623,12 @@ pub async fn remove_storage(
     // Delete keyring entry after successful registry mutation
     if let Some(ref secret_ref) = secret_ref_to_delete {
         if secret_store.delete(secret_ref).is_err() {
-            let journal_path =
-                infimount_mcp::registry::default_config_dir().join("secret-cleanup.json");
-            let warning = if append_secret_cleanup(&journal_path, secret_ref).is_ok() {
+            let warning = if infimount_mcp::registry::append_secret_cleanup_at(
+                state.registry.path(),
+                secret_ref,
+            )
+            .is_ok()
+            {
                 "Credential cleanup is pending and will be retried.".to_string()
             } else {
                 "Credential cleanup failed and could not be journaled; remove the native secret-store entry manually.".to_string()
@@ -1626,6 +1678,7 @@ fn ensure_storage_removable(state: &AppState, storage_id: &str) -> McpResult<()>
     Ok(())
 }
 
+#[allow(dead_code)]
 fn append_secret_cleanup(path: &std::path::Path, account: &str) -> McpResult<()> {
     // The callers pass the journal file path; derive the registry path from its
     // parent directory and delegate to the shared strict cleanup-journal writer.
@@ -1645,6 +1698,7 @@ pub async fn update_mcp_storage_policy(
     state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
     let _config_transaction = state.registry.acquire_configuration_transaction()?;
+    state.recover_and_require_clean_configuration_locked()?;
     let workspace_roots = state
         .workspaces
         .load_all()
@@ -2061,6 +2115,10 @@ pub async fn apply_storage_import_cmd(
     request: ApplyStorageImportInput,
 ) -> Result<ApplyStorageImportResult, McpError> {
     let _lifecycle = state.lifecycle_mutation.lock().await;
+    {
+        let _config_transaction = state.registry.acquire_configuration_transaction()?;
+        state.recover_and_require_clean_configuration_locked()?;
+    }
     let workspaces = state.workspaces.load_all().map_err(|_| {
         err(
             McpErrorCode::ERR_INTERNAL,

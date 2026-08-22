@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -201,14 +202,12 @@ fn namespace_key(
             fields.authority, fields.container
         )),
         SourceKind::Gdrive | SourceKind::Onedrive => {
-            // No stable public account identity is available from the schema.
-            // A drive account is pinned by the provider and the non-empty
-            // secret reference; different secret references are unknown, never
-            // automatically equal. The namespace key itself is never persisted.
-            let account = storage
-                .secret_ref
-                .as_deref()
-                .filter(|value| !value.is_empty())?;
+            // Prefer a stable public account/drive identifier obtained during
+            // provider validation. When it is absent, conservatively group the
+            // same provider together for self-copy protection instead of using
+            // mutable secret-reference identities.
+            let account =
+                stable_drive_identity(storage).unwrap_or_else(|| "unresolved-account".to_string());
             Some(format!("{backend}://{account}"))
         }
     }
@@ -426,6 +425,98 @@ fn sha256_hex(bytes: &[u8]) -> String {
     output
 }
 
+/// Return a stable, non-secret provider identity when one is available in the
+/// public configuration. OAuth connect/validation code can persist any of
+/// these identifiers without exposing credentials.
+pub fn stable_drive_identity(storage: &StorageRecord) -> Option<String> {
+    const FIELDS: &[&str] = &[
+        "driveId",
+        "drive_id",
+        "accountId",
+        "account_id",
+        "tenantId",
+        "tenant_id",
+        "rootItemId",
+        "root_item_id",
+        "userId",
+        "user_id",
+    ];
+    FIELDS.iter().find_map(|field| {
+        storage
+            .config
+            .get(*field)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| format!("{field}:{value}"))
+    })
+}
+
+/// Reject local MCP paths containing symlink or Windows reparse-point
+/// components. The policy layer calls this before every MCP operation. This
+/// protects against persistent project links escaping a configured root.
+/// A fully handle-relative local backend can replace this guard later.
+pub fn validate_local_mcp_path(storage: &StorageRecord, backend_path: &str) -> McpResult<()> {
+    let (kind, fields) = resolve_fields(storage)?;
+    if !matches!(kind, SourceKind::Local) {
+        return Ok(());
+    }
+
+    let mut current = PathBuf::from(fields.root);
+    reject_link_component(&current)?;
+    let normalized = normalize_operation_path(backend_path)?;
+    for segment in normalized.split('/').filter(|segment| !segment.is_empty()) {
+        current.push(segment);
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() || metadata_is_reparse_point(&metadata) {
+                    return Err(err_with_details(
+                        McpErrorCode::ERR_INVALID_PATH,
+                        "local MCP paths must not contain symlink or reparse-point components",
+                        serde_json::json!({}),
+                    ));
+                }
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => break,
+            Err(_) => {
+                return Err(err(
+                    McpErrorCode::ERR_INTERNAL,
+                    "failed to validate local MCP path confinement",
+                ))
+            }
+        }
+    }
+    Ok(())
+}
+
+fn reject_link_component(path: &Path) -> McpResult<()> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|_| {
+        err(
+            McpErrorCode::ERR_INVALID_PATH,
+            "local storage root is unavailable",
+        )
+    })?;
+    if metadata.file_type().is_symlink() || metadata_is_reparse_point(&metadata) {
+        return Err(err(
+            McpErrorCode::ERR_INVALID_PATH,
+            "local storage root must not be a symlink or reparse point",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn metadata_is_reparse_point(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn metadata_is_reparse_point(_metadata: &std::fs::Metadata) -> bool {
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -613,14 +704,27 @@ mod tests {
     }
 
     #[test]
-    fn gdrive_different_secret_references_are_unknown() {
-        let mut a = storage("one", "gdrive", json!({ "rootPath": "/workspace" }));
-        let mut b = storage("two", "gdrive", json!({ "rootPath": "/workspace" }));
+    fn gdrive_different_stable_identities_are_different_namespaces() {
+        let mut a = storage("one", "gdrive", json!({ "rootPath": "/workspace", "driveId": "drive-one" }));
+        let mut b = storage("two", "gdrive", json!({ "rootPath": "/workspace", "driveId": "drive-two" }));
         a.secret_ref = Some("storage/one".to_string());
         b.secret_ref = Some("storage/two".to_string());
         let relation = transfer_namespace_relation(&a, "foo", &b, "foo/child").unwrap();
         assert!(!relation.same_underlying_namespace);
         assert!(!transfer_has_namespace_conflict(&relation));
+    }
+
+    #[test]
+    fn gdrive_without_stable_identity_conservatively_groups() {
+        let mut a = storage("one", "gdrive", json!({ "rootPath": "/workspace" }));
+        let mut b = storage("two", "gdrive", json!({ "rootPath": "/workspace" }));
+        a.secret_ref = Some("storage/one".to_string());
+        b.secret_ref = Some("storage/two".to_string());
+        let relation = transfer_namespace_relation(&a, "foo", &b, "foo/child").unwrap();
+        // Without stable identity, conservatively group same provider together
+        // for self-copy protection instead of using mutable secret references.
+        assert!(relation.same_underlying_namespace);
+        assert!(transfer_has_namespace_conflict(&relation));
     }
 
     #[test]
@@ -707,5 +811,41 @@ mod tests {
         // A sibling whose name merely shares the prefix must not conflict.
         let sibling = transfer_namespace_relation(&a, "foo2", &b, "foo2").unwrap();
         assert!(!transfer_has_namespace_conflict(&sibling));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod local_confinement_regression_tests {
+    use super::*;
+    use serde_json::json;
+    use std::os::unix::fs::symlink;
+
+    fn local_storage(root: &Path) -> StorageRecord {
+        StorageRecord::new(
+            "local".to_string(),
+            "local".to_string(),
+            json!({ "root": root.to_string_lossy() }),
+        )
+    }
+
+    #[test]
+    fn local_mcp_path_rejects_symlink_component() {
+        let root = tempfile::tempdir().expect("root");
+        let outside = tempfile::tempdir().expect("outside");
+        std::fs::create_dir_all(root.path().join("workspace")).expect("workspace");
+        symlink(outside.path(), root.path().join("workspace/outside")).expect("symlink");
+
+        let storage = local_storage(root.path());
+        let error = validate_local_mcp_path(&storage, "workspace/outside/secret.txt")
+            .expect_err("symlink must be rejected");
+        assert_eq!(error.code, McpErrorCode::ERR_INVALID_PATH);
+    }
+
+    #[test]
+    fn local_mcp_path_accepts_normal_components_and_missing_leaf() {
+        let root = tempfile::tempdir().expect("root");
+        std::fs::create_dir_all(root.path().join("workspace")).expect("workspace");
+        let storage = local_storage(root.path());
+        validate_local_mcp_path(&storage, "workspace/new.txt").expect("normal path");
     }
 }

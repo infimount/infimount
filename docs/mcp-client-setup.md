@@ -156,7 +156,7 @@ Generic HTTP configuration:
 
 ## HTTP Authentication
 
-Desktop HTTP can run without a token only on loopback for local development. If you bind desktop HTTP to `0.0.0.0` or a LAN address, enter an HTTP bearer token in MCP Settings before starting the server.
+Desktop HTTP can run without a token only on loopback for local development. The built-in desktop and sidecar HTTP transports are loopback-only. Use a TLS-terminating reverse proxy for any remote deployment.
 
 Headless HTTP mode requires a bearer token unless `--allow-insecure` is passed for loopback local development. Set the token with either CLI or environment:
 
@@ -178,7 +178,7 @@ If your client has a headers field, configure it like this:
 }
 ```
 
-Keep the default bind address at `127.0.0.1` for desktop/local use. Binding to `0.0.0.0` or a LAN address exposes the server outside the machine and should only be done with a strong token and an explicit network boundary.
+Keep the default bind address at `127.0.0.1` for desktop/local use. Binding to `0.0.0.0` or a LAN address is rejected by the built-in server.
 
 ## Available Tools
 

@@ -129,10 +129,10 @@ pub async fn start_http_server(
 ) -> io::Result<McpHttpServerHandle> {
     let auth_token = normalize_auth_token(auth_token);
 
-    if allow_insecure && !is_loopback_bind_address(bind_address) {
+    if !is_loopback_bind_address(bind_address) {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            "unauthenticated HTTP transport is only allowed on loopback bind addresses",
+            "built-in MCP HTTP transport is loopback-only; use a TLS reverse proxy for remote access",
         ));
     }
 
@@ -358,6 +358,32 @@ mod tests {
         };
         assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
         assert!(error.to_string().contains("INFIMOUNT_AUTH_TOKEN"));
+    }
+
+    #[tokio::test]
+    async fn http_server_rejects_authenticated_non_loopback_bind() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let result = start_http_server(
+            temp_registry(&temp_dir),
+            "0.0.0.0",
+            0,
+            all_tool_names(),
+            false,
+            Some("test-token".to_string()),
+            ConfirmationManager::new(),
+            SessionManager::new(),
+        )
+        .await;
+
+        let error = match result {
+            Ok(server) => {
+                let _ = server.stop().await;
+                panic!("server should reject remote plaintext HTTP");
+            }
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().contains("loopback-only"));
     }
 
     #[tokio::test]

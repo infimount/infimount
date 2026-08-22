@@ -468,6 +468,12 @@ impl PreviewEntry {
     }
 }
 
+impl Drop for PreviewEntry {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 fn zeroize_json_value(value: &mut Value) {
     use zeroize::Zeroize;
     match value {
