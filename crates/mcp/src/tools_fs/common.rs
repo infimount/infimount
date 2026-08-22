@@ -82,6 +82,7 @@ pub(super) fn enforce_storage_policy(
     overwrite: bool,
     cross_storage: bool,
 ) -> McpResult<()> {
+    crate::storage_namespace::validate_local_mcp_path(storage, backend_path)?;
     let eval = evaluate_storage_policy(storage, backend_path, operation, overwrite, cross_storage)?;
     record_policy_eval(&eval);
     match eval.decision {

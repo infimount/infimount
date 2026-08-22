@@ -195,3 +195,19 @@ with fallback to the per-user application cache directory. The staging root is v
 ## Transactional Directory Transfers
 
 Directory transfers that create a previously absent destination are transactional: the tree is staged and committed with a rename where the backend supports it. On failure or cancellation the transaction-created destination is removed; a destination that existed before the operation is never deleted. If cleanup itself fails, the error reports `partialDestination: true` and `cleanupRequired: true` without exposing local absolute roots or credentials.
+
+
+## Local-filesystem MCP confinement
+
+Before every policy-authorized local MCP operation, Infimount rejects existing
+symlink and Windows reparse-point components beneath the configured storage
+root. This prevents persistent project links from redirecting an agent outside
+the approved namespace. The current RC threat model assumes another trusted
+local process does not replace path components during the brief operation
+window; handle-relative, race-free confinement remains planned hardening.
+
+## HTTP transport boundary
+
+The built-in Streamable HTTP transport is loopback-only. Remote access requires
+a TLS-terminating authenticated reverse proxy. A bearer token alone is not
+treated as transport encryption.

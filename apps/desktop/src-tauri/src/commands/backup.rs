@@ -70,6 +70,7 @@ pub async fn create_recovery_backup(
 ) -> Result<CreateBackupOutput, McpError> {
     let _transaction_guard = state.lifecycle_mutation.lock().await;
     let _config_transaction = state.registry.acquire_configuration_transaction()?;
+    state.recover_and_require_clean_configuration_locked()?;
     let passphrase = SensitiveString::new(request.passphrase);
     if passphrase.as_str().len() < 8 {
         return Err(err(
@@ -308,6 +309,12 @@ impl ValidatedRestore {
     }
 }
 
+impl Drop for ValidatedRestore {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 struct PendingRestore {
     validated: ValidatedRestore,
     base_digest: String,
@@ -510,6 +517,7 @@ pub struct ApplyRestoreOutput {
     pub app_settings_restored: bool,
     pub workspaces_restored: bool,
     pub secrets_restored: usize,
+    pub warnings: Vec<String>,
 }
 
 struct RestoreSnapshot {
@@ -531,6 +539,7 @@ pub async fn apply_recovery_restore(
 ) -> Result<ApplyRestoreOutput, McpError> {
     let _transaction_guard = state.lifecycle_mutation.lock().await;
     let _config_transaction = state.registry.acquire_configuration_transaction()?;
+    state.recover_and_require_clean_configuration_locked()?;
     let pending = pending_restores()
         .lock()
         .map_err(|_| {
@@ -620,12 +629,13 @@ pub async fn apply_recovery_restore(
         Vec::new()
     };
     let snapshot = snapshot_current_state(&state, snapshot_secret_names.into_iter()).await?;
+    let previous_secret_refs = active_secret_accounts(&snapshot.storages, &snapshot.mcp_settings);
     persist_restore_journal(&state, &snapshot)?;
     let result = apply_validated_restore(&state, &request, &validated, &selected_secrets).await;
     if let Err((stage, original)) = result {
-        let rollback_errors = rollback_restore(&state, &snapshot).await;
-        if rollback_errors.is_empty() {
-            cleanup_restore_journal(&state);
+        let mut rollback_errors = rollback_restore(&state, &snapshot).await;
+        if rollback_errors.is_empty() && cleanup_restore_journal(&state).is_err() {
+            rollback_errors.push("restoreJournalCleanup");
         }
         validated.zeroize();
         return Err(err_with_details(
@@ -640,9 +650,9 @@ pub async fn apply_recovery_restore(
     }
 
     if finalize_restore_journal(&state).is_err() {
-        let rollback_errors = rollback_restore(&state, &snapshot).await;
-        if rollback_errors.is_empty() {
-            cleanup_restore_journal(&state);
+        let mut rollback_errors = rollback_restore(&state, &snapshot).await;
+        if rollback_errors.is_empty() && cleanup_restore_journal(&state).is_err() {
+            rollback_errors.push("restoreJournalCleanup");
         }
         validated.zeroize();
         return Err(err_with_details(
@@ -652,7 +662,19 @@ pub async fn apply_recovery_restore(
         ));
     }
 
-    let output = ApplyRestoreOutput {
+    let effective_mcp_settings = if request.restore_mcp_settings {
+        validated
+            .mcp_settings
+            .as_ref()
+            .unwrap_or(&snapshot.mcp_settings)
+    } else {
+        &snapshot.mcp_settings
+    };
+    let current_secret_refs = active_secret_accounts(&validated.storages, effective_mcp_settings);
+    let warnings =
+        cleanup_obsolete_restore_accounts(&state, &previous_secret_refs, &current_secret_refs)?;
+
+    Ok(ApplyRestoreOutput {
         storages_restored: validated.storages.len(),
         mcp_settings_restored: request.restore_mcp_settings && validated.mcp_settings.is_some(),
         app_settings_restored: request.restore_app_settings && validated.app_settings.is_some(),
@@ -662,9 +684,8 @@ pub async fn apply_recovery_restore(
         } else {
             0
         },
-    };
-    validated.zeroize();
-    Ok(output)
+        warnings,
+    })
 }
 
 fn fresh_restore_secret_account(state: &AppState, category: &str) -> Result<String, McpError> {
@@ -1009,6 +1030,16 @@ fn restore_journal_path(state: &AppState) -> PathBuf {
         .join("restore-transaction.json")
 }
 
+pub(crate) fn ensure_no_pending_restore_transaction(state: &AppState) -> Result<(), McpError> {
+    if restore_journal_path(state).exists() {
+        return Err(err(
+            McpErrorCode::ERR_INTERNAL,
+            "configuration mutation is blocked by a pending restore transaction",
+        ));
+    }
+    Ok(())
+}
+
 fn snapshot_payload(snapshot: &RestoreSnapshot) -> Result<BackupPayload, McpError> {
     let storages = snapshot
         .storages
@@ -1234,20 +1265,42 @@ fn finalize_restore_journal(state: &AppState) -> Result<(), McpError> {
             "failed to commit restore transaction",
         )
     })?;
-    cleanup_restore_journal(state);
-    Ok(())
+    cleanup_restore_journal(state)
 }
 
-fn cleanup_restore_journal(state: &AppState) {
-    let _ = std::fs::remove_file(restore_journal_path(state));
-    let _ = state.secret_store.delete(RESTORE_JOURNAL_KEY_ACCOUNT);
+fn cleanup_restore_journal(state: &AppState) -> Result<(), McpError> {
+    state
+        .secret_store
+        .delete(RESTORE_JOURNAL_KEY_ACCOUNT)
+        .map_err(|_| {
+            err(
+                McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                "failed to remove restore transaction credential",
+            )
+        })?;
+    match std::fs::remove_file(restore_journal_path(state)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(err(
+            McpErrorCode::ERR_INTERNAL,
+            "failed to remove restore transaction journal",
+        )),
+    }
 }
 
 pub(crate) fn recover_interrupted_restore(state: &AppState) -> Result<(), McpError> {
     let _config_transaction = state.registry.acquire_configuration_transaction()?;
     let path = restore_journal_path(state);
     if !path.exists() {
-        let _ = state.secret_store.delete(RESTORE_JOURNAL_KEY_ACCOUNT);
+        state
+            .secret_store
+            .delete(RESTORE_JOURNAL_KEY_ACCOUNT)
+            .map_err(|_| {
+                err(
+                    McpErrorCode::ERR_SECRET_STORE_UNAVAILABLE,
+                    "failed to clean an orphaned restore transaction credential",
+                )
+            })?;
         return Ok(());
     }
     let bytes = std::fs::read(&path).map_err(|_| {
@@ -1269,8 +1322,7 @@ pub(crate) fn recover_interrupted_restore(state: &AppState) -> Result<(), McpErr
         ));
     }
     if journal.state == "committed" {
-        cleanup_restore_journal(state);
-        return Ok(());
+        return cleanup_restore_journal(state);
     }
     let mut key_bundle = state
         .secret_store
@@ -1308,8 +1360,7 @@ pub(crate) fn recover_interrupted_restore(state: &AppState) -> Result<(), McpErr
     backup::zeroize(&mut passphrase);
     let snapshot = snapshot_from_payload(&payload?)?;
     restore_snapshot_sections(state, &snapshot)?;
-    cleanup_restore_journal(state);
-    Ok(())
+    cleanup_restore_journal(state)
 }
 
 fn restore_snapshot_sections(state: &AppState, snapshot: &RestoreSnapshot) -> Result<(), McpError> {
@@ -1625,6 +1676,40 @@ fn validate_effective_restore_relationships(
             "restore would break an effective workspace storage or policy binding",
         )
     })
+}
+
+fn active_secret_accounts(
+    storages: &[StorageRecord],
+    mcp_settings: &McpSettings,
+) -> BTreeSet<String> {
+    required_secret_accounts(storages, Some(mcp_settings))
+}
+
+fn cleanup_obsolete_restore_accounts(
+    state: &AppState,
+    previous: &BTreeSet<String>,
+    current: &BTreeSet<String>,
+) -> Result<Vec<String>, McpError> {
+    let mut warnings = Vec::new();
+    for account in previous.difference(current) {
+        let active_storages = state.registry.load_all()?;
+        let active_settings = state.settings_store.load()?;
+        let active = active_storages
+            .iter()
+            .any(|storage| storage.secret_ref.as_deref() == Some(account.as_str()))
+            || active_settings.auth_token_ref.as_deref() == Some(account.as_str());
+        if active {
+            continue;
+        }
+        if state.secret_store.delete(account).is_err() {
+            infimount_mcp::registry::append_secret_cleanup_at(state.registry.path(), account)?;
+            warnings
+                .push("Previous credential cleanup is pending and will be retried.".to_string());
+        }
+    }
+    warnings.sort();
+    warnings.dedup();
+    Ok(warnings)
 }
 
 fn required_secret_accounts(

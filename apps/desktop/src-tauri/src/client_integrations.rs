@@ -1338,7 +1338,9 @@ mod tests {
     #[test]
     fn client_cli_that_hangs_is_killed_within_timeout() {
         let dir = tempdir().unwrap();
-        let script = write_executable_script(dir.path(), "fake-cli", "sleep 60");
+        // Use a shell-builtin infinite loop so the timeout test does not
+        // depend on an external `sleep` executable or its platform behavior.
+        let script = write_executable_script(dir.path(), "fake-cli", "while :; do :; done");
         let started = Instant::now();
         let (status, _, _, timed_out) = run_with_timeout(
             &script,
