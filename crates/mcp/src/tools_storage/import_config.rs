@@ -1123,7 +1123,7 @@ where
     apply_storage_import_with_validator_locked(ctx, input, validate_result).await
 }
 
-async fn apply_storage_import_with_validator_locked<F>(
+pub async fn apply_storage_import_with_validator_locked<F>(
     ctx: &FsToolsContext,
     input: ApplyStorageImportInput,
     validate_result: F,

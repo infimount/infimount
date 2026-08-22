@@ -15,7 +15,7 @@ use infimount_mcp::policy::{
 };
 use infimount_mcp::registry::{ensure_unique_name, validate_storage_name, StorageRecord};
 use infimount_mcp::tools_storage::{
-    apply_storage_import_with_validator, cancel_storage_import_preview, export_config,
+    apply_storage_import_with_validator_locked, cancel_storage_import_preview, export_config,
     preview_storage_import, validate_storage_record, zeroize_all_storage_import_previews,
     ApplyStorageImportInput, ApplyStorageImportResult, ExportConfigOutput,
     PreviewStorageImportInput, StorageImportPreview, ValidateStorageOutput,
@@ -2115,20 +2115,19 @@ pub async fn apply_storage_import_cmd(
     request: ApplyStorageImportInput,
 ) -> Result<ApplyStorageImportResult, McpError> {
     let _lifecycle = state.lifecycle_mutation.lock().await;
-    {
-        let _config_transaction = state.registry.acquire_configuration_transaction()?;
-        state.recover_and_require_clean_configuration_locked()?;
-    }
+    let _config_transaction = state.registry.acquire_configuration_transaction()?;
+    state.recover_and_require_clean_configuration_locked()?;
     let workspaces = state.workspaces.load_all().map_err(|_| {
         err(
             McpErrorCode::ERR_INTERNAL,
             "failed to validate workspace references before storage import",
         )
     })?;
-    let result = apply_storage_import_with_validator(&state.fs_context()?, request, |storages| {
-        validate_import_workspace_references(&workspaces, storages)
-    })
-    .await;
+    let result =
+        apply_storage_import_with_validator_locked(&state.fs_context()?, request, |storages| {
+            validate_import_workspace_references(&workspaces, storages)
+        })
+        .await;
     if result.is_ok() {
         invalidate_operator_caches_after_import(&state);
     }

@@ -231,12 +231,18 @@ pub async fn start_http_server_from_settings(
     .await
 }
 
-fn is_loopback_bind_address(value: &str) -> bool {
-    let normalized = value.trim().to_ascii_lowercase();
-    normalized == "localhost"
-        || normalized == "::1"
-        || normalized == "[::1]"
-        || normalized.starts_with("127.")
+pub fn is_loopback_bind_address(value: &str) -> bool {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    let unbracketed = value
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(value);
+    unbracketed
+        .parse::<std::net::IpAddr>()
+        .is_ok_and(|address| address.is_loopback())
 }
 
 fn display_host(addr: SocketAddr) -> String {
@@ -332,6 +338,31 @@ mod tests {
                 let (header_name, value) = line.split_once(':')?;
                 header_name.eq_ignore_ascii_case(name).then(|| value.trim())
             })
+    }
+
+    #[test]
+    fn loopback_parser_rejects_hostnames_that_only_start_with_127() {
+        for address in [
+            "127.0.0.1",
+            "127.255.255.255",
+            "::1",
+            "[::1]",
+            "localhost",
+            "LOCALHOST",
+        ] {
+            assert!(is_loopback_bind_address(address), "{address}");
+        }
+
+        for address in [
+            "127.example.com",
+            "127.0.0.1.example.com",
+            "0.0.0.0",
+            "192.168.1.2",
+            "::",
+            "example.com",
+        ] {
+            assert!(!is_loopback_bind_address(address), "{address}");
+        }
     }
 
     #[tokio::test]

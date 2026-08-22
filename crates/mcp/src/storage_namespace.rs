@@ -705,8 +705,16 @@ mod tests {
 
     #[test]
     fn gdrive_different_stable_identities_are_different_namespaces() {
-        let mut a = storage("one", "gdrive", json!({ "rootPath": "/workspace", "driveId": "drive-one" }));
-        let mut b = storage("two", "gdrive", json!({ "rootPath": "/workspace", "driveId": "drive-two" }));
+        let mut a = storage(
+            "one",
+            "gdrive",
+            json!({ "rootPath": "/workspace", "driveId": "drive-one" }),
+        );
+        let mut b = storage(
+            "two",
+            "gdrive",
+            json!({ "rootPath": "/workspace", "driveId": "drive-two" }),
+        );
         a.secret_ref = Some("storage/one".to_string());
         b.secret_ref = Some("storage/two".to_string());
         let relation = transfer_namespace_relation(&a, "foo", &b, "foo/child").unwrap();

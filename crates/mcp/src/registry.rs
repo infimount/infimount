@@ -1862,9 +1862,14 @@ pub fn retry_pending_secret_cleanup_at(
         let remaining = journal
             .pending
             .into_iter()
-            .filter(|entry| {
-                !active_secret_refs.contains(&entry.account)
-                    && secret_store.delete(&entry.account).is_err()
+            .filter_map(|entry| {
+                if active_secret_refs.contains(&entry.account) {
+                    return Some(entry);
+                }
+                secret_store
+                    .delete(&entry.account)
+                    .is_err()
+                    .then_some(entry)
             })
             .collect::<Vec<_>>();
         if remaining.is_empty() {
@@ -2542,6 +2547,39 @@ mod tests {
         let secrets = std::sync::Arc::new(infimount_core::secrets::MemorySecretStore::new());
         assert!(retry_pending_secret_cleanup_at(&registry_path, secrets.as_ref()).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), b"{ malformed");
+    }
+
+    #[test]
+    fn cleanup_journal_preserves_active_account_until_unreferenced() {
+        let dir = TempDir::new().unwrap();
+        let registry_path = dir.path().join("storages.json");
+        let secrets = std::sync::Arc::new(infimount_core::secrets::MemorySecretStore::new());
+        let registry =
+            StorageRegistry::with_secret_store(Some(registry_path.clone()), secrets.clone());
+        let account = "storage/active";
+
+        secrets
+            .put_json(account, &json!({ "token": "active" }))
+            .unwrap();
+        let mut storage = StorageRecord::new(
+            "Active".into(),
+            "local".into(),
+            json!({ "root": dir.path().to_string_lossy() }),
+        );
+        storage.secret_ref = Some(account.into());
+        registry.save_all_atomic(&[storage.clone()]).unwrap();
+        append_secret_cleanup_at(&registry_path, account).unwrap();
+
+        retry_pending_secret_cleanup_at(&registry_path, secrets.as_ref()).unwrap();
+        assert!(cleanup_journal_path(&registry_path).exists());
+        assert!(secrets.get_json(account).unwrap().is_some());
+
+        storage.secret_ref = None;
+        registry.save_all_atomic(&[storage]).unwrap();
+        retry_pending_secret_cleanup_at(&registry_path, secrets.as_ref()).unwrap();
+
+        assert!(secrets.get_json(account).unwrap().is_none());
+        assert!(!cleanup_journal_path(&registry_path).exists());
     }
 
     #[test]

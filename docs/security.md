@@ -125,7 +125,7 @@ For desktop and local development, keep HTTP bound to loopback:
 127.0.0.1
 ```
 
-Desktop HTTP can run unauthenticated only on loopback for local development. If you bind desktop HTTP to `0.0.0.0` or a LAN address, Infimount requires a bearer token before the server can start.
+Desktop HTTP can run unauthenticated only on loopback for local development. The built-in desktop and sidecar HTTP transports reject non-loopback bind addresses.
 
 Headless HTTP mode also requires bearer-token authentication unless explicitly started with `--allow-insecure` on loopback. Set a token with either CLI or environment:
 
@@ -139,7 +139,7 @@ Clients must send:
 Authorization: Bearer replace-with-a-random-token
 ```
 
-Only bind to `0.0.0.0` or a LAN address when you intentionally expose the server and have a strong token plus a network boundary in place. Desktop bearer tokens are stored in native secret storage; generated snippets use an `INFIMOUNT_AUTH_TOKEN` placeholder and never reveal the stored value. If native secret storage is unavailable or locked, Infimount fails with an actionable error instead of persisting or using plaintext fallback credentials.
+The built-in server does not bind to `0.0.0.0` or LAN addresses. Remote deployment requires a TLS-terminating authenticated reverse proxy. Desktop bearer tokens are stored in native secret storage; generated snippets use an `INFIMOUNT_AUTH_TOKEN` placeholder and never reveal the stored value. If native secret storage is unavailable or locked, Infimount fails with an actionable error instead of persisting or using plaintext fallback credentials.
 
 ## Sessions and Scoped Access
 

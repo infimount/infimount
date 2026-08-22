@@ -649,19 +649,6 @@ pub async fn apply_recovery_restore(
         ));
     }
 
-    if finalize_restore_journal(&state).is_err() {
-        let mut rollback_errors = rollback_restore(&state, &snapshot).await;
-        if rollback_errors.is_empty() && cleanup_restore_journal(&state).is_err() {
-            rollback_errors.push("restoreJournalCleanup");
-        }
-        validated.zeroize();
-        return Err(err_with_details(
-            McpErrorCode::ERR_INTERNAL,
-            "restore transaction could not be committed",
-            serde_json::json!({ "rollbackErrors": rollback_errors }),
-        ));
-    }
-
     let effective_mcp_settings = if request.restore_mcp_settings {
         validated
             .mcp_settings
@@ -671,8 +658,38 @@ pub async fn apply_recovery_restore(
         &snapshot.mcp_settings
     };
     let current_secret_refs = active_secret_accounts(&validated.storages, effective_mcp_settings);
-    let warnings =
-        cleanup_obsolete_restore_accounts(&state, &previous_secret_refs, &current_secret_refs)?;
+    let obsolete_secret_accounts = previous_secret_refs
+        .difference(&current_secret_refs)
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let committed_journal = match mark_restore_journal_committed(&state, obsolete_secret_accounts) {
+        Ok(journal) => journal,
+        Err(_) => {
+            let mut rollback_errors = rollback_restore(&state, &snapshot).await;
+            if rollback_errors.is_empty() && cleanup_restore_journal(&state).is_err() {
+                rollback_errors.push("restoreJournalCleanup");
+            }
+            validated.zeroize();
+            return Err(err_with_details(
+                McpErrorCode::ERR_INTERNAL,
+                "restore transaction could not be committed",
+                serde_json::json!({
+                    "rollbackErrors": rollback_errors
+                }),
+            ));
+        }
+    };
+
+    // From this point onward the restored state is committed. Cleanup failure
+    // must never trigger rollback. The committed journal retains every
+    // obsolete reference so startup can retry deterministically.
+    let warnings = match complete_committed_restore_cleanup(&state, &committed_journal) {
+        Ok(warnings) => warnings,
+        Err(_) => {
+            vec!["Restore committed successfully; credential cleanup is pending.".to_string()]
+        }
+    };
 
     Ok(ApplyRestoreOutput {
         storages_restored: validated.storages.len(),
@@ -1019,6 +1036,8 @@ struct RestoreJournal {
     version: u32,
     state: String,
     armored_snapshot: String,
+    #[serde(default)]
+    obsolete_secret_accounts: Vec<String>,
 }
 
 fn restore_journal_path(state: &AppState) -> PathBuf {
@@ -1216,6 +1235,7 @@ fn persist_restore_journal(state: &AppState, snapshot: &RestoreSnapshot) -> Resu
             version: RESTORE_JOURNAL_VERSION,
             state: "pending".to_string(),
             armored_snapshot: armored,
+            obsolete_secret_accounts: Vec::new(),
         };
         let bytes = serde_json::to_vec(&journal).map_err(|_| {
             err(
@@ -1242,11 +1262,15 @@ fn persist_restore_journal(state: &AppState, snapshot: &RestoreSnapshot) -> Resu
     result
 }
 
-fn finalize_restore_journal(state: &AppState) -> Result<(), McpError> {
+fn mark_restore_journal_committed(
+    state: &AppState,
+    obsolete_secret_accounts: Vec<String>,
+) -> Result<RestoreJournal, McpError> {
     let journal = RestoreJournal {
         version: RESTORE_JOURNAL_VERSION,
         state: "committed".to_string(),
         armored_snapshot: String::new(),
+        obsolete_secret_accounts,
     };
     let bytes = serde_json::to_vec(&journal).map_err(|_| {
         err(
@@ -1265,7 +1289,33 @@ fn finalize_restore_journal(state: &AppState) -> Result<(), McpError> {
             "failed to commit restore transaction",
         )
     })?;
-    cleanup_restore_journal(state)
+    Ok(journal)
+}
+
+fn complete_committed_restore_cleanup(
+    state: &AppState,
+    journal: &RestoreJournal,
+) -> Result<Vec<String>, McpError> {
+    let storages = state.registry.load_all()?;
+    let settings = state.settings_store.load()?;
+    let active = active_secret_accounts(&storages, &settings);
+    let mut warnings = Vec::new();
+
+    for account in &journal.obsolete_secret_accounts {
+        if active.contains(account) {
+            continue;
+        }
+        if state.secret_store.delete(account).is_err() {
+            infimount_mcp::registry::append_secret_cleanup_at(state.registry.path(), account)?;
+            warnings
+                .push("Previous credential cleanup is pending and will be retried.".to_string());
+        }
+    }
+
+    cleanup_restore_journal(state)?;
+    warnings.sort();
+    warnings.dedup();
+    Ok(warnings)
 }
 
 fn cleanup_restore_journal(state: &AppState) -> Result<(), McpError> {
@@ -1322,7 +1372,8 @@ pub(crate) fn recover_interrupted_restore(state: &AppState) -> Result<(), McpErr
         ));
     }
     if journal.state == "committed" {
-        return cleanup_restore_journal(state);
+        complete_committed_restore_cleanup(state, &journal)?;
+        return Ok(());
     }
     let mut key_bundle = state
         .secret_store
@@ -1685,33 +1736,6 @@ fn active_secret_accounts(
     required_secret_accounts(storages, Some(mcp_settings))
 }
 
-fn cleanup_obsolete_restore_accounts(
-    state: &AppState,
-    previous: &BTreeSet<String>,
-    current: &BTreeSet<String>,
-) -> Result<Vec<String>, McpError> {
-    let mut warnings = Vec::new();
-    for account in previous.difference(current) {
-        let active_storages = state.registry.load_all()?;
-        let active_settings = state.settings_store.load()?;
-        let active = active_storages
-            .iter()
-            .any(|storage| storage.secret_ref.as_deref() == Some(account.as_str()))
-            || active_settings.auth_token_ref.as_deref() == Some(account.as_str());
-        if active {
-            continue;
-        }
-        if state.secret_store.delete(account).is_err() {
-            infimount_mcp::registry::append_secret_cleanup_at(state.registry.path(), account)?;
-            warnings
-                .push("Previous credential cleanup is pending and will be retried.".to_string());
-        }
-    }
-    warnings.sort();
-    warnings.dedup();
-    Ok(warnings)
-}
-
 fn required_secret_accounts(
     storages: &[StorageRecord],
     mcp_settings: Option<&McpSettings>,
@@ -1859,6 +1883,40 @@ mod tests {
             .unwrap();
         state.workspaces.replace_all(Vec::new()).unwrap();
         (state, secrets)
+    }
+
+    #[test]
+    fn committed_restore_journal_retries_obsolete_secret_cleanup() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, secrets) = test_state(&dir);
+        let old_account = "storage/old".to_string();
+        let new_account = "storage/new".to_string();
+
+        secrets
+            .put_json(&old_account, &serde_json::json!({ "token": "old" }))
+            .unwrap();
+        secrets
+            .put_json(&new_account, &serde_json::json!({ "token": "new" }))
+            .unwrap();
+
+        let mut storage = StorageRecord::new(
+            "Local".into(),
+            "local".into(),
+            serde_json::json!({
+                "root": dir.path().to_string_lossy()
+            }),
+        );
+        storage.secret_ref = Some(new_account.clone());
+        state.registry.save_all_atomic(&[storage]).unwrap();
+
+        mark_restore_journal_committed(&state, vec![old_account.clone()]).unwrap();
+        assert!(restore_journal_path(&state).exists());
+
+        recover_interrupted_restore(&state).unwrap();
+
+        assert!(secrets.get_json(&old_account).unwrap().is_none());
+        assert!(secrets.get_json(&new_account).unwrap().is_some());
+        assert!(!restore_journal_path(&state).exists());
     }
 
     #[test]

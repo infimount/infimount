@@ -236,3 +236,14 @@ First stable release of Infimount — a unified desktop storage browser powered 
 - Fail closed when deleting a workspace whose managed policy grant is missing.
 - Extend advanced credential-name detection and add safe download commit fallback.
 - Move GitHub Actions validation to Node.js 24.
+
+### Final transaction and HTTP corrections
+
+- Hold one configuration transaction across workspace creation and storage-import
+  workspace validation/commit.
+- Separate restore commit from credential cleanup and persist obsolete references
+  in the committed restore journal for deterministic startup retry.
+- Preserve active secret-cleanup entries until their persisted references are
+  removed.
+- Parse loopback bind addresses as IP addresses instead of accepting arbitrary
+  hostnames beginning with `127.`.

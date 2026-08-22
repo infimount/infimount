@@ -184,6 +184,8 @@ pub async fn create_workspace_atomic(
 ) -> Result<CreateWorkspaceAtomicOutput, McpError> {
     state.require_operational()?;
     let _lifecycle = state.lifecycle_mutation.lock().await;
+    let _config_transaction = state.registry.acquire_configuration_transaction()?;
+    state.recover_and_require_clean_configuration_locked()?;
     let _transaction = state.workspaces.acquire_mutation_lock().map_err(|e| {
         err(
             McpErrorCode::ERR_INTERNAL,

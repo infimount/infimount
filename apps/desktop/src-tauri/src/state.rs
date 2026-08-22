@@ -9,7 +9,8 @@ use infimount_mcp::confirmation::ConfirmationManager;
 use infimount_mcp::errors::{err, err_with_details, McpError, McpErrorCode, McpResult};
 use infimount_mcp::registry::{StorageRecord, StorageRegistry};
 use infimount_mcp::runtime::{
-    start_http_server_from_settings, McpHttpServerHandle, HTTP_ENDPOINT_PATH,
+    is_loopback_bind_address, start_http_server_from_settings, McpHttpServerHandle,
+    HTTP_ENDPOINT_PATH,
 };
 use infimount_mcp::session::SessionManager;
 use infimount_mcp::settings::{
@@ -1105,14 +1106,6 @@ fn http_client_snippet(endpoint: &str, auth_token_configured: bool) -> Value {
             "infimount": Value::Object(server)
         }
     })
-}
-
-fn is_loopback_bind_address(value: &str) -> bool {
-    let normalized = value.trim().to_ascii_lowercase();
-    normalized == "localhost"
-        || normalized == "::1"
-        || normalized == "[::1]"
-        || normalized.starts_with("127.")
 }
 
 fn persist_secret_bundle(
