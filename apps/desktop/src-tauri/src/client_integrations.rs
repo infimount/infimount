@@ -351,7 +351,7 @@ fn kill_process_tree(child: &mut Child) {
 
         unsafe {
             let job: HANDLE = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-            if job != 0 {
+            if !job.is_null() {
                 let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
                 info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
                 let _ = windows_sys::Win32::System::JobObjects::SetInformationJobObject(
@@ -362,7 +362,7 @@ fn kill_process_tree(child: &mut Child) {
                 );
                 let process_handle: HANDLE =
                     OpenProcess(PROCESS_TERMINATE | PROCESS_SET_QUOTA, 0, child.id());
-                if process_handle != 0 {
+                if !process_handle.is_null() {
                     let _ = AssignProcessToJobObject(job, process_handle);
                     CloseHandle(process_handle);
                 }
