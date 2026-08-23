@@ -78,7 +78,6 @@ if [ -z "$INSTALLED_BIN" ]; then
   exit 1
 fi
 
-- sudo apt-get remove -y "$DEB_PACKAGE"
 
 rpm -qip "$RPM" >/dev/null
 rpm -qlp "$RPM" >/dev/null
