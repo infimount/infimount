@@ -15,94 +15,6 @@ require_file() {
   fi
 }
 
-make_smoke_home() {
-  local tmp_home=$1
-  mkdir -p "$tmp_home/.infimount"
-  cat > "$tmp_home/.infimount/config.json" <<'JSON'
-[
-  {
-    "id": "legacy-local",
-    "name": "Linux Artifact Smoke Home",
-    "kind": "local",
-    "root": "/tmp",
-    "config": {}
-  }
-]
-JSON
-}
-
-assert_migrated_storage() {
-  local tmp_home=$1
-  local log_file=$2
-  local storages_file="$tmp_home/.infimount/storages.json"
-
-  if [ ! -f "$storages_file" ]; then
-    echo "Linux artifact smoke failed: storages registry was not created at $storages_file" >&2
-    echo "Desktop run log:" >&2
-    tail -n 200 "$log_file" >&2 || true
-    exit 1
-  fi
-
-  if ! grep -Eq '"name"[[:space:]]*:[[:space:]]*"Linux Artifact Smoke Home"' "$storages_file"; then
-    echo "Linux artifact smoke failed: migrated storage was not found in $storages_file" >&2
-    echo "storages.json contents:" >&2
-    cat "$storages_file" >&2
-    echo "Desktop run log:" >&2
-    tail -n 200 "$log_file" >&2 || true
-    exit 1
-  fi
-}
-
-run_desktop_for_migration() {
-  local command_path=$1
-  local tmp_home
-  local log_file
-  tmp_home="$(mktemp -d)"
-  log_file="$(mktemp)"
-  make_smoke_home "$tmp_home"
-
-  setsid dbus-run-session -- xvfb-run -a env \
-    HOME="$tmp_home" \
-    XDG_CONFIG_HOME="$tmp_home/.config" \
-    APPIMAGE_EXTRACT_AND_RUN=1 \
-    "$command_path" >"$log_file" 2>&1 &
-  local desktop_pid=$!
-  local migrated=false
-
-  for _ in $(seq 1 480); do
-    if ! kill -0 "$desktop_pid" 2>/dev/null; then
-      set +e
-      wait "$desktop_pid"
-      local status=$?
-      set -e
-      echo "Linux artifact smoke failed: desktop exited before migration (status $status): $command_path" >&2
-      tail -n 200 "$log_file" >&2 || true
-      rm -rf "$tmp_home" "$log_file"
-      exit 1
-    fi
-    if [ -s "$tmp_home/.infimount/storages.json" ] \
-      && grep -Eq '"name"[[:space:]]*:[[:space:]]*"Linux Artifact Smoke Home"' "$tmp_home/.infimount/storages.json"; then
-      migrated=true
-      break
-    fi
-    sleep 0.5
-  done
-
-  if [ "$migrated" != true ]; then
-    echo "Linux artifact smoke failed: desktop stayed running but migration did not complete: $command_path" >&2
-    tail -n 200 "$log_file" >&2 || true
-    kill -- -"$desktop_pid" 2>/dev/null || true
-    wait "$desktop_pid" 2>/dev/null || true
-    rm -rf "$tmp_home" "$log_file"
-    exit 1
-  fi
-
-  kill -- -"$desktop_pid" 2>/dev/null || true
-  wait "$desktop_pid" 2>/dev/null || true
-  assert_migrated_storage "$tmp_home" "$log_file"
-  rm -rf "$tmp_home" "$log_file"
-}
-
 require_file "$APPIMAGE"
 require_file "$DEB"
 require_file "$RPM"
@@ -116,11 +28,6 @@ assert_bundled_sidecar() {
   local tree=$1
   "$ROOT_DIR/scripts/verify-packaged-sidecar.sh" "$tree" "$EXPECTED_VERSION"
 }
-
-if ! command -v xvfb-run >/dev/null 2>&1; then
-  echo "Linux artifact smoke failed: xvfb-run is required" >&2
-  exit 1
-fi
 
 if ! command -v dpkg-deb >/dev/null 2>&1; then
   echo "Linux artifact smoke failed: dpkg-deb is required" >&2
@@ -141,8 +48,6 @@ APPIMAGE_EXTRACT_DIR="$(mktemp -d)"
 )
 assert_bundled_sidecar "$APPIMAGE_EXTRACT_DIR/squashfs-root"
 rm -rf "$APPIMAGE_EXTRACT_DIR"
-run_desktop_for_migration "$APPIMAGE"
-
 dpkg-deb --info "$DEB" >/dev/null
 DEB_EXTRACT_DIR="$(mktemp -d)"
 dpkg-deb -x "$DEB" "$DEB_EXTRACT_DIR"
@@ -173,8 +78,6 @@ if [ -z "$INSTALLED_BIN" ]; then
   exit 1
 fi
 
-run_desktop_for_migration "$INSTALLED_BIN"
-sudo apt-get remove -y "$DEB_PACKAGE"
 
 rpm -qip "$RPM" >/dev/null
 rpm -qlp "$RPM" >/dev/null

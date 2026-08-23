@@ -1675,4 +1675,108 @@ mod tests {
         assert!(token_from_bundle(Some(&json!({"wrong": "field"}))).is_err());
         assert_eq!(token_from_bundle(None).unwrap(), None);
     }
+
+    /// Serializes INFIMOUNT_CONFIG mutations: the legacy config path is
+    /// process-global and other tests may resolve it concurrently.
+    fn legacy_config_env_scope() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<StdMutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| StdMutex::new(()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn write_legacy_config(path: &std::path::Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // Exact v0.7.1 fixture shape previously exercised by the packaged
+        // Linux artifact smoke.
+        std::fs::write(
+            path,
+            r#"[{
+  "id": "legacy-local",
+  "name": "Linux Artifact Smoke Home",
+  "kind": "local",
+  "root": "/tmp",
+  "config": {}
+}]"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn legacy_config_migration_creates_registry_and_removes_legacy_file() {
+        let _env = legacy_config_env_scope();
+        let home = tempfile::tempdir().unwrap();
+        let legacy_path = home.path().join("config.json");
+        write_legacy_config(&legacy_path);
+        // SAFETY (single-threaded test body): guarded by legacy_config_env_scope.
+        std::env::set_var("INFIMOUNT_CONFIG", &legacy_path);
+
+        let registry_dir = tempfile::tempdir().unwrap();
+        let registry = StorageRegistry::with_secret_store(
+            Some(registry_dir.path().join("storages.json")),
+            std::sync::Arc::new(secrets::MemorySecretStore::new()),
+        );
+        assert!(!registry.path().exists());
+
+        migrate_legacy_sources_if_needed(&registry).unwrap();
+
+        let migrated = registry.load_all().unwrap();
+        assert_eq!(migrated.len(), 1);
+        assert_eq!(migrated[0].name, "Linux Artifact Smoke Home");
+        assert_eq!(migrated[0].backend, "local");
+        assert_eq!(
+            migrated[0].config.get("root").and_then(Value::as_str),
+            Some("/tmp")
+        );
+        assert!(!legacy_path.exists());
+        std::env::remove_var("INFIMOUNT_CONFIG");
+    }
+
+    #[test]
+    fn legacy_migration_name_conflict_fails_closed_and_keeps_legacy_file() {
+        let _env = legacy_config_env_scope();
+        let home = tempfile::tempdir().unwrap();
+        let legacy_path = home.path().join("config.json");
+        write_legacy_config(&legacy_path);
+        std::env::set_var("INFIMOUNT_CONFIG", &legacy_path);
+
+        let registry_dir = tempfile::tempdir().unwrap();
+        let registry = StorageRegistry::with_secret_store(
+            Some(registry_dir.path().join("storages.json")),
+            std::sync::Arc::new(secrets::MemorySecretStore::new()),
+        );
+        registry
+            .save_all_atomic(&[StorageRecord::new(
+                "Linux Artifact Smoke Home".to_string(),
+                "local".to_string(),
+                json!({ "root": "/elsewhere" }),
+            )])
+            .unwrap();
+
+        let error = migrate_legacy_sources_if_needed(&registry).unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_SECRET_MIGRATION_FAILED);
+        // Fail-closed: the legacy source of truth is preserved for a retry.
+        assert!(legacy_path.exists());
+        std::env::remove_var("INFIMOUNT_CONFIG");
+    }
+
+    #[test]
+    fn legacy_migration_is_noop_without_a_legacy_file() {
+        let _env = legacy_config_env_scope();
+        let home = tempfile::tempdir().unwrap();
+        let legacy_path = home.path().join("config.json");
+        std::env::set_var("INFIMOUNT_CONFIG", &legacy_path);
+
+        let registry_dir = tempfile::tempdir().unwrap();
+        let registry = StorageRegistry::with_secret_store(
+            Some(registry_dir.path().join("storages.json")),
+            std::sync::Arc::new(secrets::MemorySecretStore::new()),
+        );
+
+        migrate_legacy_sources_if_needed(&registry).unwrap();
+
+        assert!(!registry.path().exists());
+        assert!(!legacy_path.exists());
+        std::env::remove_var("INFIMOUNT_CONFIG");
+    }
 }
