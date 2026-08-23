@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Every silent set -e death cost a full release-build cycle to diagnose.
+trap 'echo "Linux artifact smoke failed at line $LINENO (status $?)" >&2' ERR
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ARTIFACT_DIR="${1:-$ROOT_DIR/out/linux}"
 ARTIFACT_DIR="$(cd "$ARTIFACT_DIR" && pwd)"
@@ -59,7 +62,18 @@ if [ -z "$DEB_PACKAGE" ]; then
   exit 1
 fi
 
-sudo apt-get install -y "$DEB"
+# Runner apt hooks (needrestart et al.) can exit non-zero after a
+# visually successful install; fail loudly with the real status instead
+# of an unattributable set -e stop.
+set +e
+sudo env NEEDRESTART_MODE=l DEBIAN_FRONTEND=noninteractive \
+  apt-get install -y "$DEB"
+rc=$?
+set -e
+if [ "$rc" -ne 0 ]; then
+  echo "Linux artifact smoke failed: apt-get install exited $rc for $DEB" >&2
+  exit "$rc"
+fi
 # Process substitution instead of a dpkg pipeline: breaking out of a piped
 # while loop under pipefail turns dpkg's early-closed stdout into SIGPIPE
 # (141), which set -e turns into a silent script death before any diagnostic.
