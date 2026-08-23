@@ -106,6 +106,17 @@ pub async fn write_file(ctx: &FsToolsContext, input: WriteFileInput) -> McpResul
         ));
     }
 
+    // Capability gates must run before any side effect: an unsupported
+    // no-overwrite write must not leave freshly created parent directories
+    // behind when it is rejected.
+    if !input.overwrite && !supports_atomic_no_overwrite(&op.info().capability()) {
+        return Err(err_with_details(
+            McpErrorCode::ERR_BACKEND_UNSUPPORTED,
+            "storage backend cannot guarantee an atomic no-overwrite write",
+            json!({ "path": parsed.normalized, "storage_name": storage.name }),
+        ));
+    }
+
     if input.overwrite {
         match op.stat(&parsed.backend_path).await {
             Ok(meta) if meta.is_dir() => {
@@ -173,13 +184,6 @@ pub async fn write_file(ctx: &FsToolsContext, input: WriteFileInput) -> McpResul
 
     let bytes = input.content.into_bytes();
     if !input.overwrite {
-        if !supports_atomic_no_overwrite(&op.info().capability()) {
-            return Err(err_with_details(
-                McpErrorCode::ERR_BACKEND_UNSUPPORTED,
-                "storage backend cannot guarantee an atomic no-overwrite write",
-                json!({ "path": parsed.normalized, "storage_name": storage.name }),
-            ));
-        }
         let write = op
             .write_with(&parsed.backend_path, bytes)
             .if_not_exists(true);

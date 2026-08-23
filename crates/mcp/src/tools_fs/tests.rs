@@ -2769,3 +2769,45 @@ fn write_file_rejects_unsupported_atomic_no_overwrite_backend() {
     };
     assert!(super::write_file::supports_atomic_no_overwrite(&supported));
 }
+
+#[tokio::test]
+async fn write_file_no_overwrite_gate_fires_before_parent_creation() {
+    // WebDAV cannot guarantee an atomic no-overwrite write. The capability
+    // gate must reject before any mutation attempt: if parent directories
+    // were created first, this request would fail with a backend/network
+    // error instead of the explicit unsupported-backend rejection.
+    let dir = TempDir::new().unwrap();
+    let registry = registry_in(&dir);
+    let mut storage = StorageRecord::new(
+        "Dav".to_string(),
+        "webdav".to_string(),
+        json!({"endpoint": "http://127.0.0.1:9/dav"}),
+    );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    registry.save_all_atomic(&[storage]).unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+
+    let err = write_file(
+        &ctx,
+        WriteFileInput {
+            session_id: None,
+            user_metadata: None,
+            confirmation_id: None,
+            path: "/Dav/a/b/file.txt".to_string(),
+            content: "hello".to_string(),
+            encoding: "utf-8".to_string(),
+            overwrite: false,
+            create_parents: true,
+        },
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code, McpErrorCode::ERR_BACKEND_UNSUPPORTED);
+}
