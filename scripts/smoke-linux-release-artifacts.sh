@@ -100,10 +100,23 @@ fi
 rpm -qip "$RPM" >/dev/null
 rpm -qlp "$RPM" >/dev/null
 RPM_EXTRACT_DIR="$(mktemp -d)"
-(
+# rpm2cpio|cpio has failed opaquely on newer runner images; surface the
+# payload format and fall back to libarchive, which reads RPM payloads
+# (cpio/zstd/xz/gzip) directly when available.
+if ! (
   cd "$RPM_EXTRACT_DIR"
   rpm2cpio "$RPM" | cpio -idm --quiet
-)
+) 2>"$RPM_EXTRACT_DIR.extract.log"; then
+  echo "rpm2cpio extraction failed:" >&2
+  cat "$RPM_EXTRACT_DIR.extract.log" >&2 || true
+  rpm -qp --qf 'payload=%{PAYLOADFORMAT} compressor=%{PAYLOADCOMPRESSOR}\n' "$RPM" >&2 || true
+  if command -v bsdtar >/dev/null 2>&1; then
+    bsdtar -xf "$RPM" -C "$RPM_EXTRACT_DIR"
+  else
+    exit 1
+  fi
+fi
+rm -f "$RPM_EXTRACT_DIR.extract.log"
 assert_bundled_sidecar "$RPM_EXTRACT_DIR"
 rm -rf "$RPM_EXTRACT_DIR"
 

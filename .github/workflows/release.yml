@@ -409,6 +409,9 @@ jobs:
               }' > out/linux/updater/latest-linux.json
           fi
 
+      - name: Install RPM extraction fallback tooling
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libarchive-tools
+
       - name: Smoke check Linux artifacts
         run: ./scripts/smoke-linux-release-artifacts.sh out/linux
 
