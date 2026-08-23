@@ -60,17 +60,21 @@ if [ -z "$DEB_PACKAGE" ]; then
 fi
 
 sudo apt-get install -y "$DEB"
-INSTALLED_BIN="$(dpkg -L "$DEB_PACKAGE" | while IFS= read -r candidate; do
+# Process substitution instead of a dpkg pipeline: breaking out of a piped
+# while loop under pipefail turns dpkg's early-closed stdout into SIGPIPE
+# (141), which set -e turns into a silent script death before any diagnostic.
+INSTALLED_BIN=""
+while IFS= read -r candidate; do
   basename="$(basename "$candidate")"
   if [ -f "$candidate" ] \
     && [ -x "$candidate" ] \
     && [[ "$basename" =~ ^[Ii]nfimount$ ]] \
     && [[ ! "$basename" =~ [Mm][Cc][Pp] ]] \
     && file "$candidate" | grep -q 'ELF'; then
-    printf '%s\n' "$candidate"
+    INSTALLED_BIN="$candidate"
     break
   fi
-done)"
+done < <(dpkg -L "$DEB_PACKAGE")
 
 if [ -z "$INSTALLED_BIN" ]; then
   echo "Linux artifact smoke failed: could not find installed executable for $DEB_PACKAGE" >&2
