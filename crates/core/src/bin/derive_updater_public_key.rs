@@ -5,14 +5,15 @@
 //! (classic minisign text) so it can be committed. Public material is safe
 //! to display; the private key is never logged.
 //!
-//! Inputs:
-//! - `TAURI_SIGNING_PRIVATE_KEY` (the minisign secret-key file content)
-//! - optional `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
-//! or a filesystem path via argv[1] plus optional password argv[2] for
-//! local use.
+//! # Inputs
+//!
+//! * `TAURI_SIGNING_PRIVATE_KEY`: the minisign secret-key file content
+//! * `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: optional decryption password
+//!
+//! For local use, a filesystem path may be passed via argv[1] with an
+//! optional password via argv[2].
 
 use base64::Engine;
-use std::io::Read;
 
 fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
@@ -54,7 +55,7 @@ fn run() -> Result<(), String> {
         .map_err(|e| format!("parse private key: {e}"))?;
     let secret_key = sk_box
         .into_secret_key(password)
-        .map_err(|e| "decrypt private key (wrong password?)".to_string())?;
+        .map_err(|_| "decrypt private key (wrong password?)".to_string())?;
     let public_key =
         minisign::PublicKey::from_secret_key(&secret_key).map_err(|e| format!("derive: {e}"))?;
     let pk_box = public_key
