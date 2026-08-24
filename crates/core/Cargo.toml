@@ -21,6 +21,7 @@ zeroize = "1.8"
 uuid = { version = "1", features = ["v4"] }
 fs2 = "0.4"
 minisign-verify = "0.2.4"
+minisign = "0.9"
 
 [dev-dependencies]
 tempfile = "3"
