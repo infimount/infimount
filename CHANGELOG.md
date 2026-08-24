@@ -46,6 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserved explicit MCP opt-in: connecting Google Drive or OneDrive does not expose the storage to MCP clients by default.
 - Rejected copy/move transfers that would nest a storage into its own or a peer storage's subtree, and rejected manual storage-policy edits that would override workspace-managed rules.
 - Removed unused file-based backup helpers (`encrypt_backup_to_file`/`decrypt_backup_from_file`) that were not reachable from production paths.
+- Aligned the embedded updater public key with the signing identity that has produced every release since v0.7.1; the previously embedded key was orphaned (its private half never existed), so the v0.7.x auto-update path never verified. v0.7.x users must install v0.8 manually once.
+- Updater signature verification now accepts both classic minisign text and Tauri's base64-wrapped `.sig` format before cryptographic verification.
+
+### Fixed
+
+- Startup recovery now runs under one cross-process configuration transaction lock in a fixed order — restore recovery, import transactions, secret-reference transactions, secret cleanup, then plaintext/legacy migration cleanup — so credential cleanup can never delete accounts a pending transaction still needs. A failed interrupted-restore recovery blocks all later cleanup until the next launch.
+- The bundled MCP sidecar refuses configuration cleanup while a desktop restore journal is pending instead of racing desktop recovery.
 
 ## [0.7.1] - 2026-06-05
 
