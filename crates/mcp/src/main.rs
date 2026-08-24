@@ -170,6 +170,19 @@ async fn run_server(serve: ServeArgs) -> Result<(), Box<dyn std::error::Error>> 
     let config_transaction = registry
         .acquire_configuration_transaction()
         .map_err(|error| std::io::Error::other(error.message))?;
+    // A pending desktop restore journal means the desktop app has not yet
+    // reconciled configuration and keyring state. Running import/secret
+    // cleanup here could delete accounts the restore still needs.
+    let restore_journal = registry
+        .path()
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("restore-transaction.json");
+    if restore_journal.exists() {
+        return Err(Box::new(std::io::Error::other(
+            "desktop restore recovery is pending; refusing configuration cleanup",
+        )));
+    }
     registry
         .recover_pending_imports_locked()
         .map_err(|error| std::io::Error::other(error.message))?;

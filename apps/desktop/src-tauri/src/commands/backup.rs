@@ -14,7 +14,7 @@ use infimount_mcp::policy::{
     normalize_policy_path, normalize_storage_policy, McpAccessMode, McpRuleSource,
     MCP_POLICY_VERSION,
 };
-use infimount_mcp::registry::{StorageRecord, STORAGE_RECORD_SCHEMA_VERSION};
+use infimount_mcp::registry::{StorageRecord, StorageRegistry, STORAGE_RECORD_SCHEMA_VERSION};
 use infimount_mcp::settings::McpSettings;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1338,6 +1338,18 @@ fn cleanup_restore_journal(state: &AppState) -> Result<(), McpError> {
     }
 }
 
+/// True while an interrupted-restore journal exists. Startup cleanup paths
+/// must not run until restore recovery has consumed or removed the journal:
+/// cleanup can delete keyring accounts that a pending restore still needs.
+pub(crate) fn restore_recovery_pending(registry: &StorageRegistry) -> bool {
+    registry
+        .path()
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("restore-transaction.json")
+        .exists()
+}
+
 pub(crate) fn recover_interrupted_restore(state: &AppState) -> Result<(), McpError> {
     let _config_transaction = state.registry.acquire_configuration_transaction()?;
     let path = restore_journal_path(state);
@@ -1822,6 +1834,7 @@ fn map_backup_open_error(error: backup::BackupError) -> McpError {
 mod tests {
     use super::*;
     use infimount_core::SecretStore;
+    use serde_json::json;
 
     #[test]
     fn required_accounts_use_persisted_references() {
@@ -2393,6 +2406,65 @@ mod tests {
 
         recover_interrupted_restore(&state).unwrap();
         assert!(!restore_journal_path(&state).exists());
+    }
+
+    #[tokio::test]
+    async fn pending_restore_journal_blocks_secret_cleanup_until_recovery() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, _) = test_state(&dir);
+
+        // A credential queued for cleanup that a pending restore still
+        // references via its snapshot must survive a failed recovery.
+        state
+            .secret_store
+            .put_json("storage/restore-target", &json!({"token": "keep"}))
+            .unwrap();
+        let cleanup_path = dir.path().join("secret-cleanup.json");
+        std::fs::write(
+            &cleanup_path,
+            r#"{"version":1,"pending":[{"account":"storage/restore-target","createdAt":"2026-01-01T00:00:00Z"}]}"#,
+        )
+        .unwrap();
+        let snapshot = snapshot_current_state(&state, std::iter::empty())
+            .await
+            .unwrap();
+        persist_restore_journal(&state, &snapshot).unwrap();
+
+        // Ordering guard: the journal is detected before any cleanup runs.
+        assert!(restore_recovery_pending(&state.registry));
+
+        // Simulate failed startup recovery: hold the transaction lock so
+        // recovery cannot proceed.
+        let _held = state.registry.acquire_configuration_transaction().unwrap();
+        assert!(recover_interrupted_restore(&state).is_err());
+        drop(_held);
+
+        // The queued cleanup target must still exist while the journal is
+        // pending; startup skips cleanup in this state.
+        assert!(restore_recovery_pending(&state.registry));
+        assert_eq!(
+            state
+                .secret_store
+                .get_json("storage/restore-target")
+                .unwrap(),
+            Some(json!({"token": "keep"}))
+        );
+
+        // Once recovery completes, the journal is gone and cleanup may run.
+        recover_interrupted_restore(&state).unwrap();
+        assert!(!restore_recovery_pending(&state.registry));
+        let _ = infimount_mcp::registry::retry_pending_secret_cleanup_at(
+            state.registry.path(),
+            state.secret_store.as_ref(),
+        );
+        assert!(
+            state
+                .secret_store
+                .get_json("storage/restore-target")
+                .unwrap()
+                .is_none(),
+            "cleanup must only take effect after restore recovery consumed the journal"
+        );
     }
 
     #[tokio::test]

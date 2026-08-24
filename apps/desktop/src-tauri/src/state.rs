@@ -249,37 +249,6 @@ impl AppState {
         let registry = StorageRegistry::with_secret_store(None, secret_store.clone());
         let settings_store = McpSettingsStore::with_secret_store(None, secret_store.clone());
 
-        // Configuration parsing and migration failures must not discard an available
-        // native store: a valid encrypted recovery backup may be the only safe repair.
-        if native_available {
-            let initialization = (|| -> McpResult<()> {
-                let _config_transaction = registry.acquire_configuration_transaction()?;
-                infimount_mcp::migration_cleanup::retry_pending_plaintext_cleanup(&config_dir)?;
-                registry.recover_pending_imports_locked()?;
-                infimount_mcp::registry::retry_pending_secret_cleanup_at(
-                    registry.path(),
-                    secret_store.as_ref(),
-                )?;
-                migrate_legacy_sources_if_needed(&registry)?;
-                let storages = registry.load_all()?;
-                let settings = settings_store.load()?;
-                infimount_mcp::registry::recover_pending_secret_transactions(
-                    registry.path(),
-                    &storages,
-                    secret_store.as_ref(),
-                    settings.auth_token_ref.as_deref(),
-                )?;
-                Ok(())
-            })();
-            if let Err(error) = initialization {
-                startup_error = Some(if error.code == McpErrorCode::ERR_SECRET_MIGRATION_FAILED {
-                    "ERR_STARTUP_MIGRATION_CLEANUP".to_string()
-                } else {
-                    "ERR_STARTUP_INITIALIZATION".to_string()
-                });
-            }
-        }
-
         let workspaces = WorkspaceRegistry::new(&config_dir);
 
         let state = Self {
@@ -298,11 +267,53 @@ impl AppState {
             transfer_cancellations: StdMutex::new(HashSet::new()),
             startup_error: StdMutex::new(startup_error),
         };
-        // Interrupted restore recovery is security-critical. Keep the initialized
-        // native store available so the restricted recovery UI can retry safely.
-        if crate::commands::backup::recover_interrupted_restore(&state).is_err() {
+        // Interrupted-restore recovery is security-critical and must run
+        // BEFORE any credential cleanup: retrying import/secret cleanup
+        // while a restore journal is pending can delete keyring accounts
+        // that the interrupted restore still needs to finish safely,
+        // permanently losing credentials. Keep the initialized native store
+        // available so the restricted recovery UI can retry safely.
+        let mut restore_recovery_blocked = false;
+        if crate::commands::backup::restore_recovery_pending(&state.registry)
+            && crate::commands::backup::recover_interrupted_restore(&state).is_err()
+        {
+            restore_recovery_blocked = true;
             if let Ok(mut startup_error) = state.startup_error.lock() {
                 *startup_error = Some("ERR_STARTUP_RESTORE_RECOVERY".to_string());
+            }
+        }
+        // Configuration parsing and migration failures must not discard an available
+        // native store: a valid encrypted recovery backup may be the only safe repair.
+        // Cleanup is skipped entirely while failed restore recovery left the
+        // pending journal in place.
+        if native_available && !restore_recovery_blocked {
+            let initialization = (|| -> McpResult<()> {
+                infimount_mcp::migration_cleanup::retry_pending_plaintext_cleanup(&config_dir)?;
+                state.registry.recover_pending_imports_locked()?;
+                infimount_mcp::registry::retry_pending_secret_cleanup_at(
+                    state.registry.path(),
+                    state.secret_store.as_ref(),
+                )?;
+                migrate_legacy_sources_if_needed(&state.registry)?;
+                let storages = state.registry.load_all()?;
+                let settings = state.settings_store.load()?;
+                infimount_mcp::registry::recover_pending_secret_transactions(
+                    state.registry.path(),
+                    &storages,
+                    state.secret_store.as_ref(),
+                    settings.auth_token_ref.as_deref(),
+                )?;
+                Ok(())
+            })();
+            if let Err(error) = initialization {
+                let code = if error.code == McpErrorCode::ERR_SECRET_MIGRATION_FAILED {
+                    "ERR_STARTUP_MIGRATION_CLEANUP"
+                } else {
+                    "ERR_STARTUP_INITIALIZATION"
+                };
+                if let Ok(mut startup_error) = state.startup_error.lock() {
+                    *startup_error = Some(code.to_string());
+                }
             }
         }
         if let Ok(settings) = state.app_settings_store.load() {
