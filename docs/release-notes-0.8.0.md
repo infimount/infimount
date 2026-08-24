@@ -17,11 +17,13 @@ Release: not published yet.
 
 ## Security changes
 
-The public MCP surface is data-plane-only. Storage administration stays in the desktop control plane. Fresh and migrated installations use a safe read-only tool baseline, and new storages are not exposed to MCP by default. Non-loopback HTTP requires a bearer token; native secret-store failure does not trigger plaintext fallback.
+The public MCP surface is data-plane-only. Storage administration stays in the desktop control plane. Fresh and migrated installations use a safe read-only tool baseline, and new storages are not exposed to MCP by default. Built-in desktop and sidecar HTTP transports bind to loopback only; unauthenticated HTTP is limited to local development on loopback, and remote access requires an authenticated TLS reverse proxy in front of the loopback endpoint. Native secret-store failure does not trigger plaintext fallback.
 
 Every release tag requires the Tauri updater signing key. Stable tags additionally require macOS signing/notarization and Windows signing material. Clearly marked prereleases may omit platform app signing, but updater artifacts are always signed.
 
 ## Upgrade notes
+
+**v0.7.x installations must upgrade manually.** The v0.8 updater public key corrects a mismatch that existed since v0.7.1 (its own clients could never verify a signed update), so the automatic update path from v0.7.x is intentionally broken: download and install v0.8 over your existing installation once. After this one-time bridge, v0.8 and later releases update automatically through the now-coherent trust chain.
 
 Read [Migrating from v0.7 to v0.8](migration-v0.8.md) before upgrading. Back up `~/.infimount`, allow credential migration to finish, review MCP exposure and tools, then restart external stdio clients. Create a new encrypted recovery backup after migration.
 

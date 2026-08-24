@@ -2,6 +2,10 @@
 
 Infimount v0.8 changes credential storage, MCP defaults, workspace persistence, and the desktop-bundled MCP executable. Back up `~/.infimount` before upgrading, without copying it into a public issue or repository.
 
+## Manual upgrade required (updater key change)
+
+v0.8 corrects the updater signing identity: the public key embedded in v0.7.x never matched the key that actually signed releases, so automatic updates from v0.7.x cannot verify. Install v0.8 manually over your existing installation (the installer migrates configuration and credentials in place). This is a one-time bridge — after v0.8, updates are verified automatically by the corrected trust chain.
+
 ## Credentials
 
 On startup, v0.8 migrates supported plaintext storage credentials and the desktop MCP bearer token into the operating system's native secret store. JSON configuration keeps opaque secret references rather than credential values. Migration is fail-closed: if the secret store cannot save or verify a value, Infimount reports an error instead of silently discarding it or retaining a new plaintext fallback.

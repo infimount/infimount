@@ -231,7 +231,90 @@ pub enum AuthTokenMutation {
     Rotate,
 }
 
+/// Failure classification for the startup recovery sequence. A restore
+/// failure must block every later cleanup phase, so it is reported
+/// distinctly from generic initialization errors.
+#[derive(Debug)]
+pub(crate) enum StartupRecoveryFailure {
+    Restore,
+    Other(McpError),
+}
+
 impl AppState {
+    /// Recover durable configuration state at startup under ONE
+    /// cross-process configuration transaction lock, in a fixed order that
+    /// keeps credential-destroying phases last:
+    ///
+    /// ```text
+    /// restore recovery -> import transactions -> secret-reference
+    /// transactions -> secret cleanup -> plaintext/legacy migration cleanup
+    /// ```
+    ///
+    /// A failed restore leaves its journal in place and aborts the whole
+    /// sequence: nothing after it may touch keyring accounts until the next
+    /// launch retries with a consistent configuration.
+    ///
+    /// Note on ordering versus `retry_pending_secret_cleanup_at`: cleanup
+    /// independently re-reads live secret references before deleting, so
+    /// most transaction/cleanup interleavings converge today. The fixed
+    /// order is defense-in-depth for future transaction kinds whose
+    /// rollback restores credential values (where deleting first would lose
+    /// them), and it guarantees cleanup never observes a half-recovered
+    /// registry from a concurrent process.
+    pub(crate) fn run_startup_recovery(
+        &self,
+        config_dir: &std::path::Path,
+    ) -> Result<(), StartupRecoveryFailure> {
+        let _config_transaction = self
+            .registry
+            .acquire_configuration_transaction()
+            .map_err(StartupRecoveryFailure::Other)?;
+
+        // Phase 1: interrupted-restore recovery consumes or removes the
+        // journal before anything may delete keyring accounts.
+        if crate::commands::backup::restore_recovery_pending(&self.registry) {
+            crate::commands::backup::recover_interrupted_restore_locked(self)
+                .map_err(|_| StartupRecoveryFailure::Restore)?;
+        }
+
+        // Phase 2: resolve pending import journals against the registry.
+        self.registry
+            .recover_pending_imports_locked()
+            .map_err(StartupRecoveryFailure::Other)?;
+
+        // Phase 3: finish or roll back staged secret-reference writes while
+        // the registry is already in its recovered state.
+        let storages = self
+            .registry
+            .load_all()
+            .map_err(StartupRecoveryFailure::Other)?;
+        let settings = self
+            .settings_store
+            .load()
+            .map_err(StartupRecoveryFailure::Other)?;
+        infimount_mcp::registry::recover_pending_secret_transactions(
+            self.registry.path(),
+            &storages,
+            self.secret_store.as_ref(),
+            settings.auth_token_ref.as_deref(),
+        )
+        .map_err(StartupRecoveryFailure::Other)?;
+
+        // Phase 4: retry queued credential deletion only now that every
+        // transaction has decided which accounts are still referenced.
+        infimount_mcp::registry::retry_pending_secret_cleanup_at(
+            self.registry.path(),
+            self.secret_store.as_ref(),
+        )
+        .map_err(StartupRecoveryFailure::Other)?;
+
+        // Phase 5: plaintext and legacy migration cleanup last.
+        infimount_mcp::migration_cleanup::retry_pending_plaintext_cleanup(config_dir)
+            .map_err(StartupRecoveryFailure::Other)?;
+        migrate_legacy_sources_if_needed(&self.registry).map_err(StartupRecoveryFailure::Other)?;
+        Ok(())
+    }
+
     pub fn new() -> McpResult<Self> {
         let config_dir = infimount_mcp::registry::default_config_dir();
         let mut startup_error: Option<String> = None;
@@ -268,51 +351,27 @@ impl AppState {
             startup_error: StdMutex::new(startup_error),
         };
         // Interrupted-restore recovery is security-critical and must run
-        // BEFORE any credential cleanup: retrying import/secret cleanup
-        // while a restore journal is pending can delete keyring accounts
-        // that the interrupted restore still needs to finish safely,
-        // permanently losing credentials. Keep the initialized native store
-        // available so the restricted recovery UI can retry safely.
-        let mut restore_recovery_blocked = false;
-        if crate::commands::backup::restore_recovery_pending(&state.registry)
-            && crate::commands::backup::recover_interrupted_restore(&state).is_err()
-        {
-            restore_recovery_blocked = true;
-            if let Ok(mut startup_error) = state.startup_error.lock() {
-                *startup_error = Some("ERR_STARTUP_RESTORE_RECOVERY".to_string());
-            }
-        }
+        // BEFORE any credential cleanup; run_startup_recovery enforces the
+        // full ordering under one cross-process configuration lock.
         // Configuration parsing and migration failures must not discard an available
         // native store: a valid encrypted recovery backup may be the only safe repair.
-        // Cleanup is skipped entirely while failed restore recovery left the
-        // pending journal in place.
-        if native_available && !restore_recovery_blocked {
-            let initialization = (|| -> McpResult<()> {
-                infimount_mcp::migration_cleanup::retry_pending_plaintext_cleanup(&config_dir)?;
-                state.registry.recover_pending_imports_locked()?;
-                infimount_mcp::registry::retry_pending_secret_cleanup_at(
-                    state.registry.path(),
-                    state.secret_store.as_ref(),
-                )?;
-                migrate_legacy_sources_if_needed(&state.registry)?;
-                let storages = state.registry.load_all()?;
-                let settings = state.settings_store.load()?;
-                infimount_mcp::registry::recover_pending_secret_transactions(
-                    state.registry.path(),
-                    &storages,
-                    state.secret_store.as_ref(),
-                    settings.auth_token_ref.as_deref(),
-                )?;
-                Ok(())
-            })();
-            if let Err(error) = initialization {
-                let code = if error.code == McpErrorCode::ERR_SECRET_MIGRATION_FAILED {
-                    "ERR_STARTUP_MIGRATION_CLEANUP"
-                } else {
-                    "ERR_STARTUP_INITIALIZATION"
-                };
-                if let Ok(mut startup_error) = state.startup_error.lock() {
-                    *startup_error = Some(code.to_string());
+        if native_available {
+            match state.run_startup_recovery(&config_dir) {
+                Ok(()) => {}
+                Err(StartupRecoveryFailure::Restore) => {
+                    if let Ok(mut startup_error) = state.startup_error.lock() {
+                        *startup_error = Some("ERR_STARTUP_RESTORE_RECOVERY".to_string());
+                    }
+                }
+                Err(StartupRecoveryFailure::Other(error)) => {
+                    let code = if error.code == McpErrorCode::ERR_SECRET_MIGRATION_FAILED {
+                        "ERR_STARTUP_MIGRATION_CLEANUP"
+                    } else {
+                        "ERR_STARTUP_INITIALIZATION"
+                    };
+                    if let Ok(mut startup_error) = state.startup_error.lock() {
+                        *startup_error = Some(code.to_string());
+                    }
                 }
             }
         }
@@ -381,13 +440,14 @@ impl AppState {
     /// Recover every durable configuration transaction before a
     /// new mutation. The caller must already hold the cross-process
     /// configuration transaction lock.
+    ///
+    /// Ordering mirrors startup: the pending-restore gate comes first, and
+    /// credential cleanup runs only after every transaction has decided
+    /// which accounts remain referenced.
     pub(crate) fn recover_and_require_clean_configuration_locked(&self) -> McpResult<()> {
         self.registry.ensure_no_configuration_blocked()?;
+        crate::commands::backup::ensure_no_pending_restore_transaction(self)?;
         self.registry.recover_pending_imports_locked()?;
-        infimount_mcp::registry::retry_pending_secret_cleanup_at(
-            self.registry.path(),
-            self.secret_store.as_ref(),
-        )?;
         let storages = self.registry.load_all()?;
         let settings = self.settings_store.load()?;
         infimount_mcp::registry::recover_pending_secret_transactions(
@@ -396,8 +456,11 @@ impl AppState {
             self.secret_store.as_ref(),
             settings.auth_token_ref.as_deref(),
         )?;
+        infimount_mcp::registry::retry_pending_secret_cleanup_at(
+            self.registry.path(),
+            self.secret_store.as_ref(),
+        )?;
         infimount_mcp::registry::ensure_no_pending_secret_transaction(self.registry.path())?;
-        crate::commands::backup::ensure_no_pending_restore_transaction(self)?;
         self.registry.ensure_no_configuration_blocked()
     }
 
@@ -1789,5 +1852,100 @@ mod tests {
         assert!(!registry.path().exists());
         assert!(!legacy_path.exists());
         std::env::remove_var("INFIMOUNT_CONFIG");
+    }
+
+    /// Cleanup must never delete a credential that transaction recovery
+    /// still classifies as active. The mutation-recovery path therefore runs
+    /// secret-transaction recovery BEFORE the cleanup retry.
+    #[test]
+    fn mutation_recovery_runs_transactions_before_cleanup_auth_case() {
+        let dir = tempfile::tempdir().unwrap();
+        let secrets: Arc<dyn SecretStore> = Arc::new(secrets::MemorySecretStore::new());
+        let state = test_app_state(&dir, secrets.clone());
+
+        // Active auth credential, plus a stale cleanup journal entry and an
+        // already-committed transaction journal targeting the same account.
+        let active_account = format!("{MCP_AUTH_TOKEN_ACCOUNT}/revision/test-auth-txn");
+        secrets
+            .put_json(&active_account, &json!({"token": "live"}))
+            .unwrap();
+        state
+            .settings_store
+            .save_atomic(&McpSettings {
+                enabled: true,
+                transport: McpTransport::Http,
+                bind_address: "127.0.0.1".to_string(),
+                port: 0,
+                auth_token_ref: Some(format!("{MCP_AUTH_TOKEN_ACCOUNT}/revision/test-auth-txn")),
+                ..McpSettings::default()
+            })
+            .unwrap();
+        std::fs::write(
+            dir.path().join("secret-cleanup.json"),
+            format!(
+                r#"{{"version":1,"pending":[{{"account":"{active_account}","createdAt":"2026-01-01T00:00:00Z"}}]}}"#
+            ),
+        )
+        .unwrap();
+        // A committed-state auth transaction whose desired ref is live:
+        // transaction recovery must classify it as active BEFORE cleanup.
+        let journal = infimount_mcp::registry::SecretTransactionJournal {
+            version: infimount_mcp::registry::SECRET_TRANSACTION_JOURNAL_VERSION,
+            transaction_id: "test-auth-txn".to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            state: infimount_mcp::registry::SecretTransactionState::ReferenceCommitted,
+            target: infimount_mcp::registry::SecretTransactionTarget::McpAuth,
+            previous_ref: None,
+            desired_ref: Some(format!("{MCP_AUTH_TOKEN_ACCOUNT}/revision/test-auth-txn")),
+            obsolete_refs: vec![],
+        };
+        std::fs::write(
+            dir.path().join("secret-transactions.json"),
+            serde_json::to_vec_pretty(&journal).unwrap(),
+        )
+        .unwrap();
+
+        state
+            .recover_and_require_clean_configuration_locked()
+            .expect("mutation recovery succeeds");
+
+        // Transaction recovery consumed its journal first; the still-active
+        // credential survived the cleanup pass and its journal entry was
+        // retained for a later run when it truly becomes obsolete.
+        assert_eq!(
+            secrets.get_json(&active_account).unwrap(),
+            Some(json!({"token": "live"})),
+            "cleanup must skip the account that transaction recovery classified as active"
+        );
+        assert!(
+            dir.path().join("secret-cleanup.json").exists(),
+            "stale active-ref entry is retained, not silently dropped"
+        );
+        infimount_mcp::registry::ensure_no_pending_secret_transaction(state.registry.path())
+            .expect("transaction journal cleared");
+    }
+
+    /// Startup recovery holds one configuration transaction across restore,
+    /// import, secret-transaction, and cleanup phases: a concurrent process
+    /// cannot interleave between them.
+    #[test]
+    fn startup_recovery_holds_configuration_lock_across_all_phases() {
+        let dir = tempfile::tempdir().unwrap();
+        let secrets: Arc<dyn SecretStore> = Arc::new(secrets::MemorySecretStore::new());
+        let state = test_app_state(&dir, secrets);
+
+        // Another process holding the lock must block the whole sequence.
+        let held = state.registry.acquire_configuration_transaction().unwrap();
+        match state.run_startup_recovery(dir.path()) {
+            Err(StartupRecoveryFailure::Other(error)) => {
+                assert_eq!(error.code, McpErrorCode::ERR_REGISTRY_LOCK_TIMEOUT);
+            }
+            other => panic!("expected lock timeout, got {other:?}"),
+        }
+        drop(held);
+
+        state
+            .run_startup_recovery(dir.path())
+            .expect("startup recovery succeeds once the lock is free");
     }
 }

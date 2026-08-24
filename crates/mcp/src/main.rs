@@ -186,8 +186,6 @@ async fn run_server(serve: ServeArgs) -> Result<(), Box<dyn std::error::Error>> 
     registry
         .recover_pending_imports_locked()
         .map_err(|error| std::io::Error::other(error.message))?;
-    infimount_mcp::registry::retry_pending_secret_cleanup(secret_store.as_ref())
-        .map_err(|error| std::io::Error::other(error.message))?;
     let storages = registry
         .load_all()
         .map_err(|error| std::io::Error::other(error.message))?;
@@ -201,6 +199,10 @@ async fn run_server(serve: ServeArgs) -> Result<(), Box<dyn std::error::Error>> 
         settings.auth_token_ref.as_deref(),
     )
     .map_err(|error| std::io::Error::other(error.message))?;
+    // Credential cleanup runs only after transaction recovery has decided
+    // which accounts remain referenced.
+    infimount_mcp::registry::retry_pending_secret_cleanup(secret_store.as_ref())
+        .map_err(|error| std::io::Error::other(error.message))?;
     let persisted_auth_token = resolve_auth_token(&settings.auth_token_ref, secret_store.as_ref())
         .map_err(|error| std::io::Error::other(error.message))?;
 

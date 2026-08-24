@@ -8,8 +8,10 @@ on:
 env:
   CARGO_TERM_COLOR: always
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-  TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+# Everything defaults to read-only; the publish job elevates itself.
+permissions:
+  contents: read
 
 jobs:
   release-signing-preflight:
@@ -39,6 +41,30 @@ jobs:
           printf '%s\n' "$result"
           stable="$(printf '%s\n' "$result" | awk -F= '/^stable=/{print $2}')"
           printf 'stable=%s\n' "$stable" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Compile the verifier before any signing material exists in the job
+      # so Cargo/build scripts never see the private key.
+      - name: Build updater key verifier
+        run: cargo build --quiet -p infimount_core --bin derive_updater_public_key
+
+      - name: Verify updater key correspondence before any platform build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # Fail fast when the signing secret and the embedded updater trust
+          # anchor diverge, instead of after an hour of multi-platform builds.
+          derived="$(./target/debug/derive_updater_public_key)"
+          wrapped="$(printf '%s' "$derived" | base64 -w0)"
+          expected="$(jq -r '.plugins.updater.pubkey' apps/desktop/src-tauri/tauri.conf.json)"
+          if [ "$wrapped" != "$expected" ]; then
+            echo "::error::Updater public key mismatch: tauri.conf.json does not match TAURI_SIGNING_PRIVATE_KEY."
+            exit 1
+          fi
+          echo "Updater public key matches tauri.conf.json."
 
   release-frontend-gate:
     name: Release Gate / Frontend
@@ -320,6 +346,9 @@ jobs:
 
       - name: Build Tauri app
         working-directory: apps/desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build
 
       - name: Collect Linux release assets
@@ -502,11 +531,16 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           INFIMOUNT_EXPECTED_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           INFIMOUNT_OFFICIAL_SIGNED_BUILD: "1"
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build
 
       - name: Build Tauri app (unsigned prerelease fallback)
         if: ${{ steps.apple_signing.outputs.enabled != 'true' && needs.release-signing-preflight.outputs.stable != 'true' }}
         working-directory: apps/desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build
 
       - name: Collect macOS release assets
@@ -751,6 +785,8 @@ jobs:
         env:
           INFIMOUNT_EXPECTED_WINDOWS_PUBLISHER: ${{ steps.windows_signing.outputs.thumbprint }}
           INFIMOUNT_OFFICIAL_SIGNED_BUILD: "1"
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           $config = @{
             build = @{
@@ -772,6 +808,9 @@ jobs:
       - name: Build unsigned Tauri prerelease
         if: ${{ steps.windows_signing.outputs.enabled != 'true' && needs.release-signing-preflight.outputs.stable != 'true' }}
         working-directory: apps/desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build
 
       - name: Verify Windows Authenticode chain

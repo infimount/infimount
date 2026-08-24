@@ -1350,8 +1350,10 @@ pub(crate) fn restore_recovery_pending(registry: &StorageRegistry) -> bool {
         .exists()
 }
 
-pub(crate) fn recover_interrupted_restore(state: &AppState) -> Result<(), McpError> {
-    let _config_transaction = state.registry.acquire_configuration_transaction()?;
+/// Restore-recovery body for callers that already hold the cross-process
+/// configuration transaction lock (startup recovery runs restore, import,
+/// secret-transaction, and cleanup phases under one encompassing lock).
+pub(crate) fn recover_interrupted_restore_locked(state: &AppState) -> Result<(), McpError> {
     let path = restore_journal_path(state);
     if !path.exists() {
         state
@@ -1925,7 +1927,10 @@ mod tests {
         mark_restore_journal_committed(&state, vec![old_account.clone()]).unwrap();
         assert!(restore_journal_path(&state).exists());
 
-        recover_interrupted_restore(&state).unwrap();
+        {
+            let _tx = state.registry.acquire_configuration_transaction().unwrap();
+            recover_interrupted_restore_locked(&state).unwrap();
+        }
 
         assert!(secrets.get_json(&old_account).unwrap().is_none());
         assert!(secrets.get_json(&new_account).unwrap().is_some());
@@ -2379,7 +2384,7 @@ mod tests {
         secrets
             .put_json("storage/restore", &serde_json::json!({"token": "after"}))
             .unwrap();
-        recover_interrupted_restore(&state).unwrap();
+        recover_interrupted_restore_locked(&state).unwrap();
 
         assert!(!state.settings_store.load().unwrap().enabled);
         assert_eq!(
@@ -2399,12 +2404,19 @@ mod tests {
         persist_restore_journal(&state, &snapshot).unwrap();
 
         let _held = state.registry.acquire_configuration_transaction().unwrap();
-        let error = recover_interrupted_restore(&state).unwrap_err();
+        let attempt = || {
+            let _tx = state.registry.acquire_configuration_transaction()?;
+            recover_interrupted_restore_locked(&state)
+        };
+        let error = attempt().unwrap_err();
         assert_eq!(error.code, McpErrorCode::ERR_REGISTRY_LOCK_TIMEOUT);
         assert!(restore_journal_path(&state).exists());
         drop(_held);
 
-        recover_interrupted_restore(&state).unwrap();
+        {
+            let _tx = state.registry.acquire_configuration_transaction().unwrap();
+            recover_interrupted_restore_locked(&state).unwrap();
+        }
         assert!(!restore_journal_path(&state).exists());
     }
 
@@ -2433,15 +2445,23 @@ mod tests {
         // Ordering guard: the journal is detected before any cleanup runs.
         assert!(restore_recovery_pending(&state.registry));
 
-        // Simulate failed startup recovery: hold the transaction lock so
-        // recovery cannot proceed.
-        let _held = state.registry.acquire_configuration_transaction().unwrap();
-        assert!(recover_interrupted_restore(&state).is_err());
-        drop(_held);
+        // Simulate failed startup recovery: a journal the recovery logic
+        // cannot apply (unsupported version) leaves it pending.
+        let journal_path = restore_journal_path(&state);
+        let good_journal = std::fs::read(&journal_path).unwrap();
+        std::fs::write(
+            &journal_path,
+            good_journal
+                .iter()
+                .map(|b| b.wrapping_add(1))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        assert!(recover_interrupted_restore_locked(&state).is_err());
+        assert!(restore_recovery_pending(&state.registry));
 
         // The queued cleanup target must still exist while the journal is
         // pending; startup skips cleanup in this state.
-        assert!(restore_recovery_pending(&state.registry));
         assert_eq!(
             state
                 .secret_store
@@ -2451,7 +2471,8 @@ mod tests {
         );
 
         // Once recovery completes, the journal is gone and cleanup may run.
-        recover_interrupted_restore(&state).unwrap();
+        std::fs::write(&journal_path, &good_journal).unwrap();
+        recover_interrupted_restore_locked(&state).unwrap();
         assert!(!restore_recovery_pending(&state.registry));
         let _ = infimount_mcp::registry::retry_pending_secret_cleanup_at(
             state.registry.path(),
