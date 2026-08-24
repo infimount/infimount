@@ -253,6 +253,14 @@ impl AppState {
     /// A failed restore leaves its journal in place and aborts the whole
     /// sequence: nothing after it may touch keyring accounts until the next
     /// launch retries with a consistent configuration.
+    ///
+    /// Note on ordering versus `retry_pending_secret_cleanup_at`: cleanup
+    /// independently re-reads live secret references before deleting, so
+    /// most transaction/cleanup interleavings converge today. The fixed
+    /// order is defense-in-depth for future transaction kinds whose
+    /// rollback restores credential values (where deleting first would lose
+    /// them), and it guarantees cleanup never observes a half-recovered
+    /// registry from a concurrent process.
     pub(crate) fn run_startup_recovery(
         &self,
         config_dir: &std::path::Path,

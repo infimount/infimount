@@ -9,6 +9,10 @@ env:
   CARGO_TERM_COLOR: always
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
+# Everything defaults to read-only; the publish job elevates itself.
+permissions:
+  contents: read
+
 jobs:
   release-signing-preflight:
     name: Release Gate / Signing Policy
@@ -40,6 +44,11 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # Compile the verifier before any signing material exists in the job
+      # so Cargo/build scripts never see the private key.
+      - name: Build updater key verifier
+        run: cargo build --quiet -p infimount_core --bin derive_updater_public_key
+
       - name: Verify updater key correspondence before any platform build
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -48,7 +57,7 @@ jobs:
           set -euo pipefail
           # Fail fast when the signing secret and the embedded updater trust
           # anchor diverge, instead of after an hour of multi-platform builds.
-          derived="$(cargo run --quiet -p infimount_core --bin derive_updater_public_key)"
+          derived="$(./target/debug/derive_updater_public_key)"
           wrapped="$(printf '%s' "$derived" | base64 -w0)"
           expected="$(jq -r '.plugins.updater.pubkey' apps/desktop/src-tauri/tauri.conf.json)"
           if [ "$wrapped" != "$expected" ]; then
