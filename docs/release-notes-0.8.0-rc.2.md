@@ -7,6 +7,7 @@ Compared with rc.1 (which never published), rc.2 additionally carries:
 - Restore-recovery startup ordering: interrupted-restore recovery now runs before import and secret-cleanup retries on desktop, blocking cleanup while recovery fails, and the bundled MCP sidecar refuses configuration cleanup while a desktop restore journal is pending.
 - Linux release smoke hardening: SIGPIPE-safe installed-binary lookup, diagnosable apt failures, and RPM extraction fallback with bsdtar.
 - Updater signature verification accepts Tauri's base64-wrapped `.sig` format as well as classic minisign text.
+- Updater trust-chain alignment: `tauri.conf.json` now embeds the public key of the signing identity that has produced every release since v0.7.1 (derived from the CI secret via `derive_updater_public_key`). The previously embedded key was orphaned — its private half never existed anywhere — so v0.7.x auto-update verification could not succeed. Users upgrading from v0.7.x must install v0.8 manually once; after that, updates verify normally.
 
 Release: not published yet.
 
