@@ -2,7 +2,7 @@
 
 Infimount 0.8.0-rc.4 is the prerelease validation build for the v0.8 release-preflight, recovery-ordering, and updater trust-chain work.
 
-Compared with rc.2, rc.3 additionally carries:
+Compared with rc.3 (which never published), rc.4 additionally carries:
 
 - One-lock startup recovery ordering: restore recovery runs first under a single cross-process configuration lock, followed by import recovery, secret-reference transaction recovery, secret cleanup, plaintext/legacy cleanup, and migration cleanup. The mutation path checks restore state before any other mutation.
 - The standalone MCP sidecar fails closed while a desktop restore journal is pending.
