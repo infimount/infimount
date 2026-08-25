@@ -57,10 +57,13 @@ jobs:
           set -euo pipefail
           # Fail fast when the signing secret and the embedded updater trust
           # anchor diverge, instead of after an hour of multi-platform builds.
-          derived="$(./target/debug/derive_updater_public_key)"
-          wrapped="$(printf '%s' "$derived" | base64 -w0)"
-          expected="$(jq -r '.plugins.updater.pubkey' apps/desktop/src-tauri/tauri.conf.json)"
-          if [ "$wrapped" != "$expected" ]; then
+          # Compare decoded, newline-normalized text: command substitution
+          # strips trailing newlines from the derived key while tauri.conf.json
+          # encodes the classic two-line minisign text including its final
+          # newline.
+          derived="$(./target/debug/derive_updater_public_key | tr -d '\r\n')"
+          expected="$(jq -r '.plugins.updater.pubkey' apps/desktop/src-tauri/tauri.conf.json | base64 -d | tr -d '\r\n')"
+          if [ "$derived" != "$expected" ]; then
             echo "::error::Updater public key mismatch: tauri.conf.json does not match TAURI_SIGNING_PRIVATE_KEY."
             exit 1
           fi
