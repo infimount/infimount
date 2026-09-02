@@ -304,11 +304,11 @@ Your sponsorship helps:
 
 ### macOS
 
-Stable releases are signed and notarized. Open the `.dmg`, drag `Infimount.app` to Applications, and stop if Gatekeeper reports an invalid signature or missing notarization ticket. Clearly marked prereleases may omit Apple platform signing, but their updater artifacts remain cryptographically signed; verify checksums and the prerelease label before deciding whether to use one.
+Platform-signed releases are signed and notarized when the corresponding credentials are configured. Platform-unsigned stable or prerelease packages may trigger Gatekeeper or SmartScreen warnings; never treat them as notarized or Authenticode-signed. Updater artifacts remain cryptographically signed; verify checksums, provenance, and the release's explicit signing status before installing.
 
 ### Windows
 
-Stable MSI and EXE installers are Authenticode-signed. Check the Digital Signatures property and stop if Windows reports an invalid or missing signature. Clearly marked prereleases may omit Authenticode platform signing, but their updater artifacts remain cryptographically signed.
+MSI and EXE installers are Authenticode-signed only when Windows signing credentials are configured. For platform-unsigned releases, expect SmartScreen warnings and do not treat the installer as Authenticode-authenticated. Updater artifacts remain cryptographically signed.
 
 ### Linux
 

@@ -32,7 +32,7 @@ Required release preparation:
 2. Choose next version by impact:
    - patch (`X.Y.Z+1`) for fixes only
    - minor (`X.Y+1.0`) for new user-facing features
-3. Configure the updater signing secrets before every release tag. Every release fails before builds if updater signing material is absent. Stable tags additionally require all Apple and Windows platform-signing material; clearly marked prereleases may omit only platform app signing and are published as prereleases.
+3. Configure the updater signing secrets before every release tag. Every release fails before builds if updater signing material is absent. Apple and Windows platform-signing material is optional; when fully configured, platform signatures are built and verified, and when absent, the release is explicitly marked platform-unsigned. Partial platform configuration fails closed.
    - macOS signing/notarization secrets:
      - `APPLE_CERTIFICATE`
      - `APPLE_CERTIFICATE_PASSWORD`
@@ -92,8 +92,8 @@ The `Release` workflow is triggered by `v*` tags and will:
   - zero-manual release policy check (`scripts/check-zero-manual-release-gate.sh`)
 - sync app manifest versions from the pushed tag via `scripts/sync-release-version.mjs` before consistency validation and every platform build
 - build Linux, macOS, Windows binaries
-- require updater signing for every release tag; stable tags additionally require macOS signing/notarization and Windows Authenticode signing configured before Tauri bundling, with the Windows app executable, bundled sidecar, installers, and executable updater payloads verified as one signed chain
-- permit unsigned platform applications only for clearly marked prerelease tags; updater artifacts are always signed, and an unsigned prerelease sidecar is accepted at runtime only when its package-bound `mcp.sha256` matches (stable sidecars still require platform trust on macOS/Windows)
+- require updater signing and private/public key correspondence for every release tag; platform signing is used and verified when credentials are configured, otherwise stable and prerelease packages are explicitly marked platform-unsigned
+- preserve mandatory checksums, SBOM, provenance, artifact verification, and package-bound sidecar integrity; platform-unsigned applications must never be presented as notarized or Authenticode-signed
 - run artifact smoke checks, including Linux AppImage launch/migration, `.deb` install/launch/migration, and sidecar extraction/version checks for AppImage, DEB, RPM, DMG, MSI, and NSIS installers
 - validate release asset presence, updater metadata, checksum entries, and per-file `.sha256` files
 - generate `SHA256SUMS.txt` and per-file checksum files for every published payload, including updater archives, updater signatures, metadata, installers, scripts, and SBOM

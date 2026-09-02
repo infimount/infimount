@@ -19,7 +19,7 @@ Release: not published yet.
 
 The public MCP surface is data-plane-only. Storage administration stays in the desktop control plane. Fresh and migrated installations use a safe read-only tool baseline, and new storages are not exposed to MCP by default. Built-in desktop and sidecar HTTP transports bind to loopback only; unauthenticated HTTP is limited to local development on loopback, and remote access requires an authenticated TLS reverse proxy in front of the loopback endpoint. Native secret-store failure does not trigger plaintext fallback.
 
-Every release tag requires the Tauri updater signing key. Stable tags additionally require macOS signing/notarization and Windows signing material. Clearly marked prereleases may omit platform app signing, but updater artifacts are always signed.
+Every release tag requires the Tauri updater signing key and private/public key correspondence. Platform signing is performed and verified when credentials are configured; otherwise the release is explicitly marked platform-unsigned. Updater artifacts, checksums, SBOM, provenance, and artifact verification remain mandatory.
 
 ## Upgrade notes
 
