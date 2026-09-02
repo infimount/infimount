@@ -76,7 +76,7 @@ Manual downloads:
 
 ### Install notes
 
-Install scripts verify selected downloads against `SHA256SUMS.txt`. After v0.8.0 is published, pin it with `INFIMOUNT_VERSION=v0.8.0`; until then, `latest` installs the current stable release. Every release requires signed updater artifacts. Stable releases additionally require signed macOS and Windows applications; clearly marked prereleases may omit platform app signing.
+Install scripts verify selected downloads against `SHA256SUMS.txt`. After v0.8.0 is published, pin it with `INFIMOUNT_VERSION=v0.8.0`; until then, `latest` installs the current stable release. Every release requires signed updater artifacts. Platform application signing is included when credentials are configured; this project may publish explicitly platform-unsigned stable or prerelease packages, which can trigger operating-system warnings.
 
 ## What Infimount does
 
@@ -130,9 +130,9 @@ Linux RPM:
 sudo rpm -i Infimount-x86_64.rpm
 ```
 
-macOS DMG: open the DMG and drag Infimount to Applications. Stable releases are signed and notarized; do not bypass a failed Gatekeeper signature check.
+macOS DMG: open the DMG and drag Infimount to Applications. Platform-signed releases are notarized when Apple credentials are configured. For an explicitly platform-unsigned release, expect Gatekeeper warnings and use the documented per-app approval path only after verifying the release checksums and provenance; never disable Gatekeeper globally.
 
-Windows MSI or EXE: run the installer. Stable releases are Authenticode-signed; do not bypass an invalid or missing signature warning.
+Windows MSI or EXE: run the installer. Authenticode signing is included when Windows credentials are configured. For an explicitly platform-unsigned release, expect SmartScreen warnings and verify checksums, provenance, and the release signing status before proceeding.
 
 Upgrade by running the latest installer again. For Homebrew installs:
 
