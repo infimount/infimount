@@ -28,7 +28,7 @@ tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
-opendal = { version = "0.58.1", features = ["services-fs", "services-s3", "services-webdav", "services-azblob", "services-gcs", "services-b2", "services-oss", "services-cos", "services-obs", "services-ftp", "services-gdrive", "services-onedrive", "services-memory"] }
+opendal = { version = "0.58.1", features = ["services-fs", "services-s3", "services-webdav", "services-azblob", "services-gcs", "services-b2", "services-oss", "services-cos", "services-obs", "services-gdrive", "services-onedrive", "services-memory"] }
 
 [target.'cfg(not(windows))'.dependencies]
-opendal = { version = "0.58.1", features = ["services-fs", "services-s3", "services-webdav", "services-azblob", "services-gcs", "services-b2", "services-oss", "services-cos", "services-obs", "services-sftp", "services-ftp", "services-gdrive", "services-onedrive", "services-memory"] }
+opendal = { version = "0.58.1", features = ["services-fs", "services-s3", "services-webdav", "services-azblob", "services-gcs", "services-b2", "services-oss", "services-cos", "services-obs", "services-sftp", "services-gdrive", "services-onedrive", "services-memory"] }

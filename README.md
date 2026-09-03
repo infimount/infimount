@@ -80,7 +80,7 @@ Install scripts verify selected downloads against `SHA256SUMS.txt`. After v0.8.0
 
 ## What Infimount does
 
-- **Browse storage in one place:** local files, S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, Google Cloud Storage, Google Drive, Microsoft OneDrive, WebDAV, SFTP, and FTP.
+- **Browse storage in one place:** local files, S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, Google Cloud Storage, Google Drive, Microsoft OneDrive, WebDAV, and SFTP.
 - **Work like a desktop file manager:** grid and list views, rich previews, drag-and-drop upload, bookmarks, recents, keyboard navigation, global search stop, dual-pane transfer workflows, conflict handling, and transfer queue.
 - **Validate before you trust a backend:** reachability checks report grouped capabilities, sanitized fix hints, and MCP readiness notes.
 - **Control MCP access explicitly:** new storages are not exposed to MCP by default. Enable selected storages, tool lists, path policies, read-only mode, confirmations, and local audit logs.
@@ -162,7 +162,7 @@ See [Building from Source](#️-building-from-source) below.
 | **Google Cloud Storage**        | ✅ Stable  | Service account JSON; advanced capabilities depend on bucket support        |
 | **WebDAV**                      | ✅ Stable  | Nextcloud, ownCloud, etc.; optional compatibility mode for servers that cannot create collection placeholders |
 | **SFTP**                        | ✅ Stable  | Linux/macOS only; key-based SFTP via OpenDAL. Password login is intentionally not exposed because OpenDAL SFTP does not support it |
-| **FTP**                         | ✅ Stable  | FTP via OpenDAL with username/password auth; no presigned links or object versions |
+| **FTP**                         | ⏸ Disabled | Temporarily disabled in v0.8 due to an upstream command-injection vulnerability; may return after a fixed OpenDAL release |
 
 Use **Validate** in Add/Edit Storage to check reachability, grouped capability summaries, sanitized fix hints, and MCP readiness notes before browsing or exposing a storage to agents.
 For MCP/versioning details, see [Backend Capability Matrix](docs/backend-capabilities.md).
@@ -237,13 +237,13 @@ Outputs:
 
 ### Current Focus
 
-- [x] Local, S3/S3-compatible, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, GCS, Google Drive, Microsoft OneDrive, WebDAV, SFTP, and FTP browsing
+- [x] Local, S3/S3-compatible, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, GCS, Google Drive, Microsoft OneDrive, WebDAV, and SFTP browsing
 - [x] Grid and list views with file preview, drag-and-drop upload, bookmarks, recents, and transfer queue
 - [x] Dual-pane copy/move and compare/update workflows
 - [x] MCP support for local AI assistants with explicit storage exposure, tool controls, path policy, confirmations, sessions, and audit
 - [x] Version-aware MCP tools where supported by the backend
 - [x] Keyboard navigation in virtualized file grid and table views
-- [x] OAuth-backed Google Drive and OneDrive with guided local loopback connect, plus SFTP and FTP remote-file backends through OpenDAL
+- [x] OAuth-backed Google Drive and OneDrive with guided local loopback connect, plus SFTP remote-file browsing through OpenDAL
 - [x] Capability-aware storage validation summaries with fix hints and MCP readiness notes
 - [ ] Additional large-directory polish
 

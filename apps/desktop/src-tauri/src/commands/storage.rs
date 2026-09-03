@@ -2255,7 +2255,6 @@ fn validate_storage_draft(storage: &StorageDraft) -> McpResult<()> {
             | "gdrive"
             | "onedrive"
             | "sftp"
-            | "ftp"
     ) {
         return Err(err_with_details(
             McpErrorCode::ERR_BACKEND_UNSUPPORTED,
@@ -2286,7 +2285,6 @@ mod tests {
             "gdrive",
             "onedrive",
             "sftp",
-            "ftp",
         ] {
             let storage = StorageDraft {
                 storage_id: None,

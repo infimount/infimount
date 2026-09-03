@@ -10,7 +10,8 @@
     "test:release": "bash scripts/release-test-gate.sh",
     "test:release:policy": "bash scripts/check-zero-manual-release-gate.sh",
     "test:release:rehearsal": "bash scripts/release-rehearsal.sh",
-    "test:release:rehearsal:policy": "bash scripts/check-signing-policy-rehearsal.sh --matrix"
+    "test:release:rehearsal:policy": "bash scripts/check-signing-policy-rehearsal.sh --matrix",
+    "test:security:ftp-disabled": "bash scripts/check-ftp-disabled.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "2.10.1",

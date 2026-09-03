@@ -52,7 +52,6 @@ const STORAGE_TYPE_ICONS: Record<string, string> = {
   "google-drive": gcsIcon,
   onedrive: folderNetworkIcon,
   sftp: folderNetworkIcon,
-  ftp: folderNetworkIcon,
   webdav: webdavIcon,
   "local-fs": folderNetworkIcon,
 };
@@ -1025,8 +1024,6 @@ function mapStorageTypeToBackend(type: StorageType): StorageDraft["backend"] {
       return "onedrive";
     case "sftp":
       return "sftp";
-    case "ftp":
-      return "ftp";
     case "local-fs":
     default:
       return "local";

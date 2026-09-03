@@ -43,6 +43,6 @@ Workspace roots cannot be the storage root, overlap another workspace, or contai
 
 Use **Diagnostics** to view local status and export a redacted support bundle. Review the bundle before sharing it. It excludes credential values and file contents by design; see [Privacy and Diagnostics](privacy.md).
 
-## Unsigned prerelease warning
+## Platform-unsigned release warning
 
-Every release requires signed updater artifacts. Platform app signing is included when credentials are configured; this project may publish explicitly platform-unsigned stable or prerelease applications, so operating-system warnings can occur. Never treat an unsigned application as notarized or Authenticode-signed. On an unsigned prerelease only, Infimount runs its bundled MCP sidecar only when the package-bound `mcp.sha256` matches; signed sidecars prefer platform signature verification. Stable builds never use this checksum as a substitute for macOS code signing or Windows Authenticode. An updater artifact without a valid cryptographic signature is never accepted. Do not treat an unsigned prerelease application as a stable release.
+Every release requires signed updater artifacts. Platform app signing is included when credentials are configured; this project may publish explicitly platform-unsigned stable or prerelease applications, so operating-system warnings can occur. Never treat an unsigned application as notarized or Authenticode-signed. On any explicitly platform-unsigned build, prerelease or stable, Infimount runs its bundled MCP sidecar only when the package-bound `mcp.sha256` matches. Officially platform-signed builds additionally verify the platform signature and publisher identity. An updater artifact without a valid cryptographic signature is never accepted.

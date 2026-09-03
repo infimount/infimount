@@ -99,7 +99,6 @@ const getStorageIcon = (type: string) => {
       return gcsIcon;
     case "onedrive":
     case "sftp":
-    case "ftp":
       return folderNetworkIcon;
     case "webdav":
       return webdavIcon;

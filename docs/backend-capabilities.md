@@ -27,7 +27,7 @@ For backend expansion, a backend is not considered product-ready until it has an
 | Microsoft OneDrive        | Yes               | No                       | Config-dependent         | OAuth-backed OneDrive Personal through OpenDAL. The desktop app can guide connection with a local loopback OAuth + PKCE flow, or advanced users can provide tokens manually. See [Guided OAuth for Google Drive and Microsoft OneDrive](oauth-drive-setup.md). Enable `versioning` for version listing when the account supports it. Tokens stay local. |
 | WebDAV                    | Yes               | No                       | No                       | Version tools return `ERR_VERSIONS_NOT_SUPPORTED`. Use `disableCreateDir` for servers that reject collection creation probes/placeholders. |
 | SFTP                      | Yes               | No                       | No                       | Linux/macOS only. Key-based SFTP through OpenDAL. Password login is not exposed because the OpenDAL SFTP backend does not support it. Optional remote copy depends on server extension support and `enableCopy`. |
-| FTP                       | Yes               | No                       | No                       | FTP through OpenDAL with username/password auth. Generic copy and rename are not exposed by the backend, so Infimount falls back to stream-copy plus delete for moves where safe. |
+| FTP                       | No                | No                       | No                       | Temporarily disabled in v0.8 because OpenDAL 0.58.x depends on vulnerable `suppaftp` 8.x (RUSTSEC-2026-0271). Re-enable only after a released OpenDAL version uses `suppaftp >=10.0.2`. |
 
 ## Atomic No-Overwrite Writes
 

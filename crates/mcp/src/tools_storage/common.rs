@@ -17,7 +17,6 @@ pub(super) fn canonical_backend(backend: &str) -> McpResult<String> {
         "cos" | "tencent_cos" => "cos",
         "obs" | "huawei_obs" => "obs",
         "sftp" => "sftp",
-        "ftp" => "ftp",
         "gdrive" | "google_drive" | "google-drive" => "gdrive",
         "onedrive" | "one_drive" | "one-drive" => "onedrive",
         other => {

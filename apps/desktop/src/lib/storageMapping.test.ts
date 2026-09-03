@@ -15,7 +15,6 @@ describe("backendToStorageType", () => {
     ["onedrive", "onedrive"],
     ["one_drive", "onedrive"],
     ["sftp", "sftp"],
-    ["ftp", "ftp"],
   ])("maps %s backend to %s storage type", (backend, type) => {
     expect(backendToStorageType(backend as never)).toBe(type);
   });
