@@ -19,7 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       stable: ${{ steps.policy.outputs.stable }}
-      platform_signed: ${{ steps.policy.outputs.platform_signed }}
+      apple_signed: ${{ steps.policy.outputs.apple_signed }}
+      windows_signed: ${{ steps.policy.outputs.windows_signed }}
     steps:
       - uses: actions/checkout@v6
       - name: Require updater signing and report platform signing status
@@ -41,9 +42,11 @@ jobs:
           result="$(bash scripts/check-signing-policy-rehearsal.sh)"
           printf '%s\n' "$result"
           stable="$(printf '%s\n' "$result" | awk -F= '/^stable=/{print $2}')"
-          platform_signed="$(printf '%s\n' "$result" | awk -F= '/^platform_signed=/{print $2}')"
+          apple_signed="$(printf '%s\n' "$result" | awk -F= '/^apple_signed=/{print $2}')"
+          windows_signed="$(printf '%s\n' "$result" | awk -F= '/^windows_signed=/{print $2}')"
           printf 'stable=%s\n' "$stable" >> "$GITHUB_OUTPUT"
-          printf 'platform_signed=%s\n' "$platform_signed" >> "$GITHUB_OUTPUT"
+          printf 'apple_signed=%s\n' "$apple_signed" >> "$GITHUB_OUTPUT"
+          printf 'windows_signed=%s\n' "$windows_signed" >> "$GITHUB_OUTPUT"
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -1204,9 +1207,9 @@ jobs:
 
             ### Signing status
 
-            **${{ needs.release-signing-preflight.outputs.platform_signed == 'true' && 'SIGNED PLATFORM RELEASE' || 'SIGNED UPDATER; PLATFORM SIGNING NOT CONFIGURED' }}**
+            **Updater signing: verified · macOS platform signing: ${{ needs.release-signing-preflight.outputs.apple_signed == 'true' && 'verified' || 'not configured' }} · Windows platform signing: ${{ needs.release-signing-preflight.outputs.windows_signed == 'true' && 'verified' || 'not configured' }}**
 
-            Every release passes mandatory updater-signing preflight. Platform signatures are included when credentials are configured; otherwise this release is explicitly platform-unsigned. Updater artifacts remain cryptographically signed, and checksum, SBOM, provenance, and artifact verification remain mandatory.
+            Every release passes mandatory updater-signing preflight. Platform signatures are included independently when each platform's credentials are configured; otherwise that platform is explicitly unsigned. Updater artifacts remain cryptographically signed, and checksum, SBOM, provenance, and artifact verification remain mandatory.
 
             See [CHANGELOG.md](https://github.com/infimount/infimount/blob/main/CHANGELOG.md) for details.
 

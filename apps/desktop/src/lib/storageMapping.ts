@@ -21,6 +21,7 @@ const BACKEND_TO_TYPE: Record<StorageBackend, StorageType> = {
   onedrive: "onedrive",
   one_drive: "onedrive",
   sftp: "sftp",
+  ftp: "ftp",
 };
 
 export function backendToStorageType(backend: StorageBackend): StorageType {

@@ -10,6 +10,7 @@ export type StorageType =
   | "google-drive"
   | "onedrive"
   | "sftp"
+  | "ftp"
   | "local-fs";
 export type StorageBackend =
   | "s3"
@@ -30,6 +31,7 @@ export type StorageBackend =
   | "onedrive"
   | "one_drive"
   | "sftp"
+  | "ftp"
   | "local"
   | "fs";
 export type McpTransport = "stdio" | "http";
