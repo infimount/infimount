@@ -34,6 +34,7 @@ If you must return to v0.7, stop MCP clients, restore the pre-upgrade `~/.infimo
 
 ## Known limitations
 
+- Existing FTP storage records are preserved during upgrade, but FTP operations are disabled in v0.8 because OpenDAL 0.58.x used an FTP dependency affected by RUSTSEC-2026-0271. Do not delete the record if you intend to reuse it after FTP support returns.
 - The v0.7.1 `config.json` to `storages.json` startup migration remains active code, but release-candidate validation no longer exercises it against packaged Linux artifacts (AppImage/deb/rpm). It is covered by Rust-level tests in `state.rs` instead. This scope reduction is a recorded product decision made while there are no published v0.8 users and before the stable channel advances past v0.7.1.
 - Native secret-store availability depends on an unlocked OS user session.
 - Remote storage mutation cannot be made atomically transactional with local registry migration.
