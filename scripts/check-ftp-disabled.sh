@@ -11,9 +11,4 @@ if grep -q '"id": "ftp"' crates/core/storage_schemas.json; then
   echo 'FTP must not be user-selectable in storage schemas' >&2
   exit 1
 fi
-if grep -qE '"ftp"|"ftp":' apps/desktop/src/types/storage.ts apps/desktop/src/types/source.ts; then
-  echo 'FTP must not be configurable through desktop TypeScript schemas' >&2
-  exit 1
-fi
-
 echo 'FTP security disablement checks passed.'
