@@ -162,7 +162,7 @@ Some capabilities are backend-dependent:
 
 - Object versions require backend and bucket/container support.
 - Presigned download links require backend support.
-- Google Drive, WebDAV, SFTP, and FTP do not expose object-version tools. OneDrive version tools require `versioning` to be enabled and supported by the account.
+- Google Drive, WebDAV, and SFTP do not expose object-version tools. FTP is disabled in v0.8 because its OpenDAL dependency is affected by RUSTSEC-2026-0271. OneDrive version tools require `versioning` to be enabled and supported by the account.
 
 See [Backend Capability Matrix](backend-capabilities.md) for the public support matrix.
 

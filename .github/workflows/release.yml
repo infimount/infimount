@@ -19,9 +19,11 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       stable: ${{ steps.policy.outputs.stable }}
+      apple_signed: ${{ steps.policy.outputs.apple_signed }}
+      windows_signed: ${{ steps.policy.outputs.windows_signed }}
     steps:
       - uses: actions/checkout@v6
-      - name: Require updater signing for every release and platform signing for stable tags
+      - name: Require updater signing and report platform signing status
         id: policy
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -40,7 +42,13 @@ jobs:
           result="$(bash scripts/check-signing-policy-rehearsal.sh)"
           printf '%s\n' "$result"
           stable="$(printf '%s\n' "$result" | awk -F= '/^stable=/{print $2}')"
-          printf 'stable=%s\n' "$stable" >> "$GITHUB_OUTPUT"
+          apple_signed="$(printf '%s\n' "$result" | awk -F= '/^apple_signed=/{print $2}')"
+          windows_signed="$(printf '%s\n' "$result" | awk -F= '/^windows_signed=/{print $2}')"
+          {
+            printf 'stable=%s\n' "$stable"
+            printf 'apple_signed=%s\n' "$apple_signed"
+            printf 'windows_signed=%s\n' "$windows_signed"
+          } >> "$GITHUB_OUTPUT"
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -538,8 +546,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build
 
-      - name: Build Tauri app (unsigned prerelease fallback)
-        if: ${{ steps.apple_signing.outputs.enabled != 'true' && needs.release-signing-preflight.outputs.stable != 'true' }}
+      - name: Build Tauri app (unsigned platform fallback)
+        if: ${{ steps.apple_signing.outputs.enabled != 'true' }}
         working-directory: apps/desktop
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -808,8 +816,8 @@ jobs:
           pnpm tauri build --config $configPath
           if ($LASTEXITCODE -ne 0) { throw "signed Tauri build failed" }
 
-      - name: Build unsigned Tauri prerelease
-        if: ${{ steps.windows_signing.outputs.enabled != 'true' && needs.release-signing-preflight.outputs.stable != 'true' }}
+      - name: Build unsigned Tauri platform fallback
+        if: ${{ steps.windows_signing.outputs.enabled != 'true' }}
         working-directory: apps/desktop
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -1201,9 +1209,9 @@ jobs:
 
             ### Signing status
 
-            **${{ needs.release-signing-preflight.outputs.stable == 'true' && 'SIGNED STABLE RELEASE' || 'SIGNED UPDATER; PLATFORM SIGNING MAY BE OMITTED — PRERELEASE ONLY' }}**
+            **Updater signing: verified · macOS platform signing: ${{ needs.release-signing-preflight.outputs.apple_signed == 'true' && 'verified' || 'not configured' }} · Windows platform signing: ${{ needs.release-signing-preflight.outputs.windows_signed == 'true' && 'verified' || 'not configured' }}**
 
-            Every release passes mandatory updater-signing preflight. Stable tags additionally require macOS and Windows platform signing. Prerelease applications may omit platform signing; verify the release is marked prerelease before using one.
+            Every release passes mandatory updater-signing preflight. Platform signatures are included independently when each platform's credentials are configured; otherwise that platform is explicitly unsigned. Updater artifacts remain cryptographically signed, and checksum, SBOM, provenance, and artifact verification remain mandatory.
 
             See [CHANGELOG.md](https://github.com/infimount/infimount/blob/main/CHANGELOG.md) for details.
 

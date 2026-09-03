@@ -7,7 +7,7 @@ use futures::TryStreamExt;
 use indexmap::IndexMap;
 #[cfg(not(windows))]
 use opendal::services::Sftp;
-use opendal::services::{Azblob, Cos, Fs, Ftp, Gcs, Gdrive, Obs, Onedrive, Oss, Webdav, B2, S3};
+use opendal::services::{Azblob, Cos, Fs, Gcs, Gdrive, Obs, Onedrive, Oss, Webdav, B2, S3};
 use opendal::ErrorKind;
 use opendal::Operator;
 use serde_json::Value;
@@ -215,7 +215,9 @@ pub fn build_operator(source: &Source) -> Result<Operator> {
         SourceKind::Cos => build_cos_operator(source),
         SourceKind::Obs => build_obs_operator(source),
         SourceKind::Sftp => build_sftp_operator(source),
-        SourceKind::Ftp => build_ftp_operator(source),
+        SourceKind::Ftp => Err(CoreError::Config(
+            "FTP support is temporarily disabled for security reasons; upgrade to a release that uses suppaftp 10.0.2 or newer".to_string(),
+        )),
         SourceKind::Gdrive => build_gdrive_operator(source),
         SourceKind::Onedrive => build_onedrive_operator(source),
     }
@@ -680,44 +682,6 @@ fn build_sftp_operator(_source: &Source) -> Result<Operator> {
     Err(CoreError::Config(
         "SFTP is not available in Windows builds because OpenDAL's SFTP backend depends on Unix-only OpenSSH support".to_string(),
     ))
-}
-
-fn build_ftp_operator(source: &Source) -> Result<Operator> {
-    let mut builder = Ftp::default();
-
-    if !source.root.is_empty() {
-        builder = builder.endpoint(&source.root);
-    }
-    if let Some(endpoint) = source
-        .config
-        .get("endpoint")
-        .or_else(|| source.config.get("serverUrl"))
-        .and_then(|v| v.as_str())
-    {
-        builder = builder.endpoint(endpoint);
-    }
-    if let Some(user) = source
-        .config
-        .get("user")
-        .or_else(|| source.config.get("username"))
-        .and_then(|v| v.as_str())
-    {
-        builder = builder.user(user);
-    }
-    if let Some(password) = source.config.get("password").and_then(|v| v.as_str()) {
-        builder = builder.password(password);
-    }
-    if let Some(root) = source
-        .config
-        .get("rootPath")
-        .or_else(|| source.config.get("root"))
-        .and_then(|v| v.as_str())
-    {
-        builder = builder.root(root);
-    }
-
-    let op = Operator::new(builder).map_err(CoreError::Storage)?;
-    Ok(op)
 }
 
 fn expand_tilde_home(path: &str) -> String {
@@ -1513,27 +1477,19 @@ mod tests {
     }
 
     #[test]
-    fn builds_ftp_operator() {
+    fn ftp_operator_is_disabled() {
         let source = Source {
             id: "ftp".to_string(),
             name: "ftp".to_string(),
             kind: crate::models::SourceKind::Ftp,
             root: String::new(),
-            config: serde_json::json!({
-                "endpoint": "ftp://example.com:21",
-                "user": "alice",
-                "password": "password",
-                "rootPath": "/workspace",
-            }),
+            config: serde_json::json!({}),
         };
 
-        let op = build_operator(&source).expect("operator should build");
-        let caps = op.info().capability();
-        assert!(caps.list);
-        assert!(caps.read);
-        assert!(caps.write);
-        assert!(!caps.copy);
-        assert!(!caps.presign_read);
+        let error = build_operator(&source).expect_err("FTP must remain disabled");
+        assert!(error
+            .to_string()
+            .contains("FTP support is temporarily disabled"));
     }
 
     #[cfg(not(windows))]

@@ -233,21 +233,9 @@ mod tests {
     }
 
     #[test]
-    fn builds_ftp_operator() {
-        let op = build_operator_from_config(&storage(
-            "ftp",
-            json!({
-                "endpoint": "ftp://example.com:21",
-                "user": "alice",
-                "password": "password",
-                "rootPath": "/workspace",
-            }),
-        ))
-        .expect("operator should build");
-        let caps = get_capabilities(&op);
-        assert!(!caps.read_with_version);
-        assert!(!op.info().capability().copy);
-        assert!(!caps.presign_read);
+    fn ftp_backend_is_disabled() {
+        let err = build_operator_from_config(&storage("ftp", json!({}))).unwrap_err();
+        assert_eq!(err.code, McpErrorCode::ERR_INTERNAL);
     }
 
     #[cfg(not(windows))]

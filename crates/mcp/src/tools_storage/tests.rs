@@ -252,15 +252,6 @@ async fn storage_management_accepts_v0_7_and_remote_file_backends() {
             }),
         ),
         (
-            "FTP",
-            "ftp",
-            serde_json::json!({
-                "endpoint": "ftp://example.com:21",
-                "user": "alice",
-                "password": "password"
-            }),
-        ),
-        (
             "Google Drive",
             "gdrive",
             serde_json::json!({

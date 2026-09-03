@@ -83,7 +83,6 @@ mod tests {
             ("tencent-cos", SourceKind::Cos),
             ("huawei-obs", SourceKind::Obs),
             ("sftp", SourceKind::Sftp),
-            ("ftp", SourceKind::Ftp),
             ("google-drive", SourceKind::Gdrive),
             ("onedrive", SourceKind::Onedrive),
         ] {
@@ -97,17 +96,12 @@ mod tests {
                     | (SourceKind::Cos, SourceKind::Cos)
                     | (SourceKind::Obs, SourceKind::Obs)
                     | (SourceKind::Sftp, SourceKind::Sftp)
-                    | (SourceKind::Ftp, SourceKind::Ftp)
                     | (SourceKind::Gdrive, SourceKind::Gdrive)
                     | (SourceKind::Onedrive, SourceKind::Onedrive)
             ));
             if matches!(
                 kind,
-                SourceKind::Oss
-                    | SourceKind::Cos
-                    | SourceKind::Obs
-                    | SourceKind::Sftp
-                    | SourceKind::Ftp
+                SourceKind::Oss | SourceKind::Cos | SourceKind::Obs | SourceKind::Sftp
             ) {
                 assert!(schema
                     .fields

@@ -2,7 +2,7 @@
 
 Infimount is a local-first desktop app for browsing and managing local files,
 Amazon S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob Storage,
-Google Cloud Storage, Google Drive, Microsoft OneDrive, WebDAV, SFTP, and FTP from one native interface. Infimount can expose
+Google Cloud Storage, Google Drive, Microsoft OneDrive, WebDAV, and SFTP from one native interface. Infimount can expose
 selected storages through MCP for local AI assistants and agent workflows.
 
 ## Useful Links
@@ -34,7 +34,6 @@ selected storages through MCP for local AI assistants and agent workflows.
 - Microsoft OneDrive
 - WebDAV
 - SFTP
-- FTP
 
 ## Key Properties
 
@@ -45,5 +44,5 @@ selected storages through MCP for local AI assistants and agent workflows.
 - The v0.8.0 release candidate adds native secret storage, encrypted recovery, policy-scoped Agent Workspaces, bundled-sidecar activation checks, and local privacy/diagnostics controls.
 - v0.7.1 added SFTP and FTP remote-file backends, split-pane UX fixes, safer transfer/delete/upload feedback, MCP filesystem deduplication through core operations, and stronger mutation-flow regression tests.
 - v0.7.0 added OSS/COS/OBS backend support, capability-aware validation with sanitized fix hints and MCP readiness notes, a global search stop control, safer MCP exposure defaults for new/imported storages, and clearer install docs.
-- Backend expansion is OpenDAL-first, including native B2, OSS, COS, OBS, S3 default ACLs, OAuth-backed Google Drive/Microsoft OneDrive with guided local loopback PKCE connect, WebDAV compatibility mode, SFTP/FTP remote-file browsing, and capability-gated user metadata writes.
+- Backend expansion is OpenDAL-first, including native B2, OSS, COS, OBS, S3 default ACLs, OAuth-backed Google Drive/Microsoft OneDrive with guided local loopback PKCE connect, WebDAV compatibility mode, SFTP remote-file browsing, and capability-gated user metadata writes.
 - Built with Tauri, Rust, React, and Apache OpenDAL.

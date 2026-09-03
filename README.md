@@ -76,11 +76,11 @@ Manual downloads:
 
 ### Install notes
 
-Install scripts verify selected downloads against `SHA256SUMS.txt`. After v0.8.0 is published, pin it with `INFIMOUNT_VERSION=v0.8.0`; until then, `latest` installs the current stable release. Every release requires signed updater artifacts. Stable releases additionally require signed macOS and Windows applications; clearly marked prereleases may omit platform app signing.
+Install scripts verify selected downloads against `SHA256SUMS.txt`. After v0.8.0 is published, pin it with `INFIMOUNT_VERSION=v0.8.0`; until then, `latest` installs the current stable release. Every release requires signed updater artifacts. Platform application signing is included when credentials are configured; this project may publish explicitly platform-unsigned stable or prerelease packages, which can trigger operating-system warnings.
 
 ## What Infimount does
 
-- **Browse storage in one place:** local files, S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, Google Cloud Storage, Google Drive, Microsoft OneDrive, WebDAV, SFTP, and FTP.
+- **Browse storage in one place:** local files, S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, Google Cloud Storage, Google Drive, Microsoft OneDrive, WebDAV, and SFTP.
 - **Work like a desktop file manager:** grid and list views, rich previews, drag-and-drop upload, bookmarks, recents, keyboard navigation, global search stop, dual-pane transfer workflows, conflict handling, and transfer queue.
 - **Validate before you trust a backend:** reachability checks report grouped capabilities, sanitized fix hints, and MCP readiness notes.
 - **Control MCP access explicitly:** new storages are not exposed to MCP by default. Enable selected storages, tool lists, path policies, read-only mode, confirmations, and local audit logs.
@@ -130,9 +130,9 @@ Linux RPM:
 sudo rpm -i Infimount-x86_64.rpm
 ```
 
-macOS DMG: open the DMG and drag Infimount to Applications. Stable releases are signed and notarized; do not bypass a failed Gatekeeper signature check.
+macOS DMG: open the DMG and drag Infimount to Applications. Platform-signed releases are notarized when Apple credentials are configured. For an explicitly platform-unsigned release, expect Gatekeeper warnings and use the documented per-app approval path only after verifying the release checksums and provenance; never disable Gatekeeper globally.
 
-Windows MSI or EXE: run the installer. Stable releases are Authenticode-signed; do not bypass an invalid or missing signature warning.
+Windows MSI or EXE: run the installer. Authenticode signing is included when Windows credentials are configured. For an explicitly platform-unsigned release, expect SmartScreen warnings and verify checksums, provenance, and the release signing status before proceeding.
 
 Upgrade by running the latest installer again. For Homebrew installs:
 
@@ -162,7 +162,7 @@ See [Building from Source](#️-building-from-source) below.
 | **Google Cloud Storage**        | ✅ Stable  | Service account JSON; advanced capabilities depend on bucket support        |
 | **WebDAV**                      | ✅ Stable  | Nextcloud, ownCloud, etc.; optional compatibility mode for servers that cannot create collection placeholders |
 | **SFTP**                        | ✅ Stable  | Linux/macOS only; key-based SFTP via OpenDAL. Password login is intentionally not exposed because OpenDAL SFTP does not support it |
-| **FTP**                         | ✅ Stable  | FTP via OpenDAL with username/password auth; no presigned links or object versions |
+| **FTP**                         | ⏸ Disabled | Temporarily disabled in v0.8 due to an upstream command-injection vulnerability; may return after a fixed OpenDAL release |
 
 Use **Validate** in Add/Edit Storage to check reachability, grouped capability summaries, sanitized fix hints, and MCP readiness notes before browsing or exposing a storage to agents.
 For MCP/versioning details, see [Backend Capability Matrix](docs/backend-capabilities.md).
@@ -237,13 +237,13 @@ Outputs:
 
 ### Current Focus
 
-- [x] Local, S3/S3-compatible, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, GCS, Google Drive, Microsoft OneDrive, WebDAV, SFTP, and FTP browsing
+- [x] Local, S3/S3-compatible, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, GCS, Google Drive, Microsoft OneDrive, WebDAV, and SFTP browsing
 - [x] Grid and list views with file preview, drag-and-drop upload, bookmarks, recents, and transfer queue
 - [x] Dual-pane copy/move and compare/update workflows
 - [x] MCP support for local AI assistants with explicit storage exposure, tool controls, path policy, confirmations, sessions, and audit
 - [x] Version-aware MCP tools where supported by the backend
 - [x] Keyboard navigation in virtualized file grid and table views
-- [x] OAuth-backed Google Drive and OneDrive with guided local loopback connect, plus SFTP and FTP remote-file backends through OpenDAL
+- [x] OAuth-backed Google Drive and OneDrive with guided local loopback connect, plus SFTP remote-file browsing through OpenDAL
 - [x] Capability-aware storage validation summaries with fix hints and MCP readiness notes
 - [ ] Additional large-directory polish
 
@@ -304,11 +304,11 @@ Your sponsorship helps:
 
 ### macOS
 
-Stable releases are signed and notarized. Open the `.dmg`, drag `Infimount.app` to Applications, and stop if Gatekeeper reports an invalid signature or missing notarization ticket. Clearly marked prereleases may omit Apple platform signing, but their updater artifacts remain cryptographically signed; verify checksums and the prerelease label before deciding whether to use one.
+Platform-signed releases are signed and notarized when the corresponding credentials are configured. Platform-unsigned stable or prerelease packages may trigger Gatekeeper or SmartScreen warnings; never treat them as notarized or Authenticode-signed. Updater artifacts remain cryptographically signed; verify checksums, provenance, and the release's explicit signing status before installing.
 
 ### Windows
 
-Stable MSI and EXE installers are Authenticode-signed. Check the Digital Signatures property and stop if Windows reports an invalid or missing signature. Clearly marked prereleases may omit Authenticode platform signing, but their updater artifacts remain cryptographically signed.
+MSI and EXE installers are Authenticode-signed only when Windows signing credentials are configured. For platform-unsigned releases, expect SmartScreen warnings and do not treat the installer as Authenticode-authenticated. Updater artifacts remain cryptographically signed.
 
 ### Linux
 

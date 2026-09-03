@@ -2,7 +2,7 @@ use infimount_core::operations::{transfer_entries, TransferConflictPolicy, Trans
 #[cfg(not(windows))]
 use opendal::services::Sftp;
 use opendal::{
-    services::{Azblob, Ftp, Gcs, Webdav, S3},
+    services::{Azblob, Gcs, Webdav, S3},
     Operator,
 };
 use std::{error::Error, io};
@@ -318,19 +318,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     verify_round_trip(&op_s3, "S3", "verify-s3.txt").await?;
     println!("✅ S3: read/write/list/stat/delete round-trip successful");
 
-    // 3. Verify FTP
-    println!("\n--- Verifying FTP ---");
-    let ftp = Ftp::default()
-        .endpoint("ftp://127.0.0.1:2121")
-        .user("simuser")
-        .password("password123")
-        .root("/");
-
-    let op_ftp = Operator::new(ftp)?;
-    verify_round_trip(&op_ftp, "FTP", "verify-ftp.txt").await?;
-    println!("✅ FTP: read/write/list/stat/delete round-trip successful");
-
-    // 4. Verify SFTP
+    // 3. Verify SFTP
     #[cfg(not(windows))]
     {
         println!("\n--- Verifying SFTP ---");

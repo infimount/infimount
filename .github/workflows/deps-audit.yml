@@ -31,6 +31,8 @@ jobs:
           cargo tree --workspace --invert rsa@0.9.10 | tee /tmp/rsa-tree.txt
           grep -Fq 'rsa v0.9.10' /tmp/rsa-tree.txt
           grep -Fq 'reqsign-azure-storage v3.2.0' /tmp/rsa-tree.txt
+      - name: Verify FTP security disablement
+        run: bash scripts/check-ftp-disabled.sh
       - name: Run cargo audit
         # RUSTSEC-2023-0071 has no fixed rsa release. Keep this exact exception
         # visible and re-evaluate it when a fixed `rsa` release is available.
