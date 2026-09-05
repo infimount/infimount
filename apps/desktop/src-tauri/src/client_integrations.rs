@@ -1337,14 +1337,17 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn client_cli_that_hangs_is_killed_within_timeout() {
-        let dir = tempdir().unwrap();
-        // Use a shell-builtin infinite loop so the timeout test does not
-        // depend on an external `sleep` executable or its platform behavior.
-        let script = write_executable_script(dir.path(), "fake-cli", "while :; do :; done");
+        // Invoke the system shell directly rather than executing a script
+        // from a temporary directory. Some coverage runners mount temporary
+        // directories with execution restrictions, which makes spawn fail and
+        // incorrectly reports `timed_out = false`.
+        let shell = Path::new("/bin/sh");
+        assert!(shell.is_file());
+        let args = ["-c".to_string(), "while :; do :; done".to_string()];
         let started = Instant::now();
         let (status, _, _, timed_out) = run_with_timeout(
-            &script,
-            &[],
+            shell,
+            &args,
             Duration::from_millis(400),
             MAX_CAPTURED_OUTPUT,
         );
