@@ -68,5 +68,7 @@ jobs:
       - name: Lint Markdown
         run: |
           git ls-files -z "*.md" | xargs -0 -r pnpm exec markdownlint --config .markdownlint.yaml
+      - name: Check docs site is in sync with guides
+        run: node scripts/docs-site.mjs --check
       - name: Check feature documentation consistency
         run: node scripts/check-feature-docs.mjs

@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MCP Client Setup | Infimount guides</title>
+    <meta name="description" content="Infimount can expose configured storages to MCP clients through either stdio or local Streamable HTTP. All paths use the Infimount virtual filesystem:" />
+    <meta name="robots" content="index,follow,max-image-preview:large" />
+    <meta name="theme-color" content="#f0ede6" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https://infimount.github.io; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'none'; base-uri 'self'; form-action 'none';" />
+    <link rel="canonical" href="https://infimount.github.io/infimount/guide/mcp-setup.html" />
+    <link rel="icon" href="../assets/infimount-logo.png" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Infimount" />
+    <meta property="og:title" content="MCP Client Setup | Infimount guides" />
+    <meta property="og:description" content="Infimount can expose configured storages to MCP clients through either stdio or local Streamable HTTP. All paths use the Infimount virtual filesystem:" />
+    <meta property="og:url" content="https://infimount.github.io/infimount/guide/mcp-setup.html" />
+    <meta property="og:image" content="https://infimount.github.io/infimount/assets/infimount-banner.png" />
+    
+    <style>
+:root {
+        --paper: #f0ede6;
+        --paper-deep: #e5e0d6;
+        --ink: #1d2421;
+        --muted: #626861;
+        --faint: #8b918a;
+        --rule: #c9c8bf;
+        --orange: #c96035;
+        --orange-dark: #914325;
+        --forest: #29433a;
+        --night: #1d2824;
+        --white: #f9f7f2;
+        --serif: "DM Serif Display", Georgia, serif;
+        --sans: "Inter Tight", Inter, ui-sans-serif, system-ui, sans-serif;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        --measure: 72rem;
+        --ease: cubic-bezier(.22, 1, .36, 1);
+      }
+      *, *::before, *::after { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      @media (prefers-reduced-motion: reduce) {
+        html { scroll-behavior: auto; }
+      }
+      body { margin: 0; min-width: 320px; color: var(--ink); background: var(--paper); font-family: var(--sans); font-size: 16px; line-height: 1.6; text-rendering: optimizeLegibility; }
+      a { color: inherit; }
+      img { max-width: 100%; }
+      :focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+      .skip-link { position: absolute; left: -999px; top: 8px; z-index: 20; padding: 10px 14px; background: var(--orange); color: var(--white); }
+      .skip-link:focus { left: 8px; }
+      .shell { width: min(var(--measure), calc(100% - 48px)); margin-inline: auto; }
+      .eyebrow { display: flex; align-items: center; gap: 9px; margin: 0; color: var(--orange-dark); font-size: .72rem; font-weight: 800; letter-spacing: .15em; text-transform: uppercase; }
+      .eyebrow::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--orange); }
+      .display-dot::after { content: "·"; margin-left: .08em; color: var(--orange); font-family: var(--sans); font-weight: 800; }
+      .topbar { position: sticky; top: 0; z-index: 10; border-bottom: 1px solid rgba(201, 200, 191, .86); background: rgba(240, 237, 230, .92); }
+      .topbar-inner { display: flex; align-items: center; justify-content: space-between; min-height: 74px; gap: 24px; }
+      .wordmark { display: inline-flex; align-items: center; gap: 11px; color: var(--ink); font-size: 1.15rem; font-weight: 800; letter-spacing: -.055em; text-decoration: none; }
+      .mark { display: grid; width: 27px; height: 27px; place-items: center; border: 2px solid var(--ink); border-radius: 50% 50% 50% 12%; font-size: .78rem; line-height: 1; transform: rotate(-12deg); }
+      .nav { display: flex; align-items: center; gap: 22px; color: var(--muted); font-size: .84rem; font-weight: 600; }
+      .nav a { text-decoration: none; }
+      .nav a:hover, .nav a[aria-current="page"] { color: var(--orange-dark); }
+      .nav-cta { padding: 9px 14px; border: 1px solid var(--ink); color: var(--white); background: var(--ink); }
+      .guide-hero { padding: 56px 0 8px; }
+      .guide-hero h1 { max-width: 16ch; margin: 20px 0 0; font-size: clamp(2.6rem, 5.5vw, 4.6rem); line-height: .95; letter-spacing: -.06em; }
+      .guide-hero .dek { max-width: 44rem; margin: 18px 0 0; color: var(--muted); font-size: 1.08rem; }
+      .crumbs { display: flex; gap: 10px; align-items: center; margin: 26px 0 0; padding: 0; list-style: none; color: var(--muted); font-size: .8rem; }
+      .crumbs a { text-decoration: none; }
+      .crumbs a:hover { color: var(--orange-dark); }
+      .crumbs li + li::before { content: "/"; margin-right: 10px; color: var(--faint); }
+      .guide-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: clamp(32px, 5vw, 72px); align-items: start; padding: 36px 0 96px; }
+      .toc { position: sticky; top: 104px; max-height: calc(100vh - 140px); overflow: auto; margin: 0; padding: 18px 0 0; border-top: 1px solid var(--ink); list-style: none; font-size: .84rem; }
+      .toc li { margin: 2px 0; }
+      .toc li.toc-h3 { padding-left: 14px; }
+      .toc a { display: block; padding: 5px 0 5px 10px; margin-left: -12px; color: var(--muted); text-decoration: none; border-left: 2px solid transparent; }
+      .toc a:hover { color: var(--ink); }
+      .toc a[aria-current="true"] { color: var(--orange-dark); font-weight: 700; border-left-color: var(--orange); }
+      .prose { max-width: 46rem; }
+      .prose h2 { margin: 52px 0 0; padding-top: 22px; border-top: 1px solid var(--rule); font-size: clamp(1.5rem, 2.6vw, 2rem); line-height: 1.05; letter-spacing: -.035em; }
+      .prose h2:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+      .prose h3 { margin: 34px 0 0; font-size: 1.15rem; letter-spacing: -.02em; }
+      .prose p, .prose li { color: #333936; }
+      .prose > p:first-of-type { font-size: 1.08rem; }
+      .prose a { color: var(--orange-dark); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+      .prose code { padding: 1px 5px; border: 1px solid var(--rule); background: var(--paper-deep); font: .82em var(--mono); }
+      .prose pre { margin: 0; overflow: auto; border: 0; background: none; }
+      .prose pre code { display: block; padding: 16px 18px; border: 0; font-size: .84rem; line-height: 1.55; background: none; }
+      .code-frame { position: relative; margin: 18px 0; border: 1px solid var(--rule); background: var(--night); color: #d3dfd3; }
+      .code-frame pre code { color: #d3dfd3; }
+      .code-frame .code-lang { position: absolute; top: 8px; right: 86px; color: #8b978c; font-size: .68rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+      .code-frame .copy-command { position: absolute; top: 6px; right: 6px; border-color: #4b5b51; color: #d3dfd3; background: transparent; }
+      .code-frame .copy-command:hover { border-color: var(--orange); color: #d88a62; }
+      .copy-command { padding: 6px 9px; border: 1px solid var(--rule); color: var(--ink); background: var(--paper); cursor: pointer; font: 700 .72rem var(--sans); }
+      .copy-command:hover { border-color: var(--orange); color: var(--orange-dark); }
+      .table-scroll { margin: 20px 0; overflow-x: auto; border-top: 1px solid var(--ink); }
+      .table-scroll table { width: 100%; border-collapse: collapse; font-size: .86rem; }
+      .table-scroll th { padding: 10px 12px 10px 0; text-align: left; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--ink); white-space: nowrap; }
+      .table-scroll td { padding: 10px 12px 10px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+      .prose blockquote { margin: 22px 0; padding: 4px 0 4px 18px; border-left: 2px solid var(--orange); color: var(--muted); }
+      .prose blockquote p { margin: 6px 0; }
+      .prose ul, .prose ol { padding-left: 22px; }
+      .prose li + li { margin-top: 6px; }
+      .prose hr { margin: 44px 0; border: 0; border-top: 1px solid var(--rule); }
+      .page-foot { margin-top: 64px; border-top: 1px solid var(--ink); }
+      .page-foot nav { display: flex; justify-content: space-between; gap: 20px; padding: 18px 0; }
+      .page-foot a { text-decoration: none; }
+      .page-foot a:hover .page-foot-label { color: var(--orange-dark); }
+      .page-foot-eyebrow { display: block; color: var(--faint); font-size: .7rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+      .page-foot-label { display: block; margin-top: 4px; font-size: 1.02rem; font-weight: 700; letter-spacing: -.02em; }
+      .page-foot .next { text-align: right; }
+      .page-meta { margin-top: 26px; color: var(--faint); font-size: .78rem; }
+      .page-meta a { color: var(--muted); }
+      .guides-hero { padding: 56px 0 12px; }
+      .guides-hero h1 { max-width: 14ch; margin: 20px 0 0; font-size: clamp(2.6rem, 5.5vw, 4.6rem); line-height: .95; letter-spacing: -.06em; }
+      .guides-hero .dek { max-width: 42rem; margin: 18px 0 0; color: var(--muted); font-size: 1.08rem; }
+      .search-row { display: flex; gap: 12px; align-items: center; margin: 30px 0 8px; max-width: 34rem; }
+      .search-row label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+      .search-row input { flex: 1; min-height: 48px; padding: 10px 14px; border: 1px solid var(--ink); background: var(--white); color: var(--ink); font: 400 .95rem var(--sans); }
+      .search-row kbd { padding: 4px 8px; border: 1px solid var(--rule); color: var(--muted); font: .75rem var(--mono); }
+      .search-count { color: var(--faint); font-size: .8rem; min-height: 1.2em; }
+      .guide-group { margin-top: 46px; }
+      .guide-group > h2 { display: flex; align-items: baseline; gap: 14px; margin: 0; padding-top: 20px; border-top: 1px solid var(--ink); font-size: 1.35rem; letter-spacing: -.03em; }
+      .guide-group > h2 .count { color: var(--faint); font-size: .8rem; font-weight: 600; }
+      .guide-rows { margin-top: 6px; border-bottom: 1px solid var(--rule); }
+      .guide-row { display: grid; grid-template-columns: 64px 1fr auto; gap: 18px; align-items: baseline; padding: 17px 0; border-top: 1px solid var(--rule); text-decoration: none; }
+      .guide-row:hover .guide-row-title { color: var(--orange-dark); }
+      .guide-row-index { color: var(--orange); font-size: .75rem; font-weight: 800; }
+      .guide-row-title { font-size: 1.06rem; font-weight: 700; letter-spacing: -.02em; }
+      .guide-row-dek { margin: 5px 0 0; color: var(--muted); font-size: .88rem; max-width: 46rem; }
+      .guide-row-go { color: var(--faint); font-weight: 800; }
+      .guide-row:hover .guide-row-go { color: var(--orange); }
+      .footer { margin-top: 0; padding: 44px 0 26px; background: var(--ink); color: var(--white); }
+      .footer-grid { display: grid; grid-template-columns: 1.7fr repeat(3, 1fr); gap: 30px; }
+      .footer .wordmark { color: var(--white); }
+      .footer .mark { border-color: var(--white); }
+      .footer-brand p { max-width: 15rem; margin: 16px 0 0; color: #aeb8af; font-size: .84rem; }
+      .footer h3 { margin: 0 0 13px; color: #d88a62; font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; }
+      .footer a:not(.wordmark) { display: block; width: fit-content; margin: 7px 0; color: #e7ebe4; font-size: .82rem; text-decoration: none; }
+      .footer a:not(.wordmark):hover { color: #fff; text-decoration: underline; }
+      .footer-bottom { display: flex; justify-content: space-between; gap: 16px; margin-top: 30px; padding-top: 16px; border-top: 1px solid #3a4640; color: #aeb8af; font-size: .76rem; }
+      .empty-state { padding: 40px 0 90px; color: var(--muted); }
+      @media (max-width: 900px) {
+        .guide-layout { grid-template-columns: 1fr; }
+        .toc { position: static; max-height: none; border-top: 0; border-bottom: 1px solid var(--rule); padding: 0 0 14px; columns: 2; }
+        .toc li.toc-h3 { padding-left: 0; }
+        .guide-row { grid-template-columns: 44px 1fr; }
+        .guide-row-go { display: none; }
+        .footer-grid { grid-template-columns: 1fr 1fr; }
+      }
+      @media (max-width: 650px) {
+        .nav a:not(.nav-cta):not([aria-current="page"]) { display: none; }
+        .toc { columns: 1; }
+        .footer-bottom { flex-direction: column; gap: 4px; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        html { scroll-behavior: auto; }
+      }
+      @media print {
+        .topbar, .toc, .page-foot nav, .copy-command, .search-row { display: none; }
+        body { background: #fff; font-size: 12px; }
+        .prose { max-width: none; }
+      }
+    </style>
+  </head>
+<body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="topbar">
+      <div class="shell topbar-inner">
+        <a class="wordmark" href="../index.html" aria-label="Infimount home"><span class="mark" aria-hidden="true">∞</span><span>infimount</span></a>
+        <nav class="nav" aria-label="Primary navigation">
+          <a href="../index.html#workbench">Product</a>
+          <a href="../guides.html" aria-current="page">Guides</a>
+          <a href="../index.html#install">Install</a>
+          <a class="nav-cta" href="https://github.com/infimount/infimount/releases/latest">Download</a>
+        </nav>
+      </div>
+    </header>
+    <main id="main">
+      <div class="shell guide-hero">
+        <p class="eyebrow">Guide / Agents and safety</p>
+        <h1 class="display-dot">MCP Client Setup</h1>
+        <p class="dek">Expose storage to MCP clients with explicit tools and scopes.</p>
+        <ol class="crumbs" aria-label="Breadcrumb"><li><a href="../index.html">Home</a></li><li><a href="../guides.html">Guides</a></li><li aria-current="page">MCP Client Setup</li></ol>
+      </div>
+      <div class="shell guide-layout">
+        <nav class="toc-wrap" aria-label="On this page"><ol class="toc"><li class="toc-h2"><a href="#data-plane-only-no-storage-administration-via-mcp">Data-Plane Only: No Storage Administration via MCP</a></li><li class="toc-h2"><a href="#safe-default-tool-set">Safe Default Tool Set</a></li><li class="toc-h2"><a href="#desktop-settings">Desktop Settings</a></li><li class="toc-h2"><a href="#what-the-agent-can-access">What the Agent Can Access</a></li><li class="toc-h2"><a href="#risky-operation-approval">Risky Operation Approval</a></li><li class="toc-h2"><a href="#audit-viewer">Audit Viewer</a></li><li class="toc-h2"><a href="#claude-desktop-stdio">Claude Desktop / Stdio</a></li><li class="toc-h2"><a href="#cursor-vs-code-style-mcp-json">Cursor / VS Code-style MCP JSON</a></li><li class="toc-h2"><a href="#lm-studio-generic-http-clients">LM Studio / Generic HTTP Clients</a></li><li class="toc-h2"><a href="#http-authentication">HTTP Authentication</a></li><li class="toc-h2"><a href="#available-tools">Available Tools</a></li></ol></nav>
+        <article class="prose"><h1 id="mcp-client-setup">MCP Client Setup</h1>
+<p>Infimount can expose configured storages to MCP clients through either stdio or local Streamable HTTP.
+All paths use the Infimount virtual filesystem:</p>
+<ul>
+<li><code>/</code> lists MCP-exposed storages.</li>
+<li><code>/StorageName</code> lists a storage root.</li>
+<li><code>/StorageName/path/to/file.txt</code> routes to that backend path.</li>
+</ul>
+<p>Only storages with <code>enabled=true</code> and <code>mcp_exposed=true</code> are visible to MCP tools.
+If a storage is marked <code>read_only=true</code>, write tools are rejected for that storage.</p>
+<h2 id="data-plane-only-no-storage-administration-via-mcp">Data-Plane Only: No Storage Administration via MCP</h2>
+<p>The public MCP server exposes <strong>filesystem/data-plane tools only</strong>. Storage administration
+tools (list_storages, add_storage, edit_storage, remove_storage, import_config, export_config,
+validate_storage) are <strong>not available</strong> through MCP discovery or dispatch.</p>
+<p>These functions remain available exclusively through the desktop control plane (the Infimount
+desktop application). This means MCP clients — including AI agents — cannot manage storage
+registries or access credentials through MCP.</p>
+<p>This is a pre-1.0 breaking change from v0.7. See <a href="./security.html">Security Model</a> for details.</p>
+<h2 id="safe-default-tool-set">Safe Default Tool Set</h2>
+<p>A fresh installation enables only the safe read-only tool set by default:</p>
+<ul>
+<li>list_dir</li>
+<li>stat_path</li>
+<li>read_file</li>
+<li>search_paths</li>
+<li>list_versions</li>
+<li>read_file_version</li>
+</ul>
+<p>All write, destructive, external-link, and session tools are disabled by default and must be
+explicitly enabled. Each tool is annotated with a category (Read, Write, Destructive,
+ExternalLink, Session) and a risk level (Low, Medium, High).</p>
+<h2 id="desktop-settings">Desktop Settings</h2>
+<p>Open <strong>MCP Settings</strong> in the desktop app to configure:</p>
+<ul>
+<li>transport: <code>stdio</code> or <code>http</code></li>
+<li>bind address and port for HTTP</li>
+<li>exposed tool list (grouped by category with risk labels)</li>
+<li>generated client snippets</li>
+<li>per-storage path policies and confirmation rules</li>
+<li>pending approval queue and MCP audit viewer</li>
+</ul>
+<p>Apply an access preset to configure tools and policies together: <strong>Read-only research</strong> for safe reads, <strong>Workspace Agent</strong> for non-destructive writes inside existing workspace grants, <strong>Manual Approval</strong> for broad tools with explicit confirmations, or <strong>Lock down MCP</strong> to pause agent access. Use <strong>Configure advanced tools</strong> to inspect non-default tools. Enabling any write, destructive, external-link, or session tool requires a confirmation dialog, regardless of its risk label.</p>
+<p>Tool exposure changes are applied after restarting the HTTP server. The settings panel shows when a restart is required.</p>
+<h2 id="what-the-agent-can-access">What the Agent Can Access</h2>
+<p>MCP access is the intersection of several local controls:</p>
+<ol>
+<li>The storage must be enabled.</li>
+<li>The storage must be exposed to MCP.</li>
+<li>The requested tool must be enabled.</li>
+<li>The storage policy must allow the requested path.</li>
+<li>Read-only storage or read-only policy must allow the operation type.</li>
+<li>Path rules grant explicit access for specific prefixes; if no rule matches, the default access mode applies.</li>
+<li>Risky operations may require approval before execution.</li>
+</ol>
+<p>Use the <strong>What the agent can access</strong> summary in MCP Settings before connecting a client. Denied path prefixes override all other rules. When no path rules are defined, the default access mode applies to all paths.</p>
+<h2 id="risky-operation-approval">Risky Operation Approval</h2>
+<p>When a tool call requires approval, the MCP response contains <code>status: &quot;requires_confirmation&quot;</code> and an operation ID. The operation is not executed until it is approved in Infimount.</p>
+<p>The approval queue shows:</p>
+<ul>
+<li>tool name</li>
+<li>operation and risk type</li>
+<li>storage</li>
+<li>path</li>
+<li>exact action summary</li>
+<li>expiry time</li>
+</ul>
+<p>MCP Settings also shows active scoped sessions created by MCP clients, including storage scope, path prefixes, read-only status, and expiry. These sessions are in-memory, expire locally, and are cleared when the desktop HTTP server stops. Audit events include the matched policy rule ID and workspace ID when a policy rule determined the access decision.</p>
+<p>Approvals are single-use and tied to the original request fingerprint. A client cannot approve one operation and then reuse the ID for a different path, storage, or tool. Pending approvals are in-memory and are cleared by app/server restart.</p>
+<h2 id="audit-viewer">Audit Viewer</h2>
+<p>MCP Settings includes a local audit viewer for recent MCP activity. It records allowed, denied, confirmation-required, confirmed, and failed tool calls. The audit log is bounded and local-only. Secrets, auth tokens, file contents, and presigned URL query signatures are not stored.</p>
+<p>Use <strong>Copy visible</strong> for a JSON clipboard export of the current filtered rows, or <strong>Export visible</strong> to write a local redacted audit bundle under <code>~/.infimount/exports/</code> with a redaction manifest.</p>
+<h2 id="claude-desktop-stdio">Claude Desktop / Stdio</h2>
+<p>Use stdio when the MCP client launches the server process itself. Copy the generated JSON from MCP Settings; the desktop inserts the verified absolute path of its bundled, same-version sidecar and correctly escapes spaces and Windows backslashes.</p>
+<div class="code-frame"><span class="code-lang">json</span><pre><code>{
+  &quot;mcpServers&quot;: {
+    &quot;infimount&quot;: {
+      &quot;command&quot;: &quot;/absolute/path/from-Infimount-MCP-Settings/infimount_mcp&quot;,
+      &quot;args&quot;: [&quot;serve&quot;, &quot;--transport&quot;, &quot;stdio&quot;]
+    }
+  }
+}</code></pre><button class="copy-command" type="button">Copy</button></div>
+<p>Normal desktop users do not need to build or install <code>infimount_mcp</code> separately, and onboarding does not fall back to an executable on <code>PATH</code>.</p>
+<h2 id="cursor-vs-code-style-mcp-json">Cursor / VS Code-style MCP JSON</h2>
+<p>Many editor clients accept a similar MCP JSON shape. Use stdio for the broadest compatibility:</p>
+<div class="code-frame"><span class="code-lang">json</span><pre><code>{
+  &quot;mcpServers&quot;: {
+    &quot;infimount&quot;: {
+      &quot;command&quot;: &quot;/absolute/path/from-Infimount-MCP-Settings/infimount_mcp&quot;,
+      &quot;args&quot;: [&quot;serve&quot;, &quot;--transport&quot;, &quot;stdio&quot;]
+    }
+  }
+}</code></pre><button class="copy-command" type="button">Copy</button></div>
+<p>When the client supports Streamable HTTP, use the HTTP URL form instead:</p>
+<div class="code-frame"><span class="code-lang">json</span><pre><code>{
+  &quot;mcpServers&quot;: {
+    &quot;infimount&quot;: {
+      &quot;url&quot;: &quot;http://127.0.0.1:7331/mcp&quot;
+    }
+  }
+}</code></pre><button class="copy-command" type="button">Copy</button></div>
+<h2 id="lm-studio-generic-http-clients">LM Studio / Generic HTTP Clients</h2>
+<p>Use HTTP when Infimount is already running a local server.
+The default endpoint is:</p>
+<div class="code-frame"><span class="code-lang">text</span><pre><code>http://127.0.0.1:7331/mcp</code></pre><button class="copy-command" type="button">Copy</button></div>
+<p>Port <code>0</code> is supported for auto-pick. In that case, use the actual endpoint shown by the desktop settings panel or the <code>infimount_mcp</code> process output.</p>
+<p>Generic HTTP configuration:</p>
+<div class="code-frame"><span class="code-lang">json</span><pre><code>{
+  &quot;name&quot;: &quot;infimount&quot;,
+  &quot;transport&quot;: &quot;http&quot;,
+  &quot;url&quot;: &quot;http://127.0.0.1:7331/mcp&quot;
+}</code></pre><button class="copy-command" type="button">Copy</button></div>
+<h2 id="http-authentication">HTTP Authentication</h2>
+<p>Desktop HTTP can run without a token only on loopback for local development. The built-in desktop and sidecar HTTP transports are loopback-only. Use a TLS-terminating reverse proxy for any remote deployment.</p>
+<p>Headless HTTP mode requires a bearer token unless <code>--allow-insecure</code> is passed for loopback local development. Set the token with either CLI or environment:</p>
+<div class="code-frame"><span class="code-lang">bash</span><pre><code>INFIMOUNT_AUTH_TOKEN='replace-with-a-random-token' /verified/path/to/infimount_mcp serve --transport http --bind 127.0.0.1 --port 7331</code></pre><button class="copy-command" type="button">Copy</button></div>
+<p>Clients must send:</p>
+<div class="code-frame"><span class="code-lang">text</span><pre><code>Authorization: Bearer replace-with-a-random-token</code></pre><button class="copy-command" type="button">Copy</button></div>
+<p>If your client has a headers field, configure it like this:</p>
+<div class="code-frame"><span class="code-lang">json</span><pre><code>{
+  &quot;Authorization&quot;: &quot;Bearer replace-with-a-random-token&quot;
+}</code></pre><button class="copy-command" type="button">Copy</button></div>
+<p>Keep the default bind address at <code>127.0.0.1</code> for desktop/local use. Binding to <code>0.0.0.0</code> or a LAN address is rejected by the built-in server.</p>
+<h2 id="available-tools">Available Tools</h2>
+<p>The exact exposed tool list is controlled from MCP settings.
+Current tool groups include:</p>
+<ul>
+<li>filesystem: <code>list_dir</code>, <code>stat_path</code>, <code>read_file</code>, <code>write_file</code>, <code>mkdir</code>, <code>copy_path</code>, <code>move_path</code>, <code>delete_path</code></li>
+<li>versions: <code>list_versions</code>, <code>read_file_version</code>, <code>delete_version</code></li>
+<li>utility: <code>search_paths</code>, <code>generate_download_link</code></li>
+<li>sessions: <code>session_create</code>, <code>session_end</code></li>
+</ul>
+<p>Version listing and write operations are bounded for safety:</p>
+<ul>
+<li><code>list_versions</code> scans at most 10,000 versions per path, returns at most 1,000 per page, and reports <code>truncated: true</code> when more versions may exist. Pagination uses a signed cursor bound to the storage, path, and storage revision.</li>
+<li><code>write_file</code> accepts at most 4 MiB of content and is disabled by default. No-overwrite writes require an atomic create-if-absent-capable backend; other backends return <code>ERR_BACKEND_UNSUPPORTED</code>.</li>
+</ul>
+<p>Storage-management operations are desktop-only and are never exposed as public MCP tools.
+For threat model details, see <a href="./security.html">Security Model</a>.</p>
+<div class="page-foot"><nav aria-label="Guide pages"><a href="./workspaces.html"><span class="page-foot-eyebrow">Previous</span><span class="page-foot-label">Agent Workspaces</span></a><a class="next" href="./privacy.html"><span class="page-foot-eyebrow">Next</span><span class="page-foot-label">Privacy and Diagnostics</span></a></nav><p class="page-meta">Source: <a href="https://github.com/infimount/infimount/blob/main/docs/mcp-client-setup.md" rel="noopener" target="_blank">docs/mcp-client-setup.md</a> · <a href="../guides.html">All guides</a></p></div></article>
+      </div>
+    </main>
+    <footer class="footer">
+      <div class="shell">
+        <div class="footer-grid"><div class="footer-brand"><a class="wordmark" href="../index.html"><span class="mark" aria-hidden="true">∞</span><span>infimount</span></a><p>One surface for every storage. Built with Tauri, Rust, React, and Apache OpenDAL.</p></div><div><h3>Product</h3><a href="../index.html#workbench">Workbench</a><a href="../index.html#connectors">Connectors</a><a href="../index.html#agents">Agent access</a></div><div><h3>Guides</h3><a href="../guides.html">All guides</a><a href="../guide/security.html">Security model</a><a href="../guide/backends.html">Capabilities</a></div><div><h3>Project</h3><a href="https://github.com/infimount/infimount">GitHub</a><a href="https://github.com/infimount/infimount/blob/main/LICENSE">MIT license</a><a href="https://github.com/infimount/infimount/releases">Releases</a></div></div>
+        <div class="footer-bottom"><span>© Infimount contributors</span><span>Storage configuration and credentials remain local by default.</span></div>
+      </div>
+    </footer>
+    <script>
+      document.documentElement.classList.add("js");
+      document.querySelectorAll(".copy-command").forEach((button) => button.addEventListener("click", async () => {
+        const frame = button.closest(".code-frame, .command");
+        const code = frame?.querySelector("code")?.textContent?.trim();
+        if (!code) return;
+        try { await navigator.clipboard.writeText(code); button.textContent = "Copied"; window.setTimeout(() => { button.textContent = "Copy"; }, 1600); }
+        catch { button.textContent = "Copy failed"; window.setTimeout(() => { button.textContent = "Copy"; }, 1600); }
+      }));
+      const tocLinks = Array.from(document.querySelectorAll(".toc a"));
+      if (tocLinks.length && "IntersectionObserver" in window) {
+        const byId = new Map(tocLinks.map((a) => [a.getAttribute("href").slice(1), a]));
+        const observer = new IntersectionObserver((entries) => {
+          entries.forEach((entry) => {
+            const link = byId.get(entry.target.id);
+            if (link && entry.isIntersecting) {
+              tocLinks.forEach((a) => a.removeAttribute("aria-current"));
+              link.setAttribute("aria-current", "true");
+            }
+          });
+        }, { rootMargin: "-20% 0px -70% 0px" });
+        document.querySelectorAll(".prose h2[id], .prose h3[id]").forEach((h) => observer.observe(h));
+      }
+    </script>
+  </body>
+</html>
