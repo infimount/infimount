@@ -1,10 +1,10 @@
 # Infimount 0.8.0: Local Trust, Recovery, and Agent Activation
 
-> Draft release notes. v0.8.0 has not been published; v0.7.1 remains the current stable release.
+> v0.8.0 is the current stable release.
 
 Infimount 0.8.0 focuses on safer local credential handling, explicit agent access, recoverable configuration, and verification of the MCP executable bundled with the desktop app.
 
-Release: not published yet.
+Release: https://github.com/infimount/infimount/releases/tag/v0.8.0
 
 ## Highlights
 

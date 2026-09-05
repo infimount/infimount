@@ -28,9 +28,7 @@
 
 ## Install
 
-**Current stable release:** [v0.7.1](https://github.com/infimount/infimount/releases/tag/v0.7.1)
-
-**Release candidate under validation:** v0.8.0 (not published yet)
+**Current stable release:** [v0.8.0](https://github.com/infimount/infimount/releases/tag/v0.8.0)
 
 ### Linux
 
@@ -76,7 +74,7 @@ Manual downloads:
 
 ### Install notes
 
-Install scripts verify selected downloads against `SHA256SUMS.txt`. After v0.8.0 is published, pin it with `INFIMOUNT_VERSION=v0.8.0`; until then, `latest` installs the current stable release. Every release requires signed updater artifacts. Platform application signing is included when credentials are configured; this project may publish explicitly platform-unsigned stable or prerelease packages, which can trigger operating-system warnings.
+Install scripts verify selected downloads against `SHA256SUMS.txt`. Pin this stable release with `INFIMOUNT_VERSION=v0.8.0`; `latest` installs the current stable release. Every release requires signed updater artifacts. Platform application signing is included when credentials are configured; this project may publish explicitly platform-unsigned stable or prerelease packages, which can trigger operating-system warnings.
 
 ## What Infimount does
 
