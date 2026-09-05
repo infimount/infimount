@@ -54,6 +54,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          # The docs-site drift check derives sitemap dates from file
+          # history; a shallow clone would fall back to generation day.
+          fetch-depth: 0
       - name: Install Node.js
         uses: actions/setup-node@v6
         with:
