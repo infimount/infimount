@@ -11,14 +11,17 @@
     "test:release:policy": "bash scripts/check-zero-manual-release-gate.sh",
     "test:release:rehearsal": "bash scripts/release-rehearsal.sh",
     "test:release:rehearsal:policy": "bash scripts/check-signing-policy-rehearsal.sh --matrix",
-    "test:security:ftp-disabled": "bash scripts/check-ftp-disabled.sh"
+    "test:security:ftp-disabled": "bash scripts/check-ftp-disabled.sh",
+    "docs:build": "node scripts/docs-site.mjs",
+    "docs:check": "node scripts/docs-site.mjs --check"
   },
   "dependencies": {
     "@tauri-apps/api": "2.10.1",
     "@tauri-apps/cli": "2.9.4"
   },
   "devDependencies": {
-    "markdownlint-cli": "^0.48.0"
+    "markdownlint-cli": "^0.48.0",
+    "marked": "^18.0.11"
   },
   "pnpm": {
     "overrides": {

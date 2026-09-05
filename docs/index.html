@@ -203,6 +203,18 @@
       .install-foot > div { padding-top: 15px; border-top: 1px solid var(--rule); }
       .install-foot strong { display: block; font-size: .84rem; }
       .install-foot span { display: block; margin-top: 7px; color: var(--muted); font-size: .8rem; }
+      .verify-steps { margin: 34px 0 0; padding: 0; list-style: none; border-top: 1px solid var(--ink); }
+      .verify-steps li { display: grid; grid-template-columns: 40px 1fr; gap: 14px; padding: 15px 0; border-bottom: 1px solid var(--rule); }
+      .verify-steps .step-number { color: var(--orange); font-size: .75rem; font-weight: 800; padding-top: 2px; }
+      .verify-steps strong { display: block; font-size: .9rem; letter-spacing: -.01em; }
+      .verify-steps p { margin: 6px 0 0; color: var(--muted); font-size: .83rem; max-width: 34rem; }
+      .verify-steps code { padding: 1px 5px; border: 1px solid var(--rule); background: var(--paper-deep); font: .8em ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .notice { margin-top: 30px; padding: 20px 22px; border: 1px solid var(--ink); background: var(--paper-deep); }
+      .notice h3 { margin: 0; font-size: .95rem; letter-spacing: -.02em; }
+      .notice h3 .flag { display: inline-block; margin-right: 10px; padding: 3px 8px; background: var(--orange); color: var(--white); font-size: .68rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; vertical-align: 2px; }
+      .notice p { margin: 10px 0 0; color: var(--muted); font-size: .84rem; max-width: 40rem; }
+      .notice p + p { margin-top: 8px; }
+      .notice a { color: var(--orange-dark); }
       .closing { padding: 88px 0; color: var(--white); background: var(--orange-dark); }
       .closing-layout { display: flex; align-items: end; justify-content: space-between; gap: 32px; }
       .closing h2 { max-width: 10ch; margin: 0; font: 400 clamp(2.8rem, 6vw, 6rem)/.88 var(--serif); letter-spacing: -.045em; }
@@ -276,6 +288,7 @@
           <a href="#workbench">Workbench</a>
           <a href="#connectors">Connectors</a>
           <a href="#agents">Agents</a>
+          <a href="./guides.html">Guides</a>
           <a href="#install">Install</a>
           <a class="nav-cta" href="https://github.com/infimount/infimount">View on GitHub</a>
         </nav>
@@ -377,12 +390,22 @@
 
       <section id="install" class="section install shell" aria-labelledby="install-title">
         <div class="install-layout">
-          <div class="install-copy" data-reveal><p class="eyebrow">04 / Install</p><h2 id="install-title" class="display-dot">Start close to the metal.</h2><p>Install the current stable release from a verified package, then connect the storage you already trust.</p><div class="install-links"><a href="https://github.com/infimount/infimount/releases">All releases ↗</a><a href="https://github.com/infimount/infimount/blob/main/docs/security.md">Security model ↗</a><a href="https://github.com/infimount/infimount/blob/main/docs/mcp-client-setup.md">MCP setup ↗</a></div></div>
+          <div class="install-copy" data-reveal><p class="eyebrow">04 / Install</p><h2 id="install-title" class="display-dot">Start close to the metal.</h2><p>Install the current stable release from a verified package, then connect the storage you already trust.</p>            <div class="install-links"><a href="https://github.com/infimount/infimount/releases">All releases ↗</a><a href="./guide/security.html">Security model ↗</a><a href="./guide/mcp-setup.html">MCP setup ↗</a><a href="./guides.html">All guides ↗</a></div></div>
           <div data-reveal>
             <div class="command-list" aria-label="Install commands">
               <div class="command"><span class="command-label">Linux / macOS</span><code class="code-block">curl -fsSL https://github.com/infimount/infimount/releases/latest/download/install.sh | sh</code><button class="copy-command" type="button" aria-label="Copy Linux and macOS install command">Copy</button></div>
               <div class="command"><span class="command-label">Windows PowerShell</span><code class="code-block">irm https://github.com/infimount/infimount/releases/latest/download/install.ps1 | iex</code><button class="copy-command" type="button" aria-label="Copy Windows install command">Copy</button></div>
               <div class="command"><span class="command-label">Homebrew</span><code class="code-block">brew tap infimount/infimount && brew install infimount</code><button class="copy-command" type="button" aria-label="Copy Homebrew install command">Copy</button></div>
+            </div>
+            <ol class="verify-steps" aria-label="Verify a manual download">
+              <li><span class="step-number" aria-hidden="true">01</span><div><strong>Fetch the checksum list</strong><p>Every release publishes <code>SHA256SUMS.txt</code> next to its packages. Download it from the same release page as your installer.</p></div></li>
+              <li><span class="step-number" aria-hidden="true">02</span><div><strong>Compare your file</strong><p>On Linux or macOS run <code>sha256sum -c</code> against the matching line; on Windows use <code>Get-FileHash -Algorithm SHA256</code> and compare by eye. The one-line installers check this for you.</p></div></li>
+              <li><span class="step-number" aria-hidden="true">03</span><div><strong>Launch only on a match</strong><p>If any byte differs, delete the file and download again. A checksum mismatch is never a warning to click through.</p></div></li>
+            </ol>
+            <div class="notice" role="note" aria-labelledby="signing-note-title">
+              <h3 id="signing-note-title"><span class="flag">Signing</span>macOS and Windows builds are currently unsigned</h3>
+              <p>Gatekeeper on macOS and SmartScreen on Windows will ask for explicit approval before first launch. That warning is expected. Verify the checksum first, then open the app explicitly rather than bypassing anything silently.</p>
+              <p>Each release page states its signing status plainly, and every package ships with checksums, per-file hashes, and an SBOM. Read the <a href="./guide/security.html">security model</a> before exposing anything to agents.</p>
             </div>
             <div class="install-foot"><div><strong>Linux</strong><span>DEB, RPM, or AppImage. Check the release checksum before launch.</span></div><div><strong>macOS and Windows</strong><span>Platform signing is shown explicitly on each release. Verify checksums and provenance; never bypass an invalid signature silently.</span></div></div>
           </div>
@@ -396,7 +419,7 @@
 
     <footer class="footer">
       <div class="shell">
-        <div class="footer-grid"><div class="footer-brand"><a class="wordmark" href="https://github.com/infimount/infimount"><span class="mark" aria-hidden="true">∞</span><span>infimount</span></a><p>One surface for every storage. Built with Tauri, Rust, React, and Apache OpenDAL.</p></div><div><h3>Product</h3><a href="#workbench">Workbench</a><a href="#connectors">Connectors</a><a href="#agents">Agent access</a></div><div><h3>Resources</h3><a href="https://github.com/infimount/infimount/blob/main/docs/backend-capabilities.md">Capabilities</a><a href="https://github.com/infimount/infimount/blob/main/docs/mcp-client-setup.md">MCP setup</a><a href="https://github.com/infimount/infimount/releases">Releases</a></div><div><h3>Project</h3><a href="https://github.com/infimount/infimount">GitHub</a><a href="https://github.com/infimount/infimount/blob/main/LICENSE">MIT license</a><a href="https://www.linkedin.com/company/infimount">LinkedIn</a></div></div>
+        <div class="footer-grid"><div class="footer-brand"><a class="wordmark" href="https://github.com/infimount/infimount"><span class="mark" aria-hidden="true">∞</span><span>infimount</span></a><p>One surface for every storage. Built with Tauri, Rust, React, and Apache OpenDAL.</p></div><div><h3>Product</h3><a href="#workbench">Workbench</a><a href="#connectors">Connectors</a><a href="#agents">Agent access</a></div><div><h3>Resources</h3><a href="./guides.html">Guides</a><a href="./guide/backends.html">Capabilities</a><a href="./guide/mcp-setup.html">MCP setup</a><a href="https://github.com/infimount/infimount/releases">Releases</a></div><div><h3>Project</h3><a href="https://github.com/infimount/infimount">GitHub</a><a href="https://github.com/infimount/infimount/blob/main/LICENSE">MIT license</a><a href="https://www.linkedin.com/company/infimount">LinkedIn</a></div></div>
         <div class="footer-bottom"><span>© Infimount contributors</span><span>Storage configuration and credentials remain local by default.</span></div>
       </div>
     </footer>
