@@ -15,6 +15,7 @@
 // because release scripts grep exact strings inside it.
 import fs from "node:fs";
 import path from "node:path";
+import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
@@ -25,8 +26,24 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DOCS = path.join(ROOT, "docs");
 const GUIDE_DIR = path.join(DOCS, "guide");
 const SITE = "https://infimount.github.io/infimount";
-const TODAY = new Date().toISOString().slice(0, 10);
 const GITHUB_MD_PREFIX = "https://github.com/infimount/infimount/blob/main/docs/";
+
+// Sitemap dates must be deterministic: docs:check compares output
+// byte-for-byte, so embedding "today" would fail CI the morning after any
+// generation. Each URL carries the last commit date of its source file.
+function lastCommitDate(relPath) {
+  try {
+    const out = execSync(`git log -1 --format=%cs -- ${JSON.stringify(relPath)}`, {
+      cwd: ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(out)) return out;
+  } catch {
+    // No git history (exported tarball): fall back to today.
+  }
+  return new Date().toISOString().slice(0, 10);
+}
 
 // Every generated guide: source file, URL slug, nav group, one-line dek.
 // Deks live here (not in the Markdown) so sources stay free of site chrome.
@@ -157,7 +174,7 @@ function firstParagraph(source) {
   return "";
 }
 
-function chromeHead({ title, description, canonical, extra = "" }) {
+function chromeHead({ title, description, canonical, assetRoot, extra = "" }) {
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -169,7 +186,7 @@ function chromeHead({ title, description, canonical, extra = "" }) {
     <meta name="theme-color" content="#f0ede6" />
     <meta http-equiv="Content-Security-Policy" content="${CSP}" />
     <link rel="canonical" href="${canonical}" />
-    <link rel="icon" href="../assets/infimount-logo.png" />
+    <link rel="icon" href="${assetRoot}assets/infimount-logo.png" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Infimount" />
     <meta property="og:title" content="${esc(title)}" />
@@ -432,9 +449,14 @@ function buildGuidePage(page, index, titles) {
       title: `${title} | Infimount guides`,
       description,
       canonical: url,
+      assetRoot: "../",
     })}\n${body}`,
     search: { title, dek: page.dek, url: `./guide/${page.slug}.html`, text: plainText(source, 1200) },
-    sitemap: { loc: `${SITE}/guide/${page.slug}.html`, priority: "0.7" },
+    sitemap: {
+      loc: `${SITE}/guide/${page.slug}.html`,
+      priority: "0.7",
+      lastmod: lastCommitDate(path.join("docs", page.file)),
+    },
   };
 }
 
@@ -516,20 +538,25 @@ function buildGuidesIndex(entries) {
     title: "Guides | Infimount",
     description: "Field guides for installing, connecting, securing, and recovering Infimount storage.",
     canonical: `${SITE}/guides.html`,
+    assetRoot: "./",
   })}\n${body}`;
 }
 
 function buildSitemap(entries) {
+  const newestSource = entries.reduce(
+    (max, e) => (e.sitemap.lastmod > max ? e.sitemap.lastmod : max),
+    "1970-01-01"
+  );
   const urls = [
-    { loc: `${SITE}/`, priority: "1.0", changefreq: "weekly" },
-    { loc: `${SITE}/guides.html`, priority: "0.9", changefreq: "weekly" },
+    { loc: `${SITE}/`, priority: "1.0", changefreq: "weekly", lastmod: lastCommitDate("docs/index.html") },
+    { loc: `${SITE}/guides.html`, priority: "0.9", changefreq: "weekly", lastmod: newestSource },
     ...entries.map((e) => ({ ...e.sitemap, changefreq: "monthly" })),
   ];
   const items = urls
     .map(
       (u) => `  <url>
     <loc>${u.loc}</loc>
-    <lastmod>${TODAY}</lastmod>
+    <lastmod>${u.lastmod}</lastmod>
 ${u.changefreq ? `    <changefreq>${u.changefreq}</changefreq>\n` : ""}    <priority>${u.priority}</priority>
   </url>`
     )
