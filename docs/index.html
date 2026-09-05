@@ -90,7 +90,8 @@
       }
       .topbar-inner { display: flex; min-height: 68px; align-items: center; justify-content: space-between; gap: 24px; }
       .wordmark { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); font-size: 1.08rem; font-weight: 800; letter-spacing: -.045em; text-decoration: none; }
-      .mark { display: grid; width: 29px; height: 29px; place-items: center; border: 2px solid var(--ink); border-radius: 50% 50% 50% 14%; font-size: .78rem; line-height: 1; transform: rotate(-12deg); }
+      .brand-logo { display: block; width: 32px; height: 32px; flex: 0 0 32px; border-radius: 8px; object-fit: cover; box-shadow: 0 1px 2px rgba(29, 39, 35, .18); }
+      .footer .brand-logo { box-shadow: 0 1px 2px rgba(0, 0, 0, .35); }
       .nav { display: flex; align-items: center; gap: 22px; color: var(--muted); font-size: .84rem; font-weight: 650; }
       .nav a { text-decoration: none; }
       .nav a:hover { color: var(--ink); }
@@ -146,7 +147,7 @@
 
       .work-grid { display: grid; grid-template-columns: 1.12fr .88fr; gap: 54px; align-items: center; }
       .screenshot-card { overflow: hidden; border: 1px solid var(--rule); border-radius: var(--radius); background: #fff; box-shadow: var(--shadow); }
-      .screenshot-card img { width: 100%; }
+      .screenshot-card img { display: block; width: 100%; height: auto; }
       .screenshot-meta { display: flex; justify-content: space-between; gap: 18px; padding: 13px 15px; color: var(--muted); font-size: .75rem; }
       .screenshot-meta strong { color: var(--ink); }
       .feature-list { margin: 0; padding: 0; list-style: none; }
@@ -267,7 +268,7 @@
 
     <header class="topbar">
       <div class="shell topbar-inner">
-        <a class="wordmark" href="./" aria-label="Infimount home"><span class="mark" aria-hidden="true">∞</span><span>infimount</span></a>
+        <a class="wordmark" href="./" aria-label="Infimount home"><img class="brand-logo" src="./assets/infimount-logo.png" alt="" width="32" height="32" /><span>infimount</span></a>
         <nav class="nav" aria-label="Primary navigation">
           <a href="#how">How it works</a>
           <a href="#storage">Storage</a>
@@ -418,7 +419,7 @@
     <footer class="footer">
       <div class="shell">
         <div class="footer-grid">
-          <div class="footer-brand"><a class="wordmark" href="./"><span class="mark" aria-hidden="true">∞</span><span>infimount</span></a><p>One surface for every storage. Open source, local-first, and built with Tauri, Rust, React, and Apache OpenDAL.</p></div>
+          <div class="footer-brand"><a class="wordmark" href="./"><img class="brand-logo" src="./assets/infimount-logo.png" alt="" width="32" height="32" /><span>infimount</span></a><p>One surface for every storage. Open source, local-first, and built with Tauri, Rust, React, and Apache OpenDAL.</p></div>
           <div><h3>Product</h3><a href="#how">How it works</a><a href="#storage">Storage</a><a href="#agents">Agent access</a><a href="#install">Install</a></div>
           <div><h3>Resources</h3><a href="https://github.com/infimount/infimount/blob/main/docs/backend-capabilities.md">Capabilities</a><a href="https://github.com/infimount/infimount/blob/main/docs/mcp-client-setup.md">MCP setup</a><a href="https://github.com/infimount/infimount/releases">Releases</a></div>
           <div><h3>Project</h3><a href="https://github.com/infimount/infimount">GitHub</a><a href="https://github.com/infimount/infimount/blob/main/LICENSE">MIT license</a><a href="https://www.linkedin.com/company/infimount">LinkedIn</a></div>
