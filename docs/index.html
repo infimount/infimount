@@ -11,7 +11,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https://infimount.github.io; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'none'; base-uri 'self'; form-action 'none';" />
     <link rel="canonical" href="https://infimount.github.io/infimount/" />
     <link rel="sitemap" type="application/xml" href="https://infimount.github.io/infimount/sitemap.xml" />
-    <link rel="icon" href="./assets/infimount-logo.png" />
+    <link rel="icon" href="./assets/infimount-logo-web.png" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Infimount" />
     <meta property="og:title" content="Infimount | One surface for every storage" />
@@ -44,7 +44,7 @@
         --paper: #f4f1ea;
         --paper-2: #ebe7dd;
         --ink: #1d2723;
-        --muted: #626b65;
+        --muted: #5f6761;
         --rule: #cbc9c0;
         --orange: #c96035;
         --orange-dark: #8f4327;
@@ -129,10 +129,10 @@
       .fact strong { display: block; font-size: .88rem; }
       .fact span { display: block; margin-top: 4px; color: var(--muted); font-size: .78rem; }
 
-      .section { padding: 104px 0; }
+      .section { padding: 88px 0; }
       .section-soft { background: var(--paper-2); }
       .section-dark { color: var(--white); background: var(--night); }
-      .section-head { display: grid; grid-template-columns: .42fr 1fr; gap: 34px; align-items: start; margin-bottom: 44px; }
+      .section-head { display: grid; grid-template-columns: 170px 1fr; gap: 34px; align-items: start; margin-bottom: 44px; }
       .kicker { margin: 3px 0 0; color: var(--orange-dark); font-size: .74rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
       .section-dark .kicker { color: #df8c64; }
       .section-head h2 { max-width: 14ch; margin: 0; font-size: clamp(2.35rem, 4.5vw, 4.5rem); line-height: .96; letter-spacing: -.055em; }
@@ -145,19 +145,19 @@
       .step h3 { margin: 48px 0 0; font-size: 1.3rem; letter-spacing: -.025em; }
       .step p { margin: 10px 0 0; color: var(--muted); font-size: .92rem; }
 
-      .work-grid { display: grid; grid-template-columns: 1.12fr .88fr; gap: 54px; align-items: center; }
+      .work-grid { display: grid; gap: 54px; align-items: center; }
       .screenshot-card { overflow: hidden; border: 1px solid var(--rule); border-radius: var(--radius); background: #fff; box-shadow: var(--shadow); }
       .screenshot-card img { display: block; width: 100%; height: auto; }
       .screenshot-meta { display: flex; justify-content: space-between; gap: 18px; padding: 13px 15px; color: var(--muted); font-size: .75rem; }
       .screenshot-meta strong { color: var(--ink); }
-      .feature-list { margin: 0; padding: 0; list-style: none; }
+      .feature-list { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: 1fr 1fr; gap: 0 54px; border-bottom: 1px solid var(--rule); }
       .feature-list li { display: grid; grid-template-columns: 34px 1fr; gap: 14px; padding: 18px 0; border-top: 1px solid var(--rule); }
-      .feature-list li:last-child { border-bottom: 1px solid var(--rule); }
+      .feature-list li:last-child { border-bottom: 0; }
       .feature-icon { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 8px; color: var(--orange-dark); background: rgba(201, 96, 53, .10); font-size: .85rem; font-weight: 800; }
       .feature-list h3 { margin: 0; font-size: 1rem; }
       .feature-list p { margin: 5px 0 0; color: var(--muted); font-size: .88rem; }
 
-      .connector-groups { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+      .connector-groups { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
       .connector-group { padding: 22px; border: 1px solid var(--rule); border-radius: var(--radius); background: rgba(255,255,255,.32); }
       .connector-group h3 { margin: 0; color: var(--orange-dark); font-size: .76rem; letter-spacing: .09em; text-transform: uppercase; }
       .connector-group ul { margin: 20px 0 0; padding: 0; list-style: none; }
@@ -243,7 +243,7 @@
         .fact-strip { grid-template-columns: 1fr 1fr; }
         .fact:nth-child(3) { padding-left: 0; border-left: 0; border-top: 1px solid var(--rule); }
         .fact:nth-child(4) { border-top: 1px solid var(--rule); }
-        .steps, .connector-groups, .trust-grid, .policy-list { grid-template-columns: 1fr; }
+        .steps, .connector-groups, .trust-grid, .policy-list, .feature-list { grid-template-columns: 1fr; }
         .section { padding: 74px 0; }
         .step { min-height: auto; }
         .step h3 { margin-top: 30px; }
@@ -268,13 +268,14 @@
 
     <header class="topbar">
       <div class="shell topbar-inner">
-        <a class="wordmark" href="./" aria-label="Infimount home"><img class="brand-logo" src="./assets/infimount-logo.png" alt="" width="32" height="32" /><span>infimount</span></a>
+        <a class="wordmark" href="./" aria-label="Infimount home"><img class="brand-logo" src="./assets/infimount-logo-web.png" alt="" width="32" height="32" /><span>infimount</span></a>
         <nav class="nav" aria-label="Primary navigation">
           <a href="#how">How it works</a>
           <a href="#storage">Storage</a>
           <a href="#agents">Agent access</a>
           <a href="#install">Install</a>
-          <a class="nav-cta" href="https://github.com/infimount/infimount">GitHub</a>
+          <a href="https://github.com/infimount/infimount">GitHub</a>
+          <a class="nav-cta" href="https://github.com/infimount/infimount/releases/latest">Download</a>
         </nav>
       </div>
     </header>
@@ -327,7 +328,6 @@
             <div><h2 id="work-title">A file manager first. Storage infrastructure second.</h2><p>The backend can change underneath you; the interaction does not have to. Infimount is built around finishing file operations without hiding capability differences.</p></div>
           </div>
           <div class="work-grid">
-            <figure class="screenshot-card" data-reveal><img src="./assets/screenshot-infimount.png" width="1193" height="647" loading="lazy" alt="Infimount file browser with storage sidebar and file preview" /><figcaption class="screenshot-meta"><strong>Desktop workbench</strong><span>One interface across supported storage</span></figcaption></figure>
             <ul class="feature-list" data-reveal>
               <li><span class="feature-icon">↗</span><div><h3>Browse, preview, and search</h3><p>Grid and list views, metadata, bounded previews, bookmarks, recents, keyboard navigation, and opt-in global search.</p></div></li>
               <li><span class="feature-icon">⇄</span><div><h3>Dual-pane transfers</h3><p>Copy, move, compare, and update across supported storages without jumping between provider consoles.</p></div></li>
@@ -344,10 +344,9 @@
           <div><h2 id="storage-title">Bring the places your files already live.</h2><p>Infimount stays OpenDAL-first, so file operations use one storage abstraction while capabilities remain explicit per backend.</p></div>
         </div>
         <div class="connector-groups" data-reveal>
-          <article class="connector-group"><h3>Local</h3><ul><li>Local filesystem</li></ul></article>
-          <article class="connector-group"><h3>Object storage</h3><ul><li>Amazon S3 / compatible</li><li>Backblaze B2</li><li>Aliyun OSS</li><li>Tencent COS</li><li>Huawei OBS</li><li>Azure Blob Storage</li><li>Google Cloud Storage</li></ul></article>
-          <article class="connector-group"><h3>Cloud drives</h3><ul><li>Google Drive</li><li>Microsoft OneDrive</li></ul></article>
-          <article class="connector-group"><h3>File protocols</h3><ul><li>WebDAV</li><li>SFTP <small>(Linux/macOS)</small></li></ul></article>
+          <article class="connector-group"><h3>Files and protocols</h3><ul><li>Local filesystem</li><li>WebDAV</li><li>SFTP <small>(Linux/macOS)</small></li></ul></article>
+          <article class="connector-group"><h3>Object storage</h3><ul><li>Amazon S3 / compatible</li><li>Backblaze B2</li><li>Aliyun OSS</li><li>Tencent COS</li><li>Huawei OBS</li></ul></article>
+          <article class="connector-group"><h3>Cloud storage and drives</h3><ul><li>Azure Blob Storage</li><li>Google Cloud Storage</li><li>Google Drive</li><li>Microsoft OneDrive</li></ul></article>
         </div>
         <div class="connector-foot" data-reveal><span>FTP is temporarily disabled in v0.8 because of an upstream security issue.</span><a href="https://github.com/infimount/infimount/blob/main/docs/backend-capabilities.md">See the backend capability matrix ↗</a></div>
       </section>
@@ -419,7 +418,7 @@
     <footer class="footer">
       <div class="shell">
         <div class="footer-grid">
-          <div class="footer-brand"><a class="wordmark" href="./"><img class="brand-logo" src="./assets/infimount-logo.png" alt="" width="32" height="32" /><span>infimount</span></a><p>One surface for every storage. Open source, local-first, and built with Tauri, Rust, React, and Apache OpenDAL.</p></div>
+          <div class="footer-brand"><a class="wordmark" href="./"><img class="brand-logo" src="./assets/infimount-logo-web.png" alt="" width="32" height="32" /><span>infimount</span></a><p>One surface for every storage. Open source, local-first, and built with Tauri, Rust, React, and Apache OpenDAL.</p></div>
           <div><h3>Product</h3><a href="#how">How it works</a><a href="#storage">Storage</a><a href="#agents">Agent access</a><a href="#install">Install</a></div>
           <div><h3>Resources</h3><a href="https://github.com/infimount/infimount/blob/main/docs/backend-capabilities.md">Capabilities</a><a href="https://github.com/infimount/infimount/blob/main/docs/mcp-client-setup.md">MCP setup</a><a href="https://github.com/infimount/infimount/releases">Releases</a></div>
           <div><h3>Project</h3><a href="https://github.com/infimount/infimount">GitHub</a><a href="https://github.com/infimount/infimount/blob/main/LICENSE">MIT license</a><a href="https://www.linkedin.com/company/infimount">LinkedIn</a></div>
