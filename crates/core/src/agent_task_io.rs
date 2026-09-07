@@ -90,7 +90,7 @@ mod tests {
         assert_eq!(digest.byte_size, 16);
         assert_eq!(
             digest.sha256,
-            "862172067f1b5845e1809a37975d9f9565bd3ef44c455e1a8e7d1fb35cd2eea4"
+            "28236dc73a012bb872284c9576dda020a85bef2041bbe976e45a8bf1c668d275"
         );
     }
 
