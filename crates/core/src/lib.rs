@@ -1,3 +1,4 @@
+pub mod agent_tasks;
 pub mod atomic_file;
 pub mod backup;
 pub mod config;
