@@ -322,13 +322,13 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_and_case_colliding_prepared_paths() {
-        let mut manifest = manifest();
-        manifest.inputs.push(input("inputs/customers.csv"));
-        assert!(validate_agent_task_manifest(&manifest).is_err());
+        let mut duplicate = manifest();
+        duplicate.inputs.push(input("inputs/customers.csv"));
+        assert!(validate_agent_task_manifest(&duplicate).is_err());
 
-        let mut manifest = manifest();
-        manifest.inputs.push(input("inputs/CUSTOMERS.csv"));
-        assert!(validate_agent_task_manifest(&manifest).is_err());
+        let mut case_collision = manifest();
+        case_collision.inputs.push(input("inputs/CUSTOMERS.csv"));
+        assert!(validate_agent_task_manifest(&case_collision).is_err());
     }
 
     #[test]
