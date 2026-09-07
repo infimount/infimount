@@ -3,9 +3,9 @@ use std::collections::HashSet;
 use infimount_core::agent_task_io::hash_agent_task_file;
 use infimount_core::agent_tasks::{
     agent_task_root, render_agent_task_markdown, validate_agent_task_brief, AgentTaskBrief,
-    AgentTaskInput, AgentTaskManifest, AGENT_TASK_BRIEF_FILE, AGENT_TASK_INPUTS_DIR,
-    AGENT_TASK_MANIFEST_FILE, AGENT_TASK_OUTPUTS_DIR, AGENT_TASK_SCHEMA_VERSION,
-    AGENT_TASKS_DIR, MAX_AGENT_TASK_INPUTS, MAX_AGENT_TASK_PREPARED_BYTES,
+    AgentTaskInput, AgentTaskManifest, AGENT_TASKS_DIR, AGENT_TASK_BRIEF_FILE,
+    AGENT_TASK_INPUTS_DIR, AGENT_TASK_MANIFEST_FILE, AGENT_TASK_OUTPUTS_DIR,
+    AGENT_TASK_SCHEMA_VERSION, MAX_AGENT_TASK_INPUTS, MAX_AGENT_TASK_PREPARED_BYTES,
     MAX_AGENT_TASK_SELECTIONS,
 };
 use infimount_core::workspaces::{workspace_schema_supported, WorkspaceRecord};
@@ -134,7 +134,12 @@ pub async fn prepare_agent_task(
     validate_local_path(&context.workspace_storage, &staging_root)?;
     validate_local_path(&context.workspace_storage, &final_root)?;
 
-    ensure_directory(&context.workspace_op, &context.workspace_storage, &tasks_root).await?;
+    ensure_directory(
+        &context.workspace_op,
+        &context.workspace_storage,
+        &tasks_root,
+    )
+    .await?;
     require_missing(&context.workspace_op, &staging_root).await?;
     require_missing(&context.workspace_op, &final_root).await?;
     ensure_directory(
@@ -185,7 +190,8 @@ pub async fn prepare_agent_task(
         for entry in file_entries {
             validate_local_path(&context.workspace_storage, &entry.destination_path)?;
             let task_path = relative_to_root(&staging_root, &entry.destination_path)?;
-            let digest = hash_agent_task_file(&context.workspace_op, &entry.destination_path).await?;
+            let digest =
+                hash_agent_task_file(&context.workspace_op, &entry.destination_path).await?;
             inputs.push(AgentTaskInput {
                 task_path,
                 byte_size: digest.byte_size,
@@ -290,8 +296,7 @@ fn normalize_source_paths(paths: &[String]) -> Result<Vec<String>, CoreError> {
         let path = raw.trim().trim_matches('/');
         if path.is_empty() || path.len() > MAX_SOURCE_PATH_BYTES || path.contains('\\') {
             return Err(CoreError::Config(
-                "Agent Task source paths must be non-empty bounded forward-slash paths"
-                    .to_string(),
+                "Agent Task source paths must be non-empty bounded forward-slash paths".to_string(),
             ));
         }
         if path
@@ -362,7 +367,9 @@ fn load_context(
     let workspace_kind = workspace_storage
         .backend
         .parse::<SourceKind>()
-        .map_err(|_| CoreError::Config("Agent Task workspace backend is unsupported".to_string()))?;
+        .map_err(|_| {
+            CoreError::Config("Agent Task workspace backend is unsupported".to_string())
+        })?;
     if !matches!(workspace_kind, SourceKind::Local) {
         return Err(CoreError::Config(
             "Agent Tasks currently require an Agent Workspace on Local Filesystem storage"
@@ -370,10 +377,11 @@ fn load_context(
         ));
     }
 
-    let namespace = infimount_mcp::storage_namespace::storage_namespace_fingerprint(
-        &workspace_storage,
-    )
-    .map_err(|_| CoreError::Config("failed to verify Agent Task workspace identity".to_string()))?;
+    let namespace =
+        infimount_mcp::storage_namespace::storage_namespace_fingerprint(&workspace_storage)
+            .map_err(|_| {
+                CoreError::Config("failed to verify Agent Task workspace identity".to_string())
+            })?;
     if namespace != workspace.storage_namespace_fingerprint {
         return Err(CoreError::Config(
             "Agent Task workspace storage identity changed; recreate the workspace".to_string(),
@@ -547,8 +555,9 @@ async fn cleanup_created_task(op: &opendal::Operator, staging_root: &str) -> boo
 }
 
 fn validate_local_path(storage: &StorageRecord, path: &str) -> Result<(), CoreError> {
-    infimount_mcp::storage_namespace::validate_local_mcp_path(storage, path)
-        .map_err(|_| CoreError::Config("Agent Task local path confinement check failed".to_string()))
+    infimount_mcp::storage_namespace::validate_local_mcp_path(storage, path).map_err(|_| {
+        CoreError::Config("Agent Task local path confinement check failed".to_string())
+    })
 }
 
 fn relative_to_root(root: &str, path: &str) -> Result<String, CoreError> {
@@ -558,7 +567,9 @@ fn relative_to_root(root: &str, path: &str) -> Result<String, CoreError> {
     path.strip_prefix(&prefix)
         .filter(|relative| !relative.is_empty())
         .map(str::to_string)
-        .ok_or_else(|| CoreError::Config("Agent Task destination escaped its package root".to_string()))
+        .ok_or_else(|| {
+            CoreError::Config("Agent Task destination escaped its package root".to_string())
+        })
 }
 
 fn join_path(root: &str, relative: &str) -> String {
