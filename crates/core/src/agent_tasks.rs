@@ -214,9 +214,7 @@ fn validate_relative_child_path(path: &str, parent: &str) -> Result<()> {
     validate_relative_path(path)?;
     let prefix = format!("{parent}/");
     if !path.starts_with(&prefix) || path.len() == prefix.len() {
-        return config_error(format!(
-            "Agent Task path must be a child of '{parent}/'"
-        ));
+        return config_error(format!("Agent Task path must be a child of '{parent}/'"));
     }
     Ok(())
 }
