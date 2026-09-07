@@ -1,4 +1,5 @@
 pub mod activation_probe;
+pub mod agent_tasks;
 pub mod backup;
 pub mod diagnostics;
 pub mod mcp;
@@ -10,6 +11,7 @@ pub mod transfers;
 pub mod workspaces;
 
 pub use activation_probe::*;
+pub use agent_tasks::*;
 pub use backup::*;
 pub use diagnostics::*;
 pub use mcp::*;
