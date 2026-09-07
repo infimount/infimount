@@ -155,6 +155,8 @@ fn main() {
             commands::list_workspace_checkpoints,
             commands::create_workspace_checkpoint,
             commands::restore_workspace_checkpoint,
+            commands::preflight_agent_task,
+            commands::prepare_agent_task,
             commands::save_wizard_state,
             commands::set_telemetry_consent,
             commands::set_local_event_persistence,
