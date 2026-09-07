@@ -118,9 +118,14 @@ pub async fn copy_agent_task_plan(
     for entry in files {
         ensure_planned_source(entry, from_op).await?;
         require_missing_destination(to_op, &entry.destination_path).await?;
-        let copied =
-            copy_agent_task_file(from_op, &entry.source_path, to_op, &entry.destination_path)
-                .await?;
+        let copied = copy_agent_task_file(
+            from_op,
+            &entry.source_path,
+            to_op,
+            &entry.destination_path,
+            entry.size,
+        )
+        .await?;
         if copied.byte_size != entry.size {
             return Err(CoreError::Config(
                 "Agent Task source changed after planning".to_string(),
@@ -132,13 +137,16 @@ pub async fn copy_agent_task_plan(
 }
 
 /// Copy one file between OpenDAL operators while hashing the bytes actually
-/// copied. The source is size-checked before and after the stream. The caller
-/// must ensure the destination does not exist before invoking this function.
+/// copied. The source must still match the byte size from the authoritative
+/// transfer plan before the destination writer is opened, and it is checked
+/// again after the stream. The caller must ensure the destination does not
+/// exist before invoking this function.
 async fn copy_agent_task_file(
     from_op: &Operator,
     from_path: &str,
     to_op: &Operator,
     to_path: &str,
+    expected_size: u64,
 ) -> Result<AgentTaskFileDigest> {
     let from_path = normalize_file_path(from_path)?;
     let to_path = normalize_file_path(to_path)?;
@@ -148,7 +156,11 @@ async fn copy_agent_task_file(
             "Agent Task copy source must refer to a file".to_string(),
         ));
     }
-    let expected_size = before.content_length();
+    if before.content_length() != expected_size {
+        return Err(CoreError::Config(
+            "Agent Task source changed after planning".to_string(),
+        ));
+    }
 
     let mut reader = from_op
         .reader(&from_path)
@@ -368,5 +380,18 @@ mod tests {
             .unwrap_err();
         assert!(matches!(error, CoreError::Config(_)));
         assert!(destination.stat("task/inputs/a.txt").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn copy_rejects_expected_size_mismatch_before_destination_write() {
+        let source = memory_operator();
+        let destination = memory_operator();
+        source.write("a.txt", "larger").await.unwrap();
+
+        let error = copy_agent_task_file(&source, "a.txt", &destination, "out/a.txt", 1)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, CoreError::Config(_)));
+        assert!(destination.stat("out/a.txt").await.is_err());
     }
 }
