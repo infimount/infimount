@@ -4,6 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "next-themes";
+import { AgentTaskHub } from "@/components/AgentTaskHub";
 import { IconThemeProvider } from "@/hooks/use-icon-theme";
 import { FileClipboardProvider } from "@/hooks/use-file-clipboard";
 import { AppZoomProvider } from "@/hooks/use-app-zoom";
@@ -53,6 +54,7 @@ export const App: React.FC = () => {
                   <Toaster />
                   <Sonner />
                   {window.location.pathname === "/" || window.location.pathname === "" ? <Index /> : <NotFound />}
+                  <AgentTaskHub />
                 </TooltipProvider>
               </AppZoomProvider>
             </FileClipboardProvider>
