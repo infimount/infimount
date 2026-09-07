@@ -171,12 +171,7 @@ pub async fn prepare_agent_task(
             validate_local_path(&context.source_storage, &entry.source_path)?;
             validate_local_path(&context.workspace_storage, &entry.destination_path)?;
         }
-        copy_agent_task_plan(
-            &context.source_op,
-            &context.workspace_op,
-            &planned.plan,
-        )
-        .await?;
+        copy_agent_task_plan(&context.source_op, &context.workspace_op, &planned.plan).await?;
 
         let mut inputs = Vec::with_capacity(planned.file_count);
         let mut file_entries = planned
