@@ -80,7 +80,6 @@ pub async fn preflight_agent_task(
 ) -> Result<AgentTaskPreflightOutput, CoreError> {
     state.require_operational().map_err(mcp_to_core)?;
     let (brief, source_paths) = validate_request(&request)?;
-    validate_agent_task_brief(&brief)?;
     let context = load_context(&state, &request)?;
 
     let probe_id = Uuid::new_v4();
@@ -90,6 +89,11 @@ pub async fn preflight_agent_task(
     );
     let target_inputs = join_path(&probe_root, AGENT_TASK_INPUTS_DIR);
     let planned = plan_task(&context, &source_paths, &target_inputs).await?;
+
+    // Keep validation of the brief in this command even though validate_request
+    // already performs it. It documents the server-side preflight contract and
+    // prevents a later request-normalization refactor from accidentally dropping it.
+    validate_agent_task_brief(&brief)?;
 
     Ok(AgentTaskPreflightOutput {
         workspace_id: context.workspace.id.clone(),
@@ -111,11 +115,9 @@ pub async fn prepare_agent_task(
 ) -> Result<PrepareAgentTaskOutput, CoreError> {
     state.require_operational().map_err(mcp_to_core)?;
     let (brief, source_paths) = validate_request(&request)?;
-    validate_agent_task_brief(&brief)?;
 
-    // Keep workspace create/update/delete from changing the workspace record
-    // while a package is being prepared. Storage namespace mutation is already
-    // rejected while a workspace is bound.
+    // Serialize workspace create/update/delete against the complete preparation
+    // transaction. File browsing and ordinary storage operations are unaffected.
     let _workspace_transaction = state.workspaces.acquire_mutation_lock()?;
     let context = load_context(&state, &request)?;
 
@@ -212,14 +214,21 @@ pub async fn prepare_agent_task(
         operations::write_full(&context.workspace_op, &manifest_path, &manifest_bytes).await?;
         operations::write_full(&context.workspace_op, &brief_path, markdown.as_bytes()).await?;
 
-        // The directory rename is the package commit point. Discovery only
-        // recognizes direct `tasks/<uuid>` roots, never `.preparing-*` paths.
+        // Re-check the local path just before the package commit. This preserves
+        // the same accepted check-then-OpenDAL race model as the v0.8 MCP path
+        // guard while refusing persistent symlink/reparse components.
         validate_local_path(&context.workspace_storage, &staging_root)?;
         validate_local_path(&context.workspace_storage, &final_root)?;
         require_missing(&context.workspace_op, &final_root).await?;
+
+        // Match the directory-rename convention used by the existing transfer
+        // transaction implementation: normalized paths without trailing slash.
         context
             .workspace_op
-            .rename(&directory_path(&staging_root), &directory_path(&final_root))
+            .rename(
+                staging_root.trim_end_matches('/'),
+                final_root.trim_end_matches('/'),
+            )
             .await?;
 
         Ok::<_, CoreError>(PrepareAgentTaskOutput {
@@ -533,7 +542,7 @@ async fn cleanup_created_task(op: &opendal::Operator, staging_root: &str) -> boo
     match op.stat(staging_root).await {
         Err(error) if error.kind() == opendal::ErrorKind::NotFound => true,
         Err(_) => false,
-        Ok(_) => operations::delete_recursive(op, staging_root).await.is_ok(),
+        Ok(_) => operations::delete(op, staging_root).await.is_ok(),
     }
 }
 
@@ -561,11 +570,6 @@ fn join_path(root: &str, relative: &str) -> String {
         (false, true) => root.to_string(),
         (false, false) => format!("{root}/{relative}"),
     }
-}
-
-fn directory_path(path: &str) -> String {
-    let trimmed = path.trim_end_matches('/');
-    format!("{trimmed}/")
 }
 
 fn mcp_to_core(_error: infimount_mcp::errors::McpError) -> CoreError {
