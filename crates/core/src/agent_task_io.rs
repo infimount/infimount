@@ -235,7 +235,12 @@ async fn copy_agent_task_file(
 }
 
 async fn ensure_planned_source(entry: &TransferPlanEntry, op: &Operator) -> Result<()> {
-    let metadata = op.stat(&entry.source_path).await?;
+    let source_path = if entry.is_dir {
+        format!("{}/", entry.source_path.trim_end_matches('/'))
+    } else {
+        entry.source_path.clone()
+    };
+    let metadata = op.stat(&source_path).await?;
     if metadata.is_dir() != entry.is_dir
         || (!entry.is_dir && metadata.content_length() != entry.size)
     {
