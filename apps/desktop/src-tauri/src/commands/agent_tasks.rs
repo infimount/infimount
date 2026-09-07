@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use infimount_core::agent_task_io::hash_agent_task_file;
+use infimount_core::agent_task_io::{copy_agent_task_plan, hash_agent_task_file};
 use infimount_core::agent_tasks::{
     agent_task_root, render_agent_task_markdown, validate_agent_task_brief, AgentTaskBrief,
     AgentTaskInput, AgentTaskManifest, AGENT_TASKS_DIR, AGENT_TASK_BRIEF_FILE,
@@ -163,18 +163,18 @@ pub async fn prepare_agent_task(
         )
         .await?;
 
-        // Re-plan after the destination hierarchy exists. The executor receives
-        // this same source selection and fail-on-conflict policy; no frontend
-        // plan or path mapping is trusted.
+        // Re-plan after the destination hierarchy exists, then execute exactly
+        // those validated entries. Do not recursively enumerate the selected
+        // source again after the authoritative file-count/byte-limit checks.
         let planned = plan_task(&context, &source_paths, &staging_inputs).await?;
-        operations::transfer_entries(
+        for entry in &planned.plan.entries {
+            validate_local_path(&context.source_storage, &entry.source_path)?;
+            validate_local_path(&context.workspace_storage, &entry.destination_path)?;
+        }
+        copy_agent_task_plan(
             &context.source_op,
             &context.workspace_op,
-            source_paths.clone(),
-            &staging_inputs,
-            operations::TransferOperation::Copy,
-            context.source_storage.id == context.workspace_storage.id,
-            operations::TransferConflictPolicy::Fail,
+            &planned.plan,
         )
         .await?;
 
@@ -192,11 +192,25 @@ pub async fn prepare_agent_task(
             let task_path = relative_to_root(&staging_root, &entry.destination_path)?;
             let digest =
                 hash_agent_task_file(&context.workspace_op, &entry.destination_path).await?;
+            if digest.byte_size != entry.size {
+                return Err(CoreError::Config(
+                    "Agent Task prepared bytes no longer match the validated plan".to_string(),
+                ));
+            }
             inputs.push(AgentTaskInput {
                 task_path,
                 byte_size: digest.byte_size,
                 sha256: digest.sha256,
             });
+        }
+
+        let prepared_bytes = inputs
+            .iter()
+            .fold(0_u64, |total, input| total.saturating_add(input.byte_size));
+        if inputs.len() != planned.file_count || prepared_bytes != planned.total_bytes {
+            return Err(CoreError::Config(
+                "Agent Task prepared snapshot no longer matches the validated plan".to_string(),
+            ));
         }
 
         let manifest = AgentTaskManifest {
@@ -243,10 +257,7 @@ pub async fn prepare_agent_task(
             workspace_id: context.workspace.id.clone(),
             workspace_name: context.workspace.name.clone(),
             prepared_files: manifest.inputs.len(),
-            total_bytes: manifest
-                .inputs
-                .iter()
-                .fold(0_u64, |total, input| total.saturating_add(input.byte_size)),
+            total_bytes: prepared_bytes,
             source_mcp_exposed: context.source_storage.mcp_exposed,
             workspace_mcp_exposed: context.workspace_storage.mcp_exposed,
         })
