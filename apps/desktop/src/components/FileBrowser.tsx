@@ -14,6 +14,7 @@ import {
   Star,
   Clock,
   Trash2,
+  Bot,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -29,6 +30,7 @@ import { FileTable } from "./FileTable";
 import { UploadZone, type UploadFileLike, type UploadZoneRef } from "./UploadZone";
 import { FilePreviewPanel } from "./FilePreviewPanel";
 import { TransferQueuePanel } from "./TransferQueuePanel";
+import { AgentTaskPrepareDialog } from "./AgentTaskPrepareDialog";
 import { FileItem } from "@/types/storage";
 import {
   Entry,
@@ -321,6 +323,7 @@ export function FileBrowser({
   const [currentPath, setCurrentPath] = useState<string>(initialPath || "/");
   const [allFiles, setAllFiles] = useState<FileItem[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [isAgentTaskDialogOpen, setIsAgentTaskDialogOpen] = useState(false);
   const [history, setHistory] = useState<string[]>(["/"]);
   const [historyIndex, setHistoryIndex] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -454,6 +457,7 @@ export function FileBrowser({
     });
   }, [currentPath, onPaneStateChange, selectedFiles, sourceId, storageName]);
 
+  const selectedAgentTaskPaths = useMemo(() => Array.from(selectedFiles), [selectedFiles]);
   const normalizedSearchQuery = searchQuery.toLowerCase();
   const filteredFiles = useMemo(
     () => allFiles.filter((file) => file.name.toLowerCase().includes(normalizedSearchQuery)),
@@ -1488,6 +1492,20 @@ export function FileBrowser({
 
   return (
     <>
+      <AgentTaskPrepareDialog
+        open={isAgentTaskDialogOpen}
+        onOpenChange={setIsAgentTaskDialogOpen}
+        sourceId={sourceId}
+        storageName={storageName}
+        selectedPaths={selectedAgentTaskPaths}
+        onPrepared={(result) => {
+          toast({
+            title: "Agent Task prepared",
+            description: `${result.preparedFiles} file${result.preparedFiles === 1 ? "" : "s"} ready in ${result.taskRoot}.`,
+          });
+          clearSelection();
+        }}
+      />
       <div
         className="relative flex h-full bg-background"
         onDragOver={(event: React.DragEvent<HTMLDivElement>) => {
@@ -1604,6 +1622,19 @@ export function FileBrowser({
                     <Upload className="h-4 w-4" />
                   </Button>
                 </label>
+                {selectedFiles.size > 0 ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setIsAgentTaskDialogOpen(true)}
+                    className="h-8 gap-1.5 px-2.5 text-xs"
+                    title="Prepare the selected items for an agent"
+                  >
+                    <Bot className="h-3.5 w-3.5" />
+                    Use with agent
+                  </Button>
+                ) : null}
                 <Button
                   type="button"
                   size="icon"
