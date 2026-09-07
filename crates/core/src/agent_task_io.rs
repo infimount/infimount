@@ -74,9 +74,7 @@ mod tests {
     use super::*;
 
     fn memory_operator() -> Operator {
-        Operator::new(opendal::services::Memory::default())
-            .unwrap()
-            .finish()
+        Operator::new(opendal::services::Memory::default()).unwrap()
     }
 
     #[tokio::test]
@@ -86,7 +84,9 @@ mod tests {
             .await
             .unwrap();
 
-        let digest = hash_agent_task_file(&op, "inputs/report.txt").await.unwrap();
+        let digest = hash_agent_task_file(&op, "inputs/report.txt")
+            .await
+            .unwrap();
         assert_eq!(digest.byte_size, 16);
         assert_eq!(
             digest.sha256,
