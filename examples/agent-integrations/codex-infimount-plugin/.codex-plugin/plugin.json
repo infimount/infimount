@@ -1,0 +1,38 @@
+{
+  "name": "infimount-agent-tasks",
+  "version": "0.8.1",
+  "description": "Use Infimount Agent Tasks to work on selected storage files inside a scoped MCP workspace and return outputs for explicit review.",
+  "author": {
+    "name": "Infimount"
+  },
+  "homepage": "https://infimount.github.io/infimount/",
+  "repository": "https://github.com/infimount/infimount",
+  "license": "MIT",
+  "keywords": [
+    "infimount",
+    "mcp",
+    "storage",
+    "agent-tasks",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Infimount Agent Tasks",
+    "shortDescription": "Work on scoped storage files and return reviewable outputs",
+    "longDescription": "Infimount Agent Tasks prepares selected storage files into a local, path-scoped Agent Workspace. Codex works only through the existing Infimount MCP boundary, writes deliverables under outputs/, and leaves publication to the Infimount desktop user after review.",
+    "developerName": "Infimount",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://infimount.github.io/infimount/",
+    "defaultPrompt": [
+      "Work on the prepared Infimount Agent Task in this workspace.",
+      "Read TASK.md and create the requested files under outputs/."
+    ],
+    "brandColor": "#1F6F5C",
+    "screenshots": []
+  }
+}
