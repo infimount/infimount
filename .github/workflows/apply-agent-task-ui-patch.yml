@@ -1,0 +1,36 @@
+name: Apply Agent Task UI Patch
+
+on:
+  push:
+    branches:
+      - feat/agent-task-ui
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[agent-task-ui-patched]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feat/agent-task-ui
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Apply surgical File Browser patch
+        run: node scripts/apply-agent-task-ui-patch.mjs
+      - name: Verify patch changed only the intended browser file
+        run: |
+          git diff --check
+          changed="$(git diff --name-only)"
+          test "$changed" = "apps/desktop/src/components/FileBrowser.tsx"
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/desktop/src/components/FileBrowser.tsx
+          git commit -m "feat: expose Agent Tasks from File Browser [agent-task-ui-patched]"
+          git push origin HEAD:feat/agent-task-ui
