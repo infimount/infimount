@@ -118,13 +118,9 @@ pub async fn copy_agent_task_plan(
     for entry in files {
         ensure_planned_source(entry, from_op).await?;
         require_missing_destination(to_op, &entry.destination_path).await?;
-        let copied = copy_agent_task_file(
-            from_op,
-            &entry.source_path,
-            to_op,
-            &entry.destination_path,
-        )
-        .await?;
+        let copied =
+            copy_agent_task_file(from_op, &entry.source_path, to_op, &entry.destination_path)
+                .await?;
         if copied.byte_size != entry.size {
             return Err(CoreError::Config(
                 "Agent Task source changed after planning".to_string(),
