@@ -66,13 +66,14 @@ Preparation performs these steps server-side:
 3. Plan the selection using the existing transfer planner with copy + fail-on-conflict semantics.
 4. Reject empty selections, overlapping selections, case-insensitive destination collisions, more than 10,000 prepared files, or more than 2 GiB of prepared bytes.
 5. Create a hidden `tasks/.preparing-<uuid>` package inside the workspace.
-6. Copy selected inputs through the existing OpenDAL transfer implementation into `inputs/`; the source is never moved.
-7. Stream SHA-256 over each prepared destination file instead of loading whole files into memory.
-8. Write the validated manifest and `TASK.md`.
-9. Re-check local symlink/reparse confinement and commit the package with a local OpenDAL directory rename to `tasks/<uuid>`.
-10. On failure, delete only the hidden staging tree created for that task. If cleanup itself fails, surface a cleanup-required error rather than reporting a clean failure.
+6. Execute exactly the validated transfer-plan entries into `inputs/` with bounded streaming copies. The source tree is not recursively rediscovered after the authoritative file-count/byte-limit checks, so entries added after planning cannot enter the task package or bypass those limits. The source is never moved.
+7. Re-stat planned source entries while executing and fail closed on removal, file/directory type drift, or planned file-size drift.
+8. Stream SHA-256 over each prepared destination file instead of loading whole files into memory, and verify the prepared file count and byte total still match the validated plan.
+9. Write the validated manifest and `TASK.md`.
+10. Re-check local symlink/reparse confinement and commit the package with a local OpenDAL directory rename to `tasks/<uuid>`.
+11. On failure, delete only the hidden staging tree created for that task. If cleanup itself fails, surface a cleanup-required error rather than reporting a clean failure.
 
-Preflight performs the same bounded planning without mutating storage and reports selected item count, expanded file/directory count, total bytes, and MCP-exposure warnings.
+Preflight performs the same bounded planning without mutating storage and reports selected item count, expanded file/directory count, total bytes, and MCP-exposure warnings. Preflight is a scope/size check, not authorization of an immutable byte snapshot. Prepare always plans again server-side and the committed manifest describes the bytes actually prepared.
 
 ### Concurrency and local-path boundary
 
@@ -134,11 +135,12 @@ If implementing the workflow requires one of those foundational systems, that pa
 ## Planned delivery slices
 
 1. **Task package foundation** — typed manifest/brief validation and `TASK.md` rendering in `infimount-core`.
-2. **Prepare task** — server-side preflight, local-workspace copy, destination hashing, manifest/brief creation, then File Browser selection UX.
-3. **Agent handoff** — reuse existing client adapter preview/apply and workspace policy; disclose existing independent source exposure; add Codex as a first-class client.
-4. **Output review** — discover `outputs/`, reuse previews, hash output bytes, select approved files.
-5. **Safe publication** — stale-hash recheck, new-file-only destination writes, collision handling, per-file receipt.
-6. **Pilot evidence** — privacy-bounded task lifecycle product events, sample tasks, real screenshots, rc validation and normal v0.8.0 -> v0.8.1 updater smoke.
+2. **Prepare task backend** — server-side preflight, exact-plan local-workspace copy, destination hashing, and manifest/brief creation.
+3. **Prepare from File Browser** — selected-item UX, workspace choice, scope review, and prepare result presentation using the backend contract from slice 2.
+4. **Agent handoff** — reuse existing client adapter preview/apply and workspace policy; disclose existing independent source exposure; add Codex as a first-class client.
+5. **Output review** — discover `outputs/`, reuse previews, hash output bytes, select approved files.
+6. **Safe publication** — stale-hash recheck, new-file-only destination writes, collision handling, per-file receipt.
+7. **Pilot evidence** — privacy-bounded task lifecycle product events, sample tasks, real screenshots, rc validation and normal v0.8.0 -> v0.8.1 updater smoke.
 
 ## Integration direction
 
