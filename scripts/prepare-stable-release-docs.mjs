@@ -22,6 +22,13 @@ const replaceOptional = (path, pattern, replacement) => {
   const output = input.replace(pattern, replacement);
   if (output !== input) write(path, output);
 };
+const replaceAllOptional = (path, replacements) => {
+  let output = read(path);
+  for (const [pattern, replacement] of replacements) {
+    output = output.replace(pattern, replacement);
+  }
+  write(path, output);
+};
 
 const readme = read("README.md");
 const stableMatch = readme.match(
@@ -51,11 +58,6 @@ replaceOptional(
   "README.md",
   new RegExp(`INFIMOUNT_VERSION=v${previousVersion.replaceAll(".", "\\.")}`, "g"),
   `INFIMOUNT_VERSION=${tag}`,
-);
-replaceOptional(
-  "README.md",
-  new RegExp(`Agent Tasks on main, targeted for v${version.replaceAll(".", "\\.")}`, "g"),
-  `Agent Tasks in ${tag}`,
 );
 
 replaceRequired(
@@ -101,16 +103,48 @@ replaceOptional(
   /\n- Release candidate under validation: v\d+\.\d+\.\d+ \(not published yet\)/,
   "",
 );
-replaceOptional(
-  "docs/llms.txt",
-  new RegExp(`Agent Tasks on main, targeted for v${version.replaceAll(".", "\\.")}`, "g"),
-  `Agent Tasks in ${tag}`,
-);
-replaceOptional(
-  "docs/llms.txt",
-  new RegExp(`The v${version.replaceAll(".", "\\.")} release candidate adds`, "g"),
-  `${tag} adds`,
-);
+
+const escapedVersion = version.replaceAll(".", "\\.");
+const escapedPrevious = previousVersion.replaceAll(".", "\\.");
+const releaseStateReplacements = [
+  [
+    new RegExp(
+      `Agent Tasks are implemented on \\`main\\` and targeted for v${escapedVersion}\\. The current v${escapedPrevious} stable release does not include this workflow\\.`,
+      "g",
+    ),
+    `Agent Tasks are included in ${tag}.`,
+  ],
+  [
+    new RegExp(
+      `The complete implementation is on \\`main\\` and is targeted for \\*\\*v${escapedVersion}\\*\\*\\. The current v${escapedPrevious} stable release does not include this workflow\\.`,
+      "g",
+    ),
+    `The complete implementation is included in **${tag}**.`,
+  ],
+  [
+    new RegExp(`Agent Tasks on main, targeted for v${escapedVersion}`, "g"),
+    `Agent Tasks in ${tag}`,
+  ],
+  [
+    new RegExp(`targeted for \\*\\*v${escapedVersion}\\*\\*`, "g"),
+    `included in **${tag}**`,
+  ],
+  [
+    new RegExp(`targeted for v${escapedVersion}`, "g"),
+    `included in ${tag}`,
+  ],
+  [
+    new RegExp(`The current v${escapedPrevious} stable release does not include this workflow\\.`, "g"),
+    `This workflow is included in ${tag}.`,
+  ],
+  [
+    new RegExp(`pilot evidence remains the v${escapedVersion} release gate`, "g"),
+    `pilot evidence completed for ${tag}`,
+  ],
+];
+for (const path of ["README.md", "docs/agent-tasks.md", "docs/llms.txt"]) {
+  if (fs.existsSync(path)) replaceAllOptional(path, releaseStateReplacements);
+}
 
 replaceRequired(
   releaseNotesPath,
