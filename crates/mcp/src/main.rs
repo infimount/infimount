@@ -62,7 +62,9 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<CliCommand, Strin
         }
         "print-config-dir" if args.len() == 1 => Ok(CliCommand::PrintConfigDir),
         "serve" => parse_serve_args(&args[1..]).map(CliCommand::Serve),
-        "serve-agent-task" => parse_agent_task_serve_args(&args[1..]).map(CliCommand::ServeAgentTask),
+        "serve-agent-task" => {
+            parse_agent_task_serve_args(&args[1..]).map(CliCommand::ServeAgentTask)
+        }
         "--help" | "-h" if args.len() == 1 => Ok(CliCommand::Help),
         known
             if matches!(
@@ -227,7 +229,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn load_runtime_state() -> Result<(StorageRegistry, McpSettings, Option<String>), Box<dyn std::error::Error>> {
+fn load_runtime_state(
+) -> Result<(StorageRegistry, McpSettings, Option<String>), Box<dyn std::error::Error>> {
     let secret_store: std::sync::Arc<dyn infimount_core::secrets::SecretStore> =
         std::sync::Arc::new(infimount_core::secrets::NativeSecretStore::new());
     let registry = StorageRegistry::with_secret_store(None, secret_store.clone());
@@ -413,9 +416,7 @@ fn json_file_status(path: &std::path::Path) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        json_file_status, parse_cli, AgentTaskServeArgs, CliCommand, ServeArgs,
-    };
+    use super::{json_file_status, parse_cli, AgentTaskServeArgs, CliCommand, ServeArgs};
 
     fn strings(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_string()).collect()
