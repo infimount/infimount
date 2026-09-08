@@ -44,7 +44,7 @@ try {
   writeVersionFiles(candidate);
   write(
     "README.md",
-    `# Fixture\n\n**Current stable release:** [v${stable}](https://github.com/infimount/infimount/releases/tag/v${stable})\n\nInstall with INFIMOUNT_VERSION=v${stable}.\n\nRust 1.94+\n`,
+    `# Fixture\n\n**Current stable release:** [v${stable}](https://github.com/infimount/infimount/releases/tag/v${stable})\n\nInstall with INFIMOUNT_VERSION=v${stable}.\n\n## Agent Tasks\n\nAgent Tasks are implemented on \`main\` and targeted for v${core}. The current v${stable} stable release does not include this workflow.\n\nAgent Tasks on main, targeted for v${core}: fixture. Pilot evidence remains the v${core} release gate.\n\nRust 1.94+\n`,
   );
   write(
     "CHANGELOG.md",
@@ -54,15 +54,16 @@ try {
     "docs/index.html",
     `<!doctype html><meta name="fixture"><script type="application/ld+json">{"softwareVersion": "${stable}"}</script><p class="release-label">v${stable} stable · open source</p><a>Download v${stable}</a><p class="kicker">Install v${stable}</p><a href="https://github.com/infimount/infimount/releases/tag/v${stable}">Open the v${stable} release</a>`,
   );
-  write("docs/llms.txt", `# Fixture\n\n- Current stable release: v${stable}\n`);
-  for (const doc of [
-    "agent-workspaces.md",
-    "agent-tasks.md",
-    "recovery.md",
-    "troubleshooting.md",
-    "privacy.md",
-    "migration-v0.8.md",
-  ]) {
+  write(
+    "docs/llms.txt",
+    `# Fixture\n\n- Current stable release: v${stable}\n- Agent Tasks on main, targeted for v${core}: fixture.\n`,
+  );
+  write("docs/agent-workspaces.md", "# agent-workspaces.md\n");
+  write(
+    "docs/agent-tasks.md",
+    `# Agent Tasks\n\nThe complete implementation is on \`main\` and is targeted for **v${core}**. The current v${stable} stable release does not include this workflow.\n`,
+  );
+  for (const doc of ["recovery.md", "troubleshooting.md", "privacy.md", "migration-v0.8.md"]) {
     write(`docs/${doc}`, `# ${doc}\n`);
   }
   write(
@@ -84,14 +85,25 @@ try {
   const changelog = fs.readFileSync(path.join(temp, "CHANGELOG.md"), "utf8");
   const index = fs.readFileSync(path.join(temp, "docs/index.html"), "utf8");
   const llms = fs.readFileSync(path.join(temp, "docs/llms.txt"), "utf8");
+  const agentTasks = fs.readFileSync(path.join(temp, "docs/agent-tasks.md"), "utf8");
   const notes = fs.readFileSync(path.join(temp, `docs/release-notes-${core}.md`), "utf8");
 
   assert.match(readme, /Current stable release:\*\* \[v1\.3\.0\]/);
   assert.match(readme, /INFIMOUNT_VERSION=v1\.3\.0/);
   assert.doesNotMatch(readme, /Current stable release:\*\* \[v1\.2\.3\]/);
+  assert.match(readme, /Agent Tasks are included in v1\.3\.0\./);
+  assert.match(readme, /Agent Tasks in v1\.3\.0: fixture/);
+  assert.match(readme, /pilot evidence completed for v1\.3\.0/);
+  assert.doesNotMatch(readme, /targeted for v1\.3\.0/);
+  assert.doesNotMatch(readme, /current v1\.2\.3 stable release does not include/i);
   assert.match(changelog, /## \[1\.3\.0\] - 2030-01-02/);
   assert.match(index, /"softwareVersion": "1\.3\.0"/);
   assert.match(llms, /Current stable release: v1\.3\.0/);
+  assert.match(llms, /Agent Tasks in v1\.3\.0: fixture/);
+  assert.doesNotMatch(llms, /targeted for v1\.3\.0/);
+  assert.match(agentTasks, /The complete implementation is included in \*\*v1\.3\.0\*\*\./);
+  assert.doesNotMatch(agentTasks, /targeted for/);
+  assert.doesNotMatch(agentTasks, /current v1\.2\.3 stable release does not include/i);
   assert.match(notes, /releases\/tag\/v1\.3\.0/);
   assert.doesNotMatch(notes, /not published yet/);
 } finally {
