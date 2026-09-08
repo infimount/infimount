@@ -3,8 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { TauriApiError } from "./api";
 import {
+  launchAgentTaskInCodex,
   prepareAgentTask,
   preflightAgentTask,
+  type AgentTaskCodexHandoffOutput,
   type AgentTaskPreparationRequest,
   type AgentTaskPreflightOutput,
   type PrepareAgentTaskOutput,
@@ -48,6 +50,15 @@ const prepareResult: PrepareAgentTaskOutput = {
   workspaceMcpExposed: true,
 };
 
+const handoffResult: AgentTaskCodexHandoffOutput = {
+  client: "codex",
+  taskId: "task-1",
+  taskRoot: "tasks/task-1",
+  workspaceId: "workspace-1",
+  workspaceName: "Agent Scratch",
+  launched: true,
+};
+
 describe("Agent Task desktop API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -65,6 +76,14 @@ describe("Agent Task desktop API", () => {
 
     await expect(prepareAgentTask(request)).resolves.toEqual(prepareResult);
     expect(invokeMock).toHaveBeenCalledWith("prepare_agent_task", { request });
+  });
+
+  it("forwards only task and workspace identity to the Codex handoff command", async () => {
+    invokeMock.mockResolvedValueOnce(handoffResult);
+    const handoff = { workspaceId: "workspace-1", taskId: "task-1" };
+
+    await expect(launchAgentTaskInCodex(handoff)).resolves.toEqual(handoffResult);
+    expect(invokeMock).toHaveBeenCalledWith("launch_agent_task_in_codex", { request: handoff });
   });
 
   it("preserves a safe backend error code and message", async () => {

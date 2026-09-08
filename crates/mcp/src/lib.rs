@@ -1,3 +1,4 @@
+pub mod agent_task_server;
 pub mod audit;
 pub mod confirmation;
 pub mod errors;
@@ -18,6 +19,7 @@ pub mod telemetry;
 pub mod tools_fs;
 pub mod tools_storage;
 
+pub use agent_task_server::{serve_agent_task_stdio, AgentTaskScope};
 pub use errors::{McpError, McpErrorCode, McpResult};
 pub use path::{parse_mcp_path, FsOp, ParsedPath};
 pub use policy::{

@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  launchAgentTaskInCodex,
   prepareAgentTask,
   preflightAgentTask,
   type AgentTaskPreflightOutput,
@@ -142,10 +143,16 @@ export function AgentTaskPrepareDialog({
   const [prepareRunning, setPrepareRunning] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
   const [prepared, setPrepared] = useState<PrepareAgentTaskOutput | null>(null);
+  const [codexLaunching, setCodexLaunching] = useState(false);
+  const [codexLaunched, setCodexLaunched] = useState(false);
+  const [codexLaunchError, setCodexLaunchError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
       if (prepared) setPrepared(null);
+      setCodexLaunching(false);
+      setCodexLaunched(false);
+      setCodexLaunchError(null);
       return;
     }
     // FileBrowser clears its selection after a successful prepare. Keep the
@@ -159,6 +166,9 @@ export function AgentTaskPrepareDialog({
     setPreflight(null);
     setPreflightRequestKey(null);
     setRequestError(null);
+    setCodexLaunching(false);
+    setCodexLaunched(false);
+    setCodexLaunchError(null);
     setWorkspaceLoadError(false);
     setLoadingWorkspaces(true);
     void Promise.all([listWorkspaces(), listStorages()])
@@ -236,12 +246,32 @@ export function AgentTaskPrepareDialog({
     try {
       const result = await prepareAgentTask(request);
       setPrepared(result);
+      setCodexLaunched(false);
+      setCodexLaunchError(null);
       onPrepared?.(result);
     } catch (error) {
       setPrepared(null);
       setRequestError(error instanceof Error ? error.message : "Agent Task preparation failed.");
     } finally {
       setPrepareRunning(false);
+    }
+  };
+
+  const launchCodex = async () => {
+    if (!prepared || codexLaunching || !prepared.workspaceMcpExposed) return;
+    setCodexLaunching(true);
+    setCodexLaunchError(null);
+    try {
+      await launchAgentTaskInCodex({
+        workspaceId: prepared.workspaceId,
+        taskId: prepared.taskId,
+      });
+      setCodexLaunched(true);
+    } catch (error) {
+      setCodexLaunched(false);
+      setCodexLaunchError(error instanceof Error ? error.message : "Codex handoff failed.");
+    } finally {
+      setCodexLaunching(false);
     }
   };
 
@@ -275,8 +305,28 @@ export function AgentTaskPrepareDialog({
               </code>
             </div>
             <p className="text-sm text-muted-foreground">
-              Next, use your connected agent with this workspace. Put deliverables under <code>outputs/</code>; Infimount review and publication are added in the following v0.8.1 slices.
+              Open this task in Codex through the existing Infimount MCP workspace boundary. Codex starts from an empty handoff directory instead of the workspace filesystem path. Put deliverables under <code>outputs/</code>; review and publication stay separate later steps.
             </p>
+            {!prepared.workspaceMcpExposed ? (
+              <div className="flex gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-800 dark:text-amber-300">
+                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>Enable this Agent Workspace storage in MCP Settings before opening the task in Codex.</span>
+              </div>
+            ) : null}
+            {prepared.sourceMcpExposed ? (
+              <div className="flex gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-800 dark:text-amber-300">
+                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>The source storage already has independent MCP exposure. The Codex handoff does not add that access; existing source policy remains authoritative.</span>
+              </div>
+            ) : null}
+            {codexLaunched ? (
+              <p className="text-sm text-green-700 dark:text-green-300" data-testid="agent-task-codex-launched">
+                Codex handoff opened. This dialog can be closed while Codex works.
+              </p>
+            ) : null}
+            {codexLaunchError ? (
+              <p role="alert" className="text-sm text-destructive">{codexLaunchError}</p>
+            ) : null}
           </div>
         ) : (
           <div className="space-y-4 py-2">
@@ -397,9 +447,17 @@ export function AgentTaskPrepareDialog({
         )}
 
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={prepareRunning}>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={prepareRunning || codexLaunching}>
             {prepared ? "Close" : "Cancel"}
           </Button>
+          {prepared ? (
+            <Button
+              onClick={() => void launchCodex()}
+              disabled={!prepared.workspaceMcpExposed || codexLaunching}
+            >
+              {codexLaunching ? "Opening Codex…" : "Open in Codex"}
+            </Button>
+          ) : null}
           {!prepared && !reviewedPreflight ? (
             <Button
               onClick={() => void runPreflight()}

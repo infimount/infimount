@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentTaskPrepareDialog } from "./AgentTaskPrepareDialog";
 import { listStorages, listWorkspaces } from "@/lib/api";
 import {
+  launchAgentTaskInCodex,
   prepareAgentTask,
   preflightAgentTask,
   type AgentTaskPreflightOutput,
@@ -19,6 +20,7 @@ vi.mock("@/lib/api", async () => {
 });
 
 vi.mock("@/lib/agentTasks", () => ({
+  launchAgentTaskInCodex: vi.fn(),
   preflightAgentTask: vi.fn(),
   prepareAgentTask: vi.fn(),
 }));
@@ -122,6 +124,14 @@ describe("AgentTaskPrepareDialog", () => {
       totalBytes: 12 * 1024 * 1024,
       sourceMcpExposed: true,
       workspaceMcpExposed: true,
+    });
+    vi.mocked(launchAgentTaskInCodex).mockResolvedValue({
+      client: "codex",
+      workspaceId: "workspace-1",
+      workspaceName: "Agent Scratch",
+      taskId: "task-1",
+      taskRoot: "tasks/task-1",
+      launched: true,
     });
   });
 
@@ -231,6 +241,29 @@ describe("AgentTaskPrepareDialog", () => {
     expect(screen.getByTestId("agent-task-prepared")).toHaveTextContent("Task prepared");
     expect(screen.getByText("The task is committed in Agent Scratch.")).toBeInTheDocument();
     expect(screen.queryByText(/0 selected items/)).not.toBeInTheDocument();
+  });
+
+  it("hands the committed task to Codex by workspace and task id", async () => {
+    renderDialog();
+    await screen.findByText(/Agent Scratch/);
+    fireEvent.change(screen.getByLabelText("What should the agent do?"), {
+      target: { value: "Prepare a concise report." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Review scope" }));
+    await screen.findByTestId("agent-task-preflight");
+    fireEvent.click(screen.getByRole("button", { name: "Prepare task" }));
+    await screen.findByTestId("agent-task-prepared");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open in Codex" }));
+
+    await waitFor(() => expect(launchAgentTaskInCodex).toHaveBeenCalledTimes(1));
+    expect(launchAgentTaskInCodex).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      taskId: "task-1",
+    });
+    expect(await screen.findByTestId("agent-task-codex-launched")).toHaveTextContent(
+      "Codex handoff opened",
+    );
   });
 
   it("explains when no eligible local workspace exists", async () => {
