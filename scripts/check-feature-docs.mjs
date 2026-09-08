@@ -47,14 +47,52 @@ if (!webpage.includes("S3/S3-compatible")) {
 }
 
 const readme = read("README.md");
-for (const section of ["## Workbench", "## Agent Workspaces"]) {
+for (const section of ["## Workbench", "## Agent Workspaces", "## Agent Tasks"]) {
   if (!readme.includes(section)) fail(`README.md is missing ${section}`);
 }
 
-for (const phrase of ["dual-pane", "transfer queue", "workspace-scoped MCP policy", "memory files", "checkpoints"]) {
+for (const phrase of [
+  "dual-pane",
+  "transfer queue",
+  "workspace-scoped MCP policy",
+  "memory files",
+  "checkpoints",
+  "review",
+  "publish",
+  "create-only",
+]) {
   if (!readme.toLowerCase().includes(phrase.toLowerCase())) {
     fail(`README.md should mention ${phrase}`);
   }
+}
+
+if (!fs.existsSync("docs/agent-tasks.md")) {
+  fail("docs/agent-tasks.md is missing");
+}
+const agentTasks = read("docs/agent-tasks.md");
+if (agentTasks.includes("v0.8.1")) {
+  fail("docs/agent-tasks.md must not describe Agent Tasks as a v0.8.1 patch feature");
+}
+if (agentTasks.includes("publish-receipt.json")) {
+  fail("docs/agent-tasks.md must document unique publication receipts, not a mutable static receipt");
+}
+for (const phrase of [
+  "v0.9.0",
+  "publish-receipt-<publication-id>.json",
+  "create-only",
+  "fail",
+  "rename",
+  "no overwrite mode",
+  "cleanup-required",
+]) {
+  if (!agentTasks.toLowerCase().includes(phrase.toLowerCase())) {
+    fail(`docs/agent-tasks.md should mention ${phrase}`);
+  }
+}
+
+const llms = read("docs/llms.txt");
+if (!llms.includes("docs/agent-tasks.md")) {
+  fail("docs/llms.txt should link to the Agent Tasks contract");
 }
 
 console.log("Feature docs check passed.");
