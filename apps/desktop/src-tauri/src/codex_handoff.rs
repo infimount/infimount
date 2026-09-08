@@ -18,6 +18,14 @@ use crate::state::AppState;
 
 const MAX_AGENT_TASK_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
 const CODEX_CLIENT_NAME: &str = "codex";
+const CODEX_AGENT_TASK_TOOLS: &[&str] = &[
+    "list_dir",
+    "stat_path",
+    "read_file",
+    "search_paths",
+    "write_file",
+    "mkdir",
+];
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -398,6 +406,7 @@ fn codex_arguments(
         "--outputs-prefix".to_string(),
         scope.outputs_prefix.clone(),
     ])?;
+    let enabled_tools = serde_json::to_string(CODEX_AGENT_TASK_TOOLS)?;
 
     let mut args = vec![
         "exec".into(),
@@ -414,7 +423,7 @@ fn codex_arguments(
     // This run is intentionally MCP-only for task data access. Keep current Codex
     // authentication, but suppress ambient local execution, external integrations,
     // project instruction discovery, and skill catalogs. The task-unique MCP server
-    // below is then the only file-write surface available to the model.
+    // below is then the only handoff-added file-write surface available to the model.
     for config in [
         "agents.enabled=false",
         "allow_login_shell=false",
@@ -468,6 +477,14 @@ fn codex_arguments(
     push_codex_config(
         &mut args,
         format!("mcp_servers.{server_name}.args={mcp_args}"),
+    );
+    push_codex_config(
+        &mut args,
+        format!("mcp_servers.{server_name}.enabled_tools={enabled_tools}"),
+    );
+    push_codex_config(
+        &mut args,
+        format!("mcp_servers.{server_name}.default_tools_approval_mode=\"approve\""),
     );
     push_codex_config(
         &mut args,
@@ -736,6 +753,10 @@ mod tests {
         assert!(joined.contains("web_search=\"disabled\""));
         assert!(joined.contains(&format!("mcp_servers.{server_name}.command")));
         assert!(joined.contains(&format!("mcp_servers.{server_name}.required=true")));
+        assert!(joined.contains(&format!(
+            "mcp_servers.{server_name}.default_tools_approval_mode=\"approve\""
+        )));
+        assert!(joined.contains(&format!("mcp_servers.{server_name}.enabled_tools=")));
         assert!(joined.contains("serve-agent-task"));
         assert!(joined.contains("--storage-id"));
         assert!(joined.contains("--workspace-id"));
