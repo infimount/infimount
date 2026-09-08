@@ -136,6 +136,134 @@ pub async fn copy_agent_task_plan(
     Ok(())
 }
 
+/// Publish one reviewed Agent Task output without ever overwriting an existing
+/// destination object. The destination backend must support OpenDAL's atomic
+/// `if_not_exists` write condition; callers must not silently fall back to a
+/// check-then-write sequence when that capability is absent.
+///
+/// The source is hashed once immediately before opening the destination writer,
+/// hashed again while bytes are streamed, and the committed destination is
+/// hashed after close. All three observations must equal the digest captured by
+/// the user's output review. A same-size source mutation is therefore rejected,
+/// not merely a size drift.
+pub async fn publish_reviewed_agent_task_file(
+    from_op: &Operator,
+    from_path: &str,
+    to_op: &Operator,
+    to_path: &str,
+    expected: &AgentTaskFileDigest,
+) -> Result<AgentTaskFileDigest> {
+    if !to_op.info().capability().write_with_if_not_exists {
+        return Err(CoreError::Config(
+            "publication destination does not support safe create-only writes".to_string(),
+        ));
+    }
+
+    let from_path = normalize_file_path(from_path)?;
+    let to_path = normalize_file_path(to_path)?;
+    let before_digest = hash_agent_task_file(from_op, &from_path).await?;
+    if &before_digest != expected {
+        return Err(CoreError::Config(
+            "Agent Task output changed since it was reviewed".to_string(),
+        ));
+    }
+
+    let before = from_op.stat(&from_path).await?;
+    if before.is_dir() || before.content_length() != expected.byte_size {
+        return Err(CoreError::Config(
+            "Agent Task output changed since it was reviewed".to_string(),
+        ));
+    }
+
+    let mut reader = from_op
+        .reader(&from_path)
+        .await?
+        .into_futures_async_read(0..expected.byte_size)
+        .await?;
+    let mut writer = to_op.writer_with(&to_path).if_not_exists(true).await?;
+    let mut digest = Sha256::new();
+    let mut buffer = vec![0_u8; HASH_BUFFER_BYTES];
+    let mut copied = 0_u64;
+
+    loop {
+        let read = match reader.read(&mut buffer).await {
+            Ok(read) => read,
+            Err(error) => {
+                if writer.abort().await.is_err() {
+                    return Err(CoreError::TransferCleanupRequired);
+                }
+                return Err(error.into());
+            }
+        };
+        if read == 0 {
+            break;
+        }
+        copied = copied.saturating_add(read as u64);
+        if copied > expected.byte_size {
+            if writer.abort().await.is_err() {
+                return Err(CoreError::TransferCleanupRequired);
+            }
+            return Err(CoreError::Config(
+                "Agent Task output changed while it was being published".to_string(),
+            ));
+        }
+        digest.update(&buffer[..read]);
+        if let Err(error) = writer.write(buffer[..read].to_vec()).await {
+            if writer.abort().await.is_err() {
+                return Err(CoreError::TransferCleanupRequired);
+            }
+            return Err(error.into());
+        }
+    }
+
+    let streamed = AgentTaskFileDigest {
+        byte_size: copied,
+        sha256: format!("{:x}", digest.finalize()),
+    };
+    let after = match from_op.stat(&from_path).await {
+        Ok(after) => after,
+        Err(error) => {
+            if writer.abort().await.is_err() {
+                return Err(CoreError::TransferCleanupRequired);
+            }
+            return Err(error.into());
+        }
+    };
+    if after.is_dir() || after.content_length() != expected.byte_size || &streamed != expected {
+        if writer.abort().await.is_err() {
+            return Err(CoreError::TransferCleanupRequired);
+        }
+        return Err(CoreError::Config(
+            "Agent Task output changed while it was being published".to_string(),
+        ));
+    }
+
+    if let Err(error) = writer.close().await {
+        if writer.abort().await.is_err() {
+            return Err(CoreError::TransferCleanupRequired);
+        }
+        return Err(error.into());
+    }
+
+    let persisted = match hash_agent_task_file(to_op, &to_path).await {
+        Ok(persisted) => persisted,
+        Err(CoreError::Storage(error)) if error.kind() == opendal::ErrorKind::NotFound => {
+            return Err(CoreError::Config(
+                "published Agent Task output disappeared during integrity verification".to_string(),
+            ));
+        }
+        Err(_) => return Err(CoreError::TransferCleanupRequired),
+    };
+    if &persisted != expected {
+        // The create-only write succeeded, but the current destination no longer
+        // matches the bytes Infimount wrote. Another actor may have modified it;
+        // never delete bytes whose identity is no longer ours to prove.
+        return Err(CoreError::TransferCleanupRequired);
+    }
+
+    Ok(persisted)
+}
+
 /// Copy one file between OpenDAL operators while hashing the bytes actually
 /// copied. The source must still match the byte size from the authoritative
 /// transfer plan before the destination writer is opened, and it is checked
@@ -398,5 +526,84 @@ mod tests {
             .unwrap_err();
         assert!(matches!(error, CoreError::Config(_)));
         assert!(destination.stat("out/a.txt").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn reviewed_publication_copies_exact_bytes_without_overwrite() {
+        let source = memory_operator();
+        let destination = memory_operator();
+        assert!(destination.info().capability().write_with_if_not_exists);
+        source
+            .write("outputs/report.txt", "reviewed")
+            .await
+            .unwrap();
+        let expected = hash_agent_task_file(&source, "outputs/report.txt")
+            .await
+            .unwrap();
+
+        let published = publish_reviewed_agent_task_file(
+            &source,
+            "outputs/report.txt",
+            &destination,
+            "published/report.txt",
+            &expected,
+        )
+        .await
+        .unwrap();
+        assert_eq!(published, expected);
+        assert_eq!(
+            destination
+                .read("published/report.txt")
+                .await
+                .unwrap()
+                .to_vec(),
+            b"reviewed"
+        );
+
+        destination
+            .write("published/existing.txt", "keep")
+            .await
+            .unwrap();
+        let error = publish_reviewed_agent_task_file(
+            &source,
+            "outputs/report.txt",
+            &destination,
+            "published/existing.txt",
+            &expected,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, CoreError::Storage(_)));
+        assert_eq!(
+            destination
+                .read("published/existing.txt")
+                .await
+                .unwrap()
+                .to_vec(),
+            b"keep"
+        );
+    }
+
+    #[tokio::test]
+    async fn reviewed_publication_rejects_same_size_source_drift_before_write() {
+        let source = memory_operator();
+        let destination = memory_operator();
+        source.write("outputs/report.txt", "old").await.unwrap();
+        let expected = hash_agent_task_file(&source, "outputs/report.txt")
+            .await
+            .unwrap();
+        source.write("outputs/report.txt", "new").await.unwrap();
+
+        let error = publish_reviewed_agent_task_file(
+            &source,
+            "outputs/report.txt",
+            &destination,
+            "published/report.txt",
+            &expected,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, CoreError::Config(_)));
+        assert!(destination.stat("published/report.txt").await.is_err());
     }
 }
