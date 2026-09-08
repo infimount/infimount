@@ -1,4 +1,6 @@
 pub mod activation_probe;
+pub mod agent_task_list;
+pub mod agent_task_review;
 pub mod agent_tasks;
 pub mod backup;
 pub mod diagnostics;
@@ -11,6 +13,8 @@ pub mod transfers;
 pub mod workspaces;
 
 pub use activation_probe::*;
+pub use agent_task_list::*;
+pub use agent_task_review::*;
 pub use agent_tasks::*;
 pub use backup::*;
 pub use diagnostics::*;

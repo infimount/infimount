@@ -4,9 +4,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { TauriApiError } from "./api";
 import {
   launchAgentTaskInCodex,
+  listAgentTasks,
   prepareAgentTask,
   preflightAgentTask,
+  reviewAgentTaskOutputs,
   type AgentTaskCodexHandoffOutput,
+  type AgentTaskListOutput,
+  type AgentTaskOutputReviewOutput,
   type AgentTaskPreparationRequest,
   type AgentTaskPreflightOutput,
   type PrepareAgentTaskOutput,
@@ -59,6 +63,39 @@ const handoffResult: AgentTaskCodexHandoffOutput = {
   launched: true,
 };
 
+const listResult: AgentTaskListOutput = {
+  workspaceId: "workspace-1",
+  workspaceName: "Agent Scratch",
+  tasks: [
+    {
+      taskId: "task-1",
+      title: "Validate export",
+      createdAt: "2026-09-08T00:00:00+00:00",
+      taskRoot: "tasks/task-1",
+    },
+  ],
+  truncated: false,
+  skippedInvalidTasks: 0,
+};
+
+const reviewResult: AgentTaskOutputReviewOutput = {
+  workspaceId: "workspace-1",
+  workspaceName: "Agent Scratch",
+  taskId: "task-1",
+  taskRoot: "tasks/task-1",
+  fileCount: 1,
+  totalBytes: 12,
+  files: [
+    {
+      taskPath: "outputs/summary.md",
+      byteSize: 12,
+      sha256: "a".repeat(64),
+      preview: "# Summary\n",
+      previewUnavailableReason: null,
+    },
+  ],
+};
+
 describe("Agent Task desktop API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -84,6 +121,22 @@ describe("Agent Task desktop API", () => {
 
     await expect(launchAgentTaskInCodex(handoff)).resolves.toEqual(handoffResult);
     expect(invokeMock).toHaveBeenCalledWith("launch_agent_task_in_codex", { request: handoff });
+  });
+
+  it("lists committed tasks by workspace identity only", async () => {
+    invokeMock.mockResolvedValueOnce(listResult);
+    const list = { workspaceId: "workspace-1" };
+
+    await expect(listAgentTasks(list)).resolves.toEqual(listResult);
+    expect(invokeMock).toHaveBeenCalledWith("list_agent_tasks", { request: list });
+  });
+
+  it("forwards only task and workspace identity to output review", async () => {
+    invokeMock.mockResolvedValueOnce(reviewResult);
+    const review = { workspaceId: "workspace-1", taskId: "task-1" };
+
+    await expect(reviewAgentTaskOutputs(review)).resolves.toEqual(reviewResult);
+    expect(invokeMock).toHaveBeenCalledWith("review_agent_task_outputs", { request: review });
   });
 
   it("preserves a safe backend error code and message", async () => {
