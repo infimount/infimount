@@ -1,10 +1,12 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use infimount_core::agent_task_io::hash_agent_task_file;
 use infimount_core::agent_tasks::{
     agent_task_root, validate_agent_task_manifest, AgentTaskManifest, AGENT_TASK_BRIEF_FILE,
-    AGENT_TASK_MANIFEST_FILE, AGENT_TASK_OUTPUTS_DIR,
+    AGENT_TASK_INPUTS_DIR, AGENT_TASK_MANIFEST_FILE, AGENT_TASK_OUTPUTS_DIR,
 };
 use infimount_core::workspaces::workspace_schema_supported;
 use infimount_core::{CoreError, SourceKind};
@@ -157,11 +159,15 @@ pub async fn launch_agent_task_in_codex(
         ));
     }
     if manifest_metadata.content_length() > MAX_AGENT_TASK_MANIFEST_BYTES {
-        return Err(CoreError::Config("Agent Task manifest is unexpectedly large".into()));
+        return Err(CoreError::Config(
+            "Agent Task manifest is unexpectedly large".into(),
+        ));
     }
     let manifest_bytes = op.read(&manifest_path).await?.to_vec();
     if manifest_bytes.len() as u64 > MAX_AGENT_TASK_MANIFEST_BYTES {
-        return Err(CoreError::Config("Agent Task manifest is unexpectedly large".into()));
+        return Err(CoreError::Config(
+            "Agent Task manifest is unexpectedly large".into(),
+        ));
     }
     let manifest: AgentTaskManifest = serde_json::from_slice(&manifest_bytes)?;
     validate_agent_task_manifest(&manifest)?;
@@ -173,6 +179,8 @@ pub async fn launch_agent_task_in_codex(
             "Agent Task manifest does not match the requested workspace task".into(),
         ));
     }
+
+    verify_prepared_inputs(&op, &storage, &workspace_task_path, &manifest).await?;
 
     // Re-run confinement and policy binding immediately before handing the task to an
     // external client. Codex never receives the workspace's host filesystem path.
@@ -217,6 +225,67 @@ pub async fn launch_agent_task_in_codex(
     })
 }
 
+async fn verify_prepared_inputs(
+    op: &opendal::Operator,
+    storage: &infimount_mcp::registry::StorageRecord,
+    workspace_task_path: &str,
+    manifest: &AgentTaskManifest,
+) -> Result<(), CoreError> {
+    let inputs_root = join_path(workspace_task_path, AGENT_TASK_INPUTS_DIR);
+    validate_local_path(storage, &inputs_root)?;
+    require_directory(op, &inputs_root, "Agent Task inputs directory").await?;
+
+    let entries = infimount_core::operations::list_entries_recursive(op, &inputs_root)
+        .await
+        .map_err(|_| {
+            CoreError::Config("Agent Task prepared input set could not be verified".into())
+        })?;
+    let actual_files = entries
+        .iter()
+        .filter(|entry| !entry.is_dir)
+        .map(|entry| entry.path.trim_matches('/').to_string())
+        .collect::<HashSet<_>>();
+    let expected_files = expected_prepared_input_paths(workspace_task_path, manifest);
+
+    if actual_files != expected_files {
+        return Err(CoreError::Config(
+            "Agent Task prepared input set changed after preparation".into(),
+        ));
+    }
+
+    let mut inputs = manifest.inputs.iter().collect::<Vec<_>>();
+    inputs.sort_by(|left, right| left.task_path.cmp(&right.task_path));
+    for input in inputs {
+        let path = join_path(workspace_task_path, &input.task_path);
+        validate_local_path(storage, &path)?;
+        let digest = hash_agent_task_file(op, &path).await.map_err(|_| {
+            CoreError::Config("Agent Task prepared input bytes could not be verified".into())
+        })?;
+        if digest.byte_size != input.byte_size || digest.sha256 != input.sha256 {
+            return Err(CoreError::Config(
+                "Agent Task prepared input bytes changed after preparation".into(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn expected_prepared_input_paths(
+    workspace_task_path: &str,
+    manifest: &AgentTaskManifest,
+) -> HashSet<String> {
+    manifest
+        .inputs
+        .iter()
+        .map(|input| {
+            join_path(workspace_task_path, &input.task_path)
+                .trim_matches('/')
+                .to_string()
+        })
+        .collect()
+}
+
 async fn require_directory(
     op: &opendal::Operator,
     path: &str,
@@ -251,9 +320,8 @@ fn validate_local_path(
     storage: &infimount_mcp::registry::StorageRecord,
     path: &str,
 ) -> Result<(), CoreError> {
-    infimount_mcp::storage_namespace::validate_local_mcp_path(storage, path).map_err(|_| {
-        CoreError::Config("Agent Task local path confinement check failed".into())
-    })
+    infimount_mcp::storage_namespace::validate_local_mcp_path(storage, path)
+        .map_err(|_| CoreError::Config("Agent Task local path confinement check failed".into()))
 }
 
 fn join_path(root: &str, relative: &str) -> String {
@@ -271,6 +339,23 @@ fn create_neutral_handoff_directory() -> Result<PathBuf, CoreError> {
     let path = std::env::temp_dir().join(format!("infimount-codex-{}", Uuid::new_v4()));
     fs::create_dir(&path)
         .map_err(|_| CoreError::Config("failed to create the Codex handoff directory".into()))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let permissions_result = fs::metadata(&path).and_then(|metadata| {
+            let mut permissions = metadata.permissions();
+            permissions.set_mode(0o700);
+            fs::set_permissions(&path, permissions)
+        });
+        if permissions_result.is_err() {
+            cleanup_neutral_directory(&path);
+            return Err(CoreError::Config(
+                "failed to secure the Codex handoff directory".into(),
+            ));
+        }
+    }
+
     Ok(path)
 }
 
@@ -280,8 +365,12 @@ fn cleanup_neutral_directory(path: &Path) {
 
 fn codex_task_prompt(workspace_name: &str, task_path: &str, outputs_path: &str) -> String {
     format!(
-        "Complete the prepared Infimount Agent Task using only the required Infimount MCP server for task file access. Work only in Agent Workspace {workspace_name:?} at MCP path {task_path:?}. Read TASK.md through Infimount and treat inputs/ plus task metadata as immutable. Infimount enforces writes only under {outputs_path:?}; use write_file (with create_parents when needed) for deliverables. Stop when the deliverables are ready for review in Infimount. Do not publish outputs. Do not search for or use host filesystem paths to bypass the task boundary."
+        "Complete the prepared Infimount Agent Task using only the required task-scoped Infimount MCP server for task file access. Work only in Agent Workspace {workspace_name:?} at MCP path {task_path:?}. Read TASK.md through Infimount and treat inputs/ plus task metadata as immutable. Infimount enforces writes only under {outputs_path:?}; use write_file (with create_parents when needed) for deliverables. Stop when the deliverables are ready for review in Infimount. Do not publish outputs. Do not search for or use host filesystem paths to bypass the task boundary."
     )
+}
+
+fn codex_server_name(task_id: &str) -> String {
+    format!("infimount_agent_task_{}", task_id.replace('-', ""))
 }
 
 fn codex_arguments(
@@ -290,6 +379,7 @@ fn codex_arguments(
     prompt: &str,
     scope: &infimount_mcp::AgentTaskScope,
 ) -> Result<Vec<String>, CoreError> {
+    let server_name = codex_server_name(&scope.task_id);
     let command = serde_json::to_string(&sidecar.to_string_lossy().to_string())?;
     let mcp_args = serde_json::to_string(&vec![
         "serve-agent-task".to_string(),
@@ -311,14 +401,36 @@ fn codex_arguments(
         scope.outputs_prefix.clone(),
     ])?;
     Ok(vec![
+        "exec".into(),
+        "--ephemeral".into(),
+        "--ignore-user-config".into(),
+        "--skip-git-repo-check".into(),
+        "--sandbox".into(),
+        "read-only".into(),
         "-C".into(),
         cwd.to_string_lossy().to_string(),
         "-c".into(),
-        format!("mcp_servers.infimount.command={command}"),
+        "features.shell_tool=false".into(),
         "-c".into(),
-        format!("mcp_servers.infimount.args={mcp_args}"),
+        "features.shell_snapshot=false".into(),
         "-c".into(),
-        "mcp_servers.infimount.required=true".into(),
+        "features.view_image=false".into(),
+        "-c".into(),
+        "features.apps=false".into(),
+        "-c".into(),
+        "features.plugins=false".into(),
+        "-c".into(),
+        "features.memories=false".into(),
+        "-c".into(),
+        "web_search=\"disabled\"".into(),
+        "-c".into(),
+        format!("mcp_servers.{server_name}.command={command}"),
+        "-c".into(),
+        format!("mcp_servers.{server_name}.args={mcp_args}"),
+        "-c".into(),
+        format!("mcp_servers.{server_name}.enabled=true"),
+        "-c".into(),
+        format!("mcp_servers.{server_name}.required=true"),
         prompt.to_string(),
     ])
 }
@@ -330,13 +442,13 @@ fn shell_quote(value: &str) -> String {
 
 #[cfg(unix)]
 fn render_posix_codex_command(args: &[String]) -> String {
-    let rendered = std::iter::once(CODEX_CLIENT_NAME.to_string())
-        .chain(args.iter().cloned())
-        .map(|value| shell_quote(&value))
+    let rendered_args = args
+        .iter()
+        .map(|value| shell_quote(value))
         .collect::<Vec<_>>()
         .join(" ");
     format!(
-        "if ! command -v codex >/dev/null 2>&1; then printf '%s\\n' 'Codex CLI was not found in your login shell. Install or configure Codex, then retry from Infimount.'; exec \"${{SHELL:-/bin/sh}}\" -l; fi; exec {rendered}"
+        "codex_bin=$(command -v codex 2>/dev/null || true); if [ -z \"$codex_bin\" ] || [ ! -f \"$codex_bin\" ] || [ ! -x \"$codex_bin\" ]; then printf '%s\\n' 'Codex CLI executable was not found in your login shell. Install or configure Codex, then retry from Infimount.'; \"${{SHELL:-/bin/sh}}\" -l; exit 127; fi; \"$codex_bin\" {rendered_args}"
     )
 }
 
@@ -352,7 +464,9 @@ fn write_posix_launcher(args: &[String], neutral_cwd: &Path) -> Result<PathBuf, 
         shell_quote(&command)
     );
     if fs::write(&script, body).is_err() {
-        return Err(CoreError::Config("failed to prepare the Codex launcher".into()));
+        return Err(CoreError::Config(
+            "failed to prepare the Codex launcher".into(),
+        ));
     }
     let permissions_result = fs::metadata(&script).and_then(|metadata| {
         let mut permissions = metadata.permissions();
@@ -361,7 +475,9 @@ fn write_posix_launcher(args: &[String], neutral_cwd: &Path) -> Result<PathBuf, 
     });
     if permissions_result.is_err() {
         let _ = fs::remove_file(&script);
-        return Err(CoreError::Config("failed to prepare the Codex launcher".into()));
+        return Err(CoreError::Config(
+            "failed to prepare the Codex launcher".into(),
+        ));
     }
     Ok(script)
 }
@@ -405,7 +521,11 @@ fn launch_codex_terminal(args: &[String], neutral_cwd: &Path) -> Result<(), Core
             return Err(error);
         }
     };
-    match Command::new("open").args(["-a", "Terminal"]).arg(&script).spawn() {
+    match Command::new("open")
+        .args(["-a", "Terminal"])
+        .arg(&script)
+        .spawn()
+    {
         Ok(_) => Ok(()),
         Err(_) => {
             cleanup_neutral_directory(neutral_cwd);
@@ -429,13 +549,15 @@ fn launch_codex_terminal(args: &[String], neutral_cwd: &Path) -> Result<(), Core
         .join(", ");
     let neutral = format!("'{}'", neutral_cwd.to_string_lossy().replace('\'', "''"));
     let body = format!(
-        "$handoffDir = {neutral}\r\n$scriptPath = $PSCommandPath\r\ntry {{\r\n  Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue\r\n  $codex = Get-Command codex -ErrorAction SilentlyContinue\r\n  if (-not $codex) {{ Write-Host 'Codex CLI was not found. Install or configure Codex, then retry from Infimount.'; return }}\r\n  $codexArgs = @({rendered_args})\r\n  & $codex.Source @codexArgs\r\n}} finally {{\r\n  Remove-Item -LiteralPath $handoffDir -Recurse -Force -ErrorAction SilentlyContinue\r\n}}\r\n"
+        "$handoffDir = {neutral}\r\n$scriptPath = $PSCommandPath\r\ntry {{\r\n  Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue\r\n  $codex = Get-Command codex -ErrorAction SilentlyContinue\r\n  if (-not $codex -or $codex.CommandType -notin @('Application', 'ExternalScript')) {{ Write-Host 'Codex CLI executable was not found. Install or configure Codex, then retry from Infimount.'; return }}\r\n  $codexArgs = @({rendered_args})\r\n  & $codex.Source @codexArgs\r\n}} finally {{\r\n  Remove-Item -LiteralPath $handoffDir -Recurse -Force -ErrorAction SilentlyContinue\r\n}}\r\n"
     );
     let mut bytes = vec![0xEF, 0xBB, 0xBF];
     bytes.extend_from_slice(body.as_bytes());
     if fs::write(&script, bytes).is_err() {
         cleanup_neutral_directory(neutral_cwd);
-        return Err(CoreError::Config("failed to prepare the Codex launcher".into()));
+        return Err(CoreError::Config(
+            "failed to prepare the Codex launcher".into(),
+        ));
     }
     match Command::new("powershell.exe")
         .args(["-NoExit", "-ExecutionPolicy", "Bypass", "-File"])
@@ -464,6 +586,7 @@ fn launch_codex_terminal(_args: &[String], neutral_cwd: &Path) -> Result<(), Cor
 #[cfg(test)]
 mod tests {
     use super::*;
+    use infimount_core::agent_tasks::{AgentTaskInput, AGENT_TASK_SCHEMA_VERSION};
 
     fn test_scope() -> infimount_mcp::AgentTaskScope {
         infimount_mcp::AgentTaskScope::new(
@@ -480,6 +603,45 @@ mod tests {
         .unwrap()
     }
 
+    fn test_manifest() -> AgentTaskManifest {
+        AgentTaskManifest {
+            schema_version: AGENT_TASK_SCHEMA_VERSION,
+            task_id: "81f08176-86e4-40ec-a9a4-a219c4c9b454".into(),
+            title: "Test task".into(),
+            created_at: "2026-09-08T00:00:00Z".into(),
+            workspace_id: "f8f47aa7-702d-4fd6-8815-84cbdf3b3127".into(),
+            task_root: "tasks/81f08176-86e4-40ec-a9a4-a219c4c9b454".into(),
+            outputs_directory: "outputs".into(),
+            inputs: vec![
+                AgentTaskInput {
+                    task_path: "inputs/a.txt".into(),
+                    byte_size: 1,
+                    sha256: "a".repeat(64),
+                },
+                AgentTaskInput {
+                    task_path: "inputs/nested/b.txt".into(),
+                    byte_size: 2,
+                    sha256: "b".repeat(64),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn prepared_input_paths_are_derived_only_from_manifest_entries() {
+        let paths = expected_prepared_input_paths(
+            "agent/research/tasks/81f08176-86e4-40ec-a9a4-a219c4c9b454",
+            &test_manifest(),
+        );
+        assert_eq!(paths.len(), 2);
+        assert!(paths.contains(
+            "agent/research/tasks/81f08176-86e4-40ec-a9a4-a219c4c9b454/inputs/a.txt"
+        ));
+        assert!(paths.contains(
+            "agent/research/tasks/81f08176-86e4-40ec-a9a4-a219c4c9b454/inputs/nested/b.txt"
+        ));
+    }
+
     #[test]
     fn codex_prompt_uses_mcp_scope_without_host_path() {
         let prompt = codex_task_prompt(
@@ -487,7 +649,7 @@ mod tests {
             "/Workspace storage/agent/research/tasks/81f08176-86e4-40ec-a9a4-a219c4c9b454",
             "/Workspace storage/agent/research/tasks/81f08176-86e4-40ec-a9a4-a219c4c9b454/outputs",
         );
-        assert!(prompt.contains("required Infimount MCP server"));
+        assert!(prompt.contains("task-scoped Infimount MCP server"));
         assert!(prompt.contains("writes only under"));
         assert!(prompt.contains("Do not publish outputs"));
         assert!(!prompt.contains("/home/"));
@@ -495,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_arguments_pin_task_sidecar_scope_and_do_not_override_approvals() {
+    fn codex_arguments_are_ephemeral_isolated_and_task_scoped() {
         let scope = test_scope();
         let args = codex_arguments(
             Path::new("/opt/Infimount/mcp"),
@@ -505,8 +667,17 @@ mod tests {
         )
         .unwrap();
         let joined = args.join(" ");
-        assert!(joined.contains("mcp_servers.infimount.command"));
-        assert!(joined.contains("mcp_servers.infimount.required=true"));
+        let server_name = codex_server_name(&scope.task_id);
+        assert_eq!(args.first().map(String::as_str), Some("exec"));
+        assert!(joined.contains("--ephemeral"));
+        assert!(joined.contains("--ignore-user-config"));
+        assert!(joined.contains("--skip-git-repo-check"));
+        assert!(joined.contains("--sandbox read-only"));
+        assert!(joined.contains("features.shell_tool=false"));
+        assert!(joined.contains("features.view_image=false"));
+        assert!(joined.contains("web_search=\"disabled\""));
+        assert!(joined.contains(&format!("mcp_servers.{server_name}.command")));
+        assert!(joined.contains(&format!("mcp_servers.{server_name}.required=true")));
         assert!(joined.contains("serve-agent-task"));
         assert!(joined.contains("--storage-id"));
         assert!(joined.contains("--workspace-id"));
@@ -516,20 +687,34 @@ mod tests {
         assert!(joined.contains("--outputs-prefix"));
         assert!(!joined.contains("--transport"));
         assert!(!joined.contains("approval_policy"));
-        assert!(!joined.contains("sandbox"));
         assert!(!joined.contains("dangerously"));
+    }
+
+    #[test]
+    fn codex_server_name_is_unique_per_task_and_safe_for_dotted_config() {
+        let name = codex_server_name("81f08176-86e4-40ec-a9a4-a219c4c9b454");
+        assert_eq!(
+            name,
+            "infimount_agent_task_81f0817686e440eca9a4a219c4c9b454"
+        );
+        assert!(name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_'));
     }
 
     #[cfg(unix)]
     #[test]
-    fn posix_launcher_quotes_every_codex_argument_and_retains_cleanup_owner() {
+    fn posix_launcher_quotes_every_codex_argument_and_keeps_cleanup_owner() {
         let rendered = render_posix_codex_command(&[
+            "exec".into(),
             "-C".into(),
             "/tmp/a path".into(),
             "prompt with ' quote".into(),
         ]);
+        assert!(rendered.contains("\"$codex_bin\""));
         assert!(rendered.contains("'/tmp/a path'"));
         assert!(rendered.contains("'prompt with '\"'\"' quote'"));
+        assert!(!rendered.contains("exec codex"));
 
         let temp = tempfile::tempdir().unwrap();
         let handoff = temp.path().join("handoff");
