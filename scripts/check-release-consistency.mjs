@@ -48,6 +48,7 @@ if (!/^version\.workspace\s*=\s*true\s*$/m.test(desktopCargo)) {
 const releaseNotesPath = `docs/release-notes-${version}.md`;
 for (const path of [
   "docs/agent-workspaces.md",
+  "docs/agent-tasks.md",
   "docs/recovery.md",
   "docs/troubleshooting.md",
   "docs/privacy.md",
@@ -69,23 +70,49 @@ if (candidateChannel) {
 contains("CHANGELOG.md", `[Unreleased]: https://github.com/infimount/infimount/compare/v${coreVersion}...HEAD`);
 contains("CHANGELOG.md", `[${coreVersion}]: https://github.com/infimount/infimount/compare/`);
 
+const readme = read("README.md");
+const stableMatch = readme.match(
+  /\*\*Current stable release:\*\* \[v(\d+\.\d+\.\d+)\]\(https:\/\/github\.com\/infimount\/infimount\/releases\/tag\/v\1\)/,
+);
+if (!stableMatch) {
+  fail("README.md must declare one canonical Current stable release link");
+}
+const publicStableVersion = stableMatch[1];
+const candidateLine = readme.match(/\*\*Release candidate under validation:\*\* v(\d+\.\d+\.\d+) \(not published yet\)/);
+const index = read("docs/index.html");
+const llms = read("docs/llms.txt");
+
 if (candidateChannel) {
+  if (publicStableVersion === coreVersion) {
+    fail(`candidate ${coreVersion} must not replace the public stable release before publication`);
+  }
+  contains("docs/index.html", `"softwareVersion": "${publicStableVersion}"`);
+  contains("docs/llms.txt", `Current stable release: v${publicStableVersion}`);
+
+  if (candidateLine && candidateLine[1] !== coreVersion) {
+    fail(`README.md candidate ${candidateLine[1]} does not match ${coreVersion}`);
+  }
+  const llmsCandidate = llms.match(/Release candidate under validation: v(\d+\.\d+\.\d+) \(not published yet\)/);
+  if (llmsCandidate && llmsCandidate[1] !== coreVersion) {
+    fail(`docs/llms.txt candidate ${llmsCandidate[1]} does not match ${coreVersion}`);
+  }
+  const indexCandidate = index.match(/v(\d+\.\d+\.\d+) release candidate/);
+  if (indexCandidate && indexCandidate[1] !== coreVersion) {
+    fail(`docs/index.html candidate ${indexCandidate[1]} does not match ${coreVersion}`);
+  }
+
   contains("CHANGELOG.md", `## [${coreVersion}] - Unreleased release candidate`);
-  contains("README.md", "Current stable release:** [v0.7.1]");
-  contains("README.md", `Release candidate under validation:** v${coreVersion} (not published yet)`);
-  contains("docs/index.html", '"softwareVersion": "0.7.1"');
-  contains("docs/index.html", `v${coreVersion} release candidate`);
-  contains("docs/llms.txt", "Current stable release: v0.7.1");
-  contains("docs/llms.txt", `Release candidate under validation: v${coreVersion} (not published yet)`);
 } else {
   if (!new RegExp(`^## \\[${escapedVersion}\\] - \\d{4}-\\d{2}-\\d{2}$`, "m").test(read("CHANGELOG.md"))) {
     fail(`CHANGELOG.md must mark ${version} with a release date before the stable tag`);
   }
-  contains("README.md", `Current stable release:** [${tag}](https://github.com/infimount/infimount/releases/tag/${tag})`);
-  excludes("README.md", "not published yet");
+  if (publicStableVersion !== version) {
+    fail(`README.md current stable v${publicStableVersion} != ${tag}`);
+  }
   contains("docs/index.html", `"softwareVersion": "${version}"`);
-  excludes("docs/index.html", "release candidate appear only after publication");
   contains("docs/llms.txt", `Current stable release: ${tag}`);
+  excludes("README.md", "not published yet");
+  excludes("docs/index.html", "not published yet");
   excludes("docs/llms.txt", "not published yet");
 }
 
