@@ -12,7 +12,9 @@ use serde_json::{json, Map, Value};
 use crate::audit::{AuditDecision, AuditEvent, AuditStore};
 use crate::errors::{err, err_with_details, fail, McpError, McpErrorCode, McpResult};
 use crate::path::parse_mcp_path;
-use crate::policy::{normalize_policy_path, McpAccessMode, McpOperation, McpRuleSource};
+use crate::policy::{
+    evaluate_storage_policy, normalize_policy_path, McpAccessMode, McpOperation, McpRuleSource,
+};
 use crate::registry::{StorageRecord, StorageRegistry};
 use crate::server::{self, rmcp_tools};
 use crate::session::SessionManager;
@@ -192,6 +194,7 @@ impl AgentTaskScope {
         registry: &StorageRegistry,
         path: &str,
         access: ScopeAccess,
+        operation: McpOperation,
     ) -> McpResult<(StorageRecord, String)> {
         let storage = self.validate_current_binding(registry)?;
         let parsed = parse_mcp_path(path)?;
@@ -222,6 +225,22 @@ impl AgentTaskScope {
                 json!({ "taskId": self.task_id }),
             ));
         }
+
+        // The managed workspace rule must be the effective rule for the exact path,
+        // not merely an ancestor rule that still exists. This prevents a more-specific
+        // manual or unrelated workspace rule from silently replacing the authority used
+        // by the handoff while preserving the storage policy evaluator's deny semantics.
+        let evaluation = evaluate_storage_policy(&storage, &backend_path, operation, false, false)?;
+        if evaluation.matched_rule_id.as_deref() != Some(self.policy_rule_id.as_str())
+            || evaluation.workspace_id.as_deref() != Some(self.workspace_id.as_str())
+        {
+            return Err(err_with_details(
+                McpErrorCode::ERR_WORKSPACE_POLICY_MANAGED,
+                "the Agent Workspace rule is no longer the effective policy for this task path",
+                json!({ "taskId": self.task_id }),
+            ));
+        }
+
         Ok((storage, parsed.normalized))
     }
 }
@@ -325,7 +344,12 @@ impl AgentTaskMcpServer {
             "search_paths" => (ScopeAccess::Read, McpOperation::Search),
             "write_file" => (ScopeAccess::Write, McpOperation::Write),
             "mkdir" => (ScopeAccess::Write, McpOperation::Mkdir),
-            _ => return error_value(err(McpErrorCode::ERR_INVALID_PATH, "unsupported Agent Task tool")),
+            _ => {
+                return error_value(err(
+                    McpErrorCode::ERR_INVALID_PATH,
+                    "unsupported Agent Task tool",
+                ))
+            }
         };
 
         let started = Instant::now();
@@ -333,13 +357,22 @@ impl AgentTaskMcpServer {
             Ok(lock) => lock,
             Err(error) => return error_value(error),
         };
-        let authorization = self.scope.authorize_path(&self.ctx.registry, path, access);
+        let authorization =
+            self.scope
+                .authorize_path(&self.ctx.registry, path, access, operation);
         let (storage, normalized_path) = match authorization {
             Ok(value) => value,
             Err(error) => {
                 drop(configuration);
                 let result = error_value(error);
-                self.audit_result(name, operation, path, None, &result, started.elapsed().as_millis() as u64);
+                self.audit_result(
+                    name,
+                    operation,
+                    path,
+                    None,
+                    &result,
+                    started.elapsed().as_millis() as u64,
+                );
                 return result;
             }
         };
@@ -415,6 +448,7 @@ impl AgentTaskMcpServer {
                     | "ERR_STORAGE_NOT_EXPOSED"
                     | "ERR_STORAGE_READ_ONLY"
                     | "ERR_SESSION_FORBIDDEN"
+                    | "ERR_WORKSPACE_POLICY_MANAGED"
             ) {
                 AuditDecision::Denied
             } else {
@@ -437,7 +471,9 @@ impl ServerHandler for AgentTaskMcpServer {
         .with_server_info(
             Implementation::new("infimount_agent_task", env!("CARGO_PKG_VERSION"))
                 .with_title("Infimount Agent Task MCP Server")
-                .with_description("Task-scoped filesystem access for a prepared Infimount Agent Task."),
+                .with_description(
+                    "Task-scoped filesystem access for a prepared Infimount Agent Task.",
+                ),
         )
         .with_instructions(
             "Use only the prepared Agent Task path. Inputs and task instructions are readable; writes are restricted to outputs/. Infimount root enumeration, destructive operations, and publication are unavailable.",
@@ -453,7 +489,9 @@ impl ServerHandler for AgentTaskMcpServer {
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
-        self.tools().into_iter().find(|tool| tool.name == name)
+        self.tools()
+            .into_iter()
+            .find(|tool| tool.name.as_ref() == name)
     }
 
     async fn call_tool(
@@ -567,6 +605,7 @@ mod tests {
                 &registry,
                 "/Workspace storage/workspace/tasks/task-1/TASK.md",
                 ScopeAccess::Read,
+                McpOperation::Read,
             )
             .is_ok());
         assert!(scope
@@ -574,6 +613,7 @@ mod tests {
                 &registry,
                 "/Workspace storage/workspace/tasks/task-1/inputs/a.txt",
                 ScopeAccess::Write,
+                McpOperation::Write,
             )
             .is_err());
         assert!(scope
@@ -581,6 +621,7 @@ mod tests {
                 &registry,
                 "/Workspace storage/workspace/tasks/task-1/outputs/result.md",
                 ScopeAccess::Write,
+                McpOperation::Write,
             )
             .is_ok());
         assert!(scope
@@ -588,6 +629,7 @@ mod tests {
                 &registry,
                 "/Workspace storage/workspace/tasks/task-2/outputs/result.md",
                 ScopeAccess::Read,
+                McpOperation::Read,
             )
             .is_err());
         assert!(scope
@@ -595,10 +637,11 @@ mod tests {
                 &registry,
                 "/Other/workspace/tasks/task-1/TASK.md",
                 ScopeAccess::Read,
+                McpOperation::Read,
             )
             .is_err());
         assert!(scope
-            .authorize_path(&registry, "/", ScopeAccess::Read)
+            .authorize_path(&registry, "/", ScopeAccess::Read, McpOperation::Read)
             .is_err());
     }
 
@@ -609,6 +652,30 @@ mod tests {
         storage.mcp_policy.rules[0].source = McpRuleSource::Manual;
         registry.save_all_atomic(&[storage]).unwrap();
         assert!(scope.validate_current_binding(&registry).is_err());
+    }
+
+    #[test]
+    fn scope_rejects_more_specific_policy_override_inside_task() {
+        let (_dir, registry, scope) = fixture();
+        let mut storage = registry.load_all().unwrap().remove(0);
+        storage.mcp_policy.rules.push(McpPathRule {
+            id: "manual-task-output".to_string(),
+            prefix: "workspace/tasks/task-1/outputs".to_string(),
+            access: McpAccessMode::ReadWrite,
+            source: McpRuleSource::Manual,
+            confirmation_rules: None,
+        });
+        registry.save_all_atomic(&[storage]).unwrap();
+
+        let error = scope
+            .authorize_path(
+                &registry,
+                "/Workspace storage/workspace/tasks/task-1/outputs/result.md",
+                ScopeAccess::Write,
+                McpOperation::Write,
+            )
+            .unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_WORKSPACE_POLICY_MANAGED);
     }
 
     #[test]
