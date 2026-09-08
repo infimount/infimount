@@ -424,6 +424,7 @@ fn codex_arguments(
     // project instruction discovery, and skill catalogs. The task-unique MCP server
     // below is then the only file-write surface available to the model.
     for config in [
+        "agents.enabled=false",
         "allow_login_shell=false",
         "check_for_update_on_startup=false",
         "include_apps_instructions=false",
@@ -726,6 +727,7 @@ mod tests {
         assert!(joined.contains("--ignore-rules"));
         assert!(joined.contains("--skip-git-repo-check"));
         assert!(joined.contains("--sandbox read-only"));
+        assert!(joined.contains("agents.enabled=false"));
         assert!(joined.contains("project_doc_max_bytes=0"));
         assert!(joined.contains("skills.include_instructions=false"));
         assert!(joined.contains("skills.bundled.enabled=false"));
