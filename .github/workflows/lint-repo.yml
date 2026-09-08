@@ -68,5 +68,5 @@ jobs:
       - name: Lint Markdown
         run: |
           git ls-files -z "*.md" | xargs -0 -r pnpm exec markdownlint --config .markdownlint.yaml
-      - name: Check feature documentation consistency
-        run: node scripts/check-feature-docs.mjs
+      - name: Check product documentation and release-doc tooling
+        run: pnpm test:docs
