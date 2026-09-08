@@ -18,7 +18,6 @@ use crate::state::AppState;
 
 const MAX_AGENT_TASK_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
 const CODEX_CLIENT_NAME: &str = "codex";
-const REQUIRED_CODEX_MCP_TOOLS: &[&str] = &["list_dir", "stat_path", "read_file", "write_file"];
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -131,18 +130,6 @@ pub async fn launch_agent_task_in_codex(
                     .into(),
             )
         })?;
-
-    let settings = state
-        .settings_store
-        .load()
-        .map_err(|_| CoreError::Config("Infimount MCP settings could not be validated".into()))?;
-    for required in REQUIRED_CODEX_MCP_TOOLS {
-        if !settings.enabled_tools.iter().any(|tool| tool == required) {
-            return Err(CoreError::Config(format!(
-                "Codex handoff requires the {required} MCP tool to be enabled in MCP Settings"
-            )));
-        }
-    }
 
     validate_local_path(&storage, &workspace.root_path)?;
     validate_local_path(&storage, &workspace_task_path)?;
