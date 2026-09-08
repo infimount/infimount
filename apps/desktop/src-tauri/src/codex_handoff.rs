@@ -49,8 +49,9 @@ pub async fn launch_agent_task_in_codex(
 
     Uuid::parse_str(&request.task_id)
         .map_err(|_| CoreError::Config("Agent Task handoff requires a valid task id".into()))?;
-    Uuid::parse_str(&request.workspace_id)
-        .map_err(|_| CoreError::Config("Agent Task handoff requires a valid workspace id".into()))?;
+    Uuid::parse_str(&request.workspace_id).map_err(|_| {
+        CoreError::Config("Agent Task handoff requires a valid workspace id".into())
+    })?;
 
     let workspace = state
         .workspaces
@@ -72,9 +73,11 @@ pub async fn launch_agent_task_in_codex(
         )
     })?;
 
-    let storage = state.find_storage_by_id(&workspace.storage_id).map_err(|_| {
-        CoreError::Config("Agent Task workspace storage could not be validated".into())
-    })?;
+    let storage = state
+        .find_storage_by_id(&workspace.storage_id)
+        .map_err(|_| {
+            CoreError::Config("Agent Task workspace storage could not be validated".into())
+        })?;
     if !storage.enabled || storage.read_only {
         return Err(CoreError::Config(
             "Codex handoff requires an enabled writable workspace storage".into(),
@@ -120,11 +123,14 @@ pub async fn launch_agent_task_in_codex(
     .map_err(|_| {
         CoreError::Config("Agent Workspace MCP policy does not match this prepared task".into())
     })?;
-    scope.validate_current_binding(&state.registry).map_err(|_| {
-        CoreError::Config(
-            "Agent Workspace MCP policy no longer grants this workspace read-write access".into(),
-        )
-    })?;
+    scope
+        .validate_current_binding(&state.registry)
+        .map_err(|_| {
+            CoreError::Config(
+                "Agent Workspace MCP policy no longer grants this workspace read-write access"
+                    .into(),
+            )
+        })?;
 
     let settings = state
         .settings_store
@@ -185,20 +191,19 @@ pub async fn launch_agent_task_in_codex(
     // Re-run confinement and policy binding immediately before handing the task to an
     // external client. Codex never receives the workspace's host filesystem path.
     validate_local_path(&storage, &workspace_task_path)?;
-    scope.validate_current_binding(&state.registry).map_err(|_| {
-        CoreError::Config(
-            "Agent Workspace MCP policy changed before Codex handoff; review it and retry".into(),
-        )
-    })?;
+    scope
+        .validate_current_binding(&state.registry)
+        .map_err(|_| {
+            CoreError::Config(
+                "Agent Workspace MCP policy changed before Codex handoff; review it and retry"
+                    .into(),
+            )
+        })?;
 
     let sidecar = crate::activation_probe::verified_sidecar_path().map_err(|_| {
         CoreError::Config("The verified Infimount MCP sidecar is unavailable".into())
     })?;
-    let mcp_task_path = format!(
-        "/{}/{}",
-        storage.name,
-        scope.task_prefix.trim_matches('/')
-    );
+    let mcp_task_path = format!("/{}/{}", storage.name, scope.task_prefix.trim_matches('/'));
     let mcp_outputs_path = format!(
         "/{}/{}",
         storage.name,
@@ -301,11 +306,7 @@ async fn require_directory(
     Ok(())
 }
 
-async fn require_file(
-    op: &opendal::Operator,
-    path: &str,
-    label: &str,
-) -> Result<(), CoreError> {
+async fn require_file(op: &opendal::Operator, path: &str, label: &str) -> Result<(), CoreError> {
     let metadata = op
         .stat(path)
         .await
@@ -373,6 +374,11 @@ fn codex_server_name(task_id: &str) -> String {
     format!("infimount_agent_task_{}", task_id.replace('-', ""))
 }
 
+fn push_codex_config(args: &mut Vec<String>, value: impl Into<String>) {
+    args.push("-c".into());
+    args.push(value.into());
+}
+
 fn codex_arguments(
     sidecar: &Path,
     cwd: &Path,
@@ -400,39 +406,86 @@ fn codex_arguments(
         "--outputs-prefix".to_string(),
         scope.outputs_prefix.clone(),
     ])?;
-    Ok(vec![
+
+    let mut args = vec![
         "exec".into(),
         "--ephemeral".into(),
         "--ignore-user-config".into(),
+        "--ignore-rules".into(),
         "--skip-git-repo-check".into(),
         "--sandbox".into(),
         "read-only".into(),
         "-C".into(),
         cwd.to_string_lossy().to_string(),
-        "-c".into(),
-        "features.shell_tool=false".into(),
-        "-c".into(),
-        "features.shell_snapshot=false".into(),
-        "-c".into(),
-        "features.view_image=false".into(),
-        "-c".into(),
-        "features.apps=false".into(),
-        "-c".into(),
-        "features.plugins=false".into(),
-        "-c".into(),
-        "features.memories=false".into(),
-        "-c".into(),
-        "web_search=\"disabled\"".into(),
-        "-c".into(),
+    ];
+
+    // This run is intentionally MCP-only for task data access. Keep current Codex
+    // authentication, but suppress ambient local execution, external integrations,
+    // project instruction discovery, and skill catalogs. The task-unique MCP server
+    // below is then the only file-write surface available to the model.
+    for config in [
+        "allow_login_shell=false",
+        "check_for_update_on_startup=false",
+        "include_apps_instructions=false",
+        "include_collaboration_mode_instructions=false",
+        "include_environment_context=false",
+        "include_permissions_instructions=false",
+        "project_doc_max_bytes=0",
+        "skills.include_instructions=false",
+        "skills.bundled.enabled=false",
+        "features.shell_tool=false",
+        "features.unified_exec=false",
+        "features.shell_snapshot=false",
+        "features.code_mode=false",
+        "features.code_mode_host=false",
+        "features.exec_permission_approvals=false",
+        "features.request_permissions_tool=false",
+        "features.hooks=false",
+        "features.multi_agent=false",
+        "features.multi_agent_v2=false",
+        "features.view_image=false",
+        "features.image_generation=false",
+        "features.apps=false",
+        "features.enable_mcp_apps=false",
+        "features.tool_suggest=false",
+        "features.recommended_plugins=false",
+        "features.plugins=false",
+        "features.executor_capability_discovery=false",
+        "features.in_app_browser=false",
+        "features.browser_use=false",
+        "features.browser_use_full_cdp_access=false",
+        "features.browser_use_external=false",
+        "features.computer_use=false",
+        "features.remote_plugin=false",
+        "features.plugin_sharing=false",
+        "features.skill_mcp_dependency_install=false",
+        "features.skill_search=false",
+        "features.artifact=false",
+        "features.workspace_dependencies=false",
+        "features.memories=false",
+        "web_search=\"disabled\"",
+    ] {
+        push_codex_config(&mut args, config);
+    }
+
+    push_codex_config(
+        &mut args,
         format!("mcp_servers.{server_name}.command={command}"),
-        "-c".into(),
+    );
+    push_codex_config(
+        &mut args,
         format!("mcp_servers.{server_name}.args={mcp_args}"),
-        "-c".into(),
+    );
+    push_codex_config(
+        &mut args,
         format!("mcp_servers.{server_name}.enabled=true"),
-        "-c".into(),
+    );
+    push_codex_config(
+        &mut args,
         format!("mcp_servers.{server_name}.required=true"),
-        prompt.to_string(),
-    ])
+    );
+    args.push(prompt.to_string());
+    Ok(args)
 }
 
 #[cfg(unix)]
@@ -634,9 +687,8 @@ mod tests {
             &test_manifest(),
         );
         assert_eq!(paths.len(), 2);
-        assert!(paths.contains(
-            "agent/research/tasks/81f08176-86e4-40ec-a9a4-a219c4c9b454/inputs/a.txt"
-        ));
+        assert!(paths
+            .contains("agent/research/tasks/81f08176-86e4-40ec-a9a4-a219c4c9b454/inputs/a.txt"));
         assert!(paths.contains(
             "agent/research/tasks/81f08176-86e4-40ec-a9a4-a219c4c9b454/inputs/nested/b.txt"
         ));
@@ -671,9 +723,21 @@ mod tests {
         assert_eq!(args.first().map(String::as_str), Some("exec"));
         assert!(joined.contains("--ephemeral"));
         assert!(joined.contains("--ignore-user-config"));
+        assert!(joined.contains("--ignore-rules"));
         assert!(joined.contains("--skip-git-repo-check"));
         assert!(joined.contains("--sandbox read-only"));
+        assert!(joined.contains("project_doc_max_bytes=0"));
+        assert!(joined.contains("skills.include_instructions=false"));
+        assert!(joined.contains("skills.bundled.enabled=false"));
         assert!(joined.contains("features.shell_tool=false"));
+        assert!(joined.contains("features.unified_exec=false"));
+        assert!(joined.contains("features.code_mode_host=false"));
+        assert!(joined.contains("features.hooks=false"));
+        assert!(joined.contains("features.multi_agent=false"));
+        assert!(joined.contains("features.browser_use=false"));
+        assert!(joined.contains("features.computer_use=false"));
+        assert!(joined.contains("features.plugins=false"));
+        assert!(joined.contains("features.workspace_dependencies=false"));
         assert!(joined.contains("features.view_image=false"));
         assert!(joined.contains("web_search=\"disabled\""));
         assert!(joined.contains(&format!("mcp_servers.{server_name}.command")));
