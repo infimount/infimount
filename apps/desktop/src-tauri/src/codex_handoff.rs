@@ -245,6 +245,11 @@ async fn verify_prepared_inputs(
         .map_err(|_| {
             CoreError::Config("Agent Task prepared input set could not be verified".into())
         })?;
+    if entries.len() >= infimount_core::models::MAX_RECURSIVE_ITEMS as usize {
+        return Err(CoreError::Config(
+            "Agent Task prepared input set is too large to verify without truncation".into(),
+        ));
+    }
     let actual_files = entries
         .iter()
         .filter(|entry| !entry.is_dir)
