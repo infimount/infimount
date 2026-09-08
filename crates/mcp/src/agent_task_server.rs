@@ -78,7 +78,8 @@ impl AgentTaskScope {
         let workspace_prefix = normalize_non_root_prefix(&workspace_prefix, "workspace")?;
         let task_prefix = normalize_non_root_prefix(&task_prefix, "task")?;
         let outputs_prefix = normalize_non_root_prefix(&outputs_prefix, "outputs")?;
-        if !path_matches_prefix(&task_prefix, &workspace_prefix) || task_prefix == workspace_prefix {
+        if !path_matches_prefix(&task_prefix, &workspace_prefix) || task_prefix == workspace_prefix
+        {
             return Err(err(
                 McpErrorCode::ERR_INVALID_PATH,
                 "Agent Task scope must be below its Agent Workspace",
@@ -301,7 +302,9 @@ impl AgentTaskMcpServer {
             if !enabled_tools.contains(required) {
                 return Err(err(
                     McpErrorCode::ERR_MCP_POLICY_DENIED,
-                    format!("Codex Agent Task handoff requires the {required} MCP tool to be enabled"),
+                    format!(
+                        "Codex Agent Task handoff requires the {required} MCP tool to be enabled"
+                    ),
                 ));
             }
         }
@@ -357,9 +360,9 @@ impl AgentTaskMcpServer {
             Ok(lock) => lock,
             Err(error) => return error_value(error),
         };
-        let authorization =
-            self.scope
-                .authorize_path(&self.ctx.registry, path, access, operation);
+        let authorization = self
+            .scope
+            .authorize_path(&self.ctx.registry, path, access, operation);
         let (storage, normalized_path) = match authorization {
             Ok(value) => value,
             Err(error) => {
