@@ -131,6 +131,11 @@ const releaseStateReplacements = [
     `This workflow is included in ${tag}.`,
   ],
   [`pilot evidence remains the v${version} release gate`, `pilot evidence completed for ${tag}`],
+  [`Pilot evidence remains the v${version} release gate`, `Pilot evidence completed for ${tag}`],
+  [
+    `The remaining v${version} gate is **pilot evidence**, not more feature breadth. The pilot must exercise real coding, document, and data-analysis tasks, capture action-driven UI evidence, and verify the normal v${previousVersion} to v${version} release/update path before stable publication.`,
+    `Pilot evidence and the normal v${previousVersion} to ${tag} release/update path were completed before stable publication.`,
+  ],
 ];
 for (const path of ["README.md", "docs/agent-tasks.md", "docs/llms.txt"]) {
   if (fs.existsSync(path)) replaceAllOptional(path, releaseStateReplacements);
