@@ -161,7 +161,7 @@ describe("AgentWorkspacesDialog", () => {
     (apiUpdateWorkspace as ReturnType<typeof vi.fn>).mockResolvedValue({});
   });
 
-  it("creates a scoped workspace and applies MCP policy", async () => {
+  it("creates a scoped workspace read-only by default", async () => {
     const ws = makeWorkspace("ws-1", "Agent Research");
     (apiCreateWorkspaceAtomic as ReturnType<typeof vi.fn>).mockResolvedValue({
       workspace: ws,
@@ -179,6 +179,7 @@ describe("AgentWorkspacesDialog", () => {
       />,
     );
 
+    expect(screen.getByRole("switch", { name: "Allow agent writes" })).not.toBeChecked();
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Agent Research" },
     });
@@ -192,6 +193,40 @@ describe("AgentWorkspacesDialog", () => {
 
     await waitFor(() => {
       expect(screen.getAllByText("Agent Research").length).toBeGreaterThan(0);
+    });
+  });
+
+  it("creates a read-write workspace only after explicit agent-write opt-in", async () => {
+    const ws = makeWorkspace("ws-write", "Agent Outputs");
+    (apiCreateWorkspaceAtomic as ReturnType<typeof vi.fn>).mockResolvedValue({
+      workspace: ws,
+      policyUpdated: true,
+      rollbackErrors: [],
+    });
+    (listWorkspaces as ReturnType<typeof vi.fn>).mockResolvedValue([ws]);
+
+    render(
+      <AgentWorkspacesDialog
+        open
+        storages={[storage]}
+        onOpenChange={vi.fn()}
+        onSelectStorage={vi.fn()}
+      />,
+    );
+
+    const writeSwitch = screen.getByRole("switch", { name: "Allow agent writes" });
+    expect(writeSwitch).not.toBeChecked();
+    fireEvent.click(writeSwitch);
+    expect(writeSwitch).toBeChecked();
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Agent Outputs" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create workspace" }));
+
+    await waitFor(() => {
+      expect(apiCreateWorkspaceAtomic).toHaveBeenCalledWith(
+        expect.objectContaining({ accessProfile: "read_write" }),
+      );
     });
   });
 
