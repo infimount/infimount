@@ -61,7 +61,7 @@ try {
   write("docs/agent-workspaces.md", "# agent-workspaces.md\n");
   write(
     "docs/agent-tasks.md",
-    `# Agent Tasks\n\nThe complete implementation is on \`main\` and is targeted for **v${core}**. The current v${stable} stable release does not include this workflow.\n`,
+    `# Agent Tasks\n\nThe complete implementation is on \`main\` and is targeted for **v${core}**. The current v${stable} stable release does not include this workflow.\n\nThe remaining v${core} gate is **pilot evidence**, not more feature breadth. The pilot must exercise real coding, document, and data-analysis tasks, capture action-driven UI evidence, and verify the normal v${stable} to v${core} release/update path before stable publication.\n`,
   );
   for (const doc of ["recovery.md", "troubleshooting.md", "privacy.md", "migration-v0.8.md"]) {
     write(`docs/${doc}`, `# ${doc}\n`);
@@ -93,7 +93,7 @@ try {
   assert.doesNotMatch(readme, /Current stable release:\*\* \[v1\.2\.3\]/);
   assert.match(readme, /Agent Tasks are included in v1\.3\.0\./);
   assert.match(readme, /Agent Tasks in v1\.3\.0: fixture/);
-  assert.match(readme, /pilot evidence completed for v1\.3\.0/);
+  assert.match(readme, /pilot evidence completed for v1\.3\.0/i);
   assert.doesNotMatch(readme, /targeted for v1\.3\.0/);
   assert.doesNotMatch(readme, /current v1\.2\.3 stable release does not include/i);
   assert.match(changelog, /## \[1\.3\.0\] - 2030-01-02/);
@@ -102,6 +102,12 @@ try {
   assert.match(llms, /Agent Tasks in v1\.3\.0: fixture/);
   assert.doesNotMatch(llms, /targeted for v1\.3\.0/);
   assert.match(agentTasks, /The complete implementation is included in \*\*v1\.3\.0\*\*\./);
+  assert.match(
+    agentTasks,
+    /Pilot evidence and the normal v1\.2\.3 to v1\.3\.0 release\/update path were completed before stable publication\./,
+  );
+  assert.doesNotMatch(agentTasks, /remaining v1\.3\.0 gate/i);
+  assert.doesNotMatch(agentTasks, /before stable publication.*pilot/i);
   assert.doesNotMatch(agentTasks, /targeted for/);
   assert.doesNotMatch(agentTasks, /current v1\.2\.3 stable release does not include/i);
   assert.match(notes, /releases\/tag\/v1\.3\.0/);
