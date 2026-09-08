@@ -11,6 +11,11 @@ export interface AgentTaskPreparationRequest {
   requestedOutputs: string[];
 }
 
+export interface AgentTaskCodexHandoffRequest {
+  workspaceId: string;
+  taskId: string;
+}
+
 export interface AgentTaskPreflightOutput {
   workspaceId: string;
   workspaceName: string;
@@ -34,6 +39,15 @@ export interface PrepareAgentTaskOutput {
   workspaceMcpExposed: boolean;
 }
 
+export interface AgentTaskCodexHandoffOutput {
+  client: "codex";
+  workspaceId: string;
+  workspaceName: string;
+  taskId: string;
+  taskRoot: string;
+  launched: boolean;
+}
+
 function sanitizeTaskError(value: unknown): { code: string; message: string } {
   const record = typeof value === "object" && value !== null ? value as Record<string, unknown> : null;
   const code = record && typeof record.code === "string" ? record.code : "UNKNOWN";
@@ -47,7 +61,10 @@ function sanitizeTaskError(value: unknown): { code: string; message: string } {
   return { code, message };
 }
 
-async function invokeTask<T>(command: string, request: AgentTaskPreparationRequest): Promise<T> {
+async function invokeTask<T>(
+  command: string,
+  request: AgentTaskPreparationRequest | AgentTaskCodexHandoffRequest,
+): Promise<T> {
   try {
     return await tauriInvoke<T>(command, { request });
   } catch (error) {
@@ -66,4 +83,10 @@ export function prepareAgentTask(
   request: AgentTaskPreparationRequest,
 ): Promise<PrepareAgentTaskOutput> {
   return invokeTask<PrepareAgentTaskOutput>("prepare_agent_task", request);
+}
+
+export function launchAgentTaskInCodex(
+  request: AgentTaskCodexHandoffRequest,
+): Promise<AgentTaskCodexHandoffOutput> {
+  return invokeTask<AgentTaskCodexHandoffOutput>("launch_agent_task_in_codex", request);
 }
