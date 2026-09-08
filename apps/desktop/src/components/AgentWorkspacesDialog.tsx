@@ -89,6 +89,7 @@ export function AgentWorkspacesDialog({
   const [rootPath, setRootPath] = useState(defaultWorkspacePath("Coding workspace"));
   const [templateId, setTemplateId] = useState<AgentWorkspaceTemplateId>("coding");
   const [applyPolicy, setApplyPolicy] = useState(true);
+  const [allowAgentWrites, setAllowAgentWrites] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [memoryFiles, setMemoryFiles] = useState<string[]>([]);
   const [selectedMemoryFile, setSelectedMemoryFile] = useState<string | null>(null);
@@ -209,7 +210,7 @@ export function AgentWorkspacesDialog({
         name,
         rootPath,
         templateId,
-        accessProfile: "read_only",
+        accessProfile: allowAgentWrites ? "read_write" : "read_only",
         applyPolicy,
       });
       const next = await listAgentWorkspaces();
@@ -219,7 +220,9 @@ export function AgentWorkspacesDialog({
       toast({
         title: "Workspace created",
         description: applyPolicy
-          ? "MCP access is now scoped to this workspace root."
+          ? allowAgentWrites
+            ? "MCP access is scoped to this workspace root with read-write access."
+            : "MCP access is now scoped to this workspace root."
           : "Workspace files were created without changing MCP policy.",
       });
     } catch (error) {
@@ -502,6 +505,19 @@ export function AgentWorkspacesDialog({
                     </div>
                   </div>
                   <Switch checked={applyPolicy} onCheckedChange={setApplyPolicy} />
+                </div>
+                <div className="mt-3 flex flex-col gap-3 rounded-lg bg-muted/40 p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="text-sm font-medium">Allow agent writes</div>
+                    <div className="text-xs text-muted-foreground">
+                      Required for Agent Tasks that create outputs. Leave this off for a read-only workspace.
+                    </div>
+                  </div>
+                  <Switch
+                    aria-label="Allow agent writes"
+                    checked={allowAgentWrites}
+                    onCheckedChange={setAllowAgentWrites}
+                  />
                 </div>
                 <div className="mt-4 flex justify-end">
                   <Button onClick={handleCreate} disabled={!canCreate || isCreating}>
