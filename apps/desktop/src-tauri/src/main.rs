@@ -160,6 +160,8 @@ fn main() {
             commands::prepare_agent_task,
             commands::list_agent_tasks,
             commands::review_agent_task_outputs,
+            commands::preview_agent_task_publication,
+            commands::publish_agent_task_outputs,
             codex_handoff::launch_agent_task_in_codex,
             commands::save_wizard_state,
             commands::set_telemetry_consent,

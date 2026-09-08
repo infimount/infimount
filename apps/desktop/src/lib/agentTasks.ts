@@ -88,6 +88,64 @@ export interface AgentTaskOutputReviewOutput {
   files: AgentTaskOutputReviewFile[];
 }
 
+export type AgentTaskPublishConflictPolicy = "fail" | "rename";
+export type AgentTaskPublishAction = "create" | "rename" | "conflict";
+
+export interface ReviewedAgentTaskOutput {
+  taskPath: string;
+  byteSize: number;
+  sha256: string;
+}
+
+export interface AgentTaskPublicationRequest {
+  workspaceId: string;
+  taskId: string;
+  outputs: ReviewedAgentTaskOutput[];
+  destinationStorageId: string;
+  destinationDir: string;
+  conflictPolicy: AgentTaskPublishConflictPolicy;
+}
+
+export interface AgentTaskPublicationPlanFile extends ReviewedAgentTaskOutput {
+  destinationPath: string;
+  action: AgentTaskPublishAction;
+}
+
+export interface AgentTaskPublicationPreview {
+  workspaceId: string;
+  workspaceName: string;
+  taskId: string;
+  taskRoot: string;
+  destinationStorageId: string;
+  destinationStorageName: string;
+  destinationDir: string;
+  conflictPolicy: AgentTaskPublishConflictPolicy;
+  fileCount: number;
+  totalBytes: number;
+  createCount: number;
+  renameCount: number;
+  conflictCount: number;
+  canPublish: boolean;
+  previewToken: string;
+  files: AgentTaskPublicationPlanFile[];
+}
+
+export interface ApplyAgentTaskPublicationRequest {
+  publication: AgentTaskPublicationRequest;
+  previewToken: string;
+}
+
+export interface AgentTaskPublicationOutput {
+  publicationId: string;
+  publishedAt: string;
+  workspaceId: string;
+  taskId: string;
+  destinationStorageId: string;
+  destinationStorageName: string;
+  receiptPath: string;
+  files: AgentTaskPublicationPlanFile[];
+}
+
 function sanitizeTaskError(value: unknown): { code: string; message: string } {
   const record = typeof value === "object" && value !== null ? value as Record<string, unknown> : null;
   const code = record && typeof record.code === "string" ? record.code : "UNKNOWN";
@@ -103,7 +161,12 @@ function sanitizeTaskError(value: unknown): { code: string; message: string } {
 
 async function invokeTask<T>(
   command: string,
-  request: AgentTaskPreparationRequest | AgentTaskIdentityRequest | AgentTaskListRequest,
+  request:
+    | AgentTaskPreparationRequest
+    | AgentTaskIdentityRequest
+    | AgentTaskListRequest
+    | AgentTaskPublicationRequest
+    | ApplyAgentTaskPublicationRequest,
 ): Promise<T> {
   try {
     return await tauriInvoke<T>(command, { request });
@@ -141,4 +204,16 @@ export function reviewAgentTaskOutputs(
   request: AgentTaskOutputReviewRequest,
 ): Promise<AgentTaskOutputReviewOutput> {
   return invokeTask<AgentTaskOutputReviewOutput>("review_agent_task_outputs", request);
+}
+
+export function previewAgentTaskPublication(
+  request: AgentTaskPublicationRequest,
+): Promise<AgentTaskPublicationPreview> {
+  return invokeTask<AgentTaskPublicationPreview>("preview_agent_task_publication", request);
+}
+
+export function publishAgentTaskOutputs(
+  request: ApplyAgentTaskPublicationRequest,
+): Promise<AgentTaskPublicationOutput> {
+  return invokeTask<AgentTaskPublicationOutput>("publish_agent_task_outputs", request);
 }

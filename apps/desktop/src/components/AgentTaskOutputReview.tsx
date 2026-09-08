@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { FileSearch, RefreshCw } from "lucide-react";
 
+import { AgentTaskPublicationPanel } from "./AgentTaskPublicationPanel";
 import { Button } from "@/components/ui/button";
 import {
   reviewAgentTaskOutputs,
@@ -67,7 +68,7 @@ export function AgentTaskOutputReview({ workspaceId, taskId }: AgentTaskOutputRe
             Output review
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            Read the current task outputs and capture fresh SHA-256 fingerprints. Nothing is published from this step.
+            Read the current task outputs and capture fresh SHA-256 fingerprints. Nothing is published until you explicitly select outputs and approve a separate publication plan.
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={running}>
@@ -88,28 +89,31 @@ export function AgentTaskOutputReview({ workspaceId, taskId }: AgentTaskOutputRe
               No output files yet. Finish the Codex task, then refresh this review.
             </div>
           ) : (
-            <div className="space-y-3">
-              {review.files.map((file) => (
-                <article key={`${file.taskPath}:${file.sha256}`} className="rounded-lg border bg-background p-3">
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <code className="break-all text-xs font-medium">{file.taskPath}</code>
-                    <span className="text-xs text-muted-foreground">{formatBytes(file.byteSize)}</span>
-                  </div>
-                  <div className="mt-2 break-all font-mono text-[11px] text-muted-foreground" title={file.sha256}>
-                    SHA-256 {file.sha256}
-                  </div>
-                  {file.preview !== null ? (
-                    <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-3 text-xs">
-                      {file.preview}
-                    </pre>
-                  ) : (
-                    <p className="mt-3 text-xs text-muted-foreground">
-                      {previewReason(file.previewUnavailableReason)}
-                    </p>
-                  )}
-                </article>
-              ))}
-            </div>
+            <>
+              <div className="space-y-3">
+                {review.files.map((file) => (
+                  <article key={`${file.taskPath}:${file.sha256}`} className="rounded-lg border bg-background p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <code className="break-all text-xs font-medium">{file.taskPath}</code>
+                      <span className="text-xs text-muted-foreground">{formatBytes(file.byteSize)}</span>
+                    </div>
+                    <div className="mt-2 break-all font-mono text-[11px] text-muted-foreground" title={file.sha256}>
+                      SHA-256 {file.sha256}
+                    </div>
+                    {file.preview !== null ? (
+                      <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-3 text-xs">
+                        {file.preview}
+                      </pre>
+                    ) : (
+                      <p className="mt-3 text-xs text-muted-foreground">
+                        {previewReason(file.previewUnavailableReason)}
+                      </p>
+                    )}
+                  </article>
+                ))}
+              </div>
+              <AgentTaskPublicationPanel review={review} />
+            </>
           )}
         </div>
       ) : null}
