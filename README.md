@@ -82,6 +82,7 @@ Install scripts verify selected downloads against `SHA256SUMS.txt`. Pin this sta
 - **Work like a desktop file manager:** grid and list views, rich previews, drag-and-drop upload, bookmarks, recents, keyboard navigation, global search stop, dual-pane transfer workflows, conflict handling, and transfer queue.
 - **Validate before you trust a backend:** reachability checks report grouped capabilities, sanitized fix hints, and MCP readiness notes.
 - **Control MCP access explicitly:** new storages are not exposed to MCP by default. Enable selected storages, tool lists, path policies, read-only mode, confirmations, and local audit logs.
+- **Prepare bounded agent work:** Agent Tasks on `main`, targeted for v0.9.0, copy only selected files into a local Agent Workspace, hand the task to Codex through the existing MCP boundary, review outputs, and publish explicitly approved unchanged files with create-only writes.
 - **Stay backend-agnostic:** file operations route through Apache OpenDAL so capabilities are detected and documented per backend.
 
 ## Workbench
@@ -98,12 +99,26 @@ Infimount includes daily file-manager workflows beyond basic browsing:
 
 Agent Workspaces give AI workflows a safer project-shaped storage area:
 
-- Create coding, research, or data-analysis workspaces on OpenDAL-backed storage.
+- Create coding, research, or data-analysis workspaces on OpenDAL-backed storage. New workspaces are read-only for agents unless the desktop user explicitly opts into writes.
 - Apply a workspace-scoped MCP policy that defaults to no access and allows only the workspace root.
 - Keep visible memory files under `memory/` for task notes and handoff context.
 - Capture checkpoint manifests under `.infimount/checkpoints` and restore workspace memory when needed.
 - Review workspace activity grouped from local events and MCP audit events that fall under the workspace root.
 - Bind each workspace to the storage namespace it references; changing the storage namespace or removing the storage while workspaces are bound is blocked until the workspaces are recreated.
+
+## Agent Tasks
+
+Agent Tasks are implemented on `main` and targeted for v0.9.0. The current v0.8.0 stable release does not include this workflow.
+
+- Prepare only the files selected in the File Browser into a bounded `tasks/<uuid>/inputs/` snapshot. Preparation never moves or mutates the source and never grants new MCP access to it.
+- Use an explicitly read-write Local Filesystem Agent Workspace for task outputs. Read-write workspace creation is a separate desktop opt-in.
+- Launch the prepared task in Codex through the existing Infimount MCP integration rather than giving Codex a second storage-access path.
+- Review files under `outputs/` with byte size, SHA-256, and bounded previews before deciding what may leave the task workspace.
+- Publish nothing by default. The desktop user selects outputs, destination storage, destination folder, and either **fail** or **rename** conflict handling, then approves an exact publication preview.
+- Publish with OpenDAL create-only writes and re-verify source and committed destination hashes. Agent Task publication has no overwrite mode.
+- Write a unique create-only `publish-receipt-<publication-id>.json` after each fully successful publication. Partial multi-file failures surface cleanup-required state rather than pretending the operation was atomic.
+
+See the [Agent Tasks contract](docs/agent-tasks.md) for the complete safety model, limits, and known local-filesystem TOCTOU boundary.
 
 ## First run and upgrades
 
@@ -184,7 +199,7 @@ Agent integration guide: [Agent Integrations](docs/agent-integrations.md)
 
 Security model: [Security Model](docs/security.md)
 
-Operational guides: [Agent Workspaces](docs/agent-workspaces.md), [Recovery](docs/recovery.md), [Privacy](docs/privacy.md), and [Troubleshooting](docs/troubleshooting.md)
+Operational guides: [Agent Workspaces](docs/agent-workspaces.md), [Agent Tasks](docs/agent-tasks.md), [Recovery](docs/recovery.md), [Privacy](docs/privacy.md), and [Troubleshooting](docs/troubleshooting.md)
 
 ---
 
@@ -243,6 +258,7 @@ Outputs:
 - [x] Keyboard navigation in virtualized file grid and table views
 - [x] OAuth-backed Google Drive and OneDrive with guided local loopback connect, plus SFTP remote-file browsing through OpenDAL
 - [x] Capability-aware storage validation summaries with fix hints and MCP readiness notes
+- [x] Agent Tasks implementation on `main`: bounded preparation, Codex handoff, output review, and create-only approved publication; pilot evidence remains the v0.9.0 release gate
 - [ ] Additional large-directory polish
 
 ### Future Plans
@@ -338,7 +354,6 @@ chmod +x Infimount-*.AppImage
   Made with ❤️ by the Infimount community
 </p>
 
-
-> **RC security boundary:** local MCP operations reject symlink and reparse-point
+> **Security boundary:** local MCP operations reject symlink and reparse-point
 > components. Built-in MCP HTTP is loopback-only; use a TLS reverse proxy for
 > remote deployments.
