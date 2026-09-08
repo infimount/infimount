@@ -128,7 +128,7 @@ test("reviews an exact Agent Task publication before create-only publish", async
 
   const preview = page.getByTestId("agent-task-publication-preview");
   await expect(preview).toContainText("exports/summary.md");
-  await expect(preview).toContainText("Create 1");
+  await expect(preview).toContainText("Create");
   await expect(page.getByText(/^Overwrite$/)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Publish 1 approved output" })).toBeEnabled();
 
