@@ -230,6 +230,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn load_runtime_state(
+    resolve_http_auth: bool,
 ) -> Result<(StorageRegistry, McpSettings, Option<String>), Box<dyn std::error::Error>> {
     let secret_store: std::sync::Arc<dyn infimount_core::secrets::SecretStore> =
         std::sync::Arc::new(infimount_core::secrets::NativeSecretStore::new());
@@ -270,8 +271,12 @@ fn load_runtime_state(
     // which accounts remain referenced.
     infimount_mcp::registry::retry_pending_secret_cleanup(secret_store.as_ref())
         .map_err(|error| std::io::Error::other(error.message))?;
-    let persisted_auth_token = resolve_auth_token(&settings.auth_token_ref, secret_store.as_ref())
-        .map_err(|error| std::io::Error::other(error.message))?;
+    let persisted_auth_token = if resolve_http_auth {
+        resolve_auth_token(&settings.auth_token_ref, secret_store.as_ref())
+            .map_err(|error| std::io::Error::other(error.message))?
+    } else {
+        None
+    };
 
     drop(config_transaction);
     Ok((registry, settings, persisted_auth_token))
@@ -286,7 +291,7 @@ async fn run_server(serve: ServeArgs) -> Result<(), Box<dyn std::error::Error>> 
         .try_init();
     let _ = init_telemetry();
 
-    let (registry, settings, persisted_auth_token) = load_runtime_state()?;
+    let (registry, settings, persisted_auth_token) = load_runtime_state(true)?;
     let effective_auth_token = std::env::var("INFIMOUNT_AUTH_TOKEN")
         .ok()
         .map(|value| value.trim().to_string())
@@ -332,7 +337,10 @@ async fn run_agent_task_server(args: AgentTaskServeArgs) -> Result<(), Box<dyn s
         .try_init();
     let _ = init_telemetry();
 
-    let (registry, settings, _) = load_runtime_state()?;
+    // Agent Task stdio uses a fixed, separately scoped tool surface. It still
+    // loads settings so transaction recovery can identify the active auth ref,
+    // but it does not resolve or require the HTTP bearer-token secret itself.
+    let (registry, _settings, _) = load_runtime_state(false)?;
     let storage_name = registry
         .load_all()
         .map_err(|error| std::io::Error::other(error.message))?
@@ -353,7 +361,7 @@ async fn run_agent_task_server(args: AgentTaskServeArgs) -> Result<(), Box<dyn s
     )
     .map_err(|error| std::io::Error::other(error.message))?;
 
-    infimount_mcp::serve_agent_task_stdio(registry, settings.enabled_tools, scope).await
+    infimount_mcp::serve_agent_task_stdio(registry, scope).await
 }
 
 fn doctor_report() -> serde_json::Value {
