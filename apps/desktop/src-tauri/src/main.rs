@@ -6,6 +6,7 @@
 mod activation_probe;
 mod app_settings;
 mod client_integrations;
+mod codex_handoff;
 mod commands;
 mod diagnostics;
 mod state;
@@ -157,6 +158,7 @@ fn main() {
             commands::restore_workspace_checkpoint,
             commands::preflight_agent_task,
             commands::prepare_agent_task,
+            codex_handoff::launch_agent_task_in_codex,
             commands::save_wizard_state,
             commands::set_telemetry_consent,
             commands::set_local_event_persistence,
