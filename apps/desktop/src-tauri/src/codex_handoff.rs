@@ -486,10 +486,7 @@ fn codex_arguments(
         &mut args,
         format!("mcp_servers.{server_name}.default_tools_approval_mode=\"approve\""),
     );
-    push_codex_config(
-        &mut args,
-        format!("mcp_servers.{server_name}.enabled=true"),
-    );
+    push_codex_config(&mut args, format!("mcp_servers.{server_name}.enabled=true"));
     push_codex_config(
         &mut args,
         format!("mcp_servers.{server_name}.required=true"),
