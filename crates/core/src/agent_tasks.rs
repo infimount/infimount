@@ -13,6 +13,8 @@ pub const AGENT_TASK_MANIFEST_FILE: &str = "task-manifest.json";
 pub const AGENT_TASK_BRIEF_FILE: &str = "TASK.md";
 pub const AGENT_TASK_PUBLISH_RECEIPT_FILE: &str = "publish-receipt.json";
 pub const MAX_AGENT_TASK_INPUTS: usize = 10_000;
+pub const MAX_AGENT_TASK_SELECTIONS: usize = 1_000;
+pub const MAX_AGENT_TASK_PREPARED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 pub const MAX_AGENT_TASK_REQUESTED_OUTPUTS: usize = 100;
 pub const MAX_AGENT_TASK_TITLE_LEN: usize = 120;
 pub const MAX_AGENT_TASK_OBJECTIVE_LEN: usize = 32 * 1024;
@@ -21,11 +23,9 @@ pub const MAX_AGENT_TASK_PATH_LEN: usize = 1_024;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentTaskInput {
-    /// Provenance only. Authorization must never trust this field.
-    pub source_storage_id: String,
-    /// Provenance only. The task agent sees `task_path`, not this source path.
-    pub source_path: String,
     /// Relative path inside the task package, always under `inputs/`.
+    /// Source storage identity/path is deliberately not persisted in this
+    /// agent-readable manifest; the prepared bytes are the task input.
     pub task_path: String,
     pub byte_size: u64,
     /// Lowercase SHA-256 of the bytes prepared into the task package.
@@ -41,7 +41,8 @@ pub struct AgentTaskManifest {
     pub created_at: String,
     /// Existing Agent Workspace that contains this task package.
     pub workspace_id: String,
-    /// Workspace-relative task root, for example `tasks/report-a1b2c3`.
+    /// Workspace-relative direct child of `tasks/`, for example
+    /// `tasks/81f08176-86e4-40ec-a9a4-a219c4c9b454`.
     pub task_root: String,
     /// Kept explicit for forward-compatible readers; v1 requires `outputs`.
     pub outputs_directory: String,
@@ -57,6 +58,11 @@ pub struct AgentTaskBrief {
     pub requested_outputs: Vec<String>,
 }
 
+pub fn agent_task_root(task_id: &str) -> Result<String> {
+    validate_uuid("task id", task_id)?;
+    Ok(format!("{AGENT_TASKS_DIR}/{task_id}"))
+}
+
 pub fn validate_agent_task_manifest(manifest: &AgentTaskManifest) -> Result<()> {
     if manifest.schema_version != AGENT_TASK_SCHEMA_VERSION {
         return config_error("unsupported Agent Task manifest schema");
@@ -67,6 +73,9 @@ pub fn validate_agent_task_manifest(manifest: &AgentTaskManifest) -> Result<()> 
     chrono::DateTime::parse_from_rfc3339(&manifest.created_at)
         .map_err(|_| CoreError::Config("Agent Task createdAt must be RFC3339".to_string()))?;
     validate_task_root(&manifest.task_root)?;
+    if manifest.task_root != agent_task_root(&manifest.task_id)? {
+        return config_error("Agent Task root must be derived from its task id");
+    }
     if manifest.outputs_directory != AGENT_TASK_OUTPUTS_DIR {
         return config_error("Agent Task outputsDirectory must be 'outputs'");
     }
@@ -77,12 +86,17 @@ pub fn validate_agent_task_manifest(manifest: &AgentTaskManifest) -> Result<()> 
     }
 
     let mut seen_task_paths = HashSet::with_capacity(manifest.inputs.len());
+    let mut seen_portable_paths = HashSet::with_capacity(manifest.inputs.len());
     for input in &manifest.inputs {
-        validate_source_reference(input)?;
         validate_relative_child_path(&input.task_path, AGENT_TASK_INPUTS_DIR)?;
         validate_sha256(&input.sha256)?;
         if !seen_task_paths.insert(input.task_path.as_str()) {
             return config_error("Agent Task contains duplicate prepared input paths");
+        }
+        if !seen_portable_paths.insert(input.task_path.to_lowercase()) {
+            return config_error(
+                "Agent Task contains prepared input paths that collide case-insensitively",
+            );
         }
     }
     Ok(())
@@ -108,10 +122,16 @@ pub fn validate_agent_task_brief(brief: &AgentTaskBrief) -> Result<()> {
     }
 
     let mut seen = HashSet::with_capacity(brief.requested_outputs.len());
+    let mut seen_portable = HashSet::with_capacity(brief.requested_outputs.len());
     for output in &brief.requested_outputs {
         validate_relative_child_path(output, AGENT_TASK_OUTPUTS_DIR)?;
         if !seen.insert(output.as_str()) {
             return config_error("Agent Task contains duplicate requested output paths");
+        }
+        if !seen_portable.insert(output.to_lowercase()) {
+            return config_error(
+                "Agent Task contains requested output paths that collide case-insensitively",
+            );
         }
     }
     Ok(())
@@ -166,22 +186,6 @@ pub fn render_agent_task_markdown(
     Ok(out)
 }
 
-fn validate_source_reference(input: &AgentTaskInput) -> Result<()> {
-    if input.source_storage_id.trim().is_empty() || input.source_storage_id.len() > 128 {
-        return config_error("Agent Task source storage id is invalid");
-    }
-    if input.source_storage_id.chars().any(char::is_control) {
-        return config_error("Agent Task source storage id contains control characters");
-    }
-    if input.source_path.trim().is_empty() || input.source_path.len() > 4_096 {
-        return config_error("Agent Task source path is invalid");
-    }
-    if input.source_path.chars().any(|ch| ch == '\0') {
-        return config_error("Agent Task source path contains a NUL character");
-    }
-    Ok(())
-}
-
 fn validate_title(title: &str) -> Result<()> {
     let trimmed = title.trim();
     if trimmed.is_empty() || trimmed.len() > MAX_AGENT_TASK_TITLE_LEN {
@@ -203,9 +207,9 @@ fn validate_uuid(label: &str, value: &str) -> Result<()> {
 
 fn validate_task_root(path: &str) -> Result<()> {
     validate_relative_path(path)?;
-    let mut segments = path.split('/');
-    if segments.next() != Some(AGENT_TASKS_DIR) || segments.next().is_none() {
-        return config_error("Agent Task root must be a child of 'tasks/'");
+    let segments = path.split('/').collect::<Vec<_>>();
+    if segments.len() != 2 || segments[0] != AGENT_TASKS_DIR || segments[1].is_empty() {
+        return config_error("Agent Task root must be exactly one direct child of 'tasks/'");
     }
     Ok(())
 }
@@ -261,8 +265,6 @@ mod tests {
 
     fn input(path: &str) -> AgentTaskInput {
         AgentTaskInput {
-            source_storage_id: "storage-1".to_string(),
-            source_path: "exports/customers.csv".to_string(),
             task_path: path.to_string(),
             byte_size: 42,
             sha256: "a".repeat(64),
@@ -270,13 +272,14 @@ mod tests {
     }
 
     fn manifest() -> AgentTaskManifest {
+        let task_id = "81f08176-86e4-40ec-a9a4-a219c4c9b454";
         AgentTaskManifest {
             schema_version: AGENT_TASK_SCHEMA_VERSION,
-            task_id: "81f08176-86e4-40ec-a9a4-a219c4c9b454".to_string(),
+            task_id: task_id.to_string(),
             title: "Validate customer export".to_string(),
             created_at: "2026-09-07T12:00:00Z".to_string(),
             workspace_id: "f8f47aa7-702d-4fd6-8815-84cbdf3b3127".to_string(),
-            task_root: "tasks/customer-export-a1b2c3".to_string(),
+            task_root: agent_task_root(task_id).unwrap(),
             outputs_directory: AGENT_TASK_OUTPUTS_DIR.to_string(),
             inputs: vec![input("inputs/customers.csv")],
         }
@@ -293,6 +296,18 @@ mod tests {
         let encoded = serde_json::to_string(&manifest).unwrap();
         let decoded: AgentTaskManifest = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded, manifest);
+        assert!(!encoded.contains("sourcePath"));
+        assert!(!encoded.contains("sourceStorageId"));
+    }
+
+    #[test]
+    fn rejects_nested_or_mismatched_task_root() {
+        let mut manifest = manifest();
+        manifest.task_root = "tasks/one/nested".to_string();
+        assert!(validate_agent_task_manifest(&manifest).is_err());
+
+        manifest.task_root = "tasks/00000000-0000-0000-0000-000000000000".to_string();
+        assert!(validate_agent_task_manifest(&manifest).is_err());
     }
 
     #[test]
@@ -306,10 +321,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicate_prepared_paths() {
-        let mut manifest = manifest();
-        manifest.inputs.push(input("inputs/customers.csv"));
-        assert!(validate_agent_task_manifest(&manifest).is_err());
+    fn rejects_duplicate_and_case_colliding_prepared_paths() {
+        let mut duplicate = manifest();
+        duplicate.inputs.push(input("inputs/customers.csv"));
+        assert!(validate_agent_task_manifest(&duplicate).is_err());
+
+        let mut case_collision = manifest();
+        case_collision.inputs.push(input("inputs/CUSTOMERS.csv"));
+        assert!(validate_agent_task_manifest(&case_collision).is_err());
     }
 
     #[test]
@@ -330,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn rendered_brief_names_prepared_paths_not_remote_source_paths() {
+    fn rendered_brief_names_only_prepared_paths() {
         let manifest = manifest();
         let brief = AgentTaskBrief {
             title: manifest.title.clone(),
@@ -343,22 +362,25 @@ mod tests {
         let markdown = render_agent_task_markdown(&manifest, &brief).unwrap();
         assert!(markdown.contains("`inputs/customers.csv`"));
         assert!(markdown.contains("`outputs/summary.md`"));
-        assert!(!markdown.contains("exports/customers.csv"));
         assert!(markdown.contains("Publication is performed separately by the Infimount desktop"));
     }
 
     #[test]
-    fn serde_rejects_unknown_manifest_fields() {
+    fn serde_rejects_unknown_manifest_and_source_authority_fields() {
         let value = serde_json::json!({
             "schemaVersion": 1,
             "taskId": "81f08176-86e4-40ec-a9a4-a219c4c9b454",
             "title": "Task",
             "createdAt": "2026-09-07T12:00:00Z",
             "workspaceId": "f8f47aa7-702d-4fd6-8815-84cbdf3b3127",
-            "taskRoot": "tasks/task-1",
+            "taskRoot": "tasks/81f08176-86e4-40ec-a9a4-a219c4c9b454",
             "outputsDirectory": "outputs",
-            "inputs": [],
-            "allowPublish": true
+            "inputs": [{
+                "taskPath": "inputs/a.txt",
+                "byteSize": 1,
+                "sha256": "a".repeat(64),
+                "sourcePath": "private/root/a.txt"
+            }]
         });
         assert!(serde_json::from_value::<AgentTaskManifest>(value).is_err());
     }
