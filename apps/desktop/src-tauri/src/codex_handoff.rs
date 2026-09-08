@@ -16,6 +16,7 @@ use crate::state::AppState;
 
 const MAX_AGENT_TASK_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
 const CODEX_CLIENT_NAME: &str = "codex";
+const REQUIRED_CODEX_MCP_TOOLS: &[&str] = &["list_dir", "stat_path", "read_file", "write_file"];
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -63,11 +64,11 @@ pub async fn launch_agent_task_in_codex(
             "Codex handoff requires a read-write Agent Workspace".into(),
         ));
     }
-    if workspace.policy_rule_id.is_none() {
-        return Err(CoreError::Config(
+    let policy_rule_id = workspace.policy_rule_id.clone().ok_or_else(|| {
+        CoreError::Config(
             "Codex handoff requires the Agent Workspace MCP policy to be applied".into(),
-        ));
-    }
+        )
+    })?;
 
     let storage = state.find_storage_by_id(&workspace.storage_id).map_err(|_| {
         CoreError::Config("Agent Task workspace storage could not be validated".into())
@@ -102,6 +103,39 @@ pub async fn launch_agent_task_in_codex(
 
     let task_root = agent_task_root(&request.task_id)?;
     let workspace_task_path = join_path(&workspace.root_path, &task_root);
+    let outputs_path = join_path(&workspace_task_path, AGENT_TASK_OUTPUTS_DIR);
+    let scope = infimount_mcp::AgentTaskScope::new(
+        request.task_id.clone(),
+        storage.id.clone(),
+        storage.name.clone(),
+        workspace.id.clone(),
+        policy_rule_id,
+        namespace,
+        workspace.root_path.clone(),
+        workspace_task_path.clone(),
+        outputs_path.clone(),
+    )
+    .map_err(|_| {
+        CoreError::Config("Agent Workspace MCP policy does not match this prepared task".into())
+    })?;
+    scope.validate_current_binding(&state.registry).map_err(|_| {
+        CoreError::Config(
+            "Agent Workspace MCP policy no longer grants this workspace read-write access".into(),
+        )
+    })?;
+
+    let settings = state
+        .settings_store
+        .load()
+        .map_err(|_| CoreError::Config("Infimount MCP settings could not be validated".into()))?;
+    for required in REQUIRED_CODEX_MCP_TOOLS {
+        if !settings.enabled_tools.iter().any(|tool| tool == required) {
+            return Err(CoreError::Config(format!(
+                "Codex handoff requires the {required} MCP tool to be enabled in MCP Settings"
+            )));
+        }
+    }
+
     validate_local_path(&storage, &workspace.root_path)?;
     validate_local_path(&storage, &workspace_task_path)?;
 
@@ -110,7 +144,6 @@ pub async fn launch_agent_task_in_codex(
 
     let manifest_path = join_path(&workspace_task_path, AGENT_TASK_MANIFEST_FILE);
     let brief_path = join_path(&workspace_task_path, AGENT_TASK_BRIEF_FILE);
-    let outputs_path = join_path(&workspace_task_path, AGENT_TASK_OUTPUTS_DIR);
     for path in [&manifest_path, &brief_path, &outputs_path] {
         validate_local_path(&storage, path)?;
     }
@@ -141,16 +174,37 @@ pub async fn launch_agent_task_in_codex(
         ));
     }
 
-    // Re-run confinement immediately before handing the task to an external client.
-    // The client never receives the OS path: it receives the workspace-relative MCP path.
+    // Re-run confinement and policy binding immediately before handing the task to an
+    // external client. Codex never receives the workspace's host filesystem path.
     validate_local_path(&storage, &workspace_task_path)?;
+    scope.validate_current_binding(&state.registry).map_err(|_| {
+        CoreError::Config(
+            "Agent Workspace MCP policy changed before Codex handoff; review it and retry".into(),
+        )
+    })?;
 
     let sidecar = crate::activation_probe::verified_sidecar_path().map_err(|_| {
         CoreError::Config("The verified Infimount MCP sidecar is unavailable".into())
     })?;
+    let mcp_task_path = format!(
+        "/{}/{}",
+        storage.name,
+        scope.task_prefix.trim_matches('/')
+    );
+    let mcp_outputs_path = format!(
+        "/{}/{}",
+        storage.name,
+        scope.outputs_prefix.trim_matches('/')
+    );
+    let prompt = codex_task_prompt(&workspace.name, &mcp_task_path, &mcp_outputs_path);
     let neutral_cwd = create_neutral_handoff_directory()?;
-    let prompt = codex_task_prompt(&storage.name, &workspace.name, &workspace_task_path);
-    let args = codex_arguments(&sidecar, &neutral_cwd, &prompt)?;
+    let args = match codex_arguments(&sidecar, &neutral_cwd, &prompt, &scope) {
+        Ok(args) => args,
+        Err(error) => {
+            cleanup_neutral_directory(&neutral_cwd);
+            return Err(error);
+        }
+    };
     launch_codex_terminal(&args, &neutral_cwd)?;
 
     Ok(AgentTaskCodexHandoffOutput {
@@ -220,15 +274,42 @@ fn create_neutral_handoff_directory() -> Result<PathBuf, CoreError> {
     Ok(path)
 }
 
-fn codex_task_prompt(storage_name: &str, workspace_name: &str, task_path: &str) -> String {
+fn cleanup_neutral_directory(path: &Path) {
+    let _ = fs::remove_dir_all(path);
+}
+
+fn codex_task_prompt(workspace_name: &str, task_path: &str, outputs_path: &str) -> String {
     format!(
-        "Complete the prepared Infimount Agent Task using only the Infimount MCP server for task file access and writes. Do not use direct host filesystem paths to bypass Infimount. Work only in storage {storage_name:?}, Agent Workspace {workspace_name:?}, task path {task_path:?}. Read TASK.md through Infimount, treat inputs/ as immutable task inputs, place all deliverables under outputs/, and stop when the deliverables are ready for review in Infimount. Do not publish outputs."
+        "Complete the prepared Infimount Agent Task using only the required Infimount MCP server for task file access. Work only in Agent Workspace {workspace_name:?} at MCP path {task_path:?}. Read TASK.md through Infimount and treat inputs/ plus task metadata as immutable. Infimount enforces writes only under {outputs_path:?}; use write_file (with create_parents when needed) for deliverables. Stop when the deliverables are ready for review in Infimount. Do not publish outputs. Do not search for or use host filesystem paths to bypass the task boundary."
     )
 }
 
-fn codex_arguments(sidecar: &Path, cwd: &Path, prompt: &str) -> Result<Vec<String>, CoreError> {
+fn codex_arguments(
+    sidecar: &Path,
+    cwd: &Path,
+    prompt: &str,
+    scope: &infimount_mcp::AgentTaskScope,
+) -> Result<Vec<String>, CoreError> {
     let command = serde_json::to_string(&sidecar.to_string_lossy().to_string())?;
-    let mcp_args = serde_json::to_string(&vec!["serve", "--transport", "stdio"])?;
+    let mcp_args = serde_json::to_string(&vec![
+        "serve-agent-task".to_string(),
+        "--task-id".to_string(),
+        scope.task_id.clone(),
+        "--storage-id".to_string(),
+        scope.storage_id.clone(),
+        "--workspace-id".to_string(),
+        scope.workspace_id.clone(),
+        "--policy-rule-id".to_string(),
+        scope.policy_rule_id.clone(),
+        "--storage-namespace-fingerprint".to_string(),
+        scope.storage_namespace_fingerprint.clone(),
+        "--workspace-prefix".to_string(),
+        scope.workspace_prefix.clone(),
+        "--task-prefix".to_string(),
+        scope.task_prefix.clone(),
+        "--outputs-prefix".to_string(),
+        scope.outputs_prefix.clone(),
+    ])?;
     Ok(vec![
         "-C".into(),
         cwd.to_string_lossy().to_string(),
@@ -263,27 +344,37 @@ fn render_posix_codex_command(args: &[String]) -> String {
 fn write_posix_launcher(args: &[String], neutral_cwd: &Path) -> Result<PathBuf, CoreError> {
     use std::os::unix::fs::PermissionsExt;
 
-    let script = std::env::temp_dir().join(format!("infimount-codex-{}.command", Uuid::new_v4()));
+    let script = neutral_cwd.join("launch.command");
     let command = render_posix_codex_command(args);
     let cleanup_dir = shell_quote(&neutral_cwd.to_string_lossy());
     let body = format!(
-        "#!/bin/sh\nscript_path=$0\nrm -f -- \"$script_path\"\ntrap 'rmdir -- {cleanup_dir} 2>/dev/null || true' EXIT\nexec \"${{SHELL:-/bin/sh}}\" -lic {}\n",
+        "#!/bin/sh\nscript_path=$0\nrm -f -- \"$script_path\"\ncleanup() {{ rm -rf -- {cleanup_dir} 2>/dev/null || true; }}\ntrap cleanup EXIT HUP INT TERM\n\"${{SHELL:-/bin/sh}}\" -lic {}\nstatus=$?\ntrap - EXIT HUP INT TERM\ncleanup\nexit $status\n",
         shell_quote(&command)
     );
-    fs::write(&script, body)
-        .map_err(|_| CoreError::Config("failed to prepare the Codex launcher".into()))?;
-    let mut permissions = fs::metadata(&script)
-        .map_err(|_| CoreError::Config("failed to prepare the Codex launcher".into()))?
-        .permissions();
-    permissions.set_mode(0o700);
-    fs::set_permissions(&script, permissions)
-        .map_err(|_| CoreError::Config("failed to prepare the Codex launcher".into()))?;
+    if fs::write(&script, body).is_err() {
+        return Err(CoreError::Config("failed to prepare the Codex launcher".into()));
+    }
+    let permissions_result = fs::metadata(&script).and_then(|metadata| {
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&script, permissions)
+    });
+    if permissions_result.is_err() {
+        let _ = fs::remove_file(&script);
+        return Err(CoreError::Config("failed to prepare the Codex launcher".into()));
+    }
     Ok(script)
 }
 
 #[cfg(target_os = "linux")]
 fn launch_codex_terminal(args: &[String], neutral_cwd: &Path) -> Result<(), CoreError> {
-    let script = write_posix_launcher(args, neutral_cwd)?;
+    let script = match write_posix_launcher(args, neutral_cwd) {
+        Ok(script) => script,
+        Err(error) => {
+            cleanup_neutral_directory(neutral_cwd);
+            return Err(error);
+        }
+    };
     let candidates: &[(&str, &[&str])] = &[
         ("x-terminal-emulator", &["-e"]),
         ("gnome-terminal", &["--"]),
@@ -299,8 +390,7 @@ fn launch_codex_terminal(args: &[String], neutral_cwd: &Path) -> Result<(), Core
             Err(_) => continue,
         }
     }
-    let _ = fs::remove_file(&script);
-    let _ = fs::remove_dir(neutral_cwd);
+    cleanup_neutral_directory(neutral_cwd);
     Err(CoreError::Config(
         "No supported terminal application was found for Codex handoff".into(),
     ))
@@ -308,12 +398,17 @@ fn launch_codex_terminal(args: &[String], neutral_cwd: &Path) -> Result<(), Core
 
 #[cfg(target_os = "macos")]
 fn launch_codex_terminal(args: &[String], neutral_cwd: &Path) -> Result<(), CoreError> {
-    let script = write_posix_launcher(args, neutral_cwd)?;
+    let script = match write_posix_launcher(args, neutral_cwd) {
+        Ok(script) => script,
+        Err(error) => {
+            cleanup_neutral_directory(neutral_cwd);
+            return Err(error);
+        }
+    };
     match Command::new("open").args(["-a", "Terminal"]).arg(&script).spawn() {
         Ok(_) => Ok(()),
         Err(_) => {
-            let _ = fs::remove_file(&script);
-            let _ = fs::remove_dir(neutral_cwd);
+            cleanup_neutral_directory(neutral_cwd);
             Err(CoreError::Config(
                 "macOS Terminal could not be opened for Codex handoff".into(),
             ))
@@ -326,7 +421,7 @@ fn launch_codex_terminal(args: &[String], neutral_cwd: &Path) -> Result<(), Core
     use std::os::windows::process::CommandExt;
 
     const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
-    let script = std::env::temp_dir().join(format!("infimount-codex-{}.ps1", Uuid::new_v4()));
+    let script = neutral_cwd.join("launch.ps1");
     let rendered_args = args
         .iter()
         .map(|value| format!("'{}'", value.replace('\'', "''")))
@@ -334,12 +429,14 @@ fn launch_codex_terminal(args: &[String], neutral_cwd: &Path) -> Result<(), Core
         .join(", ");
     let neutral = format!("'{}'", neutral_cwd.to_string_lossy().replace('\'', "''"));
     let body = format!(
-        "$handoffDir = {neutral}\r\n$scriptPath = $PSCommandPath\r\nRemove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue\r\n$codex = Get-Command codex -ErrorAction SilentlyContinue\r\nif (-not $codex) {{ Write-Host 'Codex CLI was not found. Install or configure Codex, then retry from Infimount.'; return }}\r\n$codexArgs = @({rendered_args})\r\ntry {{ & $codex.Source @codexArgs }} finally {{ Remove-Item -LiteralPath $handoffDir -Force -ErrorAction SilentlyContinue }}\r\n"
+        "$handoffDir = {neutral}\r\n$scriptPath = $PSCommandPath\r\ntry {{\r\n  Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue\r\n  $codex = Get-Command codex -ErrorAction SilentlyContinue\r\n  if (-not $codex) {{ Write-Host 'Codex CLI was not found. Install or configure Codex, then retry from Infimount.'; return }}\r\n  $codexArgs = @({rendered_args})\r\n  & $codex.Source @codexArgs\r\n}} finally {{\r\n  Remove-Item -LiteralPath $handoffDir -Recurse -Force -ErrorAction SilentlyContinue\r\n}}\r\n"
     );
     let mut bytes = vec![0xEF, 0xBB, 0xBF];
     bytes.extend_from_slice(body.as_bytes());
-    fs::write(&script, bytes)
-        .map_err(|_| CoreError::Config("failed to prepare the Codex launcher".into()))?;
+    if fs::write(&script, bytes).is_err() {
+        cleanup_neutral_directory(neutral_cwd);
+        return Err(CoreError::Config("failed to prepare the Codex launcher".into()));
+    }
     match Command::new("powershell.exe")
         .args(["-NoExit", "-ExecutionPolicy", "Bypass", "-File"])
         .arg(&script)
@@ -348,8 +445,7 @@ fn launch_codex_terminal(args: &[String], neutral_cwd: &Path) -> Result<(), Core
     {
         Ok(_) => Ok(()),
         Err(_) => {
-            let _ = fs::remove_file(&script);
-            let _ = fs::remove_dir(neutral_cwd);
+            cleanup_neutral_directory(neutral_cwd);
             Err(CoreError::Config(
                 "PowerShell could not be opened for Codex handoff".into(),
             ))
@@ -359,7 +455,7 @@ fn launch_codex_terminal(args: &[String], neutral_cwd: &Path) -> Result<(), Core
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 fn launch_codex_terminal(_args: &[String], neutral_cwd: &Path) -> Result<(), CoreError> {
-    let _ = fs::remove_dir(neutral_cwd);
+    cleanup_neutral_directory(neutral_cwd);
     Err(CoreError::Config(
         "Codex handoff is not supported on this operating system".into(),
     ))
@@ -369,33 +465,56 @@ fn launch_codex_terminal(_args: &[String], neutral_cwd: &Path) -> Result<(), Cor
 mod tests {
     use super::*;
 
+    fn test_scope() -> infimount_mcp::AgentTaskScope {
+        infimount_mcp::AgentTaskScope::new(
+            "81f08176-86e4-40ec-a9a4-a219c4c9b454".into(),
+            "storage-id".into(),
+            "Workspace storage".into(),
+            "workspace-id".into(),
+            "workspace:workspace-id".into(),
+            "namespace-fingerprint".into(),
+            "agent/research".into(),
+            "agent/research/tasks/81f08176-86e4-40ec-a9a4-a219c4c9b454".into(),
+            "agent/research/tasks/81f08176-86e4-40ec-a9a4-a219c4c9b454/outputs".into(),
+        )
+        .unwrap()
+    }
+
     #[test]
-    fn codex_prompt_uses_mcp_relative_scope_without_host_path() {
+    fn codex_prompt_uses_mcp_scope_without_host_path() {
         let prompt = codex_task_prompt(
-            "Workspace storage",
             "Research",
-            "agent/research/tasks/81f08176-86e4-40ec-a9a4-a219c4c9b454",
+            "/Workspace storage/agent/research/tasks/81f08176-86e4-40ec-a9a4-a219c4c9b454",
+            "/Workspace storage/agent/research/tasks/81f08176-86e4-40ec-a9a4-a219c4c9b454/outputs",
         );
-        assert!(prompt.contains("Infimount MCP server"));
-        assert!(prompt.contains("outputs/"));
+        assert!(prompt.contains("required Infimount MCP server"));
+        assert!(prompt.contains("writes only under"));
         assert!(prompt.contains("Do not publish outputs"));
         assert!(!prompt.contains("/home/"));
         assert!(!prompt.contains("C:\\"));
     }
 
     #[test]
-    fn codex_arguments_require_infimount_mcp_and_do_not_override_approvals() {
+    fn codex_arguments_pin_task_sidecar_scope_and_do_not_override_approvals() {
+        let scope = test_scope();
         let args = codex_arguments(
             Path::new("/opt/Infimount/mcp"),
             Path::new("/tmp/neutral"),
             "do the task",
+            &scope,
         )
         .unwrap();
         let joined = args.join(" ");
         assert!(joined.contains("mcp_servers.infimount.command"));
         assert!(joined.contains("mcp_servers.infimount.required=true"));
-        assert!(joined.contains("serve"));
-        assert!(joined.contains("stdio"));
+        assert!(joined.contains("serve-agent-task"));
+        assert!(joined.contains("--storage-id"));
+        assert!(joined.contains("--workspace-id"));
+        assert!(joined.contains("--policy-rule-id"));
+        assert!(joined.contains("--storage-namespace-fingerprint"));
+        assert!(joined.contains("--task-prefix"));
+        assert!(joined.contains("--outputs-prefix"));
+        assert!(!joined.contains("--transport"));
         assert!(!joined.contains("approval_policy"));
         assert!(!joined.contains("sandbox"));
         assert!(!joined.contains("dangerously"));
@@ -403,7 +522,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn posix_launcher_quotes_every_codex_argument() {
+    fn posix_launcher_quotes_every_codex_argument_and_retains_cleanup_owner() {
         let rendered = render_posix_codex_command(&[
             "-C".into(),
             "/tmp/a path".into(),
@@ -411,5 +530,13 @@ mod tests {
         ]);
         assert!(rendered.contains("'/tmp/a path'"));
         assert!(rendered.contains("'prompt with '\"'\"' quote'"));
+
+        let temp = tempfile::tempdir().unwrap();
+        let handoff = temp.path().join("handoff");
+        fs::create_dir(&handoff).unwrap();
+        let launcher = write_posix_launcher(&["prompt".into()], &handoff).unwrap();
+        let body = fs::read_to_string(launcher).unwrap();
+        assert!(body.contains("trap cleanup EXIT HUP INT TERM"));
+        assert!(!body.contains("exec \"${SHELL:-/bin/sh}\" -lic"));
     }
 }
