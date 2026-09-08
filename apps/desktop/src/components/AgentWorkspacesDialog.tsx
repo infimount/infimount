@@ -12,6 +12,7 @@ import {
   Trash2,
 } from "lucide-react";
 
+import { AgentWorkspaceTasks } from "./AgentWorkspaceTasks";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -511,174 +512,178 @@ export function AgentWorkspacesDialog({
               </section>
 
               {selectedWorkspace ? (
-                <section className="grid gap-4 lg:grid-cols-[1fr_280px]">
-                  <div className="rounded-xl border bg-background p-4">
-                    <div className="mb-3 flex items-start justify-between gap-3">
-                      <div>
-                        <h3 className="text-sm font-medium">{selectedWorkspace.name}</h3>
-                        <p className="font-mono text-xs text-muted-foreground">
-                          {selectedWorkspaceStorage?.name ?? "Unknown storage"}:{selectedWorkspace.rootPath}
-                        </p>
+                <>
+                  <section className="grid gap-4 lg:grid-cols-[1fr_280px]">
+                    <div className="rounded-xl border bg-background p-4">
+                      <div className="mb-3 flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-medium">{selectedWorkspace.name}</h3>
+                          <p className="font-mono text-xs text-muted-foreground">
+                            {selectedWorkspaceStorage?.name ?? "Unknown storage"}:{selectedWorkspace.rootPath}
+                          </p>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            onSelectStorage(selectedWorkspace.storageId);
+                            onOpenChange(false);
+                          }}
+                        >
+                          Open storage
+                        </Button>
                       </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          onSelectStorage(selectedWorkspace.storageId);
-                          onOpenChange(false);
-                        }}
-                      >
-                        Open storage
-                      </Button>
-                    </div>
-                    <div className="mb-3 flex flex-wrap gap-2">
-                      <Badge variant="outline" className="gap-1">
-                        <CheckCircle2 className="h-3 w-3" /> {selectedWorkspace.rootPath}
-                      </Badge>
-                      <Badge variant="outline">default access: none</Badge>
-                    </div>
+                      <div className="mb-3 flex flex-wrap gap-2">
+                        <Badge variant="outline" className="gap-1">
+                          <CheckCircle2 className="h-3 w-3" /> {selectedWorkspace.rootPath}
+                        </Badge>
+                        <Badge variant="outline">default access: none</Badge>
+                      </div>
 
-                    <div className="grid gap-3 md:grid-cols-[180px_1fr]">
-                      <div className="space-y-1">
-                        {memoryFiles.map((path) => (
-                          <button
-                            key={path}
-                            type="button"
-                            className={cn(
-                              "w-full rounded-md px-2 py-1.5 text-left font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
-                              selectedMemoryFile === path
-                                ? "bg-muted text-foreground"
-                                : "text-muted-foreground hover:bg-muted/70",
-                            )}
-                            onClick={() => setSelectedMemoryFile(path)}
-                          >
-                            {path}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="space-y-3">
-                        <Textarea
-                          value={memoryContent}
-                          readOnly
-                          className="min-h-44 font-mono text-xs"
-                          aria-label="Memory file contents"
-                        />
-                        <Textarea
-                          value={memoryAppendText}
-                          onChange={(event) => setMemoryAppendText(event.target.value)}
-                          placeholder="Append a note to the selected memory file..."
-                          className="min-h-20"
-                          aria-label="Memory note"
-                        />
-                        <div className="flex justify-end">
-                          <Button
-                            variant="outline"
-                            onClick={handleAppendMemory}
-                            disabled={isMemoryBusy || !memoryAppendText.trim()}
-                          >
-                            {isMemoryBusy ? (
-                              <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                            ) : (
-                              <NotebookPen className="mr-2 h-4 w-4" />
-                            )}
-                            Append memory
-                          </Button>
+                      <div className="grid gap-3 md:grid-cols-[180px_1fr]">
+                        <div className="space-y-1">
+                          {memoryFiles.map((path) => (
+                            <button
+                              key={path}
+                              type="button"
+                              className={cn(
+                                "w-full rounded-md px-2 py-1.5 text-left font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+                                selectedMemoryFile === path
+                                  ? "bg-muted text-foreground"
+                                  : "text-muted-foreground hover:bg-muted/70",
+                              )}
+                              onClick={() => setSelectedMemoryFile(path)}
+                            >
+                              {path}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="space-y-3">
+                          <Textarea
+                            value={memoryContent}
+                            readOnly
+                            className="min-h-44 font-mono text-xs"
+                            aria-label="Memory file contents"
+                          />
+                          <Textarea
+                            value={memoryAppendText}
+                            onChange={(event) => setMemoryAppendText(event.target.value)}
+                            placeholder="Append a note to the selected memory file..."
+                            className="min-h-20"
+                            aria-label="Memory note"
+                          />
+                          <div className="flex justify-end">
+                            <Button
+                              variant="outline"
+                              onClick={handleAppendMemory}
+                              disabled={isMemoryBusy || !memoryAppendText.trim()}
+                            >
+                              {isMemoryBusy ? (
+                                <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                              ) : (
+                                <NotebookPen className="mr-2 h-4 w-4" />
+                              )}
+                              Append memory
+                            </Button>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="rounded-xl border bg-background p-4">
-                    <h3 className="text-sm font-medium">Checkpoints</h3>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Capture memory files locally and under `.infimount/checkpoints` in the workspace.
-                    </p>
-                    <Button
-                      className="mt-4 w-full"
-                      variant="outline"
-                      onClick={handleCheckpoint}
-                      disabled={isCheckpointBusy}
-                    >
-                      {isCheckpointBusy ? (
-                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                      ) : (
-                        <Save className="mr-2 h-4 w-4" />
-                      )}
-                      Save checkpoint
-                    </Button>
-                    <div className="mt-4 space-y-2">
-                      <Label>Restore point</Label>
-                      <Select value={selectedCheckpointId} onValueChange={setSelectedCheckpointId}>
-                        <SelectTrigger aria-label="Workspace checkpoint">
-                          <SelectValue placeholder="Choose checkpoint" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {checkpoints.map((checkpoint) => (
-                            <SelectItem key={checkpoint.id} value={checkpoint.id}>
-                              {new Date(checkpoint.createdAt).toLocaleString()}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <Button
-                      className="mt-3 w-full"
-                      variant="secondary"
-                      onClick={() => setRestoreConfirmationOpen(true)}
-                      disabled={isCheckpointBusy || !selectedCheckpointId}
-                    >
-                      <RotateCcw className="mr-2 h-4 w-4" />
-                      Restore memory
-                    </Button>
-
-                    <div className="mt-5 space-y-2 border-t pt-4">
-                      <div className="text-sm font-medium text-destructive">Remove workspace</div>
+                    <div className="rounded-xl border bg-background p-4">
+                      <h3 className="text-sm font-medium">Checkpoints</h3>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Capture memory files locally and under `.infimount/checkpoints` in the workspace.
+                      </p>
                       <Button
-                        className="w-full"
+                        className="mt-4 w-full"
                         variant="outline"
-                        onClick={() => setDeleteMode("registration")}
+                        onClick={handleCheckpoint}
+                        disabled={isCheckpointBusy}
                       >
-                        Remove registration only
-                      </Button>
-                      <Button
-                        className="w-full"
-                        variant="destructive"
-                        onClick={() => setDeleteMode("files")}
-                      >
-                        <Trash2 className="mr-2 h-4 w-4" />
-                        Delete registration and files
-                      </Button>
-                    </div>
-
-                    <div className="mt-5 border-t pt-4">
-                      <div className="flex items-center gap-2 text-sm font-medium">
-                        <Clock3 className="h-4 w-4" />
-                        Workspace audit
-                      </div>
-                      <div className="mt-3 space-y-2">
-                        {workspaceAuditItems.length === 0 ? (
-                          <p className="text-xs text-muted-foreground">
-                            No workspace activity recorded yet.
-                          </p>
+                        {isCheckpointBusy ? (
+                          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
                         ) : (
-                          workspaceAuditItems.slice(0, 6).map((item) => (
-                            <div key={item.id} className="rounded-lg bg-muted/40 p-2">
-                              <div className="text-xs font-medium">{item.title}</div>
-                              <div className="mt-0.5 text-[11px] text-muted-foreground">
-                                {new Date(item.createdAt).toLocaleString()}
-                              </div>
-                              {item.detail ? (
-                                <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
-                                  {item.detail}
-                                </div>
-                              ) : null}
-                            </div>
-                          ))
+                          <Save className="mr-2 h-4 w-4" />
                         )}
+                        Save checkpoint
+                      </Button>
+                      <div className="mt-4 space-y-2">
+                        <Label>Restore point</Label>
+                        <Select value={selectedCheckpointId} onValueChange={setSelectedCheckpointId}>
+                          <SelectTrigger aria-label="Workspace checkpoint">
+                            <SelectValue placeholder="Choose checkpoint" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {checkpoints.map((checkpoint) => (
+                              <SelectItem key={checkpoint.id} value={checkpoint.id}>
+                                {new Date(checkpoint.createdAt).toLocaleString()}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button
+                        className="mt-3 w-full"
+                        variant="secondary"
+                        onClick={() => setRestoreConfirmationOpen(true)}
+                        disabled={isCheckpointBusy || !selectedCheckpointId}
+                      >
+                        <RotateCcw className="mr-2 h-4 w-4" />
+                        Restore memory
+                      </Button>
+
+                      <div className="mt-5 space-y-2 border-t pt-4">
+                        <div className="text-sm font-medium text-destructive">Remove workspace</div>
+                        <Button
+                          className="w-full"
+                          variant="outline"
+                          onClick={() => setDeleteMode("registration")}
+                        >
+                          Remove registration only
+                        </Button>
+                        <Button
+                          className="w-full"
+                          variant="destructive"
+                          onClick={() => setDeleteMode("files")}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Delete registration and files
+                        </Button>
+                      </div>
+
+                      <div className="mt-5 border-t pt-4">
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                          <Clock3 className="h-4 w-4" />
+                          Workspace audit
+                        </div>
+                        <div className="mt-3 space-y-2">
+                          {workspaceAuditItems.length === 0 ? (
+                            <p className="text-xs text-muted-foreground">
+                              No workspace activity recorded yet.
+                            </p>
+                          ) : (
+                            workspaceAuditItems.slice(0, 6).map((item) => (
+                              <div key={item.id} className="rounded-lg bg-muted/40 p-2">
+                                <div className="text-xs font-medium">{item.title}</div>
+                                <div className="mt-0.5 text-[11px] text-muted-foreground">
+                                  {new Date(item.createdAt).toLocaleString()}
+                                </div>
+                                {item.detail ? (
+                                  <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
+                                    {item.detail}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ))
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </section>
+                  </section>
+
+                  <AgentWorkspaceTasks workspaceId={selectedWorkspace.id} />
+                </>
               ) : null}
             </div>
           </ScrollArea>

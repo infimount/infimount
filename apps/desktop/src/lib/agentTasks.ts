@@ -11,10 +11,17 @@ export interface AgentTaskPreparationRequest {
   requestedOutputs: string[];
 }
 
-export interface AgentTaskCodexHandoffRequest {
+export interface AgentTaskIdentityRequest {
   workspaceId: string;
   taskId: string;
 }
+
+export interface AgentTaskListRequest {
+  workspaceId: string;
+}
+
+export type AgentTaskCodexHandoffRequest = AgentTaskIdentityRequest;
+export type AgentTaskOutputReviewRequest = AgentTaskIdentityRequest;
 
 export interface AgentTaskPreflightOutput {
   workspaceId: string;
@@ -48,6 +55,39 @@ export interface AgentTaskCodexHandoffOutput {
   launched: boolean;
 }
 
+export interface AgentTaskSummary {
+  taskId: string;
+  title: string;
+  createdAt: string;
+  taskRoot: string;
+}
+
+export interface AgentTaskListOutput {
+  workspaceId: string;
+  workspaceName: string;
+  tasks: AgentTaskSummary[];
+  truncated: boolean;
+  skippedInvalidTasks: number;
+}
+
+export interface AgentTaskOutputReviewFile {
+  taskPath: string;
+  byteSize: number;
+  sha256: string;
+  preview: string | null;
+  previewUnavailableReason: "binary" | "too_large" | "preview_limit" | null;
+}
+
+export interface AgentTaskOutputReviewOutput {
+  workspaceId: string;
+  workspaceName: string;
+  taskId: string;
+  taskRoot: string;
+  fileCount: number;
+  totalBytes: number;
+  files: AgentTaskOutputReviewFile[];
+}
+
 function sanitizeTaskError(value: unknown): { code: string; message: string } {
   const record = typeof value === "object" && value !== null ? value as Record<string, unknown> : null;
   const code = record && typeof record.code === "string" ? record.code : "UNKNOWN";
@@ -63,7 +103,7 @@ function sanitizeTaskError(value: unknown): { code: string; message: string } {
 
 async function invokeTask<T>(
   command: string,
-  request: AgentTaskPreparationRequest | AgentTaskCodexHandoffRequest,
+  request: AgentTaskPreparationRequest | AgentTaskIdentityRequest | AgentTaskListRequest,
 ): Promise<T> {
   try {
     return await tauriInvoke<T>(command, { request });
@@ -89,4 +129,16 @@ export function launchAgentTaskInCodex(
   request: AgentTaskCodexHandoffRequest,
 ): Promise<AgentTaskCodexHandoffOutput> {
   return invokeTask<AgentTaskCodexHandoffOutput>("launch_agent_task_in_codex", request);
+}
+
+export function listAgentTasks(
+  request: AgentTaskListRequest,
+): Promise<AgentTaskListOutput> {
+  return invokeTask<AgentTaskListOutput>("list_agent_tasks", request);
+}
+
+export function reviewAgentTaskOutputs(
+  request: AgentTaskOutputReviewRequest,
+): Promise<AgentTaskOutputReviewOutput> {
+  return invokeTask<AgentTaskOutputReviewOutput>("review_agent_task_outputs", request);
 }

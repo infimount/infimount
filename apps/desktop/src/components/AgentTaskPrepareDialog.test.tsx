@@ -23,6 +23,7 @@ vi.mock("@/lib/agentTasks", () => ({
   launchAgentTaskInCodex: vi.fn(),
   preflightAgentTask: vi.fn(),
   prepareAgentTask: vi.fn(),
+  reviewAgentTaskOutputs: vi.fn(),
 }));
 
 const localStorageRecord = {
@@ -227,6 +228,9 @@ describe("AgentTaskPrepareDialog", () => {
     await waitFor(() => expect(prepareAgentTask).toHaveBeenCalledTimes(1));
     expect(await screen.findByTestId("agent-task-prepared")).toHaveTextContent("Task prepared");
     expect(screen.getByTestId("agent-task-prepared")).toHaveTextContent("tasks/task-1");
+    expect(screen.getByTestId("agent-task-output-review-section")).toHaveTextContent(
+      "Nothing is published from this step",
+    );
 
     view.rerender(
       <AgentTaskPrepareDialog

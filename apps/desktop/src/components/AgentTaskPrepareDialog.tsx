@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Bot, CheckCircle2, FileStack, ShieldAlert } from "lucide-react";
 
+import { AgentTaskOutputReview } from "./AgentTaskOutputReview";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -327,6 +328,7 @@ export function AgentTaskPrepareDialog({
             {codexLaunchError ? (
               <p role="alert" className="text-sm text-destructive">{codexLaunchError}</p>
             ) : null}
+            <AgentTaskOutputReview workspaceId={prepared.workspaceId} taskId={prepared.taskId} />
           </div>
         ) : (
           <div className="space-y-4 py-2">
