@@ -360,8 +360,19 @@ async fn run_agent_task_server(args: AgentTaskServeArgs) -> Result<(), Box<dyn s
         args.outputs_prefix,
     )
     .map_err(|error| std::io::Error::other(error.message))?;
+    let task_tools = [
+        "list_dir",
+        "stat_path",
+        "read_file",
+        "search_paths",
+        "write_file",
+        "mkdir",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
 
-    infimount_mcp::serve_agent_task_stdio(registry, scope).await
+    infimount_mcp::serve_agent_task_stdio(registry, task_tools, scope).await
 }
 
 fn doctor_report() -> serde_json::Value {
