@@ -144,7 +144,9 @@ The updater public key is embedded in `apps/desktop/src-tauri/tauri.conf.json`; 
 
 ## 5. Post-release checks
 
-The `Post Release Validation` workflow runs automatically when a release is published. It verifies tag-specific release links, release/docs consistency, and Homebrew checksum resolution. If `HOMEBREW_TAP_DISPATCH_TOKEN` is configured, it dispatches the Homebrew tap update workflow.
+The `Post Release Validation` workflow runs automatically after a successful `Release` workflow completes and validates the exact tag that workflow built. It also retains the `release: published` trigger for releases published outside the canonical release workflow and supports manual dispatch. The successful `Release` workflow trigger is required because events created with the repository `GITHUB_TOKEN` do not normally start another Actions workflow. The post-release workflow verifies tag-specific release links, release/docs consistency, re-downloaded assets and updater signatures, and stable-only Homebrew checksum resolution.
+
+For stable tags, `Sync Version After Release` uses the same successful `Release` workflow completion trigger to create the stable-identity sync PR. Prereleases skip both Homebrew work and stable-identity sync.
 
 Manual spot checks remain optional:
 
