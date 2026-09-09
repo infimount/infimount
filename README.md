@@ -82,7 +82,7 @@ Install scripts verify selected downloads against `SHA256SUMS.txt`. Pin this sta
 - **Work like a desktop file manager:** grid and list views, rich previews, drag-and-drop upload, bookmarks, recents, keyboard navigation, global search stop, dual-pane transfer workflows, conflict handling, and transfer queue.
 - **Validate before you trust a backend:** reachability checks report grouped capabilities, sanitized fix hints, and MCP readiness notes.
 - **Control MCP access explicitly:** new storages are not exposed to MCP by default. Enable selected storages, tool lists, path policies, read-only mode, confirmations, and local audit logs.
-- **Prepare bounded agent work:** Agent Tasks on `main`, targeted for v0.9.0, copy only selected files into a local Agent Workspace, hand the task to Codex through the existing MCP boundary, review outputs, and publish explicitly approved unchanged files with create-only writes.
+- **Prepare bounded agent work:** Agent Tasks on `main`, targeted for v0.8.1, copy only selected files into a local Agent Workspace, hand the task to Codex through the existing MCP boundary, review outputs, and publish explicitly approved unchanged files with create-only writes.
 - **Stay backend-agnostic:** file operations route through Apache OpenDAL so capabilities are detected and documented per backend.
 
 ## Workbench
@@ -108,7 +108,7 @@ Agent Workspaces give AI workflows a safer project-shaped storage area:
 
 ## Agent Tasks
 
-Agent Tasks are implemented on `main` and targeted for v0.9.0. The current v0.8.0 stable release does not include this workflow.
+Agent Tasks are implemented on `main` and targeted for v0.8.1. The current v0.8.0 stable release does not include this workflow.
 
 - Prepare only the files selected in the File Browser into a bounded `tasks/<uuid>/inputs/` snapshot. Preparation never moves or mutates the source and never grants new MCP access to it.
 - Use an explicitly read-write Local Filesystem Agent Workspace for task outputs. Read-write workspace creation is a separate desktop opt-in.
