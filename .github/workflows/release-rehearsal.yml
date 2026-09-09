@@ -5,7 +5,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Optional SemVer prerelease; defaults to the checked-out prerelease, or next minor rc.1 from a stable package version
+        description: >-
+          Optional SemVer prerelease to rehearse. Defaults to the checked-out
+          prerelease, or the next minor rc.1 from a stable package version.
         required: false
         default: ""
         type: string
