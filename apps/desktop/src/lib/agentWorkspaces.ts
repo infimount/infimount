@@ -34,7 +34,6 @@ export interface CreateAgentWorkspaceInput {
   templateId?: AgentWorkspaceTemplateId;
   adoptExisting?: boolean;
   accessProfile?: string;
-  applyPolicy?: boolean;
 }
 
 const MAX_CHECKPOINT_FILE_BYTES = 1024 * 1024;
@@ -50,7 +49,7 @@ export const AGENT_WORKSPACE_TEMPLATES: AgentWorkspaceTemplate[] = [
   {
     id: "coding",
     name: "Coding notes",
-    description: "Optional starter notes for tasks, decisions, and handoff context.",
+    description: "Legacy starter notes for tasks, decisions, and handoff context.",
     memoryFiles: ["memory/tasks.md", "memory/decisions.md", "memory/handoff.md"],
     files: [
       {
@@ -69,7 +68,7 @@ export const AGENT_WORKSPACE_TEMPLATES: AgentWorkspaceTemplate[] = [
   {
     id: "research",
     name: "Research notes",
-    description: "Optional starter notes for sources, questions, and synthesis.",
+    description: "Legacy starter notes for sources, questions, and synthesis.",
     memoryFiles: ["memory/questions.md", "memory/sources.md", "memory/summary.md"],
     files: [
       {
@@ -85,7 +84,7 @@ export const AGENT_WORKSPACE_TEMPLATES: AgentWorkspaceTemplate[] = [
   {
     id: "data-analysis",
     name: "Data analysis notes",
-    description: "Optional starter notes for datasets, observations, and repeatable analysis.",
+    description: "Legacy starter notes for datasets, observations, and repeatable analysis.",
     memoryFiles: ["memory/datasets.md", "memory/observations.md", "memory/runbook.md"],
     files: [
       {
@@ -124,7 +123,6 @@ export async function createAgentWorkspace({
   templateId = "custom",
   adoptExisting,
   accessProfile,
-  applyPolicy = true,
 }: CreateAgentWorkspaceInput): Promise<AgentWorkspace> {
   const rawRoot = rootPath || defaultWorkspacePath(name);
   const normalizedRoot = normalizeWorkspacePath(rawRoot);
@@ -139,7 +137,7 @@ export async function createAgentWorkspace({
     templateId,
     adoptExisting,
     accessProfile,
-    applyPolicy,
+    applyPolicy: true,
   });
 
   if (result.rollbackErrors.length > 0) {
@@ -287,7 +285,10 @@ export function normalizeWorkspacePath(path: string): string {
   const segments: string[] = [];
   for (const segment of decoded.split("/")) {
     if (segment === "" || segment === ".") continue;
-    if (segment === "..") { segments.pop(); continue; }
+    if (segment === "..") {
+      segments.pop();
+      continue;
+    }
     segments.push(segment);
   }
 
@@ -388,7 +389,10 @@ export async function deleteAgentWorkspaceWithFiles(id: string): Promise<void> {
   await apiDeleteWorkspaceWithFiles(id, true);
 }
 
-export async function archiveUnsupportedAgentWorkspaces(): Promise<{ archivedCount: number; backupPath: string | null }> {
+export async function archiveUnsupportedAgentWorkspaces(): Promise<{
+  archivedCount: number;
+  backupPath: string | null;
+}> {
   const { archiveUnsupportedWorkspaces: apiArchive } = await import("@/lib/api");
   return apiArchive();
 }
