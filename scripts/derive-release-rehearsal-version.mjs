@@ -22,5 +22,6 @@ if (match[4]) {
 } else {
   const major = Number(match[1]);
   const minor = Number(match[2]);
-  process.stdout.write(`${major}.${minor + 1}.0-rc.1`);
+  const patch = Number(match[3]);
+  process.stdout.write(`${major}.${minor}.${patch + 1}-rc.1`);
 }
