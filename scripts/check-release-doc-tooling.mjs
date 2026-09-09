@@ -40,11 +40,18 @@ try {
   const stable = "1.2.3";
   const core = "1.3.0";
   const candidate = `${core}-rc.1`;
+  const pilotSentence =
+    "Real pilot evidence is the next product-validation phase before broader promotion.";
+  const pilotParagraph =
+    `The next product-validation phase is **pilot evidence**, not more feature breadth. ` +
+    `It should exercise real coding, document, and data-analysis tasks, capture action-driven UI evidence, ` +
+    `and include the normal v${stable} to v${core} install/update path. Pilot evidence informs promotion ` +
+    "and follow-on work. It is not a manual product-test requirement in the automated release gate.";
 
   writeVersionFiles(candidate);
   write(
     "README.md",
-    `# Fixture\n\n**Current stable release:** [v${stable}](https://github.com/infimount/infimount/releases/tag/v${stable})\n\nInstall with INFIMOUNT_VERSION=v${stable}.\n\n## Agent Tasks\n\nAgent Tasks are implemented on \`main\` and targeted for v${core}. The current v${stable} stable release does not include this workflow.\n\nAgent Tasks on main, targeted for v${core}: fixture. Pilot evidence remains the v${core} release gate.\n\nRust 1.94+\n`,
+    `# Fixture\n\n**Current stable release:** [v${stable}](https://github.com/infimount/infimount/releases/tag/v${stable})\n\nInstall with INFIMOUNT_VERSION=v${stable}.\n\n## Agent Tasks\n\nAgent Tasks are implemented on \`main\` and targeted for v${core}. The current v${stable} stable release does not include this workflow.\n\nAgent Tasks on main, targeted for v${core}: fixture. ${pilotSentence}\n\nRust 1.94+\n`,
   );
   write(
     "CHANGELOG.md",
@@ -61,7 +68,7 @@ try {
   write("docs/agent-workspaces.md", "# agent-workspaces.md\n");
   write(
     "docs/agent-tasks.md",
-    `# Agent Tasks\n\nThe complete implementation is on \`main\` and is targeted for **v${core}**. The current v${stable} stable release does not include this workflow.\n\nThe remaining v${core} gate is **pilot evidence**, not more feature breadth. The pilot must exercise real coding, document, and data-analysis tasks, capture action-driven UI evidence, and verify the normal v${stable} to v${core} release/update path before stable publication.\n`,
+    `# Agent Tasks\n\nThe complete implementation is on \`main\` and is targeted for **v${core}**. The current v${stable} stable release does not include this workflow.\n\n${pilotParagraph}\n`,
   );
   for (const doc of ["recovery.md", "troubleshooting.md", "privacy.md", "migration-v0.8.md"]) {
     write(`docs/${doc}`, `# ${doc}\n`);
@@ -93,7 +100,8 @@ try {
   assert.doesNotMatch(readme, /Current stable release:\*\* \[v1\.2\.3\]/);
   assert.match(readme, /Agent Tasks are included in v1\.3\.0\./);
   assert.match(readme, /Agent Tasks in v1\.3\.0: fixture/);
-  assert.match(readme, /pilot evidence completed for v1\.3\.0/i);
+  assert.match(readme, /Real pilot evidence is the next product-validation phase before broader promotion\./);
+  assert.doesNotMatch(readme, /pilot evidence completed/i);
   assert.doesNotMatch(readme, /targeted for v1\.3\.0/);
   assert.doesNotMatch(readme, /current v1\.2\.3 stable release does not include/i);
   assert.match(changelog, /## \[1\.3\.0\] - 2030-01-02/);
@@ -102,12 +110,9 @@ try {
   assert.match(llms, /Agent Tasks in v1\.3\.0: fixture/);
   assert.doesNotMatch(llms, /targeted for v1\.3\.0/);
   assert.match(agentTasks, /The complete implementation is included in \*\*v1\.3\.0\*\*\./);
-  assert.match(
-    agentTasks,
-    /Pilot evidence and the normal v1\.2\.3 to v1\.3\.0 release\/update path were completed before stable publication\./,
-  );
-  assert.doesNotMatch(agentTasks, /remaining v1\.3\.0 gate/i);
-  assert.doesNotMatch(agentTasks, /before stable publication.*pilot/i);
+  assert.match(agentTasks, /The next product-validation phase is \*\*pilot evidence\*\*/);
+  assert.match(agentTasks, /not a manual product-test requirement in the automated release gate/);
+  assert.doesNotMatch(agentTasks, /pilot evidence completed/i);
   assert.doesNotMatch(agentTasks, /targeted for/);
   assert.doesNotMatch(agentTasks, /current v1\.2\.3 stable release does not include/i);
   assert.match(notes, /releases\/tag\/v1\.3\.0/);
