@@ -38,4 +38,9 @@ test -f "$TMP/sources/google-chrome.list.infimount-disabled"
 test -f "$TMP/sources/microsoft-prod.list"
 test -f "$TMP/sources/ubuntu.sources"
 
+# The privileged wrapper must isolate sources first and use a bounded retry loop.
+grep -Fq 'prepare-ci-apt-sources.sh' "$ROOT/scripts/ci-apt-install.sh"
+grep -Fq 'for attempt in 1 2 3' "$ROOT/scripts/ci-apt-install.sh"
+grep -Fq 'apt-get install -y "$@"' "$ROOT/scripts/ci-apt-install.sh"
+
 echo "CI APT source isolation test passed."
