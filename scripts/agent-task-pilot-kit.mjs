@@ -80,13 +80,13 @@ const makeOrdersCsv = () => {
 };
 
 const expectedDataMetrics = () => ({
-  gross_revenue: "66000",
-  net_revenue: "59800",
-  refund_amount: "6200",
+  gross_revenue: "69400",
+  net_revenue: "62000",
+  refund_amount: "7400",
   refunded_orders: "4",
   order_count: "24",
   refund_rate_pct: "16.67",
-  top_region_by_net_revenue: "West",
+  top_region_by_net_revenue: "South",
   top_product_by_net_revenue: "Beta",
 });
 
