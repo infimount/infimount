@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "synthetic": true,
   "candidate": {
-    "version": "0.9.0-rc.1",
-    "commit": "cafa0a23edb89240122d787283e8f01ac5c9195d",
+    "version": "0.8.1-rc.1",
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "platform": "linux",
     "installedFrom": "0.8.0"
   },
@@ -122,7 +122,7 @@
   },
   "upgrade": {
     "from": "0.8.0",
-    "to": "0.9.0-rc.1",
+    "to": "0.8.1-rc.1",
     "configurationRetained": true,
     "storageRegistryRetained": true,
     "workspaceRegistryRetained": true,
