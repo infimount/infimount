@@ -260,6 +260,22 @@ describe("AgentWorkspacesDialog", () => {
     });
   });
 
+  it("archives unsupported workspace metadata and reloads the list", async () => {
+    vi.mocked(archiveUnsupportedWorkspaces).mockResolvedValue({
+      archivedCount: 2,
+      backupPath: "/tmp/workspaces.archived.20260909.json",
+    });
+    vi.mocked(listWorkspaces).mockResolvedValue([]);
+
+    renderDialog();
+    fireEvent.click(screen.getByTitle("Archive unsupported workspaces"));
+
+    await waitFor(() => {
+      expect(archiveUnsupportedWorkspaces).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(listWorkspaces).mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
   it("keeps registration-only deletion distinct from deleting workspace files", async () => {
     const ws = makeWorkspace("workspace-delete", "Delete workspace");
     vi.mocked(listWorkspaces).mockResolvedValue([ws]);
