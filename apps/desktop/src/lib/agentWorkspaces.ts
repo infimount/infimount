@@ -13,7 +13,7 @@ import {
 import { appendActivityLogEvent } from "@/lib/activityLog";
 import type { McpStoragePolicy } from "@/types/storage";
 
-export type AgentWorkspaceTemplateId = "coding" | "research" | "data-analysis";
+export type AgentWorkspaceTemplateId = "custom" | "coding" | "research" | "data-analysis";
 
 export interface AgentWorkspaceTemplate {
   id: AgentWorkspaceTemplateId;
@@ -31,7 +31,7 @@ export interface CreateAgentWorkspaceInput {
   storageId: string;
   name: string;
   rootPath: string;
-  templateId: AgentWorkspaceTemplateId;
+  templateId?: AgentWorkspaceTemplateId;
   adoptExisting?: boolean;
   accessProfile?: string;
   applyPolicy?: boolean;
@@ -41,9 +41,16 @@ const MAX_CHECKPOINT_FILE_BYTES = 1024 * 1024;
 
 export const AGENT_WORKSPACE_TEMPLATES: AgentWorkspaceTemplate[] = [
   {
+    id: "custom",
+    name: "Empty workspace",
+    description: "A scoped agent folder without agent-specific starter files.",
+    memoryFiles: [],
+    files: [],
+  },
+  {
     id: "coding",
-    name: "Coding agent",
-    description: "A scoped project folder with tasks, decisions, and handoff notes.",
+    name: "Coding notes",
+    description: "Optional starter notes for tasks, decisions, and handoff context.",
     memoryFiles: ["memory/tasks.md", "memory/decisions.md", "memory/handoff.md"],
     files: [
       {
@@ -61,8 +68,8 @@ export const AGENT_WORKSPACE_TEMPLATES: AgentWorkspaceTemplate[] = [
   },
   {
     id: "research",
-    name: "Research agent",
-    description: "A quiet place for sources, summaries, questions, and synthesis.",
+    name: "Research notes",
+    description: "Optional starter notes for sources, questions, and synthesis.",
     memoryFiles: ["memory/questions.md", "memory/sources.md", "memory/summary.md"],
     files: [
       {
@@ -77,8 +84,8 @@ export const AGENT_WORKSPACE_TEMPLATES: AgentWorkspaceTemplate[] = [
   },
   {
     id: "data-analysis",
-    name: "Data analysis agent",
-    description: "A scoped area for inputs, notebooks, outputs, and observations.",
+    name: "Data analysis notes",
+    description: "Optional starter notes for datasets, observations, and repeatable analysis.",
     memoryFiles: ["memory/datasets.md", "memory/observations.md", "memory/runbook.md"],
     files: [
       {
@@ -114,10 +121,10 @@ export async function createAgentWorkspace({
   storageId,
   name,
   rootPath,
-  templateId,
+  templateId = "custom",
   adoptExisting,
   accessProfile,
-  applyPolicy,
+  applyPolicy = true,
 }: CreateAgentWorkspaceInput): Promise<AgentWorkspace> {
   const rawRoot = rootPath || defaultWorkspacePath(name);
   const normalizedRoot = normalizeWorkspacePath(rawRoot);
@@ -152,6 +159,7 @@ export async function createAgentWorkspace({
 }
 
 export async function listWorkspaceMemoryFiles(workspace: AgentWorkspace): Promise<string[]> {
+  if (workspace.memoryFiles.length === 0) return [];
   const entries = await listEntries(
     workspace.storageId,
     joinWorkspacePath(workspace.rootPath, "memory"),
@@ -305,7 +313,6 @@ export function joinWorkspacePath(rootPath: string, relativePath: string): strin
   if (root === "/") return `/${relative}`;
   return `${root}/${relative}`;
 }
-
 
 export function buildWorkspacePolicy(
   rootPath: string,
