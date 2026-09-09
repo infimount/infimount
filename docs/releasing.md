@@ -31,9 +31,7 @@ pnpm test:release
 Required release preparation:
 
 1. Ensure `main` is green in all required workflows.
-2. Choose next version by impact:
-   - patch (`X.Y.Z+1`) for fixes only
-   - minor (`X.Y+1.0`) for new user-facing features
+2. Choose the next version deliberately. Infimount is still pre-1.0, so the release line is allowed to use a patch increment for a backward-compatible product increment when that target is explicitly planned. Use a pre-1.0 minor increment when intentionally opening a broader release line or making a materially larger compatibility change. After 1.0, follow normal SemVer major/minor/patch compatibility rules.
 3. Configure the updater signing secrets before every release tag. Every release fails before builds if updater signing material is absent. Apple and Windows platform-signing material is optional; when fully configured, platform signatures are built and verified, and when absent, the release is explicitly marked platform-unsigned. Partial platform configuration fails closed.
    - macOS signing/notarization secrets:
      - `APPLE_CERTIFICATE`
@@ -66,7 +64,7 @@ pnpm test:release:rehearsal
 bash scripts/release-rehearsal.sh --work-dir /tmp/infimount-rehearsal --keep
 ```
 
-Without `--version`, a prerelease checkout rehearses its checked-out prerelease version verbatim. A stable checkout derives the next minor `rc.1` candidate. Pass `--version` only when intentionally rehearsing a different prerelease version.
+Without `--version`, a prerelease checkout rehearses its checked-out prerelease version verbatim. A stable checkout derives the next patch `rc.1` candidate. Pass `--version` only when intentionally rehearsing a different prerelease version.
 
 This uses only temporary updater keys and deterministic local fixtures. It validates updater signatures and tamper rejection, exact-tag metadata, checksums, SBOM sidecar coverage, fake upload/download byte round-trips, package-sidecar extraction, fixture secret scans, and the prerelease/stable signing-policy matrix. It never invokes `gh`, publishes a release, contacts GitHub, or consumes production secrets. The `Release Rehearsal` workflow runs the Linux aggregate and native macOS/Windows tool checks with read-only permissions.
 
