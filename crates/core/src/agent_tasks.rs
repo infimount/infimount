@@ -11,7 +11,6 @@ pub const AGENT_TASK_INPUTS_DIR: &str = "inputs";
 pub const AGENT_TASK_OUTPUTS_DIR: &str = "outputs";
 pub const AGENT_TASK_MANIFEST_FILE: &str = "task-manifest.json";
 pub const AGENT_TASK_BRIEF_FILE: &str = "TASK.md";
-pub const AGENT_TASK_PUBLISH_RECEIPT_FILE: &str = "publish-receipt.json";
 pub const MAX_AGENT_TASK_INPUTS: usize = 10_000;
 pub const MAX_AGENT_TASK_SELECTIONS: usize = 1_000;
 pub const MAX_AGENT_TASK_PREPARED_BYTES: u64 = 2 * 1024 * 1024 * 1024;

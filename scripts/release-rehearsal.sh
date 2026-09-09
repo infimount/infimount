@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; VERSION=0.8.0-rc.1; WORK_DIR=""; KEEP=0
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION="$(node "$ROOT_DIR/scripts/derive-release-rehearsal-version.mjs")"
+WORK_DIR=""
+KEEP=0
+
 while (($#)); do
   case "$1" in
     --) shift; continue ;;
@@ -10,7 +15,13 @@ while (($#)); do
     *) echo "usage: $0 [--version X] [--work-dir DIR] [--keep]" >&2; exit 2;;
   esac
 done
+
 [[ "$VERSION" != *+* ]] || { echo 'build metadata is not supported' >&2; exit 1; }
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*$ ]] || {
+  echo "release rehearsal requires a SemVer prerelease version, got '$VERSION'" >&2
+  exit 1
+}
+
 if [[ -z "$WORK_DIR" ]]; then WORK_DIR="$(mktemp -d)"; else mkdir -p "$WORK_DIR"; fi
 cleanup(){ rc=$?; if ((KEEP==0)); then rm -rf "$WORK_DIR"; else echo "Rehearsal evidence retained at $WORK_DIR"; fi; exit "$rc"; }; trap cleanup EXIT
 mkdir -p "$WORK_DIR"/{dist,release-assets,downloaded-release-assets,signing,server}

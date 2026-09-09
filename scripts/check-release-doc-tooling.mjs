@@ -1,0 +1,124 @@
+#!/usr/bin/env node
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), "infimount-release-doc-tooling-"));
+
+const write = (relativePath, content) => {
+  const target = path.join(temp, relativePath);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, content, "utf8");
+};
+
+const writeVersionFiles = (version) => {
+  write("package.json", `${JSON.stringify({ version }, null, 2)}\n`);
+  write("apps/desktop/package.json", `${JSON.stringify({ version }, null, 2)}\n`);
+  write(
+    "apps/desktop/src-tauri/tauri.conf.json",
+    `${JSON.stringify({ version, bundle: {} }, null, 2)}\n`,
+  );
+  write(
+    "Cargo.toml",
+    `[workspace.package]\nversion = "${version}"\nrust-version = "1.94"\n`,
+  );
+  write("apps/desktop/src-tauri/Cargo.toml", "[package]\nversion.workspace = true\n");
+};
+
+const run = (script, args = [], env = {}) =>
+  execFileSync("node", [path.join(root, "scripts", script), ...args], {
+    cwd: temp,
+    env: { ...process.env, ...env },
+    stdio: "pipe",
+  });
+
+try {
+  const stable = "1.2.3";
+  const core = "1.3.0";
+  const candidate = `${core}-rc.1`;
+  const pilotSentence =
+    "Real pilot evidence is the next product-validation phase before broader promotion.";
+  const pilotParagraph =
+    `The next product-validation phase is **pilot evidence**, not more feature breadth. ` +
+    `It should exercise real coding, document, and data-analysis tasks, capture action-driven UI evidence, ` +
+    `and include the normal v${stable} to v${core} install/update path. Pilot evidence informs promotion ` +
+    "and follow-on work. It is not a manual product-test requirement in the automated release gate.";
+
+  writeVersionFiles(candidate);
+  write(
+    "README.md",
+    `# Fixture\n\n**Current stable release:** [v${stable}](https://github.com/infimount/infimount/releases/tag/v${stable})\n\nInstall with INFIMOUNT_VERSION=v${stable}.\n\n## Agent Tasks\n\nAgent Tasks are implemented on \`main\` and targeted for v${core}. The current v${stable} stable release does not include this workflow.\n\nAgent Tasks on main, targeted for v${core}: fixture. ${pilotSentence}\n\nRust 1.94+\n`,
+  );
+  write(
+    "CHANGELOG.md",
+    `# Changelog\n\n## [Unreleased]\n\n## [${core}] - Unreleased release candidate\n\n### Added\n\n- Future feature.\n\n[Unreleased]: https://github.com/infimount/infimount/compare/v${core}...HEAD\n[${core}]: https://github.com/infimount/infimount/compare/v${stable}...v${core}\n`,
+  );
+  write(
+    "docs/index.html",
+    `<!doctype html><meta name="fixture"><script type="application/ld+json">{"softwareVersion": "${stable}"}</script><p class="release-label">v${stable} stable · open source</p><a>Download v${stable}</a><p class="kicker">Install v${stable}</p><a href="https://github.com/infimount/infimount/releases/tag/v${stable}">Open the v${stable} release</a>`,
+  );
+  write(
+    "docs/llms.txt",
+    `# Fixture\n\n- Current stable release: v${stable}\n- Agent Tasks on main, targeted for v${core}: fixture.\n`,
+  );
+  write("docs/agent-workspaces.md", "# agent-workspaces.md\n");
+  write(
+    "docs/agent-tasks.md",
+    `# Agent Tasks\n\nThe complete implementation is on \`main\` and is targeted for **v${core}**. The current v${stable} stable release does not include this workflow.\n\n${pilotParagraph}\n`,
+  );
+  for (const doc of ["recovery.md", "troubleshooting.md", "privacy.md", "migration-v0.8.md"]) {
+    write(`docs/${doc}`, `# ${doc}\n`);
+  }
+  write(
+    `docs/release-notes-${candidate}.md`,
+    `# Infimount ${candidate}: Fixture\n\nRelease: not published yet.\n`,
+  );
+
+  run("check-release-consistency.mjs", [`v${candidate}`]);
+
+  writeVersionFiles(core);
+  write(
+    `docs/release-notes-${core}.md`,
+    `# Infimount ${core}: Fixture\n\n> ${core} has not been published yet.\n\nRelease: not published yet.\n`,
+  );
+  run("prepare-stable-release-docs.mjs", [`v${core}`], { RELEASE_DATE: "2030-01-02" });
+  run("check-release-consistency.mjs", [`v${core}`]);
+
+  const readme = fs.readFileSync(path.join(temp, "README.md"), "utf8");
+  const changelog = fs.readFileSync(path.join(temp, "CHANGELOG.md"), "utf8");
+  const index = fs.readFileSync(path.join(temp, "docs/index.html"), "utf8");
+  const llms = fs.readFileSync(path.join(temp, "docs/llms.txt"), "utf8");
+  const agentTasks = fs.readFileSync(path.join(temp, "docs/agent-tasks.md"), "utf8");
+  const notes = fs.readFileSync(path.join(temp, `docs/release-notes-${core}.md`), "utf8");
+
+  assert.match(readme, /Current stable release:\*\* \[v1\.3\.0\]/);
+  assert.match(readme, /INFIMOUNT_VERSION=v1\.3\.0/);
+  assert.doesNotMatch(readme, /Current stable release:\*\* \[v1\.2\.3\]/);
+  assert.match(readme, /Agent Tasks are included in v1\.3\.0\./);
+  assert.match(readme, /Agent Tasks in v1\.3\.0: fixture/);
+  assert.match(readme, /Real pilot evidence is the next product-validation phase before broader promotion\./);
+  assert.doesNotMatch(readme, /pilot evidence completed/i);
+  assert.doesNotMatch(readme, /targeted for v1\.3\.0/);
+  assert.doesNotMatch(readme, /current v1\.2\.3 stable release does not include/i);
+  assert.match(changelog, /## \[1\.3\.0\] - 2030-01-02/);
+  assert.match(index, /"softwareVersion": "1\.3\.0"/);
+  assert.match(llms, /Current stable release: v1\.3\.0/);
+  assert.match(llms, /Agent Tasks in v1\.3\.0: fixture/);
+  assert.doesNotMatch(llms, /targeted for v1\.3\.0/);
+  assert.match(agentTasks, /The complete implementation is included in \*\*v1\.3\.0\*\*\./);
+  assert.match(agentTasks, /The next product-validation phase is \*\*pilot evidence\*\*/);
+  assert.match(agentTasks, /not a manual product-test requirement in the automated release gate/);
+  assert.doesNotMatch(agentTasks, /pilot evidence completed/i);
+  assert.doesNotMatch(agentTasks, /targeted for/);
+  assert.doesNotMatch(agentTasks, /current v1\.2\.3 stable release does not include/i);
+  assert.match(notes, /releases\/tag\/v1\.3\.0/);
+  assert.doesNotMatch(notes, /not published yet/);
+} finally {
+  fs.rmSync(temp, { recursive: true, force: true });
+}
+
+console.log("Release documentation tooling check passed across a synthetic future release.");

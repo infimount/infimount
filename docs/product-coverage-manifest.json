@@ -31,6 +31,11 @@
       "id": "file-browser-preview-download",
       "path": "apps/desktop/playwright/file-browser-preview.spec.tsx",
       "reason": "Opening previews and downloading from FileBrowser must remain covered."
+    },
+    {
+      "id": "agent-task-reviewed-publication",
+      "path": "apps/desktop/playwright/agent-task-publication.spec.tsx",
+      "reason": "Agent Task publication must remain review-first, explicit, no-overwrite, and visibly receipt-backed at screen level."
     }
   ]
 }

@@ -10,6 +10,8 @@ Infimount releases are intended to require **zero manual product test execution*
 
 For UI work, every newly added or changed visible action must be covered by an automated test that performs the action, not just asserts that the control renders. At least one Playwright component/UI test should capture a screenshot snapshot of the intended post-action state for each changed screen-level flow. The split-pane regression test is the reference pattern: open the visible action, assert the resulting controls/copy, assert removed controls stay absent, close the mode, and keep the screenshot under `apps/desktop/playwright/__snapshots__/`.
 
+Real-world pilot evidence may inform promotion, positioning, and follow-on product work, but it is not a substitute for these automated release gates. Release tooling must never infer or claim that a pilot was completed merely because a stable version is being prepared.
+
 Optional local dry run before tagging:
 
 ```bash
@@ -47,8 +49,8 @@ Required release preparation:
      - `TAURI_SIGNING_PRIVATE_KEY`
      - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
 4. Prepare public release identity:
-   - For a prerelease such as `v0.8.0-rc.1`, add `docs/release-notes-0.8.0-rc.1.md`; README, Pages, and llms continue to identify the previous stable release.
-   - Before a stable tag, run `node scripts/prepare-stable-release-docs.mjs vX.Y.Z`, review and commit its README, CHANGELOG, Pages, and llms changes, then tag that prepared commit. Stable consistency validation rejects `not published yet` language.
+   - For a prerelease tag `vX.Y.Z-rc.N`, add the matching `docs/release-notes-X.Y.Z-rc.N.md`; README, Pages, and llms continue to identify the previous stable release.
+   - Before a stable tag, run `node scripts/prepare-stable-release-docs.mjs vX.Y.Z`, review and commit its README, CHANGELOG, Pages, llms, and feature release-state changes, then tag that prepared commit. Stable consistency validation rejects `not published yet` language.
    - Release jobs derive manifest versions from the exact tag before running consistency checks. SemVer `+build` metadata is rejected.
 5. Confirm no secrets or local artifacts are staged:
    - `git status`
@@ -61,8 +63,10 @@ Before requesting a signed prerelease, run the non-publishing rehearsal:
 ```bash
 pnpm test:release:rehearsal
 # retain evidence for inspection:
-bash scripts/release-rehearsal.sh --version 0.8.0-rc.1 --work-dir /tmp/infimount-rehearsal --keep
+bash scripts/release-rehearsal.sh --work-dir /tmp/infimount-rehearsal --keep
 ```
+
+Without `--version`, a prerelease checkout rehearses its checked-out prerelease version verbatim. A stable checkout derives the next minor `rc.1` candidate. Pass `--version` only when intentionally rehearsing a different prerelease version.
 
 This uses only temporary updater keys and deterministic local fixtures. It validates updater signatures and tamper rejection, exact-tag metadata, checksums, SBOM sidecar coverage, fake upload/download byte round-trips, package-sidecar extraction, fixture secret scans, and the prerelease/stable signing-policy matrix. It never invokes `gh`, publishes a release, contacts GitHub, or consumes production secrets. The `Release Rehearsal` workflow runs the Linux aggregate and native macOS/Windows tool checks with read-only permissions.
 
@@ -87,7 +91,7 @@ The `Release` workflow is triggered by `v*` tags and will:
   - OpenDAL storage simulator verification, including read/write/list/stat/delete round trips where supported and WebDAV list reachability
   - optional credential-gated OAuth storage smoke via `scripts/oauth-storage-smoke.sh` when Google Drive or OneDrive test credentials are intentionally supplied; this is not a zero-manual release gate because provider OAuth APIs have no local emulator
   - release consistency checks for app versions, README, GitHub Pages, `CHANGELOG.md`, `docs/llms.txt`, and `docs/release-notes-X.Y.Z.md`
-  - feature-doc consistency checks for supported backend names, S3-compatible wording, representative MCP tool names, Workbench copy, and Agent Workspaces copy
+  - feature-doc consistency checks for supported backend names, S3-compatible wording, representative MCP tool names, Workbench copy, Agent Workspaces, and Agent Tasks
   - install-script checksum smoke tests for Linux/macOS shell and Windows PowerShell installers
   - zero-manual release policy check (`scripts/check-zero-manual-release-gate.sh`)
 - sync app manifest versions from the pushed tag via `scripts/sync-release-version.mjs` before consistency validation and every platform build
@@ -102,7 +106,7 @@ The `Release` workflow is triggered by `v*` tags and will:
 - create a draft release, re-download and validate the uploaded assets and checksums, then automatically publish stable tags only after those validations pass; prerelease tags publish with prerelease status
 - emit artifact provenance attestation
 
-## 3. Validate the published release
+## 4. Validate the published release
 
 The release workflow performs automated artifact presence, checksum, updater metadata, install-script, package, and provenance checks before publication. After publication, confirm the expected assets exist:
 
@@ -140,7 +144,7 @@ signtool verify /pa /all /v Infimount-setup.exe
 
 The updater public key is embedded in `apps/desktop/src-tauri/tauri.conf.json`; updater signatures are produced only from the corresponding protected private key. Platform sidecar copies are used only to produce and validate the SBOM and are not published as standalone downloads. Installed sidecars live inside each platform's application resources (for example, `Infimount.app/Contents/MacOS/mcp` on macOS and the Infimount installation directory on Windows/Linux), not on the user's `PATH`.
 
-## 4. Post-release checks
+## 5. Post-release checks
 
 The `Post Release Validation` workflow runs automatically when a release is published. It verifies tag-specific release links, release/docs consistency, and Homebrew checksum resolution. If `HOMEBREW_TAP_DISPATCH_TOKEN` is configured, it dispatches the Homebrew tap update workflow.
 
@@ -158,7 +162,7 @@ Manual spot checks remain optional:
 4. Merge/publish Homebrew tap changes when not handled by automation.
 5. Merge the automated stable-release identity PR (workflow: `Sync Version After Release`) if the stable tag was not already cut from an identity-prepared commit. The workflow is intentionally skipped for prereleases.
 
-## 5. Rollback strategy
+## 6. Rollback strategy
 
 If a bad release is published:
 
