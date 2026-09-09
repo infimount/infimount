@@ -74,8 +74,8 @@ if (!fs.existsSync("docs/agent-tasks.md")) {
   fail("docs/agent-tasks.md is missing");
 }
 const agentTasks = read("docs/agent-tasks.md");
-if (agentTasks.includes("v0.8.1")) {
-  fail("docs/agent-tasks.md must not describe Agent Tasks as a v0.8.1 patch feature");
+if (agentTasks.includes("v0.9.0")) {
+  fail("docs/agent-tasks.md must preserve the planned v0.8.1 Agent Tasks release line");
 }
 if (agentTasks.includes("publish-receipt.json")) {
   fail("docs/agent-tasks.md must document unique publication receipts, not a mutable static receipt");
@@ -84,7 +84,7 @@ if (/remaining v\d+\.\d+\.\d+ gate is \*\*pilot evidence\*\*/i.test(agentTasks))
   fail("docs/agent-tasks.md must keep pilot evidence separate from the automated release gate");
 }
 for (const phrase of [
-  "v0.9.0",
+  "v0.8.1",
   "publish-receipt-<publication-id>.json",
   "create-only",
   "fail",
