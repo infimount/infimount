@@ -48,14 +48,6 @@ const assertString = (value, label) => {
   if (typeof value !== "string" || value.trim() === "") fail(`${label} must be a non-empty string`);
 };
 
-const assertBoolean = (value, label) => {
-  if (typeof value !== "boolean") fail(`${label} must be a boolean`);
-};
-
-const assertNonNegativeInteger = (value, label) => {
-  if (!Number.isSafeInteger(value) || value < 0) fail(`${label} must be a non-negative integer`);
-};
-
 const assertPositiveInteger = (value, label) => {
   if (!Number.isSafeInteger(value) || value <= 0) fail(`${label} must be a positive integer`);
 };
@@ -92,11 +84,21 @@ scanForbiddenKeys(evidence);
 
 assertExactKeys(
   evidence,
-  ["schemaVersion", "synthetic", "candidate", "client", "tasks", "upgrade", "overallPassed", "observations"],
+  [
+    "schemaVersion",
+    "synthetic",
+    "candidate",
+    "client",
+    "tasks",
+    "safetyProbes",
+    "upgrade",
+    "overallPassed",
+    "observations",
+  ],
   "evidence",
 );
 if (evidence.schemaVersion !== 1) fail("schemaVersion must be 1");
-assertBoolean(evidence.synthetic, "synthetic");
+if (typeof evidence.synthetic !== "boolean") fail("synthetic must be a boolean");
 if (evidence.synthetic && !allowSynthetic) {
   fail("synthetic evidence is not accepted as real pilot evidence; pass --allow-synthetic only for fixtures");
 }
@@ -145,8 +147,8 @@ for (const [index, task] of evidence.tasks.entries()) {
   if (!uuid.test(task.taskId)) fail(`${label}.taskId must be a lowercase UUID`);
   assertString(task.sourceStorageKind, `${label}.sourceStorageKind`);
   if (task.workspaceStorageKind !== "local") fail(`${label}.workspaceStorageKind must be local for v0.9.0`);
-  assertBoolean(task.sourceMcpExposedBefore, `${label}.sourceMcpExposedBefore`);
-  assertBoolean(task.sourceMcpExposedAfter, `${label}.sourceMcpExposedAfter`);
+  if (typeof task.sourceMcpExposedBefore !== "boolean") fail(`${label}.sourceMcpExposedBefore must be a boolean`);
+  if (typeof task.sourceMcpExposedAfter !== "boolean") fail(`${label}.sourceMcpExposedAfter must be a boolean`);
   if (task.sourceMcpExposedBefore !== task.sourceMcpExposedAfter) {
     fail(`${label} changed source MCP exposure during task preparation`);
   }
@@ -213,6 +215,15 @@ for (const [index, task] of evidence.tasks.entries()) {
 
 for (const requiredClass of requiredClasses) {
   if (!seenClasses.has(requiredClass)) fail(`tasks is missing required ${requiredClass} pilot`);
+}
+
+assertExactKeys(
+  evidence.safetyProbes,
+  ["failConflictRejected", "stalePreviewRejected", "overwriteUnavailable"],
+  "safetyProbes",
+);
+for (const field of ["failConflictRejected", "stalePreviewRejected", "overwriteUnavailable"]) {
+  if (evidence.safetyProbes[field] !== true) fail(`safetyProbes.${field} must be true`);
 }
 
 assertExactKeys(
