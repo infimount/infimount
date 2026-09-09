@@ -163,7 +163,7 @@ for (const [index, task] of evidence.tasks.entries()) {
   seenClasses.add(task.class);
   if (!uuid.test(task.taskId)) fail(`${label}.taskId must be a lowercase UUID`);
   assertString(task.sourceStorageKind, `${label}.sourceStorageKind`);
-  if (task.workspaceStorageKind !== "local") fail(`${label}.workspaceStorageKind must be local for v0.9.0`);
+  if (task.workspaceStorageKind !== "local") fail(`${label}.workspaceStorageKind must be local for the Agent Tasks v1 pilot`);
   if (typeof task.sourceMcpExposedBefore !== "boolean") fail(`${label}.sourceMcpExposedBefore must be a boolean`);
   if (typeof task.sourceMcpExposedAfter !== "boolean") fail(`${label}.sourceMcpExposedAfter must be a boolean`);
   if (task.sourceMcpExposedBefore !== task.sourceMcpExposedAfter) {
