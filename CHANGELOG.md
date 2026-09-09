@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.9.0] - Unreleased release candidate
+## [0.8.1] - Unreleased release candidate
 
 ### Added
 
@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agent Workspace creation remains read-only by default and requires an explicit desktop opt-in before a workspace can host writable Agent Task outputs.
 - Agent Task publication rebuilds the approved plan under configuration/workspace mutation locks and treats its preview token as a staleness token rather than reusable write authority.
 - Release consistency, stable-document promotion, and hermetic release rehearsal are version-agnostic instead of being tied to a previous release transition.
-- Hermetic release rehearsal now derives the next minor `rc.1` from a stable checkout and rehearses an already-versioned prerelease verbatim.
+- Hermetic release rehearsal now derives the next patch `rc.1` from a stable checkout and rehearses an already-versioned prerelease verbatim.
 - Real-world Agent Task pilots are treated as product-validation evidence for broader promotion and follow-on work, not as a manual product-test requirement in the automated release gate.
 
 ### Security
@@ -253,8 +253,8 @@ First stable release of Infimount — a unified desktop storage browser powered 
 
 ---
 
-[Unreleased]: https://github.com/infimount/infimount/compare/v0.9.0...HEAD
-[0.9.0]: https://github.com/infimount/infimount/compare/v0.8.0...v0.9.0
+[Unreleased]: https://github.com/infimount/infimount/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/infimount/infimount/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/infimount/infimount/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/infimount/infimount/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/infimount/infimount/compare/v0.6.0...v0.7.0
