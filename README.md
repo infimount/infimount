@@ -74,7 +74,7 @@ Manual downloads:
 
 ### Install notes
 
-Install scripts verify selected downloads against `SHA256SUMS.txt`. Pin this stable release with `INFIMOUNT_VERSION=v0.8.0`; `latest` installs the current stable release. Every release requires signed updater artifacts. Platform application signing is included when credentials are configured; this project may publish explicitly platform-unsigned stable or prerelease packages, which can trigger operating-system warnings.
+Install scripts verify selected downloads against `SHA256SUMS.txt`. Pin this stable release with `INFIMOUNT_VERSION=v0.8.0`; `latest` installs the current stable release. On Linux, the installer warns when another `infimount` earlier in `PATH` would shadow the executable that was just installed. Every release requires signed updater artifacts. Platform application signing is included when credentials are configured; this project may publish explicitly platform-unsigned stable or prerelease packages, which can trigger operating-system warnings.
 
 ## What Infimount does
 
@@ -97,12 +97,12 @@ Infimount includes daily file-manager workflows beyond basic browsing:
 
 ## Agent Workspaces
 
-Agent Workspaces give AI workflows a safer project-shaped storage area:
+Agent Workspaces define a safer storage-scoped MCP boundary for agents and Agent Tasks:
 
-- Create coding, research, or data-analysis workspaces on OpenDAL-backed storage. New workspaces are read-only for agents unless the desktop user explicitly opts into writes.
-- Apply a workspace-scoped MCP policy that defaults to no access and allows only the workspace root.
-- Keep visible memory files under `memory/` for task notes and handoff context.
-- Capture checkpoint manifests under `.infimount/checkpoints` and restore workspace memory when needed.
+- Create a plain workspace by choosing a name and storage. Infimount derives `/agent-workspaces/<name>` inside that storage and shows the storage-relative location instead of asking for a second host path.
+- Apply a managed workspace-scoped MCP policy automatically. New workspaces are read-only for agents unless the desktop user explicitly opts into writes.
+- Require an explicit absolute Local Filesystem storage root for workspace namespace binding; shell-style `$HOME/...`, `~/...`, missing, or relative roots are rejected before workspace creation.
+- Keep older current-schema template memory files and checkpoints available as compatibility behavior for existing workspaces; new workspace creation no longer asks for coding, research, or data-analysis agent types.
 - Review workspace activity grouped from local events and MCP audit events that fall under the workspace root.
 - Bind each workspace to the storage namespace it references; changing the storage namespace or removing the storage while workspaces are bound is blocked until the workspaces are recreated.
 
