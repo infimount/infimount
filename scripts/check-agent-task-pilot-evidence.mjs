@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -110,6 +111,22 @@ if (!new Set(["linux", "macos", "windows"]).has(evidence.candidate.platform)) {
   fail("candidate.platform must be linux, macos, or windows");
 }
 if (!stableSemver.test(evidence.candidate.installedFrom)) fail("candidate.installedFrom must be a stable SemVer version");
+
+if (!evidence.synthetic) {
+  const tag = `v${evidence.candidate.version}`;
+  let taggedCommit;
+  try {
+    taggedCommit = execFileSync("git", ["rev-parse", `${tag}^{commit}`], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    fail(`real pilot validation requires candidate tag ${tag} in the current Git checkout`);
+  }
+  if (taggedCommit !== evidence.candidate.commit) {
+    fail(`candidate.commit does not match ${tag}: expected ${taggedCommit}`);
+  }
+}
 
 assertExactKeys(evidence.client, ["name", "handoffViaInfimountMcp"], "client");
 if (evidence.client.name !== "codex") fail("client.name must be codex for the v1 pilot protocol");
