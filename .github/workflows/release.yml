@@ -181,9 +181,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+        run: bash scripts/ci-apt-install.sh libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Formatting
         run: cargo fmt --all -- --check
@@ -228,9 +226,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb gnome-keyring dbus-x11
+        run: bash scripts/ci-apt-install.sh libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb gnome-keyring dbus-x11
 
       - name: Desktop launch/migration smoke
         run: ./scripts/smoke-desktop.sh
@@ -341,9 +337,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb rpm cpio unzip file
+        run: bash scripts/ci-apt-install.sh libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb rpm cpio unzip file
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -450,7 +444,7 @@ jobs:
           fi
 
       - name: Install RPM extraction fallback tooling
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libarchive-tools
+        run: bash scripts/ci-apt-install.sh libarchive-tools
 
       - name: Smoke check Linux artifacts
         run: ./scripts/smoke-linux-release-artifacts.sh out/linux
@@ -1025,7 +1019,7 @@ jobs:
         run: ls -R artifacts
 
       - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
+        run: bash scripts/ci-apt-install.sh jq
 
       - name: Install Rust for updater signature verification
         uses: dtolnay/rust-toolchain@stable
