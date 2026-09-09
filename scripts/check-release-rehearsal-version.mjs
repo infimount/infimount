@@ -14,11 +14,11 @@ const derive = (version) =>
     encoding: "utf8",
   });
 
-assert.equal(derive("0.8.0"), "0.9.0-rc.1");
-assert.equal(derive("0.9.0-rc.1"), "0.9.0-rc.1");
-assert.equal(derive("0.9.0-beta.2"), "0.9.0-beta.2");
-assert.equal(derive("1.12.3"), "1.13.0-rc.1");
-assert.throws(() => derive("0.9.0+build.1"));
+assert.equal(derive("0.8.0"), "0.8.1-rc.1");
+assert.equal(derive("0.8.1-rc.1"), "0.8.1-rc.1");
+assert.equal(derive("0.8.1-beta.2"), "0.8.1-beta.2");
+assert.equal(derive("1.12.3"), "1.12.4-rc.1");
+assert.throws(() => derive("0.8.1+build.1"));
 assert.throws(() => derive("not-semver"));
 
 const packageVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
