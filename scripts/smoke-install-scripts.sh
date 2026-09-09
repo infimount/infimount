@@ -66,6 +66,25 @@ INFIMOUNT_INSTALL_FORMAT=appimage \
 INFIMOUNT_INSTALL_DRY_RUN=1 \
 "$ROOT_DIR/scripts/install.sh"
 
+SHADOW_DIR="$TMP_DIR/shadow-bin"
+INSTALL_DIR="$TMP_DIR/installed-bin"
+HOME_DIR="$TMP_DIR/home"
+mkdir -p "$SHADOW_DIR" "$INSTALL_DIR" "$HOME_DIR"
+printf '#!/usr/bin/env sh\nexit 0\n' > "$SHADOW_DIR/infimount"
+chmod +x "$SHADOW_DIR/infimount"
+
+shadow_output="$(
+  HOME="$HOME_DIR" \
+  PATH="$SHADOW_DIR:$PATH" \
+  INFIMOUNT_RELEASE_BASE_URL="$BASE_URL" \
+  INFIMOUNT_INSTALL_FORMAT=appimage \
+  INFIMOUNT_INSTALL_DIR="$INSTALL_DIR" \
+  "$ROOT_DIR/scripts/install.sh"
+)"
+
+expected_warning="Warning: 'infimount' currently resolves to $SHADOW_DIR/infimount, not the newly installed $INSTALL_DIR/infimount."
+grep -Fq "$expected_warning" <<<"$shadow_output" || fail "shadowed-install warning was not emitted"
+
 if command -v pwsh >/dev/null 2>&1; then
   INFIMOUNT_RELEASE_BASE_URL="$BASE_URL" \
   INFIMOUNT_INSTALL_DRY_RUN=1 \
