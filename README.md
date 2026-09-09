@@ -258,7 +258,7 @@ Outputs:
 - [x] Keyboard navigation in virtualized file grid and table views
 - [x] OAuth-backed Google Drive and OneDrive with guided local loopback connect, plus SFTP remote-file browsing through OpenDAL
 - [x] Capability-aware storage validation summaries with fix hints and MCP readiness notes
-- [x] Agent Tasks implementation on `main`: bounded preparation, Codex handoff, output review, and create-only approved publication; pilot evidence remains the v0.9.0 release gate
+- [x] Agent Tasks implementation on `main`: bounded preparation, Codex handoff, output review, and create-only approved publication; real pilot evidence is the next product-validation phase before broader promotion
 - [ ] Additional large-directory polish
 
 ### Future Plans
