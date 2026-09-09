@@ -19,7 +19,8 @@ Suites: jammy jammy-updates
 Components: main universe
 EOF
 
-bash "$ROOT/scripts/prepare-ci-apt-sources.sh" "$TMP/sources"
+first_output="$(bash "$ROOT/scripts/prepare-ci-apt-sources.sh" "$TMP/sources")"
+grep -Fq 'Disabled unrelated Google Chrome APT source: google-chrome.list' <<<"$first_output"
 
 test ! -e "$TMP/sources/google-chrome.list"
 test -f "$TMP/sources/google-chrome.list.infimount-disabled"
@@ -32,9 +33,11 @@ test -f "$TMP/sources/ubuntu.sources"
 grep -Fq 'packages.microsoft.com' "$TMP/sources/microsoft-prod.list"
 grep -Fq 'archive.ubuntu.com' "$TMP/sources/ubuntu.sources"
 
-# Idempotent on a second pass: no new source is disabled and retained sources stay intact.
-bash "$ROOT/scripts/prepare-ci-apt-sources.sh" "$TMP/sources"
+# Idempotent on a second pass: no already-disabled source is renamed again.
+second_output="$(bash "$ROOT/scripts/prepare-ci-apt-sources.sh" "$TMP/sources")"
+test -z "$second_output"
 test -f "$TMP/sources/google-chrome.list.infimount-disabled"
+test ! -e "$TMP/sources/google-chrome.list.infimount-disabled.infimount-disabled"
 test -f "$TMP/sources/microsoft-prod.list"
 test -f "$TMP/sources/ubuntu.sources"
 
