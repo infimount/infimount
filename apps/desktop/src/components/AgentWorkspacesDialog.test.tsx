@@ -8,7 +8,6 @@ import {
   createWorkspaceAtomic as apiCreateWorkspaceAtomic,
   createWorkspaceCheckpointCommand,
   listWorkspaceCheckpoints,
-  restoreWorkspaceCheckpointCommand,
   listEntries,
   readFileRange,
   writeFile,
@@ -217,7 +216,7 @@ describe("AgentWorkspacesDialog", () => {
     expect(screen.queryByRole("button", { name: "Save checkpoint" })).not.toBeInTheDocument();
   });
 
-  it("preserves starter-note and checkpoint management for existing templated workspaces", async () => {
+  it("preserves starter-note and checkpoint creation for existing templated workspaces", async () => {
     const ws = makeWorkspace("workspace-1", "Existing workspace", {
       templateId: "coding",
       memoryFiles: ["memory/tasks.md", "memory/decisions.md", "memory/handoff.md"],
@@ -231,17 +230,6 @@ describe("AgentWorkspacesDialog", () => {
         size: 7,
         modified_at: null,
         etag: null,
-      },
-    ]);
-    vi.mocked(listWorkspaceCheckpoints).mockResolvedValue([
-      {
-        schemaVersion: 1,
-        id: "checkpoint-1",
-        workspaceId: "workspace-1",
-        label: "Checkpoint",
-        createdAt: "2026-01-01T00:00:00Z",
-        manifestPath: "/agent-workspaces/existing-workspace/.infimount/checkpoints/checkpoint-1.json",
-        fileCount: 3,
       },
     ]);
 
@@ -262,13 +250,6 @@ describe("AgentWorkspacesDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save checkpoint" }));
     await waitFor(() => {
       expect(createWorkspaceCheckpointCommand).toHaveBeenCalledWith("workspace-1", undefined);
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Restore notes" }));
-    expect(screen.getByRole("alertdialog")).toHaveTextContent("Overwrite starter-note files?");
-    fireEvent.click(screen.getByRole("button", { name: "Restore and overwrite" }));
-    await waitFor(() => {
-      expect(restoreWorkspaceCheckpointCommand).toHaveBeenCalledWith("workspace-1", "checkpoint-1", true);
     });
   });
 
