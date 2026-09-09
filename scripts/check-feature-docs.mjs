@@ -93,9 +93,27 @@ for (const phrase of [
   "cleanup-required",
   "product-validation phase",
   "not a manual product-test requirement in the automated release gate",
+  "agent-tasks-pilot.md",
 ]) {
   if (!agentTasks.toLowerCase().includes(phrase.toLowerCase())) {
     fail(`docs/agent-tasks.md should mention ${phrase}`);
+  }
+}
+
+if (!fs.existsSync("docs/agent-tasks-pilot.md")) {
+  fail("docs/agent-tasks-pilot.md is missing");
+}
+const pilot = read("docs/agent-tasks-pilot.md");
+for (const phrase of [
+  "product-validation artifact",
+  "synthetic fixture",
+  "stale approved preview",
+  "fail-on-conflict rejection",
+  "check-agent-task-pilot-evidence.mjs",
+  "must never be presented as a completed pilot",
+]) {
+  if (!pilot.toLowerCase().includes(phrase.toLowerCase())) {
+    fail(`docs/agent-tasks-pilot.md should mention ${phrase}`);
   }
 }
 

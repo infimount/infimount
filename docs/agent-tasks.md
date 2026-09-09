@@ -194,6 +194,8 @@ The product loop is implemented on `main` through six completed slices:
 
 The next product-validation phase is **pilot evidence**, not more feature breadth. It should exercise real coding, document, and data-analysis tasks, capture action-driven UI evidence, and include the normal v0.8.0 to v0.9.0 install/update path. Pilot evidence informs promotion and follow-on work. It is not a manual product-test requirement in the automated release gate.
 
+Use the [Agent Tasks v0.9 pilot protocol](agent-tasks-pilot.md) to collect privacy-safe, candidate-bound evidence and validate it without conflating synthetic fixtures with real pilot completion.
+
 ## Integration direction
 
 Agent Tasks work with existing MCP clients. The desktop remains the storage control plane, and client-specific handoff reuses the same MCP server and policy rather than implementing separate storage access paths. Codex is the first first-class task handoff. Pi is a lightweight follow-on candidate, while OpenCode can continue using its existing direct MCP integration until pilot evidence justifies additional packaging.
