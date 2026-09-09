@@ -146,6 +146,9 @@ describe("AgentWorkspacesDialog", () => {
     expect(screen.getByRole("combobox", { name: "Workspace starter files" })).toHaveTextContent("Empty workspace");
     expect(screen.queryByLabelText("Root path")).not.toBeInTheDocument();
 
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Create workspace" })).toBeEnabled();
+    });
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Agent Research" } });
     expect(screen.getByText("/agent-workspaces/agent-research")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Create workspace" }));
@@ -174,6 +177,9 @@ describe("AgentWorkspacesDialog", () => {
 
     renderDialog();
 
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Create workspace" })).toBeEnabled();
+    });
     const writeSwitch = screen.getByRole("switch", { name: "Allow agent writes" });
     fireEvent.click(writeSwitch);
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Agent Outputs" } });
