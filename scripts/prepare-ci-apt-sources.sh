@@ -11,6 +11,7 @@ fi
 shopt -s nullglob
 for source in "$sources_dir"/*; do
   [[ -f "$source" ]] || continue
+  [[ "$source" == *.infimount-disabled ]] && continue
 
   # GitHub-hosted Ubuntu runners include third-party repositories that Infimount
   # does not use. A metadata/content mismatch in the Chrome repository blocked
