@@ -60,10 +60,14 @@ for (const phrase of [
   "review",
   "publish",
   "create-only",
+  "product-validation phase",
 ]) {
   if (!readme.toLowerCase().includes(phrase.toLowerCase())) {
     fail(`README.md should mention ${phrase}`);
   }
+}
+if (/pilot evidence remains the v\d+\.\d+\.\d+ release gate/i.test(readme)) {
+  fail("README.md must not make real pilot evidence a manual release-test gate");
 }
 
 if (!fs.existsSync("docs/agent-tasks.md")) {
@@ -76,6 +80,9 @@ if (agentTasks.includes("v0.8.1")) {
 if (agentTasks.includes("publish-receipt.json")) {
   fail("docs/agent-tasks.md must document unique publication receipts, not a mutable static receipt");
 }
+if (/remaining v\d+\.\d+\.\d+ gate is \*\*pilot evidence\*\*/i.test(agentTasks)) {
+  fail("docs/agent-tasks.md must keep pilot evidence separate from the automated release gate");
+}
 for (const phrase of [
   "v0.9.0",
   "publish-receipt-<publication-id>.json",
@@ -84,6 +91,8 @@ for (const phrase of [
   "rename",
   "no overwrite mode",
   "cleanup-required",
+  "product-validation phase",
+  "not a manual product-test requirement in the automated release gate",
 ]) {
   if (!agentTasks.toLowerCase().includes(phrase.toLowerCase())) {
     fail(`docs/agent-tasks.md should mention ${phrase}`);
