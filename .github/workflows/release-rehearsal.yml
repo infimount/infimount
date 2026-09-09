@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Optional SemVer prerelease version to rehearse; defaults to the next minor rc.1 derived from package.json
+        description: Optional SemVer prerelease; defaults to the checked-out prerelease, or next minor rc.1 from a stable package version
         required: false
         default: ""
         type: string
