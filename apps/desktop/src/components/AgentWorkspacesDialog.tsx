@@ -46,7 +46,6 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/hooks/use-toast";
 import {
-  AGENT_WORKSPACE_TEMPLATES,
   archiveUnsupportedAgentWorkspaces,
   appendWorkspaceMemory,
   createAgentWorkspace,
@@ -61,10 +60,10 @@ import {
   restoreWorkspaceMemoryCheckpoint,
   type AgentWorkspace,
   type AgentWorkspaceCheckpoint,
-  type AgentWorkspaceTemplateId,
 } from "@/lib/agentWorkspaces";
 import { listActivityLogEvents, type ActivityLogEvent } from "@/lib/activityLog";
 import { cn } from "@/lib/utils";
+import { workspaceStorageIssue } from "@/lib/workspaceStorage";
 import type { McpAuditEvent, StorageConfig } from "@/types/storage";
 
 interface AgentWorkspacesDialogProps {
@@ -73,6 +72,12 @@ interface AgentWorkspacesDialogProps {
   auditEvents?: McpAuditEvent[];
   onOpenChange: (open: boolean) => void;
   onSelectStorage: (storageId: string) => void;
+}
+
+function workspaceAccessProfile(workspace: AgentWorkspace): "read_only" | "read_write" | "none" {
+  if (workspace.accessProfile === "read_write") return "read_write";
+  if (workspace.accessProfile === "none") return "none";
+  return "read_only";
 }
 
 export function AgentWorkspacesDialog({
@@ -85,10 +90,7 @@ export function AgentWorkspacesDialog({
   const [workspaces, setWorkspaces] = useState<AgentWorkspace[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [storageId, setStorageId] = useState("");
-  const [name, setName] = useState("Coding workspace");
-  const [rootPath, setRootPath] = useState(defaultWorkspacePath("Coding workspace"));
-  const [templateId, setTemplateId] = useState<AgentWorkspaceTemplateId>("coding");
-  const [applyPolicy, setApplyPolicy] = useState(true);
+  const [name, setName] = useState("Agent workspace");
   const [allowAgentWrites, setAllowAgentWrites] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [memoryFiles, setMemoryFiles] = useState<string[]>([]);
@@ -114,12 +116,19 @@ export function AgentWorkspacesDialog({
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,
     [selectedWorkspaceId, workspaces],
   );
-  const selectedStorage = storages.find((storage) => storage.id === storageId) ?? storages[0];
+  const selectedStorage = storages.find((storage) => storage.id === storageId) ?? null;
+  const selectedStorageIssue = selectedStorage
+    ? workspaceStorageIssue(selectedStorage)
+    : "Choose a storage.";
+  const rootPath = defaultWorkspacePath(name);
   const selectedWorkspaceStorage = selectedWorkspace
     ? storages.find((storage) => storage.id === selectedWorkspace.storageId)
     : null;
   const workspaceAuditItems = useMemo(
-    () => selectedWorkspace ? buildWorkspaceAuditItems(selectedWorkspace, activityEvents, auditEvents) : [],
+    () =>
+      selectedWorkspace
+        ? buildWorkspaceAuditItems(selectedWorkspace, activityEvents, auditEvents)
+        : [],
     [activityEvents, auditEvents, selectedWorkspace],
   );
 
@@ -132,18 +141,23 @@ export function AgentWorkspacesDialog({
       if (!active) return;
       setWorkspaces(next);
       setSelectedWorkspaceId((current) => current ?? next[0]?.id ?? null);
-      setStorageId((current) => current || storages[0]?.id || "");
+      setStorageId((current) => {
+        if (current && storages.some((storage) => storage.id === current)) return current;
+        return (
+          storages.find((storage) => workspaceStorageIssue(storage) === null)?.id ??
+          storages[0]?.id ??
+          ""
+        );
+      });
       refreshWorkspaceActivity();
     });
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [open, storages]);
 
   useEffect(() => {
-    setRootPath(defaultWorkspacePath(name));
-  }, [name]);
-
-  useEffect(() => {
-    if (!selectedWorkspace || !open) {
+    if (!selectedWorkspace || !open || selectedWorkspace.memoryFiles.length === 0) {
       setMemoryFiles([]);
       setSelectedMemoryFile(null);
       setMemoryContent("");
@@ -188,7 +202,7 @@ export function AgentWorkspacesDialog({
         if (!active) return;
         setMemoryContent("");
         toast({
-          title: "Memory file could not be read",
+          title: "Starter note could not be read",
           description: error instanceof Error ? error.message : String(error),
           variant: "destructive",
         });
@@ -202,16 +216,15 @@ export function AgentWorkspacesDialog({
   }, [open, selectedMemoryFile, selectedWorkspace]);
 
   const handleCreate = async () => {
-    if (!selectedStorage) return;
+    if (!selectedStorage || selectedStorageIssue) return;
     setIsCreating(true);
     try {
       const workspace = await createAgentWorkspace({
         storageId: selectedStorage.id,
         name,
         rootPath,
-        templateId,
+        templateId: "custom",
         accessProfile: allowAgentWrites ? "read_write" : "read_only",
-        applyPolicy,
       });
       const next = await listAgentWorkspaces();
       setWorkspaces(next);
@@ -219,11 +232,9 @@ export function AgentWorkspacesDialog({
       refreshWorkspaceActivity();
       toast({
         title: "Workspace created",
-        description: applyPolicy
-          ? allowAgentWrites
-            ? "MCP access is scoped to this workspace root with read-write access."
-            : "MCP access is now scoped to this workspace root."
-          : "Workspace files were created without changing MCP policy.",
+        description: allowAgentWrites
+          ? "Only this workspace folder is granted MCP read-write access."
+          : "Only this workspace folder is granted MCP read-only access.",
       });
     } catch (error) {
       toast({
@@ -248,10 +259,10 @@ export function AgentWorkspacesDialog({
       setMemoryContent(next);
       setMemoryAppendText("");
       refreshWorkspaceActivity();
-      toast({ title: "Memory appended", description: `${selectedMemoryFile} was updated.` });
+      toast({ title: "Starter note updated", description: `${selectedMemoryFile} was updated.` });
     } catch (error) {
       toast({
-        title: "Memory could not be updated",
+        title: "Starter note could not be updated",
         description: error instanceof Error ? error.message : String(error),
         variant: "destructive",
       });
@@ -272,7 +283,7 @@ export function AgentWorkspacesDialog({
       refreshWorkspaceActivity();
       toast({
         title: "Checkpoint saved",
-        description: "Memory files were captured in the workspace checkpoint manifest.",
+        description: "Managed starter-note files were captured in the checkpoint manifest.",
       });
     } catch (error) {
       toast({
@@ -295,7 +306,10 @@ export function AgentWorkspacesDialog({
       }
       refreshWorkspaceActivity();
       setRestoreConfirmationOpen(false);
-      toast({ title: "Checkpoint restored", description: "Memory files were restored." });
+      toast({
+        title: "Checkpoint restored",
+        description: "Managed starter-note files were restored.",
+      });
     } catch (error) {
       toast({
         title: "Restore failed",
@@ -321,10 +335,12 @@ export function AgentWorkspacesDialog({
       setSelectedWorkspaceId(next[0]?.id ?? null);
       refreshWorkspaceActivity();
       toast({
-        title: deleteMode === "files" ? "Workspace and files deleted" : "Workspace registration removed",
-        description: deleteMode === "files"
-          ? "The scoped policy, registration, and workspace root were removed."
-          : "The scoped policy and registration were removed. Storage files were preserved.",
+        title:
+          deleteMode === "files" ? "Workspace and files deleted" : "Workspace registration removed",
+        description:
+          deleteMode === "files"
+            ? "The scoped policy, registration, and workspace root were removed."
+            : "The scoped policy and registration were removed. Storage files were preserved.",
       });
       setDeleteMode(null);
     } catch (error) {
@@ -338,7 +354,7 @@ export function AgentWorkspacesDialog({
     }
   };
 
-  const canCreate = Boolean(selectedStorage && name.trim() && rootPath.trim());
+  const canCreate = Boolean(selectedStorage && !selectedStorageIssue && name.trim());
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -351,7 +367,7 @@ export function AgentWorkspacesDialog({
             <div>
               <DialogTitle>Agent Workspaces</DialogTitle>
               <DialogDescription>
-                Create scoped folders for agents, apply MCP policy, and keep visible memory files.
+                Create a storage-scoped MCP boundary for agents and Agent Tasks.
               </DialogDescription>
             </div>
           </div>
@@ -397,9 +413,7 @@ export function AgentWorkspacesDialog({
             <ScrollArea className="h-[58vh]">
               <div className="space-y-1 p-2">
                 {workspaces.length === 0 ? (
-                  <div className="px-3 py-6 text-sm text-muted-foreground">
-                    No workspaces yet. Create one on any storage.
-                  </div>
+                  <div className="px-3 py-6 text-sm text-muted-foreground">No workspaces yet.</div>
                 ) : (
                   workspaces.map((workspace) => (
                     <button
@@ -416,7 +430,9 @@ export function AgentWorkspacesDialog({
                       <div className="flex items-center justify-between gap-2">
                         <span className="truncate font-medium">{workspace.name}</span>
                         <Badge variant="outline" className="shrink-0 text-[10px]">
-                          {workspace.templateId}
+                          {workspaceAccessProfile(workspace) === "read_write"
+                            ? "read/write"
+                            : "read-only"}
                         </Badge>
                       </div>
                       <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
@@ -436,21 +452,22 @@ export function AgentWorkspacesDialog({
                   <div>
                     <h3 className="text-sm font-medium">Create workspace</h3>
                     <p className="text-xs text-muted-foreground">
-                      Files are written through OpenDAL. Credentials stay local.
+                      Pick a storage and name. Infimount creates a scoped folder and its managed MCP
+                      rule.
                     </p>
                   </div>
-                  {applyPolicy && (
-                    <Badge variant="secondary" className="gap-1">
-                      <FolderLock className="h-3 w-3" /> MCP scoped
-                    </Badge>
-                  )}
+                  <Badge variant="secondary" className="gap-1">
+                    <FolderLock className="h-3 w-3" /> MCP scoped
+                  </Badge>
                 </div>
+
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="workspace-name">Name</Label>
                     <Input
                       id="workspace-name"
                       value={name}
+                      maxLength={200}
                       onChange={(event) => setName(event.target.value)}
                     />
                   </div>
@@ -469,59 +486,60 @@ export function AgentWorkspacesDialog({
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-2">
-                    <Label>Template</Label>
-                    <Select
-                      value={templateId}
-                      onValueChange={(value) => setTemplateId(value as AgentWorkspaceTemplateId)}
-                    >
-                      <SelectTrigger aria-label="Workspace template">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {AGENT_WORKSPACE_TEMPLATES.map((template) => (
-                          <SelectItem key={template.id} value={template.id}>
-                            {template.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                </div>
+
+                <div className="mt-3 rounded-lg border bg-muted/20 p-3">
+                  <div className="text-xs text-muted-foreground">
+                    Workspace location inside the selected storage
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="workspace-root">Root path</Label>
-                    <Input
-                      id="workspace-root"
-                      className="font-mono"
-                      value={rootPath}
-                      onChange={(event) => setRootPath(event.target.value)}
+                  <code className="mt-1 block break-all text-xs font-medium">{rootPath}</code>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    This is storage-relative. It is not another host filesystem path to configure.
+                  </p>
+                </div>
+
+                {selectedStorageIssue ? (
+                  <div
+                    role="alert"
+                    className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-800 dark:text-amber-300"
+                  >
+                    <div className="font-medium">Storage needs attention</div>
+                    <div className="mt-1 text-xs">{selectedStorageIssue}</div>
+                  </div>
+                ) : selectedStorage && !selectedStorage.mcpExposed ? (
+                  <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-800 dark:text-amber-300">
+                    The workspace can be created now, but agents cannot see this storage until you
+                    enable MCP exposure. The workspace rule remains scoped to this folder.
+                  </div>
+                ) : null}
+
+                <div className="mt-3 rounded-lg bg-muted/40 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium">Allow agent writes</div>
+                      <div className="text-xs text-muted-foreground">
+                        Turn this on for Agent Tasks. Leave it off for read-only agent access.
+                      </div>
+                    </div>
+                    <Switch
+                      aria-label="Allow agent writes"
+                      checked={allowAgentWrites}
+                      onCheckedChange={setAllowAgentWrites}
                     />
                   </div>
                 </div>
-                <div className="mt-4 flex flex-col gap-3 rounded-lg bg-muted/40 p-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <div className="text-sm font-medium">Apply workspace MCP policy</div>
-                    <div className="text-xs text-muted-foreground">
-                      Sets default access to none and allows only the workspace root.
-                    </div>
+
+                <div className="mt-4 flex items-center justify-between gap-3">
+                  <div className="text-xs text-muted-foreground">
+                    New workspaces are plain scoped folders. MCP policy is always managed by the
+                    workspace.
                   </div>
-                  <Switch checked={applyPolicy} onCheckedChange={setApplyPolicy} />
-                </div>
-                <div className="mt-3 flex flex-col gap-3 rounded-lg bg-muted/40 p-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <div className="text-sm font-medium">Allow agent writes</div>
-                    <div className="text-xs text-muted-foreground">
-                      Required for Agent Tasks that create outputs. Leave this off for a read-only workspace.
-                    </div>
-                  </div>
-                  <Switch
-                    aria-label="Allow agent writes"
-                    checked={allowAgentWrites}
-                    onCheckedChange={setAllowAgentWrites}
-                  />
-                </div>
-                <div className="mt-4 flex justify-end">
                   <Button onClick={handleCreate} disabled={!canCreate || isCreating}>
-                    {isCreating ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                    {isCreating ? (
+                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Save className="mr-2 h-4 w-4" />
+                    )}
                     Create workspace
                   </Button>
                 </div>
@@ -535,7 +553,8 @@ export function AgentWorkspacesDialog({
                         <div>
                           <h3 className="text-sm font-medium">{selectedWorkspace.name}</h3>
                           <p className="font-mono text-xs text-muted-foreground">
-                            {selectedWorkspaceStorage?.name ?? "Unknown storage"}:{selectedWorkspace.rootPath}
+                            {selectedWorkspaceStorage?.name ?? "Unknown storage"}:
+                            {selectedWorkspace.rootPath}
                           </p>
                         </div>
                         <Button
@@ -553,103 +572,126 @@ export function AgentWorkspacesDialog({
                         <Badge variant="outline" className="gap-1">
                           <CheckCircle2 className="h-3 w-3" /> {selectedWorkspace.rootPath}
                         </Badge>
-                        <Badge variant="outline">default access: none</Badge>
+                        <Badge variant="outline">
+                          {workspaceAccessProfile(selectedWorkspace) === "read_write"
+                            ? "MCP read/write"
+                            : "MCP read-only"}
+                        </Badge>
+                        {selectedWorkspace.templateId !== "custom" ? (
+                          <Badge variant="outline">legacy starter: {selectedWorkspace.templateId}</Badge>
+                        ) : null}
                       </div>
 
-                      <div className="grid gap-3 md:grid-cols-[180px_1fr]">
-                        <div className="space-y-1">
-                          {memoryFiles.map((path) => (
-                            <button
-                              key={path}
-                              type="button"
-                              className={cn(
-                                "w-full rounded-md px-2 py-1.5 text-left font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
-                                selectedMemoryFile === path
-                                  ? "bg-muted text-foreground"
-                                  : "text-muted-foreground hover:bg-muted/70",
-                              )}
-                              onClick={() => setSelectedMemoryFile(path)}
-                            >
-                              {path}
-                            </button>
-                          ))}
-                        </div>
-                        <div className="space-y-3">
-                          <Textarea
-                            value={memoryContent}
-                            readOnly
-                            className="min-h-44 font-mono text-xs"
-                            aria-label="Memory file contents"
-                          />
-                          <Textarea
-                            value={memoryAppendText}
-                            onChange={(event) => setMemoryAppendText(event.target.value)}
-                            placeholder="Append a note to the selected memory file..."
-                            className="min-h-20"
-                            aria-label="Memory note"
-                          />
-                          <div className="flex justify-end">
-                            <Button
-                              variant="outline"
-                              onClick={handleAppendMemory}
-                              disabled={isMemoryBusy || !memoryAppendText.trim()}
-                            >
-                              {isMemoryBusy ? (
-                                <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                              ) : (
-                                <NotebookPen className="mr-2 h-4 w-4" />
-                              )}
-                              Append memory
-                            </Button>
+                      {memoryFiles.length > 0 ? (
+                        <div className="grid gap-3 md:grid-cols-[180px_1fr]">
+                          <div className="space-y-1">
+                            {memoryFiles.map((path) => (
+                              <button
+                                key={path}
+                                type="button"
+                                className={cn(
+                                  "w-full rounded-md px-2 py-1.5 text-left font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+                                  selectedMemoryFile === path
+                                    ? "bg-muted text-foreground"
+                                    : "text-muted-foreground hover:bg-muted/70",
+                                )}
+                                onClick={() => setSelectedMemoryFile(path)}
+                              >
+                                {path}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="space-y-3">
+                            <Textarea
+                              value={memoryContent}
+                              readOnly
+                              className="min-h-44 font-mono text-xs"
+                              aria-label="Memory file contents"
+                            />
+                            <Textarea
+                              value={memoryAppendText}
+                              onChange={(event) => setMemoryAppendText(event.target.value)}
+                              placeholder="Append a note to the selected starter file..."
+                              className="min-h-20"
+                              aria-label="Memory note"
+                            />
+                            <div className="flex justify-end">
+                              <Button
+                                variant="outline"
+                                onClick={handleAppendMemory}
+                                disabled={isMemoryBusy || !memoryAppendText.trim()}
+                              >
+                                {isMemoryBusy ? (
+                                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <NotebookPen className="mr-2 h-4 w-4" />
+                                )}
+                                Append note
+                              </Button>
+                            </div>
                           </div>
                         </div>
-                      </div>
+                      ) : (
+                        <div className="rounded-lg border border-dashed px-3 py-4 text-sm text-muted-foreground">
+                          This is a plain scoped workspace. Agent Tasks create their own task package
+                          under <code>tasks/</code>.
+                        </div>
+                      )}
                     </div>
 
                     <div className="rounded-xl border bg-background p-4">
-                      <h3 className="text-sm font-medium">Checkpoints</h3>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Capture memory files locally and under `.infimount/checkpoints` in the workspace.
-                      </p>
-                      <Button
-                        className="mt-4 w-full"
-                        variant="outline"
-                        onClick={handleCheckpoint}
-                        disabled={isCheckpointBusy}
-                      >
-                        {isCheckpointBusy ? (
-                          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                        ) : (
-                          <Save className="mr-2 h-4 w-4" />
-                        )}
-                        Save checkpoint
-                      </Button>
-                      <div className="mt-4 space-y-2">
-                        <Label>Restore point</Label>
-                        <Select value={selectedCheckpointId} onValueChange={setSelectedCheckpointId}>
-                          <SelectTrigger aria-label="Workspace checkpoint">
-                            <SelectValue placeholder="Choose checkpoint" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {checkpoints.map((checkpoint) => (
-                              <SelectItem key={checkpoint.id} value={checkpoint.id}>
-                                {new Date(checkpoint.createdAt).toLocaleString()}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <Button
-                        className="mt-3 w-full"
-                        variant="secondary"
-                        onClick={() => setRestoreConfirmationOpen(true)}
-                        disabled={isCheckpointBusy || !selectedCheckpointId}
-                      >
-                        <RotateCcw className="mr-2 h-4 w-4" />
-                        Restore memory
-                      </Button>
+                      {memoryFiles.length > 0 ? (
+                        <>
+                          <h3 className="text-sm font-medium">Legacy starter-file checkpoints</h3>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Existing templated workspaces keep their managed starter-note files and
+                            checkpoints for compatibility.
+                          </p>
+                          <Button
+                            className="mt-4 w-full"
+                            variant="outline"
+                            onClick={handleCheckpoint}
+                            disabled={isCheckpointBusy}
+                          >
+                            {isCheckpointBusy ? (
+                              <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                              <Save className="mr-2 h-4 w-4" />
+                            )}
+                            Save checkpoint
+                          </Button>
+                          <div className="mt-4 space-y-2">
+                            <Label>Restore point</Label>
+                            <Select
+                              value={selectedCheckpointId}
+                              onValueChange={setSelectedCheckpointId}
+                            >
+                              <SelectTrigger aria-label="Workspace checkpoint">
+                                <SelectValue placeholder="Choose checkpoint" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {checkpoints.map((checkpoint) => (
+                                  <SelectItem key={checkpoint.id} value={checkpoint.id}>
+                                    {new Date(checkpoint.createdAt).toLocaleString()}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <Button
+                            className="mt-3 w-full"
+                            variant="secondary"
+                            onClick={() => setRestoreConfirmationOpen(true)}
+                            disabled={isCheckpointBusy || !selectedCheckpointId}
+                          >
+                            <RotateCcw className="mr-2 h-4 w-4" />
+                            Restore notes
+                          </Button>
+                          <div className="my-5 border-t" />
+                        </>
+                      ) : null}
 
-                      <div className="mt-5 space-y-2 border-t pt-4">
+                      <div className="space-y-2">
                         <div className="text-sm font-medium text-destructive">Remove workspace</div>
                         <Button
                           className="w-full"
@@ -711,9 +753,11 @@ export function AgentWorkspacesDialog({
         >
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Overwrite workspace memory?</AlertDialogTitle>
+              <AlertDialogTitle>Overwrite starter-note files?</AlertDialogTitle>
               <AlertDialogDescription>
-                Restoring {selectedCheckpointId || "this checkpoint"} will replace every managed memory file in {selectedWorkspace?.name ?? "this workspace"}. Current contents will be lost.
+                Restoring {selectedCheckpointId || "this checkpoint"} will replace every managed
+                starter-note file in {selectedWorkspace?.name ?? "this workspace"}. Current contents
+                will be lost.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -732,11 +776,16 @@ export function AgentWorkspacesDialog({
           </AlertDialogContent>
         </AlertDialog>
 
-        <AlertDialog open={deleteMode !== null} onOpenChange={(next) => !next && setDeleteMode(null)}>
+        <AlertDialog
+          open={deleteMode !== null}
+          onOpenChange={(next) => !next && setDeleteMode(null)}
+        >
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>
-                {deleteMode === "files" ? "Delete workspace files permanently?" : "Remove workspace registration?"}
+                {deleteMode === "files"
+                  ? "Delete workspace files permanently?"
+                  : "Remove workspace registration?"}
               </AlertDialogTitle>
               <AlertDialogDescription>
                 {deleteMode === "files"
@@ -748,7 +797,11 @@ export function AgentWorkspacesDialog({
               <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
               <AlertDialogAction
                 disabled={isDeleting}
-                className={deleteMode === "files" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : undefined}
+                className={
+                  deleteMode === "files"
+                    ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    : undefined
+                }
                 onClick={(event) => {
                   event.preventDefault();
                   void handleDeleteWorkspace();

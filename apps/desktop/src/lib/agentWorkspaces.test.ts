@@ -61,9 +61,10 @@ vi.mock("./api", async (importOriginal) => {
             templateId: input.templateId,
             createdAt: now,
             updatedAt: now,
-            memoryFiles: input.templateId === "coding"
-              ? ["memory/tasks.md", "memory/decisions.md", "memory/handoff.md"]
-              : [],
+            memoryFiles:
+              input.templateId === "coding"
+                ? ["memory/tasks.md", "memory/decisions.md", "memory/handoff.md"]
+                : [],
             checkpointIds: [],
           },
           policyUpdated: !!input.accessProfile,
@@ -117,7 +118,7 @@ describe("agentWorkspaces", () => {
 
     expect(workspace.rootPath).toBe("/agent space");
     expect(createWorkspaceAtomic).toHaveBeenCalledWith(
-      expect.objectContaining({ accessProfile: "read_only" }),
+      expect.objectContaining({ accessProfile: "read_only", applyPolicy: true }),
     );
   });
 
@@ -320,9 +321,10 @@ describe("agentWorkspaces", () => {
           templateId: input.templateId,
           createdAt: now,
           updatedAt: now,
-          memoryFiles: input.templateId === "coding"
-            ? ["memory/tasks.md", "memory/decisions.md", "memory/handoff.md"]
-            : [],
+          memoryFiles:
+            input.templateId === "coding"
+              ? ["memory/tasks.md", "memory/decisions.md", "memory/handoff.md"]
+              : [],
           checkpointIds: [],
         };
         created.push(record);
@@ -402,19 +404,18 @@ describe("agentWorkspaces", () => {
     );
   });
 
-  it("passes access profile and explicit policy choice to atomic command", async () => {
+  it("always applies the managed workspace policy", async () => {
     const workspace = await createAgentWorkspace({
       storageId: "local",
       name: "Access-Test",
       rootPath: "/access-test",
       templateId: "coding",
       accessProfile: "read_only",
-      applyPolicy: false,
     });
 
     expect(workspace.id).toBeTruthy();
     expect(createWorkspaceAtomic).toHaveBeenCalledWith(
-      expect.objectContaining({ accessProfile: "read_only", applyPolicy: false }),
+      expect.objectContaining({ accessProfile: "read_only", applyPolicy: true }),
     );
   });
 });

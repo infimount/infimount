@@ -6,17 +6,15 @@ import {
   listWorkspaces,
   archiveUnsupportedWorkspaces,
   createWorkspaceAtomic as apiCreateWorkspaceAtomic,
-  updateWorkspace as apiUpdateWorkspace,
   createWorkspaceCheckpointCommand,
   listWorkspaceCheckpoints,
-  restoreWorkspaceCheckpointCommand,
-  createDirectory,
   listEntries,
   readFileRange,
   writeFile,
   deleteWorkspace,
   deleteWorkspaceWithFiles,
 } from "@/lib/api";
+import { workspaceStorageIssue } from "@/lib/workspaceStorage";
 import type { StorageConfig } from "@/types/storage";
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -24,16 +22,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     listWorkspaces: vi.fn().mockResolvedValue([]),
-    archiveUnsupportedWorkspaces: vi.fn().mockResolvedValue({
-      archivedCount: 0,
-      backupPath: null,
-    }),
+    archiveUnsupportedWorkspaces: vi.fn().mockResolvedValue({ archivedCount: 0, backupPath: null }),
     createWorkspaceAtomic: vi.fn().mockResolvedValue({
       workspace: {},
-      policyUpdated: false,
+      policyUpdated: true,
       rollbackErrors: [],
     }),
-    updateWorkspace: vi.fn().mockResolvedValue({}),
     createWorkspaceCheckpointCommand: vi.fn().mockResolvedValue({
       schemaVersion: 1,
       id: "checkpoint-1",
@@ -43,20 +37,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
       manifestPath: "/agent-workspaces/existing-workspace/.infimount/checkpoints/checkpoint-1.json",
       fileCount: 3,
     }),
-    listWorkspaceCheckpoints: vi.fn().mockResolvedValue([
-      {
-        schemaVersion: 1,
-        id: "checkpoint-1",
-        workspaceId: "workspace-1",
-        label: "Checkpoint",
-        createdAt: "2026-01-01T00:00:00Z",
-        manifestPath: "/agent-workspaces/existing-workspace/.infimount/checkpoints/checkpoint-1.json",
-        fileCount: 3,
-      },
-    ]),
+    listWorkspaceCheckpoints: vi.fn().mockResolvedValue([]),
     restoreWorkspaceCheckpointCommand: vi.fn().mockResolvedValue(undefined),
-    createDirectory: vi.fn(),
-    listEntries: vi.fn(),
+    listEntries: vi.fn().mockResolvedValue([]),
     readFileRange: vi.fn(),
     writeFile: vi.fn(),
     deleteWorkspace: vi.fn(),
@@ -74,7 +57,7 @@ const storage: StorageConfig = {
   type: "local-fs",
   name: "Local Docs",
   backend: "local",
-  config: { root: "/tmp/docs" },
+  config: { rootPath: "/tmp/docs" },
   enabled: true,
   mcpExposed: true,
   readOnly: false,
@@ -83,9 +66,8 @@ const storage: StorageConfig = {
   updatedAt: "2026-01-01T00:00:00Z",
   mcpPolicy: {
     version: 2,
-    default_access: "read_write",
+    default_access: "none",
     rules: [],
-    allowed_paths: [],
     denied_paths: [],
     confirmation_rules: {
       require_for_write: true,
@@ -98,26 +80,43 @@ const storage: StorageConfig = {
   },
 };
 
-function makeWorkspace(id: string, name: string) {
+function makeWorkspace(
+  id: string,
+  name: string,
+  options: { templateId?: string; accessProfile?: string; memoryFiles?: string[] } = {},
+) {
+  const templateId = options.templateId ?? "custom";
   return {
     id,
+    schemaVersion: 2,
     storageId: "local",
     name,
     rootPath: `/agent-workspaces/${name.toLowerCase().replace(/\s+/g, "-")}`,
-    templateId: "coding" as const,
+    templateId,
+    accessProfile: options.accessProfile ?? "read_only",
+    policyRuleId: `workspace:${id}`,
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
-    memoryFiles: ["memory/tasks.md", "memory/decisions.md", "memory/handoff.md"],
+    memoryFiles: options.memoryFiles ?? [],
     checkpointIds: [],
   };
+}
+
+function renderDialog(storages: StorageConfig[] = [storage]) {
+  return render(
+    <AgentWorkspacesDialog
+      open
+      storages={storages}
+      onOpenChange={vi.fn()}
+      onSelectStorage={vi.fn()}
+    />,
+  );
 }
 
 describe("AgentWorkspacesDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
-    vi.mocked(createDirectory).mockResolvedValue(undefined);
-    vi.mocked(writeFile).mockResolvedValue(undefined);
     vi.mocked(readFileRange).mockResolvedValue({
       totalSize: 8,
       offset: 0,
@@ -127,180 +126,108 @@ describe("AgentWorkspacesDialog", () => {
     vi.mocked(listEntries).mockResolvedValue([]);
     vi.mocked(deleteWorkspace).mockResolvedValue(undefined);
     vi.mocked(deleteWorkspaceWithFiles).mockResolvedValue(undefined);
-    vi.mocked(listWorkspaceCheckpoints).mockResolvedValue([
-      {
-        schemaVersion: 1,
-        id: "checkpoint-1",
-        workspaceId: "workspace-1",
-        label: "Checkpoint",
-        createdAt: "2026-01-01T00:00:00Z",
-        manifestPath: "/agent-workspaces/existing-workspace/.infimount/checkpoints/checkpoint-1.json",
-        fileCount: 3,
-      },
-    ]);
-    (listWorkspaces as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-    vi.mocked(archiveUnsupportedWorkspaces).mockResolvedValue({
-      archivedCount: 0,
-      backupPath: null,
-    });
-    (apiCreateWorkspaceAtomic as ReturnType<typeof vi.fn>).mockResolvedValue({
-      workspace: {
-        id: "ws-1",
-        storageId: "local",
-        name: "Agent Research",
-        rootPath: "/agent-workspaces/agent-research",
-        templateId: "coding",
-        createdAt: "2026-01-01T00:00:00Z",
-        updatedAt: "2026-01-01T00:00:00Z",
-        memoryFiles: ["memory/tasks.md", "memory/decisions.md", "memory/handoff.md"],
-        checkpointIds: [],
-      },
-      policyUpdated: true,
-      rollbackErrors: [],
-    });
-    (apiUpdateWorkspace as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    vi.mocked(listWorkspaceCheckpoints).mockResolvedValue([]);
+    vi.mocked(archiveUnsupportedWorkspaces).mockResolvedValue({ archivedCount: 0, backupPath: null });
+    vi.mocked(listWorkspaces).mockResolvedValue([]);
   });
 
-  it("creates a scoped workspace read-only by default", async () => {
+  it("creates a plain scoped workspace with an automatic root and mandatory policy", async () => {
     const ws = makeWorkspace("ws-1", "Agent Research");
-    (apiCreateWorkspaceAtomic as ReturnType<typeof vi.fn>).mockResolvedValue({
+    vi.mocked(apiCreateWorkspaceAtomic).mockResolvedValue({
       workspace: ws,
       policyUpdated: true,
       rollbackErrors: [],
     });
-    (listWorkspaces as ReturnType<typeof vi.fn>).mockResolvedValue([ws]);
+    vi.mocked(listWorkspaces).mockResolvedValue([ws]);
 
-    render(
-      <AgentWorkspacesDialog
-        open
-        storages={[storage]}
-        onOpenChange={vi.fn()}
-        onSelectStorage={vi.fn()}
-      />,
-    );
+    renderDialog();
 
     expect(screen.getByRole("switch", { name: "Allow agent writes" })).not.toBeChecked();
-    fireEvent.change(screen.getByLabelText("Name"), {
-      target: { value: "Agent Research" },
+    expect(screen.queryByRole("combobox", { name: "Workspace starter files" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Root path")).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Create workspace" })).toBeEnabled();
     });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Agent Research" } });
+    expect(screen.getAllByText("/agent-workspaces/agent-research").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Create workspace" }));
 
     await waitFor(() => {
-      expect(apiCreateWorkspaceAtomic).toHaveBeenCalledWith(
-        expect.objectContaining({ accessProfile: "read_only" }),
-      );
-    });
-
-    await waitFor(() => {
-      expect(screen.getAllByText("Agent Research").length).toBeGreaterThan(0);
+      expect(apiCreateWorkspaceAtomic).toHaveBeenCalledWith({
+        storageId: "local",
+        name: "Agent Research",
+        rootPath: "/agent-workspaces/agent-research",
+        templateId: "custom",
+        adoptExisting: undefined,
+        accessProfile: "read_only",
+        applyPolicy: true,
+      });
     });
   });
 
   it("creates a read-write workspace only after explicit agent-write opt-in", async () => {
-    const ws = makeWorkspace("ws-write", "Agent Outputs");
-    (apiCreateWorkspaceAtomic as ReturnType<typeof vi.fn>).mockResolvedValue({
+    const ws = makeWorkspace("ws-write", "Agent Outputs", { accessProfile: "read_write" });
+    vi.mocked(apiCreateWorkspaceAtomic).mockResolvedValue({
       workspace: ws,
       policyUpdated: true,
       rollbackErrors: [],
     });
-    (listWorkspaces as ReturnType<typeof vi.fn>).mockResolvedValue([ws]);
+    vi.mocked(listWorkspaces).mockResolvedValue([ws]);
 
-    render(
-      <AgentWorkspacesDialog
-        open
-        storages={[storage]}
-        onOpenChange={vi.fn()}
-        onSelectStorage={vi.fn()}
-      />,
-    );
+    renderDialog();
 
-    const writeSwitch = screen.getByRole("switch", { name: "Allow agent writes" });
-    expect(writeSwitch).not.toBeChecked();
-    fireEvent.click(writeSwitch);
-    expect(writeSwitch).toBeChecked();
-    fireEvent.change(screen.getByLabelText("Name"), {
-      target: { value: "Agent Outputs" },
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Create workspace" })).toBeEnabled();
     });
+    const writeSwitch = screen.getByRole("switch", { name: "Allow agent writes" });
+    fireEvent.click(writeSwitch);
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Agent Outputs" } });
     fireEvent.click(screen.getByRole("button", { name: "Create workspace" }));
 
     await waitFor(() => {
       expect(apiCreateWorkspaceAtomic).toHaveBeenCalledWith(
-        expect.objectContaining({ accessProfile: "read_write" }),
+        expect.objectContaining({ accessProfile: "read_write", applyPolicy: true }),
       );
     });
   });
 
-  it("archives unsupported workspace metadata and reloads the workspace list", async () => {
-    vi.mocked(archiveUnsupportedWorkspaces).mockResolvedValue({
-      archivedCount: 2,
-      backupPath: "/tmp/workspaces.archived.20260821.json",
-    });
-    (listWorkspaces as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([]);
+  it("blocks the exact shell-style Local Filesystem root that failed the real pilot", async () => {
+    const invalid = {
+      ...storage,
+      config: { rootPath: "$HOME/infimount-agent-task-workspaces" },
+    };
+    renderDialog([invalid]);
 
-    render(
-      <AgentWorkspacesDialog
-        open
-        storages={[storage]}
-        onOpenChange={vi.fn()}
-        onSelectStorage={vi.fn()}
-      />,
-    );
-
-    fireEvent.click(screen.getByTitle("Archive unsupported workspaces"));
-
-    await waitFor(() => {
-      expect(archiveUnsupportedWorkspaces).toHaveBeenCalledTimes(1);
-      expect(listWorkspaces).toHaveBeenCalledTimes(2);
-    });
+    expect(await screen.findByText(/uses \$HOME shell syntax/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create workspace" })).toBeDisabled();
+    expect(apiCreateWorkspaceAtomic).not.toHaveBeenCalled();
   });
 
-  it("offers separate confirmed registration-only and registration-plus-files deletion", async () => {
-    const ws = makeWorkspace("workspace-delete", "Delete workspace");
-    (listWorkspaces as ReturnType<typeof vi.fn>).mockResolvedValue([ws]);
-    const { unmount } = render(
-      <AgentWorkspacesDialog
-        open
-        storages={[storage]}
-        onOpenChange={vi.fn()}
-        onSelectStorage={vi.fn()}
-      />,
-    );
-    await screen.findByRole("button", { name: "Remove registration only" });
-    fireEvent.click(screen.getByRole("button", { name: "Remove registration only" }));
-    const registrationDialog = await screen.findByRole("alertdialog");
-    fireEvent.click(
-      within(registrationDialog).getByRole("button", { name: "Remove registration only" }),
-    );
-    await waitFor(() => expect(deleteWorkspace).toHaveBeenCalledWith("workspace-delete"));
-    expect(deleteWorkspaceWithFiles).not.toHaveBeenCalled();
-    unmount();
-
-    render(
-      <AgentWorkspacesDialog
-        open
-        storages={[storage]}
-        onOpenChange={vi.fn()}
-        onSelectStorage={vi.fn()}
-      />,
-    );
-    await screen.findByRole("button", { name: "Delete registration and files" });
-    fireEvent.click(screen.getByRole("button", { name: "Delete registration and files" }));
-    const filesDialog = await screen.findByRole("alertdialog");
-    expect(within(filesDialog).getByText(/permanently deletes/i)).toBeInTheDocument();
-    fireEvent.click(
-      within(filesDialog).getByRole("button", { name: "Delete registration and files" }),
-    );
-    await waitFor(() =>
-      expect(deleteWorkspaceWithFiles).toHaveBeenCalledWith("workspace-delete", true),
-    );
+  it("rejects relative, tilde, disabled, and read-only storage configurations before creation", () => {
+    expect(workspaceStorageIssue({ ...storage, config: { rootPath: "relative/path" } })).toMatch(/not absolute/i);
+    expect(workspaceStorageIssue({ ...storage, config: { rootPath: "~/workspace" } })).toMatch(/uses a ~ path/i);
+    expect(workspaceStorageIssue({ ...storage, enabled: false })).toMatch(/disabled/i);
+    expect(workspaceStorageIssue({ ...storage, readOnly: true })).toMatch(/read-only/i);
+    expect(workspaceStorageIssue(storage)).toBeNull();
   });
 
-  it("appends workspace memory and restores a checkpoint", async () => {
-    const ws = makeWorkspace("workspace-1", "Existing workspace");
-    (listWorkspaces as ReturnType<typeof vi.fn>).mockResolvedValue([ws]);
+  it("keeps a plain workspace free of the legacy memory/checkpoint surface", async () => {
+    const ws = makeWorkspace("plain", "Plain workspace");
+    vi.mocked(listWorkspaces).mockResolvedValue([ws]);
+    renderDialog();
 
+    expect(await screen.findByText(/plain scoped workspace/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Memory note")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save checkpoint" })).not.toBeInTheDocument();
+  });
+
+  it("preserves starter-note and checkpoint creation for existing templated workspaces", async () => {
+    const ws = makeWorkspace("workspace-1", "Existing workspace", {
+      templateId: "coding",
+      memoryFiles: ["memory/tasks.md", "memory/decisions.md", "memory/handoff.md"],
+    });
+    vi.mocked(listWorkspaces).mockResolvedValue([ws]);
     vi.mocked(listEntries).mockResolvedValue([
       {
         path: "memory/tasks.md",
@@ -312,45 +239,12 @@ describe("AgentWorkspacesDialog", () => {
       },
     ]);
 
-    render(
-      <AgentWorkspacesDialog
-        open
-        storages={[storage]}
-        auditEvents={[
-          {
-            id: "audit-1",
-            timestamp: "2026-01-01T00:01:00Z",
-            actor_type: "mcp_client",
-            mcp_client_id: null,
-            session_id: null,
-            storage_id: "local",
-            storage_name: "Local Docs",
-            backend: "local",
-            tool_name: "list_dir",
-            operation: "list",
-            path: "/agent-workspaces/existing/memory",
-            version_id: null,
-            decision: "allowed",
-            confirmation_id: null,
-            duration_ms: 1,
-            bytes_read: null,
-            bytes_written: null,
-            error_code: null,
-          },
-        ]}
-        onOpenChange={vi.fn()}
-        onSelectStorage={vi.fn()}
-      />,
-    );
+    renderDialog();
 
-    await waitFor(() => {
-      expect(screen.getAllByText("Existing workspace").length).toBeGreaterThan(0);
-    });
-
-    fireEvent.change(screen.getByLabelText("Memory note"), {
-      target: { value: "Follow up" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Append memory" }));
+    await screen.findByLabelText("Memory note");
+    expect(screen.getByText(/legacy starter: coding/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Memory note"), { target: { value: "Follow up" } });
+    fireEvent.click(screen.getByRole("button", { name: "Append note" }));
 
     await waitFor(() => {
       expect(writeFile).toHaveBeenCalledWith(
@@ -364,14 +258,43 @@ describe("AgentWorkspacesDialog", () => {
     await waitFor(() => {
       expect(createWorkspaceCheckpointCommand).toHaveBeenCalledWith("workspace-1", undefined);
     });
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "Restore memory" }));
-    expect(screen.getByRole("alertdialog")).toHaveTextContent("Overwrite workspace memory?");
-    expect(restoreWorkspaceCheckpointCommand).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Restore and overwrite" }));
-    await waitFor(() => {
-      expect(restoreWorkspaceCheckpointCommand).toHaveBeenCalledWith("workspace-1", "checkpoint-1", true);
-      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  it("archives unsupported workspace metadata and reloads the list", async () => {
+    vi.mocked(archiveUnsupportedWorkspaces).mockResolvedValue({
+      archivedCount: 2,
+      backupPath: "/tmp/workspaces.archived.20260909.json",
     });
+    vi.mocked(listWorkspaces).mockResolvedValue([]);
+
+    renderDialog();
+    fireEvent.click(screen.getByTitle("Archive unsupported workspaces"));
+
+    await waitFor(() => {
+      expect(archiveUnsupportedWorkspaces).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(listWorkspaces).mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  it("keeps registration-only deletion distinct from deleting workspace files", async () => {
+    const ws = makeWorkspace("workspace-delete", "Delete workspace");
+    vi.mocked(listWorkspaces).mockResolvedValue([ws]);
+    const { unmount } = renderDialog();
+
+    await screen.findByRole("button", { name: "Remove registration only" });
+    fireEvent.click(screen.getByRole("button", { name: "Remove registration only" }));
+    const registrationDialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(registrationDialog).getByRole("button", { name: "Remove registration only" }));
+    await waitFor(() => expect(deleteWorkspace).toHaveBeenCalledWith("workspace-delete"));
+    expect(deleteWorkspaceWithFiles).not.toHaveBeenCalled();
+    unmount();
+
+    vi.mocked(listWorkspaces).mockResolvedValue([ws]);
+    renderDialog();
+    await screen.findByRole("button", { name: "Delete registration and files" });
+    fireEvent.click(screen.getByRole("button", { name: "Delete registration and files" }));
+    const filesDialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(filesDialog).getByRole("button", { name: "Delete registration and files" }));
+    await waitFor(() => expect(deleteWorkspaceWithFiles).toHaveBeenCalledWith("workspace-delete", true));
   });
 });
