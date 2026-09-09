@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AgentWorkspacesDialog, workspaceStorageIssue } from "./AgentWorkspacesDialog";
+import { AgentWorkspacesDialog } from "./AgentWorkspacesDialog";
 import {
   listWorkspaces,
   archiveUnsupportedWorkspaces,
@@ -15,6 +15,7 @@ import {
   deleteWorkspace,
   deleteWorkspaceWithFiles,
 } from "@/lib/api";
+import { workspaceStorageIssue } from "@/lib/workspaceStorage";
 import type { StorageConfig } from "@/types/storage";
 
 vi.mock("@/lib/api", async (importOriginal) => {
