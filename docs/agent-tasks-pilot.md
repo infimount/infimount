@@ -18,7 +18,9 @@ The pilot does not justify new feature breadth. A failed run should first identi
 
 ## Candidate prerequisite
 
-Use a published v0.8.1 prerelease built from a known commit, starting with `v0.8.1-rc.1`.
+Use the published `v0.8.1-rc.2` candidate for the resumed pilot.
+
+`v0.8.1-rc.1` was published successfully, but its first real pilot attempt stopped during Agent Workspace setup before any Agent Task was executed. That run exposed a material Infimount workflow defect: workspace creation still carried agent-type/template and second-path concepts, and a shell-style Local Filesystem root could fail late during namespace binding. rc.2 fixes that blocker. rc.1 must not be presented as completed pilot evidence.
 
 Record:
 
@@ -28,7 +30,9 @@ Record:
 - previous installed stable version;
 - agent client name.
 
-The first pilot should start from an installed v0.8.0 environment and install the v0.8.1 candidate over it. If the prerelease is not offered through the stable updater channel, installer-over-install is the correct candidate upgrade exercise. Do not claim that a prerelease installer proves stable-channel updater behavior.
+The resumed pilot should start from an installed v0.8.0 environment and install v0.8.1-rc.2 over it. If the prerelease is not offered through the stable updater channel, installer-over-install is the correct candidate upgrade exercise. Do not claim that a prerelease installer proves stable-channel updater behavior.
+
+For a Local Filesystem storage used to host an Agent Workspace, use an explicit absolute host path. Do not enter shell notation such as `$HOME/...` or `~/...` for workspace namespace binding. The workspace path shown by Infimount itself is storage-relative and is derived automatically from the workspace name.
 
 ## Evidence privacy boundary
 
@@ -148,7 +152,7 @@ Verify the real publication UI does not expose an overwrite mode. Record `safety
 
 ## Upgrade exercise
 
-Start from v0.8.0 with representative local state, then install the v0.8.1 prerelease over it.
+Start from v0.8.0 with representative local state, then install v0.8.1-rc.2 over it.
 
 The evidence bundle requires all of the following:
 

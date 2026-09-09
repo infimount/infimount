@@ -55,6 +55,8 @@ for (const phrase of [
   "dual-pane",
   "transfer queue",
   "workspace-scoped MCP policy",
+  "plain workspace",
+  "storage-relative",
   "memory files",
   "checkpoints",
   "review",
@@ -66,8 +68,26 @@ for (const phrase of [
     fail(`README.md should mention ${phrase}`);
   }
 }
+if (readme.includes("Create coding, research, or data-analysis workspaces")) {
+  fail("README.md must not describe agent-type templates as the new Agent Workspace creation model");
+}
 if (/pilot evidence remains the v\d+\.\d+\.\d+ release gate/i.test(readme)) {
   fail("README.md must not make real pilot evidence a manual release-test gate");
+}
+
+if (!fs.existsSync("docs/agent-workspaces.md")) {
+  fail("docs/agent-workspaces.md is missing");
+}
+const agentWorkspaces = read("docs/agent-workspaces.md");
+for (const phrase of [
+  "storage-scoped MCP boundary",
+  "New workspaces are plain scoped folders",
+  "does not ask for an agent type or starter template",
+  "explicit absolute host path",
+]) {
+  if (!agentWorkspaces.toLowerCase().includes(phrase.toLowerCase())) {
+    fail(`docs/agent-workspaces.md should mention ${phrase}`);
+  }
 }
 
 if (!fs.existsSync("docs/agent-tasks.md")) {
@@ -107,6 +127,7 @@ const pilot = read("docs/agent-tasks-pilot.md");
 for (const phrase of [
   "product-validation artifact",
   "synthetic fixture",
+  "v0.8.1-rc.2",
   "stale approved preview",
   "fail-on-conflict rejection",
   "check-agent-task-pilot-evidence.mjs",
