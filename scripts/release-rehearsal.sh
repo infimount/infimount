@@ -2,12 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CURRENT_CORE="$(node -e 'const fs=require("fs"); const p=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(p.version.split("-", 1)[0]);' "$ROOT_DIR/package.json")"
-if [[ ! "$CURRENT_CORE" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-  echo "unable to derive rehearsal version from package version '$CURRENT_CORE'" >&2
-  exit 1
-fi
-VERSION="${BASH_REMATCH[1]}.$((10#${BASH_REMATCH[2]} + 1)).0-rc.1"
+VERSION="$(node "$ROOT_DIR/scripts/derive-release-rehearsal-version.mjs")"
 WORK_DIR=""
 KEEP=0
 
