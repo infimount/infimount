@@ -1,8 +1,8 @@
-# Infimount 0.9.0-rc.1: Agent Tasks
+# Infimount 0.8.1-rc.1: Agent Tasks
 
 Release: not published yet.
 
-Infimount 0.9.0-rc.1 is the first release candidate for Agent Tasks, a bounded workflow for preparing selected storage files for an existing coding agent, reviewing the resulting outputs, and publishing only explicitly approved unchanged bytes.
+Infimount 0.8.1-rc.1 is the first release candidate for Agent Tasks, a bounded workflow for preparing selected storage files for an existing coding agent, reviewing the resulting outputs, and publishing only explicitly approved unchanged bytes.
 
 ## What is new
 
@@ -21,9 +21,9 @@ Infimount 0.9.0-rc.1 is the first release candidate for Agent Tasks, a bounded w
 
 ### Release and validation hardening
 
-- Agent Tasks are versioned as a minor release feature, moving the target from the earlier v0.8.1 draft plan to v0.9.0.
+- Agent Tasks remain on the planned v0.8.1 pre-1.0 release line.
 - Release consistency and stable-document promotion are version-agnostic rather than hard-coded to a previous release transition.
-- Hermetic release rehearsal derives the next minor `rc.1` from a stable checkout and rehearses an already-versioned prerelease verbatim.
+- Hermetic release rehearsal derives the next patch `rc.1` from a stable checkout and rehearses an already-versioned prerelease verbatim.
 - Release tooling is explicitly prevented from inferring or fabricating real-world pilot completion.
 - The review-before-publish Agent Task flow has action-driven Playwright coverage and a committed CI-produced visual baseline.
 
@@ -41,7 +41,7 @@ See `docs/agent-tasks.md` for the complete contract, limits, concurrency model, 
 
 ## Product validation
 
-This release candidate is intended to support real product validation before broader promotion. The next phase should exercise representative coding, document, and data-analysis tasks plus the v0.8.0 to v0.9.0 install/update path.
+This release candidate is intended to support real product validation before broader promotion. The next phase should exercise representative coding, document, and data-analysis tasks plus the v0.8.0 to v0.8.1 install/update path.
 
 Pilot evidence is not a manual product-test requirement in the automated release gate. The release workflow continues to rely on automated frontend, Playwright, Rust, desktop-smoke, storage-simulator, dependency-audit, coverage, consistency, and artifact/signing gates.
 
@@ -54,4 +54,4 @@ Pilot evidence is not a manual product-test requirement in the automated release
 
 ## Upgrade note
 
-v0.8.0 remains the current stable release while this candidate is evaluated. Release manifests are derived from the exact prerelease tag by the release workflow. Do not change the public stable-release identity to v0.9.0 until a stable release is actually prepared and published.
+v0.8.0 remains the current stable release while this candidate is evaluated. Release manifests are derived from the exact prerelease tag by the release workflow. Do not change the public stable-release identity to v0.8.1 until a stable release is actually prepared and published.
