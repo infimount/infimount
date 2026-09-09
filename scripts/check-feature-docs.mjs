@@ -74,8 +74,8 @@ if (!fs.existsSync("docs/agent-tasks.md")) {
   fail("docs/agent-tasks.md is missing");
 }
 const agentTasks = read("docs/agent-tasks.md");
-if (agentTasks.includes("v0.9.0")) {
-  fail("docs/agent-tasks.md must preserve the planned v0.8.1 Agent Tasks release line");
+if (!agentTasks.includes("targeted for **v0.8.1**")) {
+  fail("docs/agent-tasks.md must preserve the planned v0.8.1 Agent Tasks release target");
 }
 if (agentTasks.includes("publish-receipt.json")) {
   fail("docs/agent-tasks.md must document unique publication receipts, not a mutable static receipt");
