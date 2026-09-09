@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELEASE_WORKFLOW="$ROOT_DIR/.github/workflows/release.yml"
 POST_RELEASE_WORKFLOW="$ROOT_DIR/.github/workflows/post-release.yml"
+SYNC_VERSION_WORKFLOW="$ROOT_DIR/.github/workflows/sync-version-after-release.yml"
 RELEASE_GATE_SCRIPT="$ROOT_DIR/scripts/release-test-gate.sh"
 RELEASING_DOC="$ROOT_DIR/docs/releasing.md"
 PRODUCT_COVERAGE_MANIFEST="$ROOT_DIR/docs/product-coverage-manifest.json"
@@ -106,6 +107,10 @@ require_file_contains "$RELEASE_WORKFLOW" "test-packaged-sidecar-checksum.sh"
 require_file_contains "$ROOT_DIR/scripts/smoke-linux-release-artifacts.sh" "verify-packaged-sidecar.sh"
 
 require_file_contains "$POST_RELEASE_WORKFLOW" "types: [published]"
+require_file_contains "$POST_RELEASE_WORKFLOW" "workflow_run:"
+require_file_contains "$POST_RELEASE_WORKFLOW" 'workflows: ["Release"]'
+require_file_contains "$POST_RELEASE_WORKFLOW" "github.event.workflow_run.head_branch"
+require_file_contains "$POST_RELEASE_WORKFLOW" "github.event.workflow_run.conclusion == 'success'"
 require_file_contains "$POST_RELEASE_WORKFLOW" "check-release-links.sh"
 require_file_contains "$POST_RELEASE_WORKFLOW" "check-feature-docs.mjs"
 require_file_contains "$POST_RELEASE_WORKFLOW" "check-homebrew-update.sh"
@@ -113,8 +118,15 @@ require_file_contains "$POST_RELEASE_WORKFLOW" "homebrew-infimount/dispatches"
 require_file_contains "$POST_RELEASE_WORKFLOW" "Re-download and validate published assets"
 require_file_contains "$POST_RELEASE_WORKFLOW" "!contains(steps.release.outputs.tag, '-')"
 
+require_file_contains "$SYNC_VERSION_WORKFLOW" "workflow_run:"
+require_file_contains "$SYNC_VERSION_WORKFLOW" 'workflows: ["Release"]'
+require_file_contains "$SYNC_VERSION_WORKFLOW" "github.event.workflow_run.head_branch"
+require_file_contains "$SYNC_VERSION_WORKFLOW" "github.event.workflow_run.conclusion == 'success'"
+require_file_contains "$SYNC_VERSION_WORKFLOW" "!contains(github.event.workflow_run.head_branch, '-')"
+
 require_file_contains "$RELEASING_DOC" "Zero manual product test execution"
 require_file_contains "$RELEASING_DOC" "Manual product test execution must not be a release gate"
+require_file_contains "$RELEASING_DOC" 'successful `Release` workflow'
 
 [[ -f "$PRODUCT_COVERAGE_MANIFEST" ]] || fail "docs/product-coverage-manifest.json must exist"
 [[ -f "$PRODUCT_COVERAGE_CHECK" ]] || fail "scripts/check-product-coverage-manifest.mjs must exist"
