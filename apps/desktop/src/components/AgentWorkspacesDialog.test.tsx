@@ -143,7 +143,7 @@ describe("AgentWorkspacesDialog", () => {
     renderDialog();
 
     expect(screen.getByRole("switch", { name: "Allow agent writes" })).not.toBeChecked();
-    expect(screen.getByRole("combobox", { name: "Workspace starter files" })).toHaveTextContent("Empty workspace");
+    expect(screen.queryByRole("combobox", { name: "Workspace starter files" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Root path")).not.toBeInTheDocument();
 
     await waitFor(() => {
@@ -217,7 +217,7 @@ describe("AgentWorkspacesDialog", () => {
     vi.mocked(listWorkspaces).mockResolvedValue([ws]);
     renderDialog();
 
-    expect(await screen.findByText(/no agent-specific starter files/i)).toBeInTheDocument();
+    expect(await screen.findByText(/plain scoped workspace/i)).toBeInTheDocument();
     expect(screen.queryByLabelText("Memory note")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save checkpoint" })).not.toBeInTheDocument();
   });
@@ -242,6 +242,7 @@ describe("AgentWorkspacesDialog", () => {
     renderDialog();
 
     await screen.findByLabelText("Memory note");
+    expect(screen.getByText(/legacy starter: coding/i)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Memory note"), { target: { value: "Follow up" } });
     fireEvent.click(screen.getByRole("button", { name: "Append note" }));
 
