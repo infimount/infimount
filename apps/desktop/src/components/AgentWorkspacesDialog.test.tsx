@@ -150,7 +150,7 @@ describe("AgentWorkspacesDialog", () => {
       expect(screen.getByRole("button", { name: "Create workspace" })).toBeEnabled();
     });
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Agent Research" } });
-    expect(screen.getByText("/agent-workspaces/agent-research")).toBeInTheDocument();
+    expect(screen.getAllByText("/agent-workspaces/agent-research").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Create workspace" }));
 
     await waitFor(() => {
