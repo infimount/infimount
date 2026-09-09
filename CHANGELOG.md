@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - Unreleased release candidate
+
+### Added
+
+- Added Agent Tasks for preparing explicitly selected storage files as bounded copies inside an existing read-write Local Filesystem Agent Workspace.
+- Added first-class Codex handoff for prepared tasks through the existing Infimount MCP integration without introducing a second storage-access path.
+- Added bounded Agent Task output discovery and review with byte size, SHA-256, and text previews where supported.
+- Added desktop-only Agent Task publication with explicit output selection, destination selection, mandatory publication preview, `fail` or `rename` conflict handling, destination verification, and unique create-only publication receipts.
+- Added action-driven Playwright coverage and a CI-produced visual baseline for the review-before-publish Agent Task flow.
+
+### Changed
+
+- Agent Workspace creation remains read-only by default and requires an explicit desktop opt-in before a workspace can host writable Agent Task outputs.
+- Agent Task publication rebuilds the approved plan under configuration/workspace mutation locks and treats its preview token as a staleness token rather than reusable write authority.
+- Release consistency, stable-document promotion, and hermetic release rehearsal are version-agnostic instead of being tied to a previous release transition.
+- Hermetic release rehearsal now derives the next minor `rc.1` from a stable checkout and rehearses an already-versioned prerelease verbatim.
+- Real-world Agent Task pilots are treated as product-validation evidence for broader promotion and follow-on work, not as a manual product-test requirement in the automated release gate.
+
+### Security
+
+- Agent Task preparation never mutates the selected source or grants new MCP access to the source storage; existing storage and workspace policy remain authoritative.
+- Agent Task publication starts with nothing selected, has no overwrite mode, re-hashes reviewed source bytes before and during copy, uses create-only destination writes, and verifies committed destination bytes after close.
+- Partial multi-file publication failures preserve already committed objects and surface cleanup-required state rather than attempting an unsafe delete rollback or claiming atomic success.
+- Removed the obsolete static `publish-receipt.json` core contract so only unique `publish-receipt-<publication-id>.json` receipts represent successful publications.
+- Stable-release tooling is explicitly prevented from inferring or fabricating real-world pilot completion.
+
+### Tests
+
+- Added regression coverage for Agent Task manifest/brief validation, bounded preparation, source drift, output review, preview invalidation, create-only publication, destination conflicts, rename behavior, receipts, and publication staleness.
+- Added synthetic future-release coverage for prerelease/stable public identity promotion and for keeping pilot evidence separate from release-state changes.
+- Added release-rehearsal version derivation coverage, including location-independent execution and preservation of checked-out prerelease versions.
+
 ## [0.8.0] - 2026-09-05
 
 ### Added
@@ -221,7 +253,8 @@ First stable release of Infimount — a unified desktop storage browser powered 
 
 ---
 
-[Unreleased]: https://github.com/infimount/infimount/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/infimount/infimount/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/infimount/infimount/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/infimount/infimount/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/infimount/infimount/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/infimount/infimount/compare/v0.6.0...v0.7.0
