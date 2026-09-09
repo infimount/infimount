@@ -46,7 +46,6 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/hooks/use-toast";
 import {
-  AGENT_WORKSPACE_TEMPLATES,
   archiveUnsupportedAgentWorkspaces,
   appendWorkspaceMemory,
   createAgentWorkspace,
@@ -61,7 +60,6 @@ import {
   restoreWorkspaceMemoryCheckpoint,
   type AgentWorkspace,
   type AgentWorkspaceCheckpoint,
-  type AgentWorkspaceTemplateId,
 } from "@/lib/agentWorkspaces";
 import { listActivityLogEvents, type ActivityLogEvent } from "@/lib/activityLog";
 import { cn } from "@/lib/utils";
@@ -93,7 +91,6 @@ export function AgentWorkspacesDialog({
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [storageId, setStorageId] = useState("");
   const [name, setName] = useState("Agent workspace");
-  const [templateId, setTemplateId] = useState<AgentWorkspaceTemplateId>("custom");
   const [allowAgentWrites, setAllowAgentWrites] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [memoryFiles, setMemoryFiles] = useState<string[]>([]);
@@ -120,13 +117,18 @@ export function AgentWorkspacesDialog({
     [selectedWorkspaceId, workspaces],
   );
   const selectedStorage = storages.find((storage) => storage.id === storageId) ?? null;
-  const selectedStorageIssue = selectedStorage ? workspaceStorageIssue(selectedStorage) : "Choose a storage.";
+  const selectedStorageIssue = selectedStorage
+    ? workspaceStorageIssue(selectedStorage)
+    : "Choose a storage.";
   const rootPath = defaultWorkspacePath(name);
   const selectedWorkspaceStorage = selectedWorkspace
     ? storages.find((storage) => storage.id === selectedWorkspace.storageId)
     : null;
   const workspaceAuditItems = useMemo(
-    () => selectedWorkspace ? buildWorkspaceAuditItems(selectedWorkspace, activityEvents, auditEvents) : [],
+    () =>
+      selectedWorkspace
+        ? buildWorkspaceAuditItems(selectedWorkspace, activityEvents, auditEvents)
+        : [],
     [activityEvents, auditEvents, selectedWorkspace],
   );
 
@@ -141,11 +143,17 @@ export function AgentWorkspacesDialog({
       setSelectedWorkspaceId((current) => current ?? next[0]?.id ?? null);
       setStorageId((current) => {
         if (current && storages.some((storage) => storage.id === current)) return current;
-        return storages.find((storage) => workspaceStorageIssue(storage) === null)?.id ?? storages[0]?.id ?? "";
+        return (
+          storages.find((storage) => workspaceStorageIssue(storage) === null)?.id ??
+          storages[0]?.id ??
+          ""
+        );
       });
       refreshWorkspaceActivity();
     });
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [open, storages]);
 
   useEffect(() => {
@@ -215,9 +223,8 @@ export function AgentWorkspacesDialog({
         storageId: selectedStorage.id,
         name,
         rootPath,
-        templateId,
+        templateId: "custom",
         accessProfile: allowAgentWrites ? "read_write" : "read_only",
-        applyPolicy: true,
       });
       const next = await listAgentWorkspaces();
       setWorkspaces(next);
@@ -299,7 +306,10 @@ export function AgentWorkspacesDialog({
       }
       refreshWorkspaceActivity();
       setRestoreConfirmationOpen(false);
-      toast({ title: "Checkpoint restored", description: "Managed starter-note files were restored." });
+      toast({
+        title: "Checkpoint restored",
+        description: "Managed starter-note files were restored.",
+      });
     } catch (error) {
       toast({
         title: "Restore failed",
@@ -325,10 +335,12 @@ export function AgentWorkspacesDialog({
       setSelectedWorkspaceId(next[0]?.id ?? null);
       refreshWorkspaceActivity();
       toast({
-        title: deleteMode === "files" ? "Workspace and files deleted" : "Workspace registration removed",
-        description: deleteMode === "files"
-          ? "The scoped policy, registration, and workspace root were removed."
-          : "The scoped policy and registration were removed. Storage files were preserved.",
+        title:
+          deleteMode === "files" ? "Workspace and files deleted" : "Workspace registration removed",
+        description:
+          deleteMode === "files"
+            ? "The scoped policy, registration, and workspace root were removed."
+            : "The scoped policy and registration were removed. Storage files were preserved.",
       });
       setDeleteMode(null);
     } catch (error) {
@@ -343,7 +355,6 @@ export function AgentWorkspacesDialog({
   };
 
   const canCreate = Boolean(selectedStorage && !selectedStorageIssue && name.trim());
-  const selectedTemplate = AGENT_WORKSPACE_TEMPLATES.find((template) => template.id === templateId);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -402,9 +413,7 @@ export function AgentWorkspacesDialog({
             <ScrollArea className="h-[58vh]">
               <div className="space-y-1 p-2">
                 {workspaces.length === 0 ? (
-                  <div className="px-3 py-6 text-sm text-muted-foreground">
-                    No workspaces yet.
-                  </div>
+                  <div className="px-3 py-6 text-sm text-muted-foreground">No workspaces yet.</div>
                 ) : (
                   workspaces.map((workspace) => (
                     <button
@@ -421,7 +430,9 @@ export function AgentWorkspacesDialog({
                       <div className="flex items-center justify-between gap-2">
                         <span className="truncate font-medium">{workspace.name}</span>
                         <Badge variant="outline" className="shrink-0 text-[10px]">
-                          {workspaceAccessProfile(workspace) === "read_write" ? "read/write" : "read-only"}
+                          {workspaceAccessProfile(workspace) === "read_write"
+                            ? "read/write"
+                            : "read-only"}
                         </Badge>
                       </div>
                       <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
@@ -441,7 +452,8 @@ export function AgentWorkspacesDialog({
                   <div>
                     <h3 className="text-sm font-medium">Create workspace</h3>
                     <p className="text-xs text-muted-foreground">
-                      Pick a storage and name. Infimount creates a scoped folder and its managed MCP rule.
+                      Pick a storage and name. Infimount creates a scoped folder and its managed MCP
+                      rule.
                     </p>
                   </div>
                   <Badge variant="secondary" className="gap-1">
@@ -477,7 +489,9 @@ export function AgentWorkspacesDialog({
                 </div>
 
                 <div className="mt-3 rounded-lg border bg-muted/20 p-3">
-                  <div className="text-xs text-muted-foreground">Workspace location inside the selected storage</div>
+                  <div className="text-xs text-muted-foreground">
+                    Workspace location inside the selected storage
+                  </div>
                   <code className="mt-1 block break-all text-xs font-medium">{rootPath}</code>
                   <p className="mt-1 text-[11px] text-muted-foreground">
                     This is storage-relative. It is not another host filesystem path to configure.
@@ -485,59 +499,47 @@ export function AgentWorkspacesDialog({
                 </div>
 
                 {selectedStorageIssue ? (
-                  <div role="alert" className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-800 dark:text-amber-300">
+                  <div
+                    role="alert"
+                    className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-800 dark:text-amber-300"
+                  >
                     <div className="font-medium">Storage needs attention</div>
                     <div className="mt-1 text-xs">{selectedStorageIssue}</div>
                   </div>
                 ) : selectedStorage && !selectedStorage.mcpExposed ? (
                   <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-800 dark:text-amber-300">
-                    The workspace can be created now, but agents cannot see this storage until you enable MCP exposure. The workspace rule remains scoped to this folder.
+                    The workspace can be created now, but agents cannot see this storage until you
+                    enable MCP exposure. The workspace rule remains scoped to this folder.
                   </div>
                 ) : null}
 
-                <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                  <div className="rounded-lg bg-muted/40 p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-medium">Allow agent writes</div>
-                        <div className="text-xs text-muted-foreground">
-                          Turn this on for Agent Tasks. Leave it off for read-only agent access.
-                        </div>
+                <div className="mt-3 rounded-lg bg-muted/40 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium">Allow agent writes</div>
+                      <div className="text-xs text-muted-foreground">
+                        Turn this on for Agent Tasks. Leave it off for read-only agent access.
                       </div>
-                      <Switch
-                        aria-label="Allow agent writes"
-                        checked={allowAgentWrites}
-                        onCheckedChange={setAllowAgentWrites}
-                      />
                     </div>
-                  </div>
-
-                  <div className="space-y-2 rounded-lg bg-muted/40 p-3">
-                    <Label className="text-sm font-medium">Starter files <span className="font-normal text-muted-foreground">(optional)</span></Label>
-                    <Select value={templateId} onValueChange={(value) => setTemplateId(value as AgentWorkspaceTemplateId)}>
-                      <SelectTrigger aria-label="Workspace starter files">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {AGENT_WORKSPACE_TEMPLATES.map((template) => (
-                          <SelectItem key={template.id} value={template.id}>
-                            {template.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <div className="text-[11px] text-muted-foreground">
-                      {selectedTemplate?.description ?? "No starter files."}
-                    </div>
+                    <Switch
+                      aria-label="Allow agent writes"
+                      checked={allowAgentWrites}
+                      onCheckedChange={setAllowAgentWrites}
+                    />
                   </div>
                 </div>
 
                 <div className="mt-4 flex items-center justify-between gap-3">
                   <div className="text-xs text-muted-foreground">
-                    MCP policy is always managed by the workspace and cannot be disabled here.
+                    New workspaces are plain scoped folders. MCP policy is always managed by the
+                    workspace.
                   </div>
                   <Button onClick={handleCreate} disabled={!canCreate || isCreating}>
-                    {isCreating ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                    {isCreating ? (
+                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Save className="mr-2 h-4 w-4" />
+                    )}
                     Create workspace
                   </Button>
                 </div>
@@ -551,7 +553,8 @@ export function AgentWorkspacesDialog({
                         <div>
                           <h3 className="text-sm font-medium">{selectedWorkspace.name}</h3>
                           <p className="font-mono text-xs text-muted-foreground">
-                            {selectedWorkspaceStorage?.name ?? "Unknown storage"}:{selectedWorkspace.rootPath}
+                            {selectedWorkspaceStorage?.name ?? "Unknown storage"}:
+                            {selectedWorkspace.rootPath}
                           </p>
                         </div>
                         <Button
@@ -570,10 +573,12 @@ export function AgentWorkspacesDialog({
                           <CheckCircle2 className="h-3 w-3" /> {selectedWorkspace.rootPath}
                         </Badge>
                         <Badge variant="outline">
-                          {workspaceAccessProfile(selectedWorkspace) === "read_write" ? "MCP read/write" : "MCP read-only"}
+                          {workspaceAccessProfile(selectedWorkspace) === "read_write"
+                            ? "MCP read/write"
+                            : "MCP read-only"}
                         </Badge>
                         {selectedWorkspace.templateId !== "custom" ? (
-                          <Badge variant="outline">starter: {selectedWorkspace.templateId}</Badge>
+                          <Badge variant="outline">legacy starter: {selectedWorkspace.templateId}</Badge>
                         ) : null}
                       </div>
 
@@ -628,7 +633,8 @@ export function AgentWorkspacesDialog({
                         </div>
                       ) : (
                         <div className="rounded-lg border border-dashed px-3 py-4 text-sm text-muted-foreground">
-                          This workspace has no agent-specific starter files. Agent Tasks create their own task package under <code>tasks/</code>.
+                          This is a plain scoped workspace. Agent Tasks create their own task package
+                          under <code>tasks/</code>.
                         </div>
                       )}
                     </div>
@@ -636,9 +642,10 @@ export function AgentWorkspacesDialog({
                     <div className="rounded-xl border bg-background p-4">
                       {memoryFiles.length > 0 ? (
                         <>
-                          <h3 className="text-sm font-medium">Starter-file checkpoints</h3>
+                          <h3 className="text-sm font-medium">Legacy starter-file checkpoints</h3>
                           <p className="mt-1 text-xs text-muted-foreground">
-                            Capture only the managed starter-note files under `.infimount/checkpoints`.
+                            Existing templated workspaces keep their managed starter-note files and
+                            checkpoints for compatibility.
                           </p>
                           <Button
                             className="mt-4 w-full"
@@ -655,7 +662,10 @@ export function AgentWorkspacesDialog({
                           </Button>
                           <div className="mt-4 space-y-2">
                             <Label>Restore point</Label>
-                            <Select value={selectedCheckpointId} onValueChange={setSelectedCheckpointId}>
+                            <Select
+                              value={selectedCheckpointId}
+                              onValueChange={setSelectedCheckpointId}
+                            >
                               <SelectTrigger aria-label="Workspace checkpoint">
                                 <SelectValue placeholder="Choose checkpoint" />
                               </SelectTrigger>
@@ -745,7 +755,9 @@ export function AgentWorkspacesDialog({
             <AlertDialogHeader>
               <AlertDialogTitle>Overwrite starter-note files?</AlertDialogTitle>
               <AlertDialogDescription>
-                Restoring {selectedCheckpointId || "this checkpoint"} will replace every managed starter-note file in {selectedWorkspace?.name ?? "this workspace"}. Current contents will be lost.
+                Restoring {selectedCheckpointId || "this checkpoint"} will replace every managed
+                starter-note file in {selectedWorkspace?.name ?? "this workspace"}. Current contents
+                will be lost.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -764,11 +776,16 @@ export function AgentWorkspacesDialog({
           </AlertDialogContent>
         </AlertDialog>
 
-        <AlertDialog open={deleteMode !== null} onOpenChange={(next) => !next && setDeleteMode(null)}>
+        <AlertDialog
+          open={deleteMode !== null}
+          onOpenChange={(next) => !next && setDeleteMode(null)}
+        >
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>
-                {deleteMode === "files" ? "Delete workspace files permanently?" : "Remove workspace registration?"}
+                {deleteMode === "files"
+                  ? "Delete workspace files permanently?"
+                  : "Remove workspace registration?"}
               </AlertDialogTitle>
               <AlertDialogDescription>
                 {deleteMode === "files"
@@ -780,7 +797,11 @@ export function AgentWorkspacesDialog({
               <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
               <AlertDialogAction
                 disabled={isDeleting}
-                className={deleteMode === "files" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : undefined}
+                className={
+                  deleteMode === "files"
+                    ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    : undefined
+                }
                 onClick={(event) => {
                   event.preventDefault();
                   void handleDeleteWorkspace();
