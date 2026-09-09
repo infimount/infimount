@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const raw = process.argv[2] ?? JSON.parse(fs.readFileSync("package.json", "utf8")).version;
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const raw =
+  process.argv[2] ?? JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
 if (typeof raw !== "string" || raw.includes("+")) {
   throw new Error(`unsupported release rehearsal version: ${String(raw)}`);
 }
