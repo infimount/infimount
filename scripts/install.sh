@@ -129,9 +129,29 @@ verify_checksum() {
   fi
 }
 
+warn_if_shadowed() {
+  installed_path="$1"
+  [ -n "$installed_path" ] || return 0
+  [ -x "$installed_path" ] || return 0
+
+  resolved_path="$(command -v infimount 2>/dev/null || true)"
+  [ -n "$resolved_path" ] || return 0
+
+  if [ "$resolved_path" = "$installed_path" ]; then
+    return 0
+  fi
+  if [ -e "$resolved_path" ] && [ "$resolved_path" -ef "$installed_path" ]; then
+    return 0
+  fi
+
+  log "Warning: 'infimount' currently resolves to $resolved_path, not the newly installed $installed_path."
+  log "Another Infimount installation earlier in PATH may shadow this one. Launch $installed_path directly or unlink/remove the older package."
+}
+
 install_linux() {
   asset="$1"
   path="$TMP_DIR/$asset"
+  installed_path=""
 
   case "$asset" in
     *.deb)
@@ -143,6 +163,7 @@ install_linux() {
           run_root apt-get install -f -y
         }
       fi
+      installed_path="/usr/bin/infimount"
       ;;
     *.rpm)
       if command -v dnf >/dev/null 2>&1; then
@@ -152,6 +173,7 @@ install_linux() {
       else
         run_root rpm -Uvh "$path"
       fi
+      installed_path="/usr/bin/infimount"
       ;;
     *.AppImage)
       install_dir="${INFIMOUNT_INSTALL_DIR:-$HOME/.local/bin}"
@@ -173,11 +195,14 @@ EOF_DESKTOP
         *":$install_dir:"*) ;;
         *) log "Tip: add $install_dir to PATH to run 'infimount' from a terminal." ;;
       esac
+      installed_path="$app_path"
       ;;
     *)
       fail "unsupported Linux asset: $asset"
       ;;
   esac
+
+  warn_if_shadowed "$installed_path"
 }
 
 install_macos() {
