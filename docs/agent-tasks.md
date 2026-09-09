@@ -192,7 +192,7 @@ The product loop is implemented on `main` through six completed slices:
 5. **Output review**: bounded discovery, preview, byte size, and SHA-256 review of `outputs/`.
 6. **Safe publication**: mandatory preview, staleness token, create-only writes, fail/rename conflict handling, destination verification, and unique receipts.
 
-The remaining v0.9.0 gate is **pilot evidence**, not more feature breadth. The pilot must exercise real coding, document, and data-analysis tasks, capture action-driven UI evidence, and verify the normal v0.8.0 to v0.9.0 release/update path before stable publication.
+The next product-validation phase is **pilot evidence**, not more feature breadth. It should exercise real coding, document, and data-analysis tasks, capture action-driven UI evidence, and include the normal v0.8.0 to v0.9.0 install/update path. Pilot evidence informs promotion and follow-on work. It is not a manual product-test requirement in the automated release gate.
 
 ## Integration direction
 
