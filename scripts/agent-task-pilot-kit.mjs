@@ -29,6 +29,12 @@ const fail = (message) => {
   process.exit(1);
 };
 
+const pilotPlatform = () => {
+  const value = { linux: "linux", darwin: "macos", win32: "windows" }[process.platform];
+  if (!value) fail(`unsupported pilot platform ${process.platform}`);
+  return value;
+};
+
 const normalizeRel = (value) => value.split(path.sep).join("/");
 
 const ensureEmptyDir = (dir) => {
@@ -118,10 +124,10 @@ const evidenceTemplate = () => ({
   candidate: {
     version: CANDIDATE_VERSION,
     commit: CANDIDATE_COMMIT,
-    platform: "linux",
+    platform: pilotPlatform(),
     installedFrom: INSTALLED_FROM,
   },
-  client: { name: "codex", handoffViaInfimountMcp: true },
+  client: { name: "codex", handoffViaInfimountMcp: null },
   tasks: ["coding", "document", "data-analysis"].map((klass) => ({
     class: klass,
     taskId: "REPLACE_WITH_TASK_UUID",
@@ -135,7 +141,7 @@ const evidenceTemplate = () => ({
     review: { fileCount: 0, totalBytes: 0, nothingSelectedByDefault: null },
     publication: {
       selectedCount: 0,
-      conflictPolicy: klass === "document" ? "rename" : "fail",
+      conflictPolicy: null,
       overwriteAvailable: null,
       previewApproved: null,
       destinationVerified: null,
@@ -165,17 +171,22 @@ const evidenceTemplate = () => ({
 
 const assertTemplateStartsUnobserved = (template) => {
   if (template.overallPassed !== false || template.upgrade.passed !== false) fail("evidence template must start unpassed");
+  if (template.client.handoffViaInfimountMcp !== null) fail("evidence template must not pre-fill MCP handoff success");
   for (const task of template.tasks) {
-    if (task.passed !== false || task.sourceMcpExposedBefore !== null || task.publication.previewApproved !== null) {
-      fail("evidence template must not pre-fill observed task success");
-    }
+    if (
+      task.passed !== false ||
+      task.sourceMcpExposedBefore !== null ||
+      task.review.nothingSelectedByDefault !== null ||
+      task.publication.conflictPolicy !== null ||
+      task.publication.previewApproved !== null
+    ) fail("evidence template must not pre-fill observed task results");
   }
   for (const value of Object.values(template.safetyProbes)) {
     if (value !== null) fail("evidence template must not pre-fill safety probe success");
   }
 };
 
-const runbook = (root) => `# Infimount Agent Tasks real pilot kit\n\nCandidate: ${CANDIDATE_VERSION}\nCommit: ${CANDIDATE_COMMIT}\nInstalled-from stable: ${INSTALLED_FROM}\n\nThis directory contains deterministic local workloads, not pilot evidence. The generated evidence template intentionally starts in a failing/unobserved state. Fill fields only after observing them.\n\n## 0. Upgrade exercise\n\n1. Start from an installed Infimount ${INSTALLED_FROM} environment with representative configuration, at least one storage registration, and at least one Agent Workspace.\n2. Install ${CANDIDATE_VERSION} over that installation. This validates installer-over-install only, not stable-channel updater behavior.\n3. Confirm the application starts, prior configuration/storage/workspace entries remain, and Agent Tasks are visible.\n\n## 1. Coding pilot\n\nSelect only \`coding/source/\`. Before preparation:\n\n\`node scripts/agent-task-pilot-kit.mjs digest ${normalizeRel(path.join(root, "coding/source"))}\`\n\nCodex prompt:\n\n> Diagnose why the invoice total is too low when a customer has more than one invoice. Produce outputs/review.md explaining the root cause and outputs/patch.diff containing a minimal fix. Preserve duplicate-invoice-id protection. Do not modify inputs.\n\nCheck the result independently:\n\n\`node scripts/agent-task-pilot-kit.mjs check coding --kit ${normalizeRel(root)} --outputs <TASK_OUTPUTS_DIR>\`\n\nUse this task for the stale-preview probe: obtain and approve a publication preview, change the reviewed output bytes, attempt the stale preview and require rejection, then re-review/re-preview before successful publication. Re-run the source digest afterward and require an exact match.\n\n## 2. Document pilot\n\nSelect only \`document/source/\`.\n\nPrompt:\n\n> Synthesize these notes into outputs/summary.md and outputs/action-items.md. Reconcile repeated information, preserve dates/owners/quantities exactly, call out the one unresolved launch dependency, and do not invent decisions. Do not modify inputs.\n\nCheck:\n\n\`node scripts/agent-task-pilot-kit.mjs check document --kit ${normalizeRel(root)} --outputs <TASK_OUTPUTS_DIR>\`\n\nPublication probe: \`document/publish-destination/summary.md\` already exists. First use conflict policy **fail** and verify rejection. Then choose **rename**, review the rename plan, approve it, and publish. Verify no overwrite mode exists. Re-run the source digest afterward and require an exact match.\n\n## 3. Data-analysis pilot\n\nSelect only \`data/source/\`.\n\nPrompt:\n\n> Analyze orders.csv. Produce outputs/findings.md and outputs/summary.csv. summary.csv must use columns metric,value and include exactly these metrics: gross_revenue, net_revenue, refund_amount, refunded_orders, order_count, refund_rate_pct, top_region_by_net_revenue, top_product_by_net_revenue. Treat refunded orders as zero net revenue. Round refund_rate_pct to two decimals. Do not modify inputs.\n\nCheck:\n\n\`node scripts/agent-task-pilot-kit.mjs check data-analysis --kit ${normalizeRel(root)} --outputs <TASK_OUTPUTS_DIR>\`\n\nRe-run the source digest afterward and require an exact match.\n\n## Evidence\n\nCapture at least two screenshots per task in a private local evidence directory using relative names such as \`coding/review.png\` and \`coding/published.png\`. Never record source/host paths, source content, storage IDs/configuration, credentials, OAuth values, or secrets in the evidence JSON.\n\nCopy and fill \`pilot-evidence.template.json\`, then validate it from a checkout containing the candidate tag:\n\n\`node scripts/check-agent-task-pilot-evidence.mjs /path/to/pilot-evidence.json\`\n\nA checker pass is necessary but not sufficient. Mark a task passed only when its output is genuinely useful/correct and the real safety flow was acceptable.\n`;
+const runbook = (root) => `# Infimount Agent Tasks real pilot kit\n\nCandidate: ${CANDIDATE_VERSION}\nCommit: ${CANDIDATE_COMMIT}\nInstalled-from stable: ${INSTALLED_FROM}\n\nThis directory contains deterministic local workloads, not pilot evidence. The generated evidence template intentionally starts in a failing/unobserved state. Fill observed fields only after the real desktop/Codex flow.\n\n## 0. Upgrade exercise\n\n1. Start from an installed Infimount ${INSTALLED_FROM} environment with representative configuration, at least one storage registration, and at least one Agent Workspace.\n2. Install ${CANDIDATE_VERSION} over that installation. This validates installer-over-install only, not stable-channel updater behavior.\n3. Confirm the application starts, prior configuration/storage/workspace entries remain, and Agent Tasks are visible.\n\n## 1. Coding pilot\n\nSelect only \`coding/source/\`. Before preparation:\n\n\`node scripts/agent-task-pilot-kit.mjs digest ${normalizeRel(path.join(root, "coding/source"))}\`\n\nCodex prompt:\n\n> Diagnose why the invoice total is too low when a customer has more than one invoice. Produce outputs/review.md explaining the root cause and outputs/patch.diff containing a minimal fix. Preserve duplicate-invoice-id protection. Do not modify inputs.\n\nCheck the result independently:\n\n\`node scripts/agent-task-pilot-kit.mjs check coding --kit ${normalizeRel(root)} --outputs <TASK_OUTPUTS_DIR>\`\n\nUse this task for the stale-preview probe: obtain and approve a publication preview, change the reviewed output bytes, attempt the stale preview and require rejection, then re-review/re-preview before successful publication. Re-run the source digest afterward and require an exact match.\n\n## 2. Document pilot\n\nSelect only \`document/source/\`.\n\nPrompt:\n\n> Synthesize these notes into outputs/summary.md and outputs/action-items.md. Reconcile repeated information, preserve dates/owners/quantities exactly, call out the one unresolved launch dependency, and do not invent decisions. Do not modify inputs.\n\nCheck:\n\n\`node scripts/agent-task-pilot-kit.mjs check document --kit ${normalizeRel(root)} --outputs <TASK_OUTPUTS_DIR>\`\n\nPublication probe: \`document/publish-destination/summary.md\` already exists. First use conflict policy **fail** and verify rejection. Then choose **rename**, review the rename plan, approve it, and publish. Verify no overwrite mode exists. Re-run the source digest afterward and require an exact match.\n\n## 3. Data-analysis pilot\n\nSelect only \`data/source/\`.\n\nPrompt:\n\n> Analyze orders.csv. Produce outputs/findings.md and outputs/summary.csv. summary.csv must use columns metric,value and include exactly these metrics: gross_revenue, net_revenue, refund_amount, refunded_orders, order_count, refund_rate_pct, top_region_by_net_revenue, top_product_by_net_revenue. Treat refunded orders as zero net revenue. Round refund_rate_pct to two decimals. Do not modify inputs.\n\nCheck:\n\n\`node scripts/agent-task-pilot-kit.mjs check data-analysis --kit ${normalizeRel(root)} --outputs <TASK_OUTPUTS_DIR>\`\n\nRe-run the source digest afterward and require an exact match.\n\n## Evidence\n\nCapture at least two screenshots per task in a private local evidence directory using relative names such as \`coding/review.png\` and \`coding/published.png\`. Never record source/host paths, source content, storage IDs/configuration, credentials, OAuth values, or secrets in the evidence JSON.\n\nCopy and fill \`pilot-evidence.template.json\`, then validate it from a checkout containing the candidate tag:\n\n\`node scripts/check-agent-task-pilot-evidence.mjs /path/to/pilot-evidence.json\`\n\nA checker pass is necessary but not sufficient. Mark a task passed only when its output is genuinely useful/correct and the real safety flow was acceptable.\n`;
 
 const prepare = (out) => {
   const root = path.resolve(out);
