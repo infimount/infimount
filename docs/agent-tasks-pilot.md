@@ -1,4 +1,4 @@
-# Agent Tasks v0.9 pilot protocol
+# Agent Tasks v0.8.1 pilot protocol
 
 This protocol validates whether Agent Tasks are useful and understandable in real work after the automated release gates have already established build, test, packaging, and safety-contract correctness.
 
@@ -12,13 +12,13 @@ The v1 pilot answers five questions:
 2. Can Codex complete useful work through the existing Infimount workspace MCP boundary?
 3. Can the user understand reviewed outputs well enough to make an explicit publication decision?
 4. Do create-only publication, fail/rename conflict handling, and stale-preview rejection behave safely in a real desktop flow?
-5. Can an existing v0.8.0 installation move to the v0.9 candidate without losing local configuration, storage registrations, or Agent Workspaces?
+5. Can an existing v0.8.0 installation move to the v0.8.1 candidate without losing local configuration, storage registrations, or Agent Workspaces?
 
 The pilot does not justify new feature breadth. A failed run should first identify whether the cause is an Infimount defect, a client/agent limitation, a task-quality problem, or an environment problem.
 
 ## Candidate prerequisite
 
-Use a published v0.9 prerelease built from a known commit, starting with `v0.9.0-rc.1`.
+Use a published v0.8.1 prerelease built from a known commit, starting with `v0.8.1-rc.1`.
 
 Record:
 
@@ -28,7 +28,7 @@ Record:
 - previous installed stable version;
 - agent client name.
 
-The first pilot should start from an installed v0.8.0 environment and install the v0.9 candidate over it. If the prerelease is not offered through the stable updater channel, installer-over-install is the correct candidate upgrade exercise. Do not claim that a prerelease installer proves stable-channel updater behavior.
+The first pilot should start from an installed v0.8.0 environment and install the v0.8.1 candidate over it. If the prerelease is not offered through the stable updater channel, installer-over-install is the correct candidate upgrade exercise. Do not claim that a prerelease installer proves stable-channel updater behavior.
 
 ## Evidence privacy boundary
 
@@ -148,7 +148,7 @@ Verify the real publication UI does not expose an overwrite mode. Record `safety
 
 ## Upgrade exercise
 
-Start from v0.8.0 with representative local state, then install the v0.9 prerelease over it.
+Start from v0.8.0 with representative local state, then install the v0.8.1 prerelease over it.
 
 The evidence bundle requires all of the following:
 
