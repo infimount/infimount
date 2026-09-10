@@ -18,11 +18,13 @@ The pilot does not justify new feature breadth. A failed run should first identi
 
 ## Candidate prerequisite
 
-Use the published `v0.8.1-rc.3` candidate for the resumed pilot.
+Once published, use the `v0.8.1-rc.4` candidate for the resumed pilot.
 
 `v0.8.1-rc.1` was published successfully, but its first real pilot attempt stopped during Agent Workspace setup before any Agent Task was executed. That run exposed a material Infimount workflow defect: workspace creation still carried agent-type/template and second-path concepts, and a shell-style Local Filesystem root could fail late during namespace binding. rc.2 fixed that product blocker. rc.1 must not be presented as completed pilot evidence.
 
-`v0.8.1-rc.2` was then tagged at the intended candidate commit, but its Release workflow failed twice in the Linux packaging job before Infimount compilation because a GitHub-hosted runner contained an unrelated Google Chrome APT repository with inconsistent package metadata (`Hash Sum mismatch`). The dependent publish job remained skipped, so no rc.2 GitHub Release was published. The product/release gates and macOS/Windows builds passed; the failure was classified as release-environment infrastructure. rc.3 carries the same product behavior plus release APT-source hardening. rc.2 must not be presented as completed pilot evidence.
+`v0.8.1-rc.2` was then tagged at the intended candidate commit, but its Release workflow failed twice in the Linux packaging job before Infimount compilation because a GitHub-hosted runner contained an unrelated Google Chrome APT repository with inconsistent package metadata (`Hash Sum mismatch`). The dependent publish job remained skipped, so no rc.2 GitHub Release was published. The product/release gates and macOS/Windows builds passed; the failure was classified as release-environment infrastructure. rc.3 carried the same product behavior plus release APT-source hardening. rc.2 must not be presented as completed pilot evidence.
+
+`v0.8.1-rc.3` was published successfully and its canonical Release workflow passed all release gates, multi-platform packaging, publication, and public-asset re-download validation. The separate `Post Release Validation` workflow then failed before artifact validation because its `workflow_run` context supplied reserved `GITHUB_REF_NAME=main`; the attempted step-level override did not replace that reserved variable, so the version-sync script rejected `main` instead of using the resolved rc.3 tag. PR #99 fixed that orchestration path by passing the resolved release tag explicitly and adding a regression test. rc.4 carries the same product behavior plus that post-release validation fix. rc.3 must not be presented as completed pilot evidence.
 
 Record:
 
@@ -32,7 +34,7 @@ Record:
 - previous installed stable version;
 - agent client name.
 
-The resumed pilot should start from an installed v0.8.0 environment and install v0.8.1-rc.3 over it. If the prerelease is not offered through the stable updater channel, installer-over-install is the correct candidate upgrade exercise. Do not claim that a prerelease installer proves stable-channel updater behavior.
+The resumed pilot should start from an installed v0.8.0 environment and install v0.8.1-rc.4 over it. If the prerelease is not offered through the stable updater channel, installer-over-install is the correct candidate upgrade exercise. Do not claim that a prerelease installer proves stable-channel updater behavior.
 
 For a Local Filesystem storage used to host an Agent Workspace, use an explicit absolute host path. Do not enter shell notation such as `$HOME/...` or `~/...` for workspace namespace binding. The workspace path shown by Infimount itself is storage-relative and is derived automatically from the workspace name.
 
@@ -154,7 +156,7 @@ Verify the real publication UI does not expose an overwrite mode. Record `safety
 
 ## Upgrade exercise
 
-Start from v0.8.0 with representative local state, then install v0.8.1-rc.3 over it.
+Start from v0.8.0 with representative local state, then install v0.8.1-rc.4 over it.
 
 The evidence bundle requires all of the following:
 
