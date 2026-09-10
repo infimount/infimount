@@ -130,7 +130,8 @@ const selfTest = () => {
   }
 
   const root = path.join(os.tmpdir(), `infimount-agent-task-pilot-wrapper-self-test-${process.pid}`);
-  const commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const taggedCommit = resolveCandidateCommit(DEFAULT_CANDIDATE_VERSION);
+  const commit = taggedCommit || "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   try {
     fs.rmSync(root, { recursive: true, force: true });
     prepare([
