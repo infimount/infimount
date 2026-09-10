@@ -84,15 +84,23 @@ const rewriteGeneratedIdentity = (out, version, commit) => {
 
   const finalEvidence = fs.readFileSync(evidencePath, "utf8");
   const finalRunbook = fs.readFileSync(runbookPath, "utf8");
-  if (finalEvidence.includes(oldCommit) || finalRunbook.includes(oldCommit)) {
-    fail("historical candidate commit remains in generated pilot artifacts");
+  const staleVersionRemains = oldVersion !== version && (finalEvidence.includes(oldVersion) || finalRunbook.includes(oldVersion));
+  const staleCommitRemains = oldCommit !== commit && (finalEvidence.includes(oldCommit) || finalRunbook.includes(oldCommit));
+  if (staleVersionRemains || staleCommitRemains) {
+    fail("historical candidate identity remains in generated pilot artifacts");
   }
 };
 
 const prepare = (args) => {
   const version = normalizeVersion(getArg(args, "--candidate-version") || DEFAULT_CANDIDATE_VERSION);
   validateVersion(version);
-  const commit = getArg(args, "--candidate-commit") || resolveCandidateCommit(version);
+
+  const explicitCommit = getArg(args, "--candidate-commit") || "";
+  const taggedCommit = resolveCandidateCommit(version);
+  if (explicitCommit && taggedCommit && explicitCommit !== taggedCommit) {
+    fail(`candidate commit ${explicitCommit} does not match tag v${version} -> ${taggedCommit}`);
+  }
+  const commit = explicitCommit || taggedCommit;
   validateCommit(commit, version);
 
   const out = path.resolve(
@@ -114,7 +122,12 @@ const prepare = (args) => {
 };
 
 const selfTest = () => {
-  runCore(["self-test"]);
+  try {
+    runCore(["self-test"], { capture: true });
+  } catch (error) {
+    const detail = error.stderr?.toString().trim() || error.message;
+    fail(`core workload self-test failed: ${detail}`);
+  }
 
   const root = path.join(os.tmpdir(), `infimount-agent-task-pilot-wrapper-self-test-${process.pid}`);
   const commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
