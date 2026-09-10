@@ -32,12 +32,22 @@ try {
   });
 
   assert.equal(JSON.parse(fs.readFileSync(path.join(temp, "package.json"))).version, "0.8.0-rc.1");
-  const tauri = JSON.parse(
-    fs.readFileSync(path.join(temp, "apps/desktop/src-tauri/tauri.conf.json")),
-  );
+  let tauri = JSON.parse(fs.readFileSync(path.join(temp, "apps/desktop/src-tauri/tauri.conf.json")));
   assert.equal(tauri.version, "0.8.0-rc.1");
   assert.equal(tauri.bundle.windows.wix.version, "0.8.0.1");
   assert.match(fs.readFileSync(path.join(temp, "Cargo.toml"), "utf8"), /0\.8\.0-rc\.1/);
+
+  const workflowRunEnv = { ...process.env, GITHUB_REF_NAME: "main" };
+  execFileSync(
+    "node",
+    [path.join(root, "scripts/sync-release-version.mjs"), "v0.8.1-rc.3"],
+    { cwd: temp, env: workflowRunEnv },
+  );
+
+  assert.equal(JSON.parse(fs.readFileSync(path.join(temp, "package.json"))).version, "0.8.1-rc.3");
+  tauri = JSON.parse(fs.readFileSync(path.join(temp, "apps/desktop/src-tauri/tauri.conf.json")));
+  assert.equal(tauri.version, "0.8.1-rc.3");
+  assert.match(fs.readFileSync(path.join(temp, "Cargo.toml"), "utf8"), /0\.8\.1-rc\.3/);
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }

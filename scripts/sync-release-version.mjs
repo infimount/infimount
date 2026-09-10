@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { canonicalVersionFromTag } from "./release-version-utils.mjs";
 
-const tag = process.env.GITHUB_REF_NAME ?? "";
+const tag = process.argv[2] || process.env.GITHUB_REF_NAME || "";
 const version = canonicalVersionFromTag(tag);
 
 const updateJsonVersion = (path) => {
