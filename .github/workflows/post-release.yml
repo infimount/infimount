@@ -51,9 +51,9 @@ jobs:
           ref: ${{ steps.release.outputs.tag }}
 
       - name: Apply tag version before consistency validation
-        env:
-          GITHUB_REF_NAME: ${{ steps.release.outputs.tag }}
-        run: node scripts/sync-release-version.mjs
+        run: |
+          GITHUB_REF_NAME="${{ steps.release.outputs.tag }}" \
+            node scripts/sync-release-version.mjs "${{ steps.release.outputs.tag }}"
 
       - name: Verify version, docs, changelog, and release notes
         run: node scripts/check-release-consistency.mjs "${{ steps.release.outputs.tag }}"
