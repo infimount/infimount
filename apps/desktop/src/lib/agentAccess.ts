@@ -36,8 +36,7 @@ export function workspaceAgentSettings(
   ];
 
   // First-time setup intentionally chooses local stdio rather than activating a
-  // previously drafted HTTP bind. Existing active MCP setups keep their chosen
-  // transport and tools; we only add the minimum tools this workspace needs.
+  // previously drafted HTTP bind.
   if (!status.settings.enabled) {
     return {
       enabled: true,
@@ -47,6 +46,18 @@ export function workspaceAgentSettings(
       enabledTools: uniqueSorted(required),
       authTokenMutation: { action: "keep" },
     };
+  }
+
+  // Exposing a new workspace while the active server has additional global
+  // tools would silently give that workspace more capability than this guided
+  // step presents. Do not remove an advanced user's tools behind their back;
+  // fail closed and send that configuration to the Advanced MCP surface.
+  const requiredSet = new Set<string>(required);
+  const additionalTools = status.settings.enabledTools.filter((tool) => !requiredSet.has(tool));
+  if (additionalTools.length > 0) {
+    throw new Error(
+      "MCP already has additional tools enabled. Review Advanced MCP settings before exposing this workspace.",
+    );
   }
 
   return {
