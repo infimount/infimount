@@ -63,20 +63,33 @@ describe("workspace agent access", () => {
     expect(update.enabledTools).not.toContain("generate_download_link");
   });
 
-  it("preserves an already-active user's transport and explicit tools", () => {
+  it("preserves an already-active transport when its tools fit the guided profile", () => {
     const update = workspaceAgentSettings(
       status({
         enabled: true,
         transport: "http",
         bindAddress: "127.0.0.1",
-        enabledTools: ["delete_path", "read_file"],
+        enabledTools: ["read_file", "list_dir"],
       }),
       "read_write",
     );
     expect(update.transport).toBe("http");
-    expect(update.enabledTools).toContain("delete_path");
+    expect(update.bindAddress).toBe("127.0.0.1");
     expect(update.enabledTools).toContain("write_file");
     expect(update.enabledTools.filter((tool) => tool === "read_file")).toHaveLength(1);
+  });
+
+  it("fails closed instead of inheriting additional active global tools", () => {
+    expect(() =>
+      workspaceAgentSettings(
+        status({
+          enabled: true,
+          transport: "http",
+          enabledTools: ["read_file", "delete_path"],
+        }),
+        "read_write",
+      ),
+    ).toThrow(/additional tools enabled/i);
   });
 
   it("validates policy before changing MCP settings and revalidates before exposure", async () => {
@@ -129,6 +142,25 @@ describe("workspace agent access", () => {
       /broader MCP grants/i,
     );
     expect(getMcpStatus).not.toHaveBeenCalled();
+    expect(updateMcpSettings).not.toHaveBeenCalled();
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not expose storage when active MCP tools exceed the guided profile", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce({
+      workspaceId: "workspace-id",
+      storageId: "storage-id",
+      accessProfile: "read_write",
+      mcpExposed: false,
+      changed: false,
+    });
+    vi.mocked(getMcpStatus).mockResolvedValue(
+      status({ enabled: true, enabledTools: ["read_file", "delete_path"] }),
+    );
+
+    await expect(prepareWorkspaceAgentAccess("workspace-id")).rejects.toThrow(
+      /additional tools enabled/i,
+    );
     expect(updateMcpSettings).not.toHaveBeenCalled();
     expect(invoke).toHaveBeenCalledTimes(1);
   });
