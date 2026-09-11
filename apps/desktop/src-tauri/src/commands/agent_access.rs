@@ -1,4 +1,6 @@
-use std::path::{Path, PathBuf};
+#![allow(non_snake_case)]
+
+use std::path::PathBuf;
 
 use infimount_core::workspaces::workspace_schema_supported;
 use infimount_mcp::errors::{err, err_with_details, McpError, McpErrorCode, McpResult};
@@ -289,7 +291,7 @@ fn validate_simple_workspace_exposure(
 
     let has_broad_manual_rule = storage.mcp_policy.rules.iter().any(|candidate| {
         candidate.id != rule_id
-            && matches!(candidate.source, McpRuleSource::Manual)
+            && matches!(&candidate.source, McpRuleSource::Manual)
             && candidate.access != McpAccessMode::None
     });
     if has_broad_manual_rule {
@@ -300,6 +302,36 @@ fn validate_simple_workspace_exposure(
     }
 
     Ok(access)
+}
+
+fn load_workspace_and_storage(
+    state: &State<'_, AppState>,
+    workspace_id: &str,
+) -> McpResult<(infimount_core::workspaces::WorkspaceRecord, StorageRecord)> {
+    let workspace = state
+        .workspaces
+        .find_by_id(workspace_id)
+        .map_err(|_| err(McpErrorCode::ERR_INTERNAL, "failed to load workspace"))?
+        .ok_or_else(|| err(McpErrorCode::ERR_INVALID_PATH, "workspace was not found"))?;
+    let storage = state.find_storage_by_id(&workspace.storage_id)?;
+    Ok((workspace, storage))
+}
+
+#[tauri::command]
+pub fn check_workspace_agent_access(
+    state: State<'_, AppState>,
+    workspaceId: String,
+) -> Result<WorkspaceAgentAccessOutput, McpError> {
+    state.require_operational()?;
+    let (workspace, storage) = load_workspace_and_storage(&state, &workspaceId)?;
+    validate_simple_workspace_exposure(&storage, &workspace)?;
+    Ok(WorkspaceAgentAccessOutput {
+        workspace_id: workspace.id,
+        storage_id: storage.id,
+        access_profile: workspace.access_profile,
+        mcp_exposed: storage.mcp_exposed,
+        changed: false,
+    })
 }
 
 #[tauri::command]
@@ -318,12 +350,7 @@ pub async fn prepare_workspace_agent_access(
         )
     })?;
 
-    let workspace = state
-        .workspaces
-        .find_by_id(&workspaceId)
-        .map_err(|_| err(McpErrorCode::ERR_INTERNAL, "failed to load workspace"))?
-        .ok_or_else(|| err(McpErrorCode::ERR_INVALID_PATH, "workspace was not found"))?;
-    let storage = state.find_storage_by_id(&workspace.storage_id)?;
+    let (workspace, storage) = load_workspace_and_storage(&state, &workspaceId)?;
     validate_simple_workspace_exposure(&storage, &workspace)?;
 
     if storage.mcp_exposed {
@@ -392,12 +419,11 @@ mod tests {
     }
 
     fn storage_with_workspace_rule(access: McpAccessMode) -> (StorageRecord, WorkspaceRecord) {
-        let root = std::env::temp_dir().join("infimount-agent-access-test");
-        std::fs::create_dir_all(&root).unwrap();
+        let root = tempfile::tempdir().expect("temp root");
         let mut storage = StorageRecord::new(
             "Local".into(),
             "local".into(),
-            json!({ "root": root.to_string_lossy() }),
+            serde_json::json!({ "root": root.path().to_string_lossy() }),
         );
         let profile = if access == McpAccessMode::ReadWrite {
             "read_write"
@@ -424,13 +450,25 @@ mod tests {
             return;
         }
         let expanded = expand_home_alias("~").unwrap().unwrap();
-        assert!(Path::new(&expanded).is_absolute());
-        assert!(Path::new(&expanded).is_dir());
+        assert!(std::path::Path::new(&expanded).is_absolute());
+        assert!(std::path::Path::new(&expanded).is_dir());
     }
 
     #[test]
     fn ordinary_relative_root_is_not_treated_as_a_home_alias() {
         assert_eq!(expand_home_alias("relative/path").unwrap(), None);
+    }
+
+    #[test]
+    fn local_root_alias_fields_are_normalized_consistently() {
+        let mut config = json!({ "root": "~", "rootPath": "~", "path": "other" });
+        normalize_local_root_config(&mut config, "~", "/home/example");
+        assert_eq!(config.get("root").and_then(Value::as_str), Some("/home/example"));
+        assert_eq!(
+            config.get("rootPath").and_then(Value::as_str),
+            Some("/home/example")
+        );
+        assert_eq!(config.get("path").and_then(Value::as_str), Some("other"));
     }
 
     #[test]
