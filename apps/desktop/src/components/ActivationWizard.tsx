@@ -126,12 +126,23 @@ export function ActivationWizard({
   const [demoCreating, setDemoCreating] = useState(false);
   const [demoError, setDemoError] = useState(false);
   const [clientReviewed, setClientReviewed] = useState(false);
-  const [agentAccessPrepared, setAgentAccessPrepared] = useState(false);
+  const [selectedAccessWorkspaceId, setSelectedAccessWorkspaceId] = useState(
+    workspaces[0]?.id ?? "",
+  );
+  const [agentAccessPreparedWorkspaceId, setAgentAccessPreparedWorkspaceId] = useState<
+    string | null
+  >(null);
   const [finishRunning, setFinishRunning] = useState(false);
   const [finishError, setFinishError] = useState<string>();
 
   const currentIndex = STEP_ORDER.indexOf(currentStep);
-  const accessReady = agentAccessReady || agentAccessPrepared;
+  const singlePersistedReadyWorkspaceId =
+    agentAccessReady && workspaces.length === 1 ? workspaces[0]?.id ?? null : null;
+  const accessReady = Boolean(
+    selectedAccessWorkspaceId &&
+      (selectedAccessWorkspaceId === singlePersistedReadyWorkspaceId ||
+        selectedAccessWorkspaceId === agentAccessPreparedWorkspaceId),
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -144,9 +155,22 @@ export function ActivationWizard({
       (step): step is WizardStepId => STEP_ORDER.includes(step as WizardStepId),
     ));
     setClientReviewed(false);
-    setAgentAccessPrepared(agentAccessReady);
+    setSelectedAccessWorkspaceId(workspaces[0]?.id ?? "");
+    setAgentAccessPreparedWorkspaceId(
+      agentAccessReady && workspaces.length === 1 ? workspaces[0]?.id ?? null : null,
+    );
     setFinishError(undefined);
   }, [agentAccessReady, initialCompletedSteps, initialStep, open]);
+
+  useEffect(() => {
+    if (
+      selectedAccessWorkspaceId &&
+      workspaces.some((workspace) => workspace.id === selectedAccessWorkspaceId)
+    ) {
+      return;
+    }
+    setSelectedAccessWorkspaceId(workspaces[0]?.id ?? "");
+  }, [selectedAccessWorkspaceId, workspaces]);
 
   const isStepComplete = (step: WizardStepId) => completedSteps.includes(step);
   const isStepCurrent = (step: WizardStepId) => step === currentStep;
@@ -231,7 +255,8 @@ export function ActivationWizard({
 
   const handlePrepareAgentAccess = async (workspace: WorkspaceRecord) => {
     await onPrepareAgentAccess(workspace);
-    setAgentAccessPrepared(true);
+    setSelectedAccessWorkspaceId(workspace.id);
+    setAgentAccessPreparedWorkspaceId(workspace.id);
     await handleRunProbe();
   };
 
@@ -293,7 +318,7 @@ export function ActivationWizard({
 
         <Separator className="shrink-0" />
 
-        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1" data-testid="wizard-scroll-region">
           {currentStep === "welcome" && <WelcomeStep />}
           {currentStep === "storage" && (
             <StorageStep
@@ -323,6 +348,8 @@ export function ActivationWizard({
           {currentStep === "mcp" && (
             <AgentAccessStep
               workspaces={workspaces}
+              selectedWorkspaceId={selectedAccessWorkspaceId}
+              onWorkspaceSelectionChange={setSelectedAccessWorkspaceId}
               accessReady={accessReady}
               mcpStatus={mcpStatus}
               sidecar={probe?.sidecar}
@@ -534,6 +561,8 @@ function WorkspaceStep({
 
 function AgentAccessStep({
   workspaces,
+  selectedWorkspaceId,
+  onWorkspaceSelectionChange,
   accessReady,
   mcpStatus,
   sidecar,
@@ -543,6 +572,8 @@ function AgentAccessStep({
   onOpenAdvanced,
 }: {
   workspaces: WorkspaceRecord[];
+  selectedWorkspaceId: string;
+  onWorkspaceSelectionChange: (workspaceId: string) => void;
   accessReady: boolean;
   mcpStatus?: McpRuntimeStatus;
   sidecar?: ActivationProbeOutput["sidecar"];
@@ -551,17 +582,10 @@ function AgentAccessStep({
   onValidate: () => Promise<void>;
   onOpenAdvanced: () => void;
 }) {
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState(workspaces[0]?.id ?? "");
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState<string>();
-  const selected = workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? workspaces[0];
-
-  useEffect(() => {
-    if (selectedWorkspaceId && workspaces.some((workspace) => workspace.id === selectedWorkspaceId)) {
-      return;
-    }
-    setSelectedWorkspaceId(workspaces[0]?.id ?? "");
-  }, [selectedWorkspaceId, workspaces]);
+  const selected =
+    workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? workspaces[0];
 
   const handlePrepare = async () => {
     if (!selected) return;
@@ -597,7 +621,7 @@ function AgentAccessStep({
             aria-label="Workspace for agent access"
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
             value={selected?.id ?? ""}
-            onChange={(event) => setSelectedWorkspaceId(event.target.value)}
+            onChange={(event) => onWorkspaceSelectionChange(event.target.value)}
           >
             {workspaces.map((workspace) => (
               <option key={workspace.id} value={workspace.id}>
