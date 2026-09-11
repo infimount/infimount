@@ -63,7 +63,7 @@ describe("workspace agent access", () => {
     expect(update.enabledTools).not.toContain("generate_download_link");
   });
 
-  it("preserves an already-active transport when its tools fit the guided profile", () => {
+  it("preserves an already-active local transport when its tools fit the guided profile", () => {
     const update = workspaceAgentSettings(
       status({
         enabled: true,
@@ -79,12 +79,27 @@ describe("workspace agent access", () => {
     expect(update.enabledTools.filter((tool) => tool === "read_file")).toHaveLength(1);
   });
 
+  it("fails closed on an already-active non-loopback HTTP listener", () => {
+    expect(() =>
+      workspaceAgentSettings(
+        status({
+          enabled: true,
+          transport: "http",
+          bindAddress: "0.0.0.0",
+          enabledTools: ["read_file"],
+        }),
+        "read_only",
+      ),
+    ).toThrow(/non-loopback HTTP address/i);
+  });
+
   it("fails closed instead of inheriting additional active global tools", () => {
     expect(() =>
       workspaceAgentSettings(
         status({
           enabled: true,
           transport: "http",
+          bindAddress: "127.0.0.1",
           enabledTools: ["read_file", "delete_path"],
         }),
         "read_write",
@@ -155,11 +170,39 @@ describe("workspace agent access", () => {
       changed: false,
     });
     vi.mocked(getMcpStatus).mockResolvedValue(
-      status({ enabled: true, enabledTools: ["read_file", "delete_path"] }),
+      status({
+        enabled: true,
+        bindAddress: "127.0.0.1",
+        enabledTools: ["read_file", "delete_path"],
+      }),
     );
 
     await expect(prepareWorkspaceAgentAccess("workspace-id")).rejects.toThrow(
       /additional tools enabled/i,
+    );
+    expect(updateMcpSettings).not.toHaveBeenCalled();
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not expose storage through an active non-loopback HTTP listener", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce({
+      workspaceId: "workspace-id",
+      storageId: "storage-id",
+      accessProfile: "read_only",
+      mcpExposed: false,
+      changed: false,
+    });
+    vi.mocked(getMcpStatus).mockResolvedValue(
+      status({
+        enabled: true,
+        transport: "http",
+        bindAddress: "0.0.0.0",
+        enabledTools: ["read_file"],
+      }),
+    );
+
+    await expect(prepareWorkspaceAgentAccess("workspace-id")).rejects.toThrow(
+      /non-loopback HTTP address/i,
     );
     expect(updateMcpSettings).not.toHaveBeenCalled();
     expect(invoke).toHaveBeenCalledTimes(1);
