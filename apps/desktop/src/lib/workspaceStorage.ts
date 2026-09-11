@@ -38,7 +38,9 @@ export async function prepareWorkspaceStorageBinding(
       typeof error === "object" && error !== null && "message" in error
         ? String((error as { message: unknown }).message)
         : "";
-    throw new Error(message || "The storage could not be prepared for an Agent Workspace.");
+    throw new Error(message || "The storage could not be prepared for an Agent Workspace.", {
+      cause: error,
+    });
   }
 }
 
