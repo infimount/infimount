@@ -1,3 +1,5 @@
+import { invoke } from "@tauri-apps/api/core";
+
 import type { StorageConfig } from "@/types/storage";
 
 function storageConfigString(storage: StorageConfig, keys: string[]): string | null {
@@ -19,6 +21,27 @@ function isSupportedHomeAlias(value: string): boolean {
   return value === "~" || value.startsWith("~/") || value.startsWith("~\\");
 }
 
+export interface WorkspaceStorageBindingResult {
+  storageId: string;
+  normalized: boolean;
+}
+
+export async function prepareWorkspaceStorageBinding(
+  storageId: string,
+): Promise<WorkspaceStorageBindingResult> {
+  try {
+    return await invoke<WorkspaceStorageBindingResult>("prepare_workspace_storage_binding", {
+      storageId,
+    });
+  } catch (error) {
+    const message =
+      typeof error === "object" && error !== null && "message" in error
+        ? String((error as { message: unknown }).message)
+        : "";
+    throw new Error(message || "The storage could not be prepared for an Agent Workspace.");
+  }
+}
+
 export function workspaceStorageIssue(storage: StorageConfig): string | null {
   if (!storage.enabled) return "This storage is disabled.";
   if (storage.readOnly) return "This storage is read-only. Agent Workspaces need a writable storage.";
@@ -30,8 +53,8 @@ export function workspaceStorageIssue(storage: StorageConfig): string | null {
     if (root === "$HOME" || root.startsWith("$HOME/") || root.startsWith("${HOME}")) {
       return "This storage uses shell variable syntax. Edit the storage and use either ~ or an absolute folder path.";
     }
-    // The Local Filesystem operator already expands ~ and ~/... to the current
-    // user's home directory. Workspace namespace binding supports the same alias.
+    // Legacy ~ roots are normalized to the concrete home directory once, just
+    // before the first workspace binds the storage namespace.
     if (isSupportedHomeAlias(root)) return null;
     if (!isAbsoluteLocalRoot(root)) {
       return "This Local Filesystem storage root is not absolute. Edit and validate the storage first.";
