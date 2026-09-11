@@ -157,6 +157,7 @@ fn main() {
             commands::create_workspace_checkpoint,
             commands::restore_workspace_checkpoint,
             commands::prepare_workspace_storage_binding,
+            commands::check_workspace_agent_access,
             commands::prepare_workspace_agent_access,
             commands::preflight_agent_task,
             commands::prepare_agent_task,
