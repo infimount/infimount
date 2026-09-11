@@ -96,7 +96,7 @@ describe("workspace agent access", () => {
         changed: true,
       });
 
-    await expect(prepareWorkspaceAgentAccess("workspace-id", "read_write")).resolves.toMatchObject({
+    await expect(prepareWorkspaceAgentAccess("workspace-id", "read_only")).resolves.toMatchObject({
       mcpExposed: true,
       changed: true,
     });
@@ -105,6 +105,11 @@ describe("workspace agent access", () => {
       "check_workspace_agent_access",
       { workspaceId: "workspace-id" },
     ]);
+    expect(updateMcpSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enabledTools: expect.arrayContaining(["mkdir", "write_file"]),
+      }),
+    );
     expect(vi.mocked(invoke).mock.calls[1]).toEqual([
       "prepare_workspace_agent_access",
       { workspaceId: "workspace-id" },
