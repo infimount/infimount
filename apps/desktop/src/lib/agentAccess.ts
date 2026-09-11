@@ -26,6 +26,14 @@ function uniqueSorted(values: string[]): string[] {
   return Array.from(new Set(values)).sort((left, right) => left.localeCompare(right));
 }
 
+function isLoopbackBindAddress(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "127.0.0.1"
+    || normalized === "localhost"
+    || normalized === "::1"
+    || normalized === "[::1]";
+}
+
 export function workspaceAgentSettings(
   status: McpRuntimeStatus,
   accessProfile: string,
@@ -46,6 +54,18 @@ export function workspaceAgentSettings(
       enabledTools: uniqueSorted(required),
       authTokenMutation: { action: "keep" },
     };
+  }
+
+  // The guided path is deliberately local. An already-running non-loopback HTTP
+  // listener is an advanced deployment choice and must not gain a new workspace
+  // as a side effect of simple onboarding.
+  if (
+    status.settings.transport === "http"
+    && !isLoopbackBindAddress(status.settings.bindAddress)
+  ) {
+    throw new Error(
+      "MCP is already active on a non-loopback HTTP address. Review Advanced MCP settings before exposing this workspace.",
+    );
   }
 
   // Exposing a new workspace while the active server has additional global
