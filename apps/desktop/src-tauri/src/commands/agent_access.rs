@@ -1,11 +1,21 @@
+use std::path::{Path, PathBuf};
+
 use infimount_core::workspaces::workspace_schema_supported;
 use infimount_mcp::errors::{err, err_with_details, McpError, McpErrorCode, McpResult};
 use infimount_mcp::policy::{McpAccessMode, McpRuleSource};
 use infimount_mcp::registry::StorageRecord;
 use serde::Serialize;
+use serde_json::Value;
 use tauri::State;
 
 use crate::state::AppState;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceStorageBindingOutput {
+    pub storage_id: String,
+    pub normalized: bool,
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -15,6 +25,177 @@ pub struct WorkspaceAgentAccessOutput {
     pub access_profile: String,
     pub mcp_exposed: bool,
     pub changed: bool,
+}
+
+fn configured_local_root(storage: &StorageRecord) -> Option<String> {
+    ["root", "rootPath", "path"].iter().find_map(|key| {
+        storage
+            .config
+            .get(*key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })
+}
+
+fn home_dir() -> Option<String> {
+    std::env::var("HOME")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("USERPROFILE")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+}
+
+fn expand_home_alias(value: &str) -> McpResult<Option<String>> {
+    let trimmed = value.trim();
+    let suffix = if trimmed == "~" {
+        Some("")
+    } else if let Some(rest) = trimmed.strip_prefix("~/") {
+        Some(rest)
+    } else if let Some(rest) = trimmed.strip_prefix("~\\") {
+        Some(rest)
+    } else {
+        None
+    };
+    let Some(suffix) = suffix else {
+        return Ok(None);
+    };
+    let home = home_dir().ok_or_else(|| {
+        err(
+            McpErrorCode::ERR_INVALID_PATH,
+            "the current user's home directory could not be resolved",
+        )
+    })?;
+    let expanded = if suffix.is_empty() {
+        PathBuf::from(home)
+    } else {
+        PathBuf::from(home).join(suffix)
+    };
+    if !expanded.is_absolute() {
+        return Err(err(
+            McpErrorCode::ERR_INVALID_PATH,
+            "the resolved Local Filesystem root is not absolute",
+        ));
+    }
+    let metadata = std::fs::metadata(&expanded).map_err(|_| {
+        err(
+            McpErrorCode::ERR_INVALID_PATH,
+            "the resolved Local Filesystem root is unavailable",
+        )
+    })?;
+    if !metadata.is_dir() {
+        return Err(err(
+            McpErrorCode::ERR_INVALID_PATH,
+            "the resolved Local Filesystem root is not a directory",
+        ));
+    }
+    let canonical = std::fs::canonicalize(&expanded).map_err(|_| {
+        err(
+            McpErrorCode::ERR_INVALID_PATH,
+            "the resolved Local Filesystem root could not be canonicalized",
+        )
+    })?;
+    Ok(Some(canonical.to_string_lossy().to_string()))
+}
+
+fn normalize_local_root_config(config: &mut Value, original: &str, canonical: &str) {
+    let Some(object) = config.as_object_mut() else {
+        return;
+    };
+    for key in ["root", "rootPath", "path"] {
+        let matches_original = object
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|value| value.trim() == original);
+        if matches_original {
+            object.insert(key.to_string(), Value::String(canonical.to_string()));
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn prepare_workspace_storage_binding(
+    state: State<'_, AppState>,
+    storageId: String,
+) -> Result<WorkspaceStorageBindingOutput, McpError> {
+    state.require_operational()?;
+    let _lifecycle = state.lifecycle_mutation.lock().await;
+    let _configuration = state.registry.acquire_configuration_transaction()?;
+    state.recover_and_require_clean_configuration_locked()?;
+
+    let storage = state.find_storage_by_id(&storageId)?;
+    if !matches!(storage.backend.as_str(), "local" | "fs") {
+        return Ok(WorkspaceStorageBindingOutput {
+            storage_id: storage.id,
+            normalized: false,
+        });
+    }
+
+    let root = configured_local_root(&storage).ok_or_else(|| {
+        err(
+            McpErrorCode::ERR_INVALID_PATH,
+            "Local Filesystem storage has no configured root folder",
+        )
+    })?;
+    let Some(canonical) = expand_home_alias(&root)? else {
+        return Ok(WorkspaceStorageBindingOutput {
+            storage_id: storage.id,
+            normalized: false,
+        });
+    };
+
+    if state
+        .workspaces
+        .load_all()
+        .map_err(|_| err(McpErrorCode::ERR_INTERNAL, "failed to inspect bound workspaces"))?
+        .iter()
+        .any(|workspace| workspace.storage_id == storage.id)
+    {
+        return Err(err(
+            McpErrorCode::ERR_STORAGE_NAMESPACE_IN_USE,
+            "legacy Local Filesystem root cannot be normalized while workspaces are already bound",
+        ));
+    }
+
+    let expected_revision = storage.revision;
+    state.registry.with_locked_mutation(|storages| {
+        let current = storages
+            .iter_mut()
+            .find(|candidate| candidate.id == storage.id)
+            .ok_or_else(|| err(McpErrorCode::ERR_STORAGE_NOT_FOUND, "storage was not found"))?;
+        if current.revision != expected_revision {
+            return Err(err(
+                McpErrorCode::ERR_INTERNAL,
+                "storage changed while preparing the workspace; retry",
+            ));
+        }
+        let current_root = configured_local_root(current).ok_or_else(|| {
+            err(
+                McpErrorCode::ERR_INVALID_PATH,
+                "Local Filesystem storage has no configured root folder",
+            )
+        })?;
+        if current_root != root {
+            return Err(err(
+                McpErrorCode::ERR_INTERNAL,
+                "storage root changed while preparing the workspace; retry",
+            ));
+        }
+        normalize_local_root_config(&mut current.config, &root, &canonical);
+        current.revision = current.revision.saturating_add(1);
+        current.updated_at = chrono::Utc::now().to_rfc3339();
+        Ok(())
+    })?;
+    state.operator_cache.invalidate(&storage.id);
+
+    Ok(WorkspaceStorageBindingOutput {
+        storage_id: storage.id,
+        normalized: true,
+    })
 }
 
 fn expected_access(profile: &str) -> McpResult<McpAccessMode> {
@@ -235,6 +416,21 @@ mod tests {
             confirmation_rules: None,
         });
         (storage, workspace)
+    }
+
+    #[test]
+    fn home_alias_expands_to_an_absolute_existing_directory() {
+        if home_dir().is_none() {
+            return;
+        }
+        let expanded = expand_home_alias("~").unwrap().unwrap();
+        assert!(Path::new(&expanded).is_absolute());
+        assert!(Path::new(&expanded).is_dir());
+    }
+
+    #[test]
+    fn ordinary_relative_root_is_not_treated_as_a_home_alias() {
+        assert_eq!(expand_home_alias("relative/path").unwrap(), None);
     }
 
     #[test]
