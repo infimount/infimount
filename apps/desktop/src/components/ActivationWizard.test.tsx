@@ -135,13 +135,17 @@ describe("ActivationWizard guided setup", () => {
   });
 
   it("mounts six distinct verified adapter cards inside a viewport-scrollable wizard", async () => {
-    const { container } = renderWizard();
+    renderWizard();
     for (const adapter of adapters) {
       expect(await screen.findByTestId(`client-adapter-${adapter.kind}`)).toBeInTheDocument();
     }
     expect(screen.getAllByText(/serve/)).toHaveLength(6);
     expect(screen.getByRole("dialog")).toHaveClass("max-h-[min(90vh,760px)]", "overflow-hidden");
-    expect(container.querySelector(".min-h-0.flex-1.overflow-y-auto")).not.toBeNull();
+    expect(screen.getByTestId("wizard-scroll-region")).toHaveClass(
+      "min-h-0",
+      "flex-1",
+      "overflow-y-auto",
+    );
   });
 
   it("previews, applies, and rolls back a writable adapter", async () => {
@@ -209,7 +213,7 @@ describe("ActivationWizard guided setup", () => {
       onOpenMcpSettings,
     });
 
-    expect(screen.getByText("Prepare agent access")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Prepare agent access" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Advanced MCP settings" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Prepare agent access" }));
     await waitFor(() => expect(onPrepareAgentAccess).toHaveBeenCalledWith(workspace));
@@ -219,6 +223,46 @@ describe("ActivationWizard guided setup", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Advanced MCP settings" }));
     expect(onOpenMcpSettings).toHaveBeenCalled();
+  });
+
+  it("never reuses one workspace readiness for a different selected workspace", async () => {
+    const secondWorkspace: WorkspaceRecord = {
+      ...workspace,
+      id: "workspace-two",
+      storageId: "storage-two",
+      name: "Second workspace",
+      rootPath: "/agent-workspaces/second-workspace",
+      accessProfile: "read_only",
+      policyRuleId: "workspace:workspace-two",
+    };
+    const onPrepareAgentAccess = vi.fn(async () => undefined);
+
+    renderWizard({
+      initialStep: "mcp",
+      initialCompletedSteps: ["welcome", "storage", "workspace"],
+      workspaces: [workspace, secondWorkspace],
+      agentAccessReady: true,
+      onPrepareAgentAccess,
+    });
+
+    expect(screen.queryByText("Scoped agent access is ready.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Prepare agent access" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Continue/ })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Prepare agent access" }));
+    await waitFor(() => expect(onPrepareAgentAccess).toHaveBeenCalledWith(workspace));
+    expect(await screen.findByText("Scoped agent access is ready.")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Workspace for agent access"), {
+      target: { value: secondWorkspace.id },
+    });
+    expect(screen.queryByText("Scoped agent access is ready.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Prepare agent access" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Continue/ })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Prepare agent access" }));
+    await waitFor(() => expect(onPrepareAgentAccess).toHaveBeenCalledWith(secondWorkspace));
+    expect(await screen.findByText("Scoped agent access is ready.")).toBeInTheDocument();
   });
 
   it("runs the safety probe and renders every verification check", async () => {
