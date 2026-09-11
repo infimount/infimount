@@ -172,7 +172,7 @@ describe("ActivationWizard guided setup", () => {
     renderWizard({ initialStep: "welcome", initialCompletedSteps: [], onSaveState, onSkip });
     expect(screen.getByText("Welcome to Infimount")).toBeInTheDocument();
     expect(screen.getByText("Browse storage")).toBeInTheDocument();
-    expect(screen.getByText(/Adding one does not expose it to an agent/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Adding one does not expose it to an agent/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Continue/ }));
     await waitFor(() => expect(onSaveState).toHaveBeenCalledWith("storage", ["welcome"]));
     expect(screen.getByText(/Adding one does not expose it to an agent/)).toBeInTheDocument();
