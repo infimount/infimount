@@ -153,7 +153,12 @@ pub async fn prepare_workspace_storage_binding(
     if state
         .workspaces
         .load_all()
-        .map_err(|_| err(McpErrorCode::ERR_INTERNAL, "failed to inspect bound workspaces"))?
+        .map_err(|_| {
+            err(
+                McpErrorCode::ERR_INTERNAL,
+                "failed to inspect bound workspaces",
+            )
+        })?
         .iter()
         .any(|workspace| workspace.storage_id == storage.id)
     {
@@ -368,7 +373,12 @@ pub async fn prepare_workspace_agent_access(
         let current = storages
             .iter_mut()
             .find(|candidate| candidate.id == workspace.storage_id)
-            .ok_or_else(|| err(McpErrorCode::ERR_STORAGE_NOT_FOUND, "workspace storage was not found"))?;
+            .ok_or_else(|| {
+                err(
+                    McpErrorCode::ERR_STORAGE_NOT_FOUND,
+                    "workspace storage was not found",
+                )
+            })?;
         if current.revision != expected_revision {
             return Err(err(
                 McpErrorCode::ERR_INTERNAL,
@@ -463,7 +473,10 @@ mod tests {
     fn local_root_alias_fields_are_normalized_consistently() {
         let mut config = json!({ "root": "~", "rootPath": "~", "path": "other" });
         normalize_local_root_config(&mut config, "~", "/home/example");
-        assert_eq!(config.get("root").and_then(Value::as_str), Some("/home/example"));
+        assert_eq!(
+            config.get("root").and_then(Value::as_str),
+            Some("/home/example")
+        );
         assert_eq!(
             config.get("rootPath").and_then(Value::as_str),
             Some("/home/example")
