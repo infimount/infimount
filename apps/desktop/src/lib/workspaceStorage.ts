@@ -21,6 +21,12 @@ function isSupportedHomeAlias(value: string): boolean {
   return value === "~" || value.startsWith("~/") || value.startsWith("~\\");
 }
 
+function errorWithCause(message: string, cause: unknown): Error {
+  const wrapped = new Error(message) as Error & { cause?: unknown };
+  wrapped.cause = cause;
+  return wrapped;
+}
+
 export interface WorkspaceStorageBindingResult {
   storageId: string;
   normalized: boolean;
@@ -38,9 +44,10 @@ export async function prepareWorkspaceStorageBinding(
       typeof error === "object" && error !== null && "message" in error
         ? String((error as { message: unknown }).message)
         : "";
-    throw new Error(message || "The storage could not be prepared for an Agent Workspace.", {
-      cause: error,
-    });
+    throw errorWithCause(
+      message || "The storage could not be prepared for an Agent Workspace.",
+      error,
+    );
   }
 }
 
