@@ -85,17 +85,19 @@ function agentAccessError(error: unknown): Error {
 
 export async function prepareWorkspaceAgentAccess(
   workspaceId: string,
-  accessProfile: string,
+  _requestedAccessProfile?: string,
 ): Promise<WorkspaceAgentAccessResult> {
   try {
     // Preflight is read-only. It rejects stale namespace bindings and broad/manual
-    // grants before onboarding changes the MCP runtime at all.
-    await invoke<WorkspaceAgentAccessResult>("check_workspace_agent_access", {
+    // grants before onboarding changes the MCP runtime at all. The validated
+    // backend record is also the source of truth for the required tool profile;
+    // callers cannot broaden tools by supplying a stale or incorrect profile.
+    const preflight = await invoke<WorkspaceAgentAccessResult>("check_workspace_agent_access", {
       workspaceId,
     });
 
     const status = await getMcpStatus();
-    await updateMcpSettings(workspaceAgentSettings(status, accessProfile));
+    await updateMcpSettings(workspaceAgentSettings(status, preflight.accessProfile));
 
     // The commit path repeats every preflight check under the configuration lock
     // before exposing the backing storage, so policy drift cannot race the UI.
