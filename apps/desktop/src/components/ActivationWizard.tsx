@@ -9,7 +9,7 @@ import {
   Terminal,
   TestTube2,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -107,7 +107,7 @@ export function ActivationWizard({
   onSaveState,
   storagesCount,
   workspaces,
-  agentAccessReady,
+  agentAccessReady: _agentAccessReady,
   mcpStatus,
   initialStep,
   initialCompletedSteps = [],
@@ -126,26 +126,26 @@ export function ActivationWizard({
   const [demoCreating, setDemoCreating] = useState(false);
   const [demoError, setDemoError] = useState(false);
   const [clientReviewed, setClientReviewed] = useState(false);
-  const [selectedAccessWorkspaceId, setSelectedAccessWorkspaceId] = useState(
-    workspaces[0]?.id ?? "",
-  );
+  const [selectedAccessWorkspaceId, setSelectedAccessWorkspaceId] = useState("");
   const [agentAccessPreparedWorkspaceId, setAgentAccessPreparedWorkspaceId] = useState<
     string | null
   >(null);
   const [finishRunning, setFinishRunning] = useState(false);
   const [finishError, setFinishError] = useState<string>();
+  const wasOpen = useRef(false);
 
   const currentIndex = STEP_ORDER.indexOf(currentStep);
-  const singlePersistedReadyWorkspaceId =
-    agentAccessReady && workspaces.length === 1 ? workspaces[0]?.id ?? null : null;
   const accessReady = Boolean(
-    selectedAccessWorkspaceId &&
-      (selectedAccessWorkspaceId === singlePersistedReadyWorkspaceId ||
-        selectedAccessWorkspaceId === agentAccessPreparedWorkspaceId),
+    selectedAccessWorkspaceId && selectedAccessWorkspaceId === agentAccessPreparedWorkspaceId,
   );
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      wasOpen.current = false;
+      return;
+    }
+    if (wasOpen.current) return;
+    wasOpen.current = true;
     setCurrentStep(
       initialStep && STEP_ORDER.includes(initialStep as WizardStepId)
         ? initialStep as WizardStepId
@@ -155,14 +155,13 @@ export function ActivationWizard({
       (step): step is WizardStepId => STEP_ORDER.includes(step as WizardStepId),
     ));
     setClientReviewed(false);
-    setSelectedAccessWorkspaceId(workspaces[0]?.id ?? "");
-    setAgentAccessPreparedWorkspaceId(
-      agentAccessReady && workspaces.length === 1 ? workspaces[0]?.id ?? null : null,
-    );
+    setSelectedAccessWorkspaceId("");
+    setAgentAccessPreparedWorkspaceId(null);
     setFinishError(undefined);
-  }, [agentAccessReady, initialCompletedSteps, initialStep, open]);
+  }, [initialCompletedSteps, initialStep, open]);
 
   useEffect(() => {
+    if (!open) return;
     if (
       selectedAccessWorkspaceId &&
       workspaces.some((workspace) => workspace.id === selectedAccessWorkspaceId)
@@ -170,7 +169,7 @@ export function ActivationWizard({
       return;
     }
     setSelectedAccessWorkspaceId(workspaces[0]?.id ?? "");
-  }, [selectedAccessWorkspaceId, workspaces]);
+  }, [open, selectedAccessWorkspaceId, workspaces]);
 
   const isStepComplete = (step: WizardStepId) => completedSteps.includes(step);
   const isStepCurrent = (step: WizardStepId) => step === currentStep;
