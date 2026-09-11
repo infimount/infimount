@@ -1,4 +1,5 @@
 pub mod activation_probe;
+pub mod agent_access;
 pub mod agent_task_list;
 pub mod agent_task_publish;
 pub mod agent_task_review;
@@ -14,6 +15,7 @@ pub mod transfers;
 pub mod workspaces;
 
 pub use activation_probe::*;
+pub use agent_access::*;
 pub use agent_task_list::*;
 pub use agent_task_publish::*;
 pub use agent_task_review::*;
