@@ -18,6 +18,7 @@ import {
   previewMcpClientInstall,
   rollbackMcpClientInstall,
   runActivationProbe,
+  type WorkspaceRecord,
 } from "@/lib/api";
 import { Card } from "@/components/ui/card";
 import {
@@ -51,11 +52,13 @@ export interface ActivationWizardProps {
   onCreateDemo: () => Promise<void>;
   onOpenWorkspaces: () => void;
   onOpenMcpSettings: () => void;
+  onPrepareAgentAccess: (workspace: WorkspaceRecord) => Promise<void>;
   onComplete: () => Promise<void>;
   onSkip: () => Promise<void>;
   onSaveState: (step: WizardStepId | null, completed: WizardStepId[]) => Promise<void>;
   storagesCount: number;
-  workspacesCount: number;
+  workspaces: WorkspaceRecord[];
+  agentAccessReady: boolean;
   mcpStatus?: McpRuntimeStatus;
   initialStep?: string | null;
   initialCompletedSteps?: string[];
@@ -74,8 +77,8 @@ const STEP_ORDER: WizardStepId[] = [
 const STEP_LABELS: Record<WizardStepId, string> = {
   welcome: "Welcome",
   storage: "Add Storage",
-  workspace: "Scope Workspace",
-  mcp: "Verify Sidecar",
+  workspace: "Create Workspace",
+  mcp: "Agent Access",
   client: "Connect Client",
   verify: "Verify",
   done: "Done",
@@ -98,11 +101,13 @@ export function ActivationWizard({
   onCreateDemo,
   onOpenWorkspaces,
   onOpenMcpSettings,
+  onPrepareAgentAccess,
   onComplete,
   onSkip,
   onSaveState,
   storagesCount,
-  workspacesCount,
+  workspaces,
+  agentAccessReady,
   mcpStatus,
   initialStep,
   initialCompletedSteps = [],
@@ -121,10 +126,12 @@ export function ActivationWizard({
   const [demoCreating, setDemoCreating] = useState(false);
   const [demoError, setDemoError] = useState(false);
   const [clientReviewed, setClientReviewed] = useState(false);
+  const [agentAccessPrepared, setAgentAccessPrepared] = useState(false);
   const [finishRunning, setFinishRunning] = useState(false);
   const [finishError, setFinishError] = useState<string>();
 
   const currentIndex = STEP_ORDER.indexOf(currentStep);
+  const accessReady = agentAccessReady || agentAccessPrepared;
 
   useEffect(() => {
     if (!open) return;
@@ -137,8 +144,9 @@ export function ActivationWizard({
       (step): step is WizardStepId => STEP_ORDER.includes(step as WizardStepId),
     ));
     setClientReviewed(false);
+    setAgentAccessPrepared(agentAccessReady);
     setFinishError(undefined);
-  }, [initialCompletedSteps, initialStep, open]);
+  }, [agentAccessReady, initialCompletedSteps, initialStep, open]);
 
   const isStepComplete = (step: WizardStepId) => completedSteps.includes(step);
   const isStepCurrent = (step: WizardStepId) => step === currentStep;
@@ -188,8 +196,8 @@ export function ActivationWizard({
     switch (currentStep) {
       case "welcome": return true;
       case "storage": return storagesCount > 0;
-      case "workspace": return workspacesCount > 0;
-      case "mcp": return mcpStatus?.settings.enabled === true
+      case "workspace": return workspaces.length > 0;
+      case "mcp": return accessReady
         && probe?.sidecar.versionMatch === true
         && probe.sidecar.doctorHealthy === true;
       case "client": return clientReviewed;
@@ -197,14 +205,14 @@ export function ActivationWizard({
       case "done": return false;
     }
   }, [
+    accessReady,
     clientReviewed,
     currentStep,
-    mcpStatus?.settings.enabled,
     probe?.overallOk,
     probe?.sidecar.doctorHealthy,
     probe?.sidecar.versionMatch,
     storagesCount,
-    workspacesCount,
+    workspaces.length,
   ]);
 
   const handleRunProbe = async () => {
@@ -219,6 +227,12 @@ export function ActivationWizard({
     } finally {
       setProbeRunning(false);
     }
+  };
+
+  const handlePrepareAgentAccess = async (workspace: WorkspaceRecord) => {
+    await onPrepareAgentAccess(workspace);
+    setAgentAccessPrepared(true);
+    await handleRunProbe();
   };
 
   const handleFinish = async () => {
@@ -240,10 +254,10 @@ export function ActivationWizard({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="sm:max-w-[800px] rounded-2xl border border-border bg-background text-foreground shadow-2xl"
+        className="flex max-h-[min(90vh,760px)] flex-col overflow-hidden rounded-2xl border border-border bg-background text-foreground shadow-2xl sm:max-w-[800px]"
         onInteractOutside={(e) => e.preventDefault()}
       >
-        <DialogHeader>
+        <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2 text-xl font-semibold">
             <StepIcon className="h-5 w-5 text-primary" />
             {STEP_LABELS[currentStep]}
@@ -253,8 +267,7 @@ export function ActivationWizard({
           </DialogDescription>
         </DialogHeader>
 
-        {/* Progress bar */}
-        <div className="flex gap-1.5">
+        <div className="flex shrink-0 gap-1.5">
           {STEP_ORDER.map((step) => (
             <button
               key={step}
@@ -278,10 +291,9 @@ export function ActivationWizard({
           ))}
         </div>
 
-        <Separator />
+        <Separator className="shrink-0" />
 
-        {/* Step content */}
-        <div className="min-h-[280px]">
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
           {currentStep === "welcome" && <WelcomeStep />}
           {currentStep === "storage" && (
             <StorageStep
@@ -304,17 +316,20 @@ export function ActivationWizard({
           )}
           {currentStep === "workspace" && (
             <WorkspaceStep
-              workspacesCount={workspacesCount}
+              workspacesCount={workspaces.length}
               onOpenWorkspaces={onOpenWorkspaces}
             />
           )}
           {currentStep === "mcp" && (
-            <McpStep
+            <AgentAccessStep
+              workspaces={workspaces}
+              accessReady={accessReady}
               mcpStatus={mcpStatus}
               sidecar={probe?.sidecar}
-              probeRunning={probeRunning}
-              onValidateSidecar={handleRunProbe}
-              onOpenMcpSettings={onOpenMcpSettings}
+              busy={probeRunning}
+              onPrepare={handlePrepareAgentAccess}
+              onValidate={handleRunProbe}
+              onOpenAdvanced={onOpenMcpSettings}
             />
           )}
           {currentStep === "client" && <ClientStep onReviewed={() => setClientReviewed(true)} />}
@@ -329,16 +344,15 @@ export function ActivationWizard({
           {currentStep === "done" && <DoneStep />}
         </div>
 
-        <Separator />
+        <Separator className="shrink-0" />
 
         {finishError ? (
-          <p role="alert" className="text-sm text-destructive">
+          <p role="alert" className="shrink-0 text-sm text-destructive">
             Final server-side verification failed: {finishError}
           </p>
         ) : null}
 
-        {/* Navigation */}
-        <div className="flex items-center justify-between">
+        <div className="flex shrink-0 items-center justify-between">
           <div className="flex gap-2">
             {currentIndex > 0 && (
               <Button type="button" variant="ghost" onClick={goBack}>
@@ -381,9 +395,8 @@ function WelcomeStep() {
           Welcome to Infimount
         </h3>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          Infimount starts with read-only MCP tools, no administration tools, no whole-storage
-          grants, and no exposed storage. Access is added only through an explicit path-scoped
-          workspace.
+          Connect storage, create one scoped workspace, then connect an agent. Infimount keeps
+          storage browsing separate from agent access so nothing is exposed just because you added it.
         </p>
       </div>
 
@@ -391,17 +404,17 @@ function WelcomeStep() {
         <SafetyCard
           icon={<Database className="h-4 w-4" />}
           title="Browse storage"
-          description="Connect local folders, S3, WebDAV, and 15+ backends via OpenDAL."
+          description="Connect local folders and supported cloud/object backends through OpenDAL."
         />
         <SafetyCard
           icon={<ShieldCheck className="h-4 w-4" />}
-          title="Read-only workspace"
-          description="Default access is scoped to one workspace path; everything else remains denied."
+          title="Scope a workspace"
+          description="The workspace path gets a managed MCP rule; the rest stays denied by default."
         />
         <SafetyCard
           icon={<PlugZap className="h-4 w-4" />}
-          title="Connect agents"
-          description="Claude Code, Cursor, VS Code, OpenCode — any MCP client, stdio or HTTP."
+          title="Connect an agent"
+          description="Prepare safe local MCP access, then install or copy the client integration you want."
         />
       </div>
 
@@ -436,27 +449,29 @@ function StorageStep({
       <div className="rounded-xl border border-border/80 bg-card p-4">
         <h3 className="flex items-center gap-2 text-sm font-medium">
           <Database className="h-4 w-4 text-primary" />
-          Add your first storage
+          Add or choose storage
         </h3>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          Start by connecting a local folder or a cloud storage backend. You can always add more
-          later.
+          Storage connections are for browsing first. Adding one does not expose it to an agent.
         </p>
       </div>
 
       {storagesCount > 0 ? (
-        <div className="flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 p-3 dark:border-green-900/30 dark:bg-green-950/10">
-          <CheckCircle2 className="h-4 w-4 text-green-600" />
-          <span className="text-sm text-green-700 dark:text-green-400">
-            {storagesCount} storage configuration(s) ready.
-          </span>
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 p-3 dark:border-green-900/30 dark:bg-green-950/10">
+            <CheckCircle2 className="h-4 w-4 text-green-600" />
+            <span className="text-sm text-green-700 dark:text-green-400">
+              {storagesCount} storage configuration{storagesCount === 1 ? "" : "s"} available.
+            </span>
+          </div>
+          <Button type="button" variant="outline" onClick={onAddStorage}>
+            Add another storage
+          </Button>
         </div>
       ) : (
         <Card className="flex flex-col items-center gap-3 p-6">
           <Database className="h-8 w-8 text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">
-            No storages configured yet.
-          </p>
+          <p className="text-sm text-muted-foreground">No storages configured yet.</p>
           <div className="flex flex-wrap justify-center gap-2">
             <Button type="button" onClick={() => void onCreateDemo()} disabled={demoCreating}>
               {demoCreating ? "Creating safe demo…" : "Create safe demo"}
@@ -488,86 +503,151 @@ function WorkspaceStep({
       <div className="rounded-xl border border-border/80 bg-card p-4">
         <h3 className="flex items-center gap-2 text-sm font-medium">
           <ShieldCheck className="h-4 w-4 text-primary" />
-          Scope access to a workspace
+          Create a storage-scoped workspace
         </h3>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          Create a read-only workspace. Infimount grants only that path; the rest of the storage
-          remains denied. The safe demo creates <code>workspace/</code> and keeps
-          <code>outside/denied.txt</code> inaccessible.
+          Pick any enabled writable storage that supports the required OpenDAL operations. Infimount
+          creates the workspace path inside that storage automatically. Turn on agent writes only if
+          you plan to run Agent Tasks.
         </p>
       </div>
       {workspacesCount > 0 ? (
-        <div className="flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 p-3 dark:border-green-900/30 dark:bg-green-950/10">
-          <CheckCircle2 className="h-4 w-4 text-green-600" />
-          <span className="text-sm text-green-700 dark:text-green-400">
-            {workspacesCount} scoped workspace{workspacesCount === 1 ? "" : "s"} ready.
-          </span>
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 p-3 dark:border-green-900/30 dark:bg-green-950/10">
+            <CheckCircle2 className="h-4 w-4 text-green-600" />
+            <span className="text-sm text-green-700 dark:text-green-400">
+              {workspacesCount} scoped workspace{workspacesCount === 1 ? "" : "s"} ready.
+            </span>
+          </div>
+          <Button type="button" variant="outline" onClick={onOpenWorkspaces}>
+            Manage workspaces
+          </Button>
         </div>
       ) : (
         <Button type="button" onClick={onOpenWorkspaces}>
-          Create read-only workspace
+          Create workspace
         </Button>
       )}
     </div>
   );
 }
 
-function McpStep({
+function AgentAccessStep({
+  workspaces,
+  accessReady,
   mcpStatus,
   sidecar,
-  probeRunning,
-  onValidateSidecar,
-  onOpenMcpSettings,
+  busy,
+  onPrepare,
+  onValidate,
+  onOpenAdvanced,
 }: {
+  workspaces: WorkspaceRecord[];
+  accessReady: boolean;
   mcpStatus?: McpRuntimeStatus;
   sidecar?: ActivationProbeOutput["sidecar"];
-  probeRunning: boolean;
-  onValidateSidecar: () => Promise<void>;
-  onOpenMcpSettings: () => void;
+  busy: boolean;
+  onPrepare: (workspace: WorkspaceRecord) => Promise<void>;
+  onValidate: () => Promise<void>;
+  onOpenAdvanced: () => void;
 }) {
-  const isReady = mcpStatus?.runningHttp || mcpStatus?.settings.enabled;
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState(workspaces[0]?.id ?? "");
+  const [preparing, setPreparing] = useState(false);
+  const [error, setError] = useState<string>();
+  const selected = workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? workspaces[0];
+
+  useEffect(() => {
+    if (selectedWorkspaceId && workspaces.some((workspace) => workspace.id === selectedWorkspaceId)) {
+      return;
+    }
+    setSelectedWorkspaceId(workspaces[0]?.id ?? "");
+  }, [selectedWorkspaceId, workspaces]);
+
+  const handlePrepare = async () => {
+    if (!selected) return;
+    setPreparing(true);
+    setError(undefined);
+    try {
+      await onPrepare(selected);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setPreparing(false);
+    }
+  };
+
   return (
     <div className="space-y-4 py-2">
       <div className="rounded-xl border border-border/80 bg-card p-4">
         <h3 className="flex items-center gap-2 text-sm font-medium">
           <ShieldCheck className="h-4 w-4 text-primary" />
-          Configure MCP safely
+          Prepare agent access
         </h3>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          MCP (Model Context Protocol) lets AI agents access your storage. Review which storages
-          are exposed, which tools are enabled, and set path-scoped access policies.
+          Infimount verifies the workspace-managed policy first, enables the minimum MCP tools for
+          that workspace, and only then exposes its backing storage. Storages with broader manual
+          grants stop here for explicit advanced review.
         </p>
       </div>
+
+      {workspaces.length > 0 ? (
+        <label className="block space-y-1.5 text-sm">
+          <span className="font-medium">Workspace</span>
+          <select
+            aria-label="Workspace for agent access"
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            value={selected?.id ?? ""}
+            onChange={(event) => setSelectedWorkspaceId(event.target.value)}
+          >
+            {workspaces.map((workspace) => (
+              <option key={workspace.id} value={workspace.id}>
+                {workspace.name} · {workspace.accessProfile === "read_write" ? "read/write" : "read-only"}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : (
+        <p className="text-sm text-muted-foreground">Create a workspace before preparing agent access.</p>
+      )}
+
+      {accessReady ? (
+        <div className="flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 p-3 dark:border-green-900/30 dark:bg-green-950/10">
+          <CheckCircle2 className="h-4 w-4 text-green-600" />
+          <span className="text-sm text-green-700 dark:text-green-400">Scoped agent access is ready.</span>
+        </div>
+      ) : null}
 
       {mcpStatus ? (
         <div className="rounded-xl border border-border/80 bg-card p-3">
           <div className="space-y-2 text-sm">
             <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Status</span>
-              <span className={isReady ? "text-green-600" : "text-muted-foreground"}>
-                {isReady ? "Active" : "Inactive"}
-              </span>
+              <span className="text-muted-foreground">MCP</span>
+              <span>{mcpStatus.settings.enabled ? "Enabled" : "Not enabled"}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">Transport</span>
               <span>{mcpStatus.settings.transport}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Endpoint</span>
-              <span className="font-mono text-xs">{mcpStatus.endpointDisplay}</span>
             </div>
           </div>
         </div>
       ) : null}
 
       <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="outline" onClick={onOpenMcpSettings}>
-          Open MCP settings
+        <Button
+          type="button"
+          onClick={() => void handlePrepare()}
+          disabled={!selected || preparing || busy}
+        >
+          {preparing ? "Preparing…" : accessReady ? "Re-check agent access" : "Prepare agent access"}
         </Button>
-        <Button type="button" onClick={() => void onValidateSidecar()} disabled={probeRunning}>
-          {probeRunning ? "Validating bundled sidecar…" : "Validate sidecar and policy"}
+        <Button type="button" variant="outline" onClick={() => void onValidate()} disabled={busy}>
+          {busy ? "Checking…" : "Re-check safety"}
+        </Button>
+        <Button type="button" variant="ghost" onClick={onOpenAdvanced}>
+          Advanced MCP settings
         </Button>
       </div>
+
       {sidecar ? (
         <p className={sidecar.versionMatch && sidecar.doctorHealthy ? "text-sm text-green-600" : "text-sm text-destructive"}>
           {sidecar.versionMatch && sidecar.doctorHealthy
@@ -575,6 +655,7 @@ function McpStep({
             : `Sidecar validation failed (${sidecar.errorCode ?? "ERR_SIDECAR_VALIDATION_FAILED"}).`}
         </p>
       ) : null}
+      {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
     </div>
   );
 }
@@ -603,7 +684,8 @@ function ClientStep({ onReviewed }: { onReviewed: () => void }) {
           Connect an MCP client
         </h3>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          Every adapter uses the verified, same-version bundled sidecar. Review exact changes before any config write or command execution.
+          Choose the client you actually use. Every adapter shows the exact config or command before
+          Infimount changes anything. You can also copy the snippet and install it yourself.
         </p>
       </div>
 
@@ -799,7 +881,7 @@ function VerifyStep({
         </p>
         {(requestError || probe?.errorCode) && (
           <p className="mt-2 text-xs text-destructive" role="alert">
-            Verification failed{probe?.errorCode ? ` (${probe.errorCode})` : ""}. Review MCP and workspace settings, then retry.
+            Verification failed{probe?.errorCode ? ` (${probe.errorCode})` : ""}. Review agent access or Advanced MCP settings, then retry.
           </p>
         )}
         <Button
@@ -841,7 +923,7 @@ function DoneStep() {
       <div className="text-center">
         <h3 className="text-lg font-semibold">Setup complete!</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Your Infimount environment is ready. You can always revisit settings from the sidebar.
+          Your workspace and agent connection are ready. Advanced controls remain available from the sidebar.
         </p>
       </div>
     </div>
