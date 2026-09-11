@@ -58,10 +58,8 @@ fn expand_home_alias(value: &str) -> McpResult<Option<String>> {
         Some("")
     } else if let Some(rest) = trimmed.strip_prefix("~/") {
         Some(rest)
-    } else if let Some(rest) = trimmed.strip_prefix("~\\") {
-        Some(rest)
     } else {
-        None
+        trimmed.strip_prefix("~\\")
     };
     let Some(suffix) = suffix else {
         return Ok(None);
