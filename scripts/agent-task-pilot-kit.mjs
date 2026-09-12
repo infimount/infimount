@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const DEFAULT_CANDIDATE_VERSION = "0.8.1-rc.4";
+const DEFAULT_CANDIDATE_VERSION = "0.8.1-rc.5";
 const INSTALLED_FROM = "0.8.0";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CORE = path.join(SCRIPT_DIR, "agent-task-pilot-kit-core.mjs");
