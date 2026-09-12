@@ -11,6 +11,7 @@ import {
   type WorkspaceRecord,
 } from "@/lib/api";
 import { appendActivityLogEvent } from "@/lib/activityLog";
+import { prepareWorkspaceStorageBinding } from "@/lib/workspaceStorage";
 import type { McpStoragePolicy } from "@/types/storage";
 
 export type AgentWorkspaceTemplateId = "custom" | "coding" | "research" | "data-analysis";
@@ -129,6 +130,11 @@ export async function createAgentWorkspace({
   if (normalizedRoot === "/" || normalizedRoot === "." || normalizedRoot === "..") {
     throw new Error("Workspace root path must be a non-root directory");
   }
+
+  // A legacy Local Filesystem record may use ~ while still browsing normally.
+  // Normalize that alias once before the first workspace binds the namespace so
+  // every later safety check sees one canonical persistent identity.
+  await prepareWorkspaceStorageBinding(storageId);
 
   const result = await createWorkspaceAtomic({
     storageId,

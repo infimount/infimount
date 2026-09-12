@@ -26,6 +26,7 @@ import {
   type WorkspaceRecord,
   type CreateWorkspaceAtomicInput,
 } from "./api";
+import { prepareWorkspaceStorageBinding } from "./workspaceStorage";
 import type { McpStoragePolicy } from "@/types/storage";
 
 const policy: McpStoragePolicy = {
@@ -82,10 +83,21 @@ vi.mock("./api", async (importOriginal) => {
   };
 });
 
+vi.mock("./workspaceStorage", () => ({
+  prepareWorkspaceStorageBinding: vi.fn().mockResolvedValue({
+    storageId: "local",
+    normalized: false,
+  }),
+}));
+
 describe("agentWorkspaces", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
+    vi.mocked(prepareWorkspaceStorageBinding).mockResolvedValue({
+      storageId: "local",
+      normalized: false,
+    });
     vi.mocked(writeFile).mockResolvedValue(undefined);
     vi.mocked(readFileRange).mockResolvedValue({
       totalSize: 8,
@@ -107,7 +119,7 @@ describe("agentWorkspaces", () => {
     (listWorkspaces as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   });
 
-  it("creates a workspace, template files, and scoped MCP policy", async () => {
+  it("normalizes storage binding before creating the scoped workspace", async () => {
     const workspace = await createAgentWorkspace({
       storageId: "local",
       name: "Coding Workspace",
@@ -117,9 +129,29 @@ describe("agentWorkspaces", () => {
     });
 
     expect(workspace.rootPath).toBe("/agent space");
+    expect(prepareWorkspaceStorageBinding).toHaveBeenCalledWith("local");
     expect(createWorkspaceAtomic).toHaveBeenCalledWith(
       expect.objectContaining({ accessProfile: "read_only", applyPolicy: true }),
     );
+    expect(vi.mocked(prepareWorkspaceStorageBinding).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(createWorkspaceAtomic).mock.invocationCallOrder[0],
+    );
+  });
+
+  it("does not attempt workspace creation if storage binding preparation fails", async () => {
+    vi.mocked(prepareWorkspaceStorageBinding).mockRejectedValueOnce(
+      new Error("storage root could not be normalized"),
+    );
+
+    await expect(
+      createAgentWorkspace({
+        storageId: "local",
+        name: "Blocked",
+        rootPath: "/blocked",
+        templateId: "custom",
+      }),
+    ).rejects.toThrow("storage root could not be normalized");
+    expect(createWorkspaceAtomic).not.toHaveBeenCalled();
   });
 
   it("appends memory and delegates checkpoint operations to Rust", async () => {

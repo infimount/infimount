@@ -14,7 +14,10 @@ import {
   deleteWorkspace,
   deleteWorkspaceWithFiles,
 } from "@/lib/api";
-import { workspaceStorageIssue } from "@/lib/workspaceStorage";
+import {
+  prepareWorkspaceStorageBinding,
+  workspaceStorageIssue,
+} from "@/lib/workspaceStorage";
 import type { StorageConfig } from "@/types/storage";
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -44,6 +47,17 @@ vi.mock("@/lib/api", async (importOriginal) => {
     writeFile: vi.fn(),
     deleteWorkspace: vi.fn(),
     deleteWorkspaceWithFiles: vi.fn(),
+  };
+});
+
+vi.mock("@/lib/workspaceStorage", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/workspaceStorage")>();
+  return {
+    ...actual,
+    prepareWorkspaceStorageBinding: vi.fn().mockResolvedValue({
+      storageId: "local",
+      normalized: false,
+    }),
   };
 });
 
@@ -117,6 +131,10 @@ describe("AgentWorkspacesDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
+    vi.mocked(prepareWorkspaceStorageBinding).mockResolvedValue({
+      storageId: "local",
+      normalized: false,
+    });
     vi.mocked(readFileRange).mockResolvedValue({
       totalSize: 8,
       offset: 0,
@@ -154,6 +172,7 @@ describe("AgentWorkspacesDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create workspace" }));
 
     await waitFor(() => {
+      expect(prepareWorkspaceStorageBinding).toHaveBeenCalledWith("local");
       expect(apiCreateWorkspaceAtomic).toHaveBeenCalledWith({
         storageId: "local",
         name: "Agent Research",
@@ -164,6 +183,9 @@ describe("AgentWorkspacesDialog", () => {
         applyPolicy: true,
       });
     });
+    expect(vi.mocked(prepareWorkspaceStorageBinding).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(apiCreateWorkspaceAtomic).mock.invocationCallOrder[0],
+    );
   });
 
   it("creates a read-write workspace only after explicit agent-write opt-in", async () => {
@@ -192,21 +214,21 @@ describe("AgentWorkspacesDialog", () => {
     });
   });
 
-  it("blocks the exact shell-style Local Filesystem root that failed the real pilot", async () => {
+  it("blocks the exact shell-variable Local Filesystem root that failed the real pilot", async () => {
     const invalid = {
       ...storage,
       config: { rootPath: "$HOME/infimount-agent-task-workspaces" },
     };
     renderDialog([invalid]);
 
-    expect(await screen.findByText(/uses \$HOME shell syntax/i)).toBeInTheDocument();
+    expect(await screen.findByText(/shell variable syntax/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create workspace" })).toBeDisabled();
     expect(apiCreateWorkspaceAtomic).not.toHaveBeenCalled();
   });
 
-  it("rejects relative, tilde, disabled, and read-only storage configurations before creation", () => {
+  it("accepts supported tilde aliases and rejects relative, disabled, and read-only storage configurations", () => {
     expect(workspaceStorageIssue({ ...storage, config: { rootPath: "relative/path" } })).toMatch(/not absolute/i);
-    expect(workspaceStorageIssue({ ...storage, config: { rootPath: "~/workspace" } })).toMatch(/uses a ~ path/i);
+    expect(workspaceStorageIssue({ ...storage, config: { rootPath: "~/workspace" } })).toBeNull();
     expect(workspaceStorageIssue({ ...storage, enabled: false })).toMatch(/disabled/i);
     expect(workspaceStorageIssue({ ...storage, readOnly: true })).toMatch(/read-only/i);
     expect(workspaceStorageIssue(storage)).toBeNull();

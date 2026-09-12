@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/experimental-ct-react";
 import { ActivationWizard } from "@/components/ActivationWizard";
+import type { WorkspaceRecord } from "@/lib/api";
 
 const kinds = [
   ["generic_stdio", "Generic stdio JSON", false],
@@ -9,6 +10,21 @@ const kinds = [
   ["open_code", "OpenCode", true],
   ["claude_desktop", "Claude Desktop", false],
 ] as const;
+
+const workspace: WorkspaceRecord = {
+  id: "workspace-id",
+  schemaVersion: 2,
+  storageId: "storage-id",
+  name: "Agent workspace",
+  rootPath: "/agent-workspaces/agent-workspace",
+  templateId: "custom",
+  accessProfile: "read_write",
+  policyRuleId: "workspace:workspace-id",
+  createdAt: "2026-09-11T00:00:00Z",
+  updatedAt: "2026-09-11T00:00:00Z",
+  memoryFiles: [],
+  checkpointIds: [],
+};
 
 test("mounts all client adapters and applies a reviewed Cursor merge", async ({ mount, page }) => {
   const installMocks = (adapterKinds: typeof kinds) => {
@@ -72,11 +88,13 @@ test("mounts all client adapters and applies a reviewed Cursor merge", async ({ 
       onCreateDemo={async () => undefined}
       onOpenWorkspaces={() => undefined}
       onOpenMcpSettings={() => undefined}
+      onPrepareAgentAccess={async () => undefined}
       onComplete={async () => undefined}
       onSkip={async () => undefined}
       onSaveState={async () => undefined}
       storagesCount={1}
-      workspacesCount={1}
+      workspaces={[workspace]}
+      agentAccessReady={false}
       initialStep="client"
       initialCompletedSteps={["welcome", "storage", "workspace", "mcp"]}
     />,
