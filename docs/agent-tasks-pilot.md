@@ -18,13 +18,15 @@ The pilot does not justify new feature breadth. A failed run should first identi
 
 ## Candidate prerequisite
 
-Once published, use the `v0.8.1-rc.4` candidate for the resumed pilot.
+Once published, use the `v0.8.1-rc.5` candidate for the resumed pilot.
 
 `v0.8.1-rc.1` was published successfully, but its first real pilot attempt stopped during Agent Workspace setup before any Agent Task was executed. That run exposed a material Infimount workflow defect: workspace creation still carried agent-type/template and second-path concepts, and a shell-style Local Filesystem root could fail late during namespace binding. rc.2 fixed that product blocker. rc.1 must not be presented as completed pilot evidence.
 
 `v0.8.1-rc.2` was then tagged at the intended candidate commit, but its Release workflow failed twice in the Linux packaging job before Infimount compilation because a GitHub-hosted runner contained an unrelated Google Chrome APT repository with inconsistent package metadata (`Hash Sum mismatch`). The dependent publish job remained skipped, so no rc.2 GitHub Release was published. The product/release gates and macOS/Windows builds passed; the failure was classified as release-environment infrastructure. rc.3 carried the same product behavior plus release APT-source hardening. rc.2 must not be presented as completed pilot evidence.
 
-`v0.8.1-rc.3` was published successfully and its canonical Release workflow passed all release gates, multi-platform packaging, publication, and public-asset re-download validation. The separate `Post Release Validation` workflow then failed before artifact validation because its `workflow_run` context supplied reserved `GITHUB_REF_NAME=main`; the attempted step-level override did not replace that reserved variable, so the version-sync script rejected `main` instead of using the resolved rc.3 tag. PR #99 fixed that orchestration path by passing the resolved release tag explicitly and adding a regression test. rc.4 carries the same product behavior plus that post-release validation fix. rc.3 must not be presented as completed pilot evidence.
+`v0.8.1-rc.3` was published successfully and its canonical Release workflow passed all release gates, multi-platform packaging, publication, and public-asset re-download validation. The separate `Post Release Validation` workflow then failed before artifact validation because its `workflow_run` context supplied reserved `GITHUB_REF_NAME=main`; the attempted step-level override did not replace that reserved variable, so the version-sync script rejected `main` instead of using the resolved rc.3 tag. PR #99 fixed that orchestration path by passing the resolved release tag explicitly and adding a regression test. rc.4 carried the same product behavior plus that post-release validation fix. rc.3 must not be presented as completed pilot evidence.
+
+`v0.8.1-rc.4` was published successfully. Its canonical Release workflow and automatic downstream `Post Release Validation` both passed. The resumed real pilot then exposed product workflow and guided-access defects before a complete three-workload pilot could be recorded: legacy Local Filesystem home-alias roots could still fail Agent Workspace binding, onboarding forced normal users through advanced MCP administration, modal state could relaunch onboarding unexpectedly, the client-adapter step could exceed the usable viewport, and the guided agent-access path needed stronger least-privilege handling for per-workspace readiness, extra global tools, and non-loopback HTTP listeners. PR #102 fixes those rc.4 pilot blockers. rc.4 must not be presented as completed pilot evidence.
 
 Record:
 
@@ -34,9 +36,43 @@ Record:
 - previous installed stable version;
 - agent client name.
 
-The resumed pilot should start from an installed v0.8.0 environment and install v0.8.1-rc.4 over it. If the prerelease is not offered through the stable updater channel, installer-over-install is the correct candidate upgrade exercise. Do not claim that a prerelease installer proves stable-channel updater behavior.
+The resumed pilot should start from an installed v0.8.0 environment and install v0.8.1-rc.5 over it. If the prerelease is not offered through the stable updater channel, installer-over-install is the correct candidate upgrade exercise. Do not claim that a prerelease installer proves stable-channel updater behavior.
 
-For a Local Filesystem storage used to host an Agent Workspace, use an explicit absolute host path. Do not enter shell notation such as `$HOME/...` or `~/...` for workspace namespace binding. The workspace path shown by Infimount itself is storage-relative and is derived automatically from the workspace name.
+For the controlled task workspace in this pilot, continue to use an **explicit absolute host path**. This keeps the Agent Task workload evidence independent from the separate legacy-root regression below. Shell-variable notation such as `$HOME/...` remains invalid. rc.5 also supports legacy `~` and `~/...` Local Filesystem roots by canonically normalizing them once before the first workspace namespace binding.
+
+## rc.5 focused regression checks
+
+Before the three workload pilots, verify the product corrections that caused rc.5 to exist.
+
+### Legacy Local Filesystem home alias
+
+Use a v0.8.0 Local Filesystem storage whose configured root is the legacy `~` form and that has no bound Agent Workspace. After upgrading to rc.5:
+
+1. confirm ordinary storage browsing still works;
+2. create one Agent Workspace on that storage through the normal UI;
+3. verify workspace creation succeeds without manually editing the storage first;
+4. verify the storage root is normalized to the concrete canonical home directory before namespace binding;
+5. verify existing storage contents remain available and no unrelated storage settings are changed.
+
+Do this after the upgrade-retention snapshot is captured, because the one-time normalization is an intentional post-upgrade mutation.
+
+### Guided Agent Access
+
+Exercise the normal onboarding flow as **Storage → Workspace → Agent Access → Client → Verify**.
+
+Verify all of the following:
+
+- the selected workspace must be explicitly prepared; another exposed workspace on the same storage does not make it ready;
+- a first-time read-only setup enables only the read tools;
+- a first-time read-write setup adds only `mkdir` and `write_file` beyond the read tools;
+- when MCP is disabled, guided setup chooses local stdio rather than activating a drafted HTTP listener;
+- an already-active MCP server with additional global tools is rejected by the guided path and directs the user to Advanced MCP settings;
+- an already-active HTTP server bound beyond loopback is rejected by the guided path and directs the user to Advanced MCP settings;
+- broad default storage access or additional manual storage grants are rejected by the guided path;
+- closing Add Storage, Agent Workspaces, or Advanced MCP only returns to onboarding when onboarding explicitly opened that dialog;
+- the MCP client-adapter step remains usable at the target desktop viewport without inaccessible controls below the fold.
+
+These checks validate the rc.5 corrections. They do not replace the three real Agent Task workloads below.
 
 ## Evidence privacy boundary
 
@@ -156,7 +192,7 @@ Verify the real publication UI does not expose an overwrite mode. Record `safety
 
 ## Upgrade exercise
 
-Start from v0.8.0 with representative local state, then install v0.8.1-rc.4 over it.
+Start from v0.8.0 with representative local state, then install v0.8.1-rc.5 over it.
 
 The evidence bundle requires all of the following:
 
@@ -166,7 +202,7 @@ The evidence bundle requires all of the following:
 - Agent Tasks are visible and usable after the upgrade;
 - the upgraded application starts normally.
 
-The upgrade check is a candidate-compatibility exercise. It does not replace automated migration tests and does not claim stable-channel updater behavior unless that exact updater path was actually used.
+Capture the post-upgrade retention snapshot before exercising the rc.5 legacy `~` normalization check. The upgrade check is a candidate-compatibility exercise. It does not replace automated migration tests and does not claim stable-channel updater behavior unless that exact updater path was actually used.
 
 ## Per-task evidence
 
@@ -194,6 +230,7 @@ Each of the three task records contains:
 
 A candidate/platform evidence bundle passes only when:
 
+- the rc.5 focused regression checks above pass without a material workflow or safety defect;
 - coding, document, and data-analysis pilots all pass;
 - all source before/after aggregate hashes match;
 - source MCP exposure is unchanged for every task;
@@ -218,5 +255,3 @@ Classify every failed pilot before changing scope:
 - **Client/agent limitation**: Codex behavior or model quality is the cause while Infimount boundaries work correctly. Record it separately from storage-product correctness.
 - **Task-quality failure**: output is not useful or correct enough even though the workflow is sound. Improve task framing or reassess the product value hypothesis before adding features.
 - **Environment failure**: external registry, provider, network, or OS issue occurs before the product path is exercised. Retry without changing product code unless the product should reasonably tolerate the condition.
-
-This classification prevents a flaky external dependency or a weak agent answer from being misdiagnosed as a storage safety defect, and prevents a real safety failure from being dismissed as model variance.
