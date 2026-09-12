@@ -255,3 +255,5 @@ Classify every failed pilot before changing scope:
 - **Client/agent limitation**: Codex behavior or model quality is the cause while Infimount boundaries work correctly. Record it separately from storage-product correctness.
 - **Task-quality failure**: output is not useful or correct enough even though the workflow is sound. Improve task framing or reassess the product value hypothesis before adding features.
 - **Environment failure**: external registry, provider, network, or OS issue occurs before the product path is exercised. Retry without changing product code unless the product should reasonably tolerate the condition.
+
+This classification prevents a flaky external dependency or a weak agent answer from being misdiagnosed as a storage safety defect, and prevents a real safety failure from being dismissed as model variance.
