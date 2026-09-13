@@ -163,7 +163,7 @@ test("loads additional directory pages as the file grid reaches the end", async 
 
   const fallback = page.getByRole("button", { name: "Load more", includeHidden: true });
   await expect(fallback).toHaveCount(1);
-  await expect(fallback).toBeHidden();
+  await expect(fallback).toHaveClass(/sr-only/);
 
   await page.getByRole("listbox").evaluate((node) => {
     node.dispatchEvent(new Event("scroll", { bubbles: false }));
