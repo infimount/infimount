@@ -18,7 +18,7 @@ The pilot does not justify new feature breadth. A failed run should first identi
 
 ## Candidate prerequisite
 
-Once published, use the `v0.8.1-rc.5` candidate for the resumed pilot.
+Once published, use the `v0.8.1-rc.6` candidate for the resumed pilot.
 
 `v0.8.1-rc.1` was published successfully, but its first real pilot attempt stopped during Agent Workspace setup before any Agent Task was executed. That run exposed a material Infimount workflow defect: workspace creation still carried agent-type/template and second-path concepts, and a shell-style Local Filesystem root could fail late during namespace binding. rc.2 fixed that product blocker. rc.1 must not be presented as completed pilot evidence.
 
@@ -26,7 +26,9 @@ Once published, use the `v0.8.1-rc.5` candidate for the resumed pilot.
 
 `v0.8.1-rc.3` was published successfully and its canonical Release workflow passed all release gates, multi-platform packaging, publication, and public-asset re-download validation. The separate `Post Release Validation` workflow then failed before artifact validation because its `workflow_run` context supplied reserved `GITHUB_REF_NAME=main`; the attempted step-level override did not replace that reserved variable, so the version-sync script rejected `main` instead of using the resolved rc.3 tag. PR #99 fixed that orchestration path by passing the resolved release tag explicitly and adding a regression test. rc.4 carried the same product behavior plus that post-release validation fix. rc.3 must not be presented as completed pilot evidence.
 
-`v0.8.1-rc.4` was published successfully. Its canonical Release workflow and automatic downstream `Post Release Validation` both passed. The resumed real pilot then exposed product workflow and guided-access defects before a complete three-workload pilot could be recorded: legacy Local Filesystem home-alias roots could still fail Agent Workspace binding, onboarding forced normal users through advanced MCP administration, modal state could relaunch onboarding unexpectedly, the client-adapter step could exceed the usable viewport, and the guided agent-access path needed stronger least-privilege handling for per-workspace readiness, extra global tools, and non-loopback HTTP listeners. PR #102 fixes those rc.4 pilot blockers. rc.4 must not be presented as completed pilot evidence.
+`v0.8.1-rc.4` was published successfully. Its canonical Release workflow and automatic downstream `Post Release Validation` both passed. The resumed real pilot then exposed product workflow and guided-access defects before a complete three-workload pilot could be recorded: legacy Local Filesystem home-alias roots could still fail Agent Workspace binding, onboarding forced normal users through advanced MCP administration, modal state could relaunch onboarding unexpectedly, the client-adapter step could exceed the usable viewport, and the guided agent-access path needed stronger least-privilege handling for per-workspace readiness, extra global tools, and non-loopback HTTP listeners. PR #102 fixed those rc.4 pilot blockers. rc.4 must not be presented as completed pilot evidence.
+
+`v0.8.1-rc.5` was published successfully. Its canonical Release workflow and automatic downstream `Post Release Validation` both passed. The resumed real pilot then confirmed the key legacy-root correction: an Agent Workspace could be created on the existing `~` Local Filesystem storage without manually rewriting the storage first. The same real run exposed a separate file-browser workflow defect before the three Agent Task workloads were completed. Paginated folders showed a visible manual **Load more** control, and a continuation cursor obtained before the one-time storage normalization could become stale because list cursors are intentionally bound to the storage revision. Clicking the stale control surfaced an error instead of recovering transparently. PR #105 fixes that defect by auto-loading as the user scrolls, refreshing the current directory when a revision-bound cursor becomes stale, retaining only a screen-reader pagination fallback, and stopping automatic retries after genuine paging failures. rc.5 must not be presented as completed pilot evidence.
 
 Record:
 
@@ -36,17 +38,17 @@ Record:
 - previous installed stable version;
 - agent client name.
 
-The resumed pilot should start from an installed v0.8.0 environment and install v0.8.1-rc.5 over it. If the prerelease is not offered through the stable updater channel, installer-over-install is the correct candidate upgrade exercise. Do not claim that a prerelease installer proves stable-channel updater behavior.
+The resumed pilot should start from an installed v0.8.0 environment and install v0.8.1-rc.6 over it. If the prerelease is not offered through the stable updater channel, installer-over-install is the correct candidate upgrade exercise. Do not claim that a prerelease installer proves stable-channel updater behavior.
 
-For the controlled task workspace in this pilot, continue to use an **explicit absolute host path**. This keeps the Agent Task workload evidence independent from the separate legacy-root regression below. Shell-variable notation such as `$HOME/...` remains invalid. rc.5 also supports legacy `~` and `~/...` Local Filesystem roots by canonically normalizing them once before the first workspace namespace binding.
+For the controlled task workspace in this pilot, continue to use an **explicit absolute host path**. This keeps the Agent Task workload evidence independent from the separate legacy-root regression below. Shell-variable notation such as `$HOME/...` remains invalid. rc.6 retains the rc.5 support for legacy `~` and `~/...` Local Filesystem roots by canonically normalizing them once before the first workspace namespace binding.
 
-## rc.5 focused regression checks
+## rc.5 and rc.6 focused regression checks
 
-Before the three workload pilots, verify the product corrections that caused rc.5 to exist.
+Before the three workload pilots, verify the product corrections that caused rc.5 and rc.6 to exist.
 
 ### Legacy Local Filesystem home alias
 
-Use a v0.8.0 Local Filesystem storage whose configured root is the legacy `~` form and that has no bound Agent Workspace. After upgrading to rc.5:
+Use a v0.8.0 Local Filesystem storage whose configured root is the legacy `~` form and that has no bound Agent Workspace. After upgrading to rc.6:
 
 1. confirm ordinary storage browsing still works;
 2. create one Agent Workspace on that storage through the normal UI;
@@ -73,6 +75,22 @@ Verify all of the following:
 - the MCP client-adapter step remains usable at the target desktop viewport without inaccessible controls below the fold.
 
 These checks validate the rc.5 corrections. They do not replace the three real Agent Task workloads below.
+
+### File-browser pagination and stale-cursor recovery
+
+Use a disposable, non-sensitive directory with more than 200 entries so the normal browser requires at least two bounded list pages.
+
+Required real-pilot observations:
+
+1. the first page renders normally without a visible manual **Load more** button;
+2. scrolling toward the end of the loaded grid or table automatically loads the next page;
+3. the additional entries append without duplicates and normal navigation remains usable;
+4. when a legitimate storage revision change invalidates a previously issued cursor, the browser refreshes the current directory from page one instead of surfacing a generic load-more error; the legacy `~` normalization above is an acceptable real revision-change path when exercised in that order;
+5. after recovery, scrolling can continue and the directory remains browseable.
+
+The automated UI/unit gates additionally prove that genuine paging failures stop automatic retry and expose an explicit retry state, safety-limit text is shown only when continuation is no longer possible, and stale page responses are ignored after navigation/storage changes. Do not manufacture a network failure in the real pilot solely to duplicate those deterministic automated checks.
+
+These checks validate the rc.6 correction. They do not replace the three real Agent Task workloads below.
 
 ## Evidence privacy boundary
 
@@ -192,7 +210,7 @@ Verify the real publication UI does not expose an overwrite mode. Record `safety
 
 ## Upgrade exercise
 
-Start from v0.8.0 with representative local state, then install v0.8.1-rc.5 over it.
+Start from v0.8.0 with representative local state, then install v0.8.1-rc.6 over it.
 
 The evidence bundle requires all of the following:
 
@@ -202,7 +220,7 @@ The evidence bundle requires all of the following:
 - Agent Tasks are visible and usable after the upgrade;
 - the upgraded application starts normally.
 
-Capture the post-upgrade retention snapshot before exercising the rc.5 legacy `~` normalization check. The upgrade check is a candidate-compatibility exercise. It does not replace automated migration tests and does not claim stable-channel updater behavior unless that exact updater path was actually used.
+Capture the post-upgrade retention snapshot before exercising the legacy `~` normalization check. The upgrade check is a candidate-compatibility exercise. It does not replace automated migration tests and does not claim stable-channel updater behavior unless that exact updater path was actually used.
 
 ## Per-task evidence
 
@@ -230,7 +248,7 @@ Each of the three task records contains:
 
 A candidate/platform evidence bundle passes only when:
 
-- the rc.5 focused regression checks above pass without a material workflow or safety defect;
+- the rc.5 and rc.6 focused regression checks above pass without a material workflow or safety defect;
 - coding, document, and data-analysis pilots all pass;
 - all source before/after aggregate hashes match;
 - source MCP exposure is unchanged for every task;
