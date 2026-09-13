@@ -330,6 +330,7 @@ export function FileBrowser({
   const [loadingMore, setLoadingMore] = useState(false);
   const [nextPageCursor, setNextPageCursor] = useState<string | null>(null);
   const [listingTruncated, setListingTruncated] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [error, setError] = useState<LoadError | null>(null);
 
   type SortField = "name" | "type" | "modified" | "size";
@@ -550,6 +551,7 @@ export function FileBrowser({
     setLoadingMore(false);
     setNextPageCursor(null);
     setListingTruncated(false);
+    setLoadMoreError(null);
     setError(null);
     try {
       const page = await listEntriesPage(sourceId, path, 200, undefined, false);
@@ -557,6 +559,7 @@ export function FileBrowser({
       setAllFiles(visiblePageEntries(page.entries, path).map(mapEntryToFileItem));
       setNextPageCursor(page.nextCursor);
       setListingTruncated(page.truncated);
+      setLoadMoreError(null);
       setSelectedFiles(new Set());
     } catch (err) {
       if (requestId !== loadRequestIdRef.current) return;
@@ -580,27 +583,67 @@ export function FileBrowser({
   const loadMoreFiles = async () => {
     const cursor = nextPageCursor;
     if (!cursor || loadMoreInFlightRef.current) return;
+
     const requestId = loadRequestIdRef.current;
     const requestedPath = currentPath;
+
     loadMoreInFlightRef.current = true;
     setLoadingMore(true);
+    setLoadMoreError(null);
+
     try {
       const page = await listEntriesPage(sourceId, requestedPath, 200, cursor, false);
-      if (requestId !== loadRequestIdRef.current || requestedPath !== currentPath) return;
+
+      if (
+        requestId !== loadRequestIdRef.current
+        || requestedPath !== currentPath
+      ) {
+        return;
+      }
+
       const additions = visiblePageEntries(page.entries, requestedPath).map(mapEntryToFileItem);
+
       setAllFiles((previous) => {
         const existing = new Set(previous.map((file) => file.id));
-        return [...previous, ...additions.filter((file) => !existing.has(file.id))];
+        return [
+          ...previous,
+          ...additions.filter((file) => !existing.has(file.id)),
+        ];
       });
+
       setNextPageCursor(page.nextCursor);
       setListingTruncated(page.truncated);
+      setLoadMoreError(null);
     } catch (err) {
-      if (requestId !== loadRequestIdRef.current || requestedPath !== currentPath) return;
-      toast({
-        title: "Could not load more files",
-        description: err instanceof Error ? err.message : String(err),
-        variant: "destructive",
-      });
+      if (
+        requestId !== loadRequestIdRef.current
+        || requestedPath !== currentPath
+      ) {
+        return;
+      }
+
+      const message = err instanceof Error ? err.message : String(err);
+      const staleCursor =
+        err instanceof TauriApiError
+        && /list cursor/i.test(err.message)
+        && /(invalid|current query|storage revision)/i.test(err.message);
+
+      if (staleCursor) {
+        // Cursors are intentionally storage-revision-bound. A legitimate
+        // configuration mutation, such as normalizing a legacy local root
+        // before workspace binding, invalidates the old cursor. Refresh the
+        // current folder from page one rather than exposing that internal
+        // consistency mechanism to the user.
+        loadMoreInFlightRef.current = false;
+        setLoadingMore(false);
+        setLoadMoreError(null);
+        await loadFiles(requestedPath);
+        return;
+      }
+
+      // Stop automatic paging after a real failure so a network/backend
+      // problem cannot produce an uncontrolled retry loop.
+      setLoadMoreError(message || "Could not load more files.");
     } finally {
       if (requestId === loadRequestIdRef.current) {
         loadMoreInFlightRef.current = false;
@@ -626,6 +669,7 @@ export function FileBrowser({
     setLoadingMore(false);
     setNextPageCursor(null);
     setListingTruncated(false);
+    setLoadMoreError(null);
     loadMoreInFlightRef.current = false;
     setAllFiles([]); // Clear files when switching sources
     setSelectedFiles(new Set());
@@ -644,6 +688,30 @@ export function FileBrowser({
     rememberRecent(currentPath);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPath, sourceId, refreshTick]);
+
+  const handleContentScroll = (event: React.UIEvent<HTMLElement>) => {
+    if (
+      !nextPageCursor
+      || loading
+      || loadingMore
+      || loadMoreError
+      || error
+    ) {
+      return;
+    }
+
+    const target = event.target as HTMLElement;
+    const remaining =
+      target.scrollHeight - target.scrollTop - target.clientHeight;
+    const threshold = Math.max(
+      240,
+      Math.round(target.clientHeight * 0.5),
+    );
+
+    if (remaining <= threshold) {
+      void loadMoreFiles();
+    }
+  };
 
   const handleNavigate = (path: string, options?: { fromHistory?: boolean }) => {
     const normalized = path || "/";
@@ -1838,7 +1906,10 @@ export function FileBrowser({
           {/* Panel Group for Content & Preview */}
           <ResizablePanelGroup direction="horizontal" className="flex-1 overflow-hidden">
             <ResizablePanel minSize="30%" defaultSize={previewFile ? "70%" : "100%"}>
-                <div className="flex h-full flex-col overflow-hidden relative">
+                <div
+                  className="flex h-full flex-col overflow-hidden relative"
+                  onScrollCapture={handleContentScroll}
+                >
                 <ContextMenu>
                   <ContextMenuTrigger asChild>
                     <div
@@ -1956,29 +2027,58 @@ export function FileBrowser({
                   </ContextMenuContent>
                 </ContextMenu>
 
-                {(nextPageCursor || listingTruncated) && !error && (
+                {nextPageCursor && !error && !loadMoreError ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="sr-only"
+                    disabled={loadingMore}
+                    onClick={() => void loadMoreFiles()}
+                  >
+                    Load more
+                  </Button>
+                ) : null}
+
+                {(loadingMore
+                  || loadMoreError
+                  || (listingTruncated && !nextPageCursor)) && !error ? (
                   <div
                     className="flex h-10 shrink-0 items-center justify-center gap-3 border-t bg-muted/20 px-3"
                     aria-live="polite"
                   >
-                    {nextPageCursor ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={loadingMore}
-                        onClick={() => void loadMoreFiles()}
-                      >
-                        {loadingMore ? "Loading more…" : "Load more"}
-                      </Button>
+                    {loadingMore ? (
+                      <span className="text-xs text-muted-foreground">
+                        Loading more files…
+                      </span>
                     ) : null}
-                    {listingTruncated ? (
+
+                    {loadMoreError ? (
+                      <>
+                        <span className="text-xs text-muted-foreground">
+                          More files could not be loaded.
+                        </span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setLoadMoreError(null);
+                            void loadMoreFiles();
+                          }}
+                        >
+                          Retry
+                        </Button>
+                      </>
+                    ) : null}
+
+                    {listingTruncated && !nextPageCursor ? (
                       <span className="text-xs text-muted-foreground">
                         Listing reached the backend safety limit.
                       </span>
                     ) : null}
                   </div>
-                )}
+                ) : null}
 
                 {/* Footer path (Inside Left Panel) */}
                 {/* Footer path (Editable) */}

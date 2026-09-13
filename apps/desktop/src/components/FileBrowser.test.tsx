@@ -467,11 +467,97 @@ describe("FileBrowser navigation, selection, and upload flows", () => {
         renderFileBrowser();
         expect(await screen.findByRole("button", { name: "first.txt" })).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "second.txt" })).not.toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+        expect(screen.getByRole("button", { name: "Load more" })).toHaveClass("sr-only");
+
+        const grid = screen.getByTestId("grid-view");
+        Object.defineProperties(grid, {
+            scrollHeight: { configurable: true, value: 1200 },
+            clientHeight: { configurable: true, value: 600 },
+            scrollTop: { configurable: true, value: 560, writable: true },
+        });
+
+        fireEvent.scroll(grid);
+
         expect(await screen.findByRole("button", { name: "second.txt" })).toBeInTheDocument();
         expect(listEntriesPage).toHaveBeenNthCalledWith(1, "test", "/", 200, undefined, false);
         expect(listEntriesPage).toHaveBeenNthCalledWith(2, "test", "/", 200, "signed-next", false);
         expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+    });
+
+    it("refreshes the current folder when a pagination cursor becomes stale", async () => {
+        vi.mocked(listEntriesPage)
+            .mockResolvedValueOnce({
+                entries: [{
+                    path: "/first.txt",
+                    name: "first.txt",
+                    is_dir: false,
+                    size: 1,
+                    modified_at: null,
+                    etag: null,
+                }],
+                nextCursor: "stale-next",
+                truncated: false,
+            })
+            .mockRejectedValueOnce(
+                new TauriApiError(
+                    "list cursor does not match the current query or storage revision",
+                    "CONFIG_ERROR",
+                ),
+            )
+            .mockResolvedValueOnce({
+                entries: [
+                    {
+                        path: "/first.txt",
+                        name: "first.txt",
+                        is_dir: false,
+                        size: 1,
+                        modified_at: null,
+                        etag: null,
+                    },
+                    {
+                        path: "/refreshed.txt",
+                        name: "refreshed.txt",
+                        is_dir: false,
+                        size: 2,
+                        modified_at: null,
+                        etag: null,
+                    },
+                ],
+                nextCursor: null,
+                truncated: false,
+            });
+
+        renderFileBrowser();
+
+        expect(
+            await screen.findByRole("button", { name: "first.txt" }),
+        ).toBeInTheDocument();
+
+        const grid = screen.getByTestId("grid-view");
+        Object.defineProperties(grid, {
+            scrollHeight: { configurable: true, value: 1200 },
+            clientHeight: { configurable: true, value: 600 },
+            scrollTop: { configurable: true, value: 560, writable: true },
+        });
+
+        fireEvent.scroll(grid);
+
+        expect(
+            await screen.findByRole("button", { name: "refreshed.txt" }),
+        ).toBeInTheDocument();
+
+        expect(listEntriesPage).toHaveBeenNthCalledWith(
+            3,
+            "test",
+            "/",
+            200,
+            undefined,
+            false,
+        );
+
+        expect(
+            screen.queryByText("More files could not be loaded."),
+        ).not.toBeInTheDocument();
     });
 
     it("ignores a stale load-more response after navigation", async () => {

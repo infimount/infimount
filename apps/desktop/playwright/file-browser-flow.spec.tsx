@@ -155,15 +155,23 @@ test("browses into a folder and updates the visible location", async ({ mount, p
   await expect(page.getByRole("option", { name: "report.txt" })).toHaveCount(0);
 });
 
-test("loads additional directory pages only when requested", async ({ mount, page }) => {
+test("loads additional directory pages as the file grid reaches the end", async ({ mount, page }) => {
   await mountFileBrowser(mount, page, { paginateRoot: true });
 
   await expect(page.getByRole("option", { name: "docs" })).toBeVisible();
   await expect(page.getByRole("option", { name: "report.txt" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Load more" }).click();
+
+  const fallback = page.getByRole("button", { name: "Load more", includeHidden: true });
+  await expect(fallback).toHaveCount(1);
+  await expect(fallback).toHaveClass(/sr-only/);
+
+  await page.getByRole("listbox").evaluate((node) => {
+    node.dispatchEvent(new Event("scroll", { bubbles: false }));
+  });
+
   await expect(page.getByRole("option", { name: "report.txt" })).toBeVisible();
   await expect(page.getByRole("option", { name: "photo.jpg" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Load more" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Load more", includeHidden: true })).toHaveCount(0);
 });
 
 test("filters files through search and switches to list view", async ({ mount, page }) => {
