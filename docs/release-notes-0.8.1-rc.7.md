@@ -129,21 +129,27 @@ See `docs/agent-tasks-pilot.md` for the complete protocol. No completed real pil
 
 ## Release validation
 
-The rc.7 candidate must pass the complete automated release chain before its tag is created:
+Before creating the `v0.8.1-rc.7` tag, the exact final release-preparation PR head must pass all six pre-tag workflows:
 
-- frontend lint, typecheck, unit tests, integration tests, coverage, and Playwright UI tests;
-- activation-reminder regression coverage;
-- file-browser automatic-pagination and stale-cursor recovery regressions;
-- Rust formatting, clippy, tests, exact MSRV validation, and coverage;
-- desktop smoke and storage simulator gates;
-- dependency audit, repository lint, release consistency, and zero-manual release policy;
+- CI;
+- Integration Tests;
+- Release Rehearsal;
+- Coverage;
+- Dependency Audit;
+- Repo Lint.
+
+Those gates cover frontend lint, typecheck, unit/integration/UI tests and coverage; activation-reminder and file-browser regressions; Rust formatting, clippy, tests, exact MSRV and coverage; desktop smoke; storage simulator checks; dependency audit; repository consistency; and release-policy rehearsal.
+
+After the tag is created, the canonical Release workflow must then pass the tag-triggered release chain, including:
+
 - signing-policy checks;
 - Linux, macOS, and Windows packaging;
 - updater-signature verification;
 - checksums, SBOM, provenance, and installer smoke checks;
 - draft-release re-download validation;
-- publication and published-release re-download validation;
-- automatic downstream `Post Release Validation`.
+- publication and published-release re-download validation.
+
+The automatic downstream `Post Release Validation` workflow must also pass before rc.7 is accepted as the candidate for the resumed real pilot.
 
 ## Known boundaries
 
