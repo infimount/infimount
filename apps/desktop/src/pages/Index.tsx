@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 
 import { PanelLeft, PanelRight, X } from "lucide-react";
 
+import { ActivationReminder } from "@/components/ActivationReminder";
 import { AgentWorkspacesDialog } from "@/components/AgentWorkspacesDialog";
 import { FileBrowser, type FileBrowserPaneState } from "@/components/FileBrowser";
 import { WindowControls } from "@/components/WindowControls";
@@ -1364,12 +1365,7 @@ const Index = () => {
         </Suspense>
 
         {appSettings?.onboardingSkipped && !appSettings.onboardingCompleted ? (
-          <div className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-amber-500/30 bg-background px-4 py-3 shadow-lg">
-            <p className="text-sm">Activation is incomplete. Agent access remains unverified.</p>
-            <Button type="button" size="sm" onClick={() => setIsOnboardingOpen(true)}>
-              Finish setup
-            </Button>
-          </div>
+          <ActivationReminder onFinishSetup={() => setIsOnboardingOpen(true)} />
         ) : null}
       </div>
     </TransferQueueProvider>
