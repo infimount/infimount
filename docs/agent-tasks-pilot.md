@@ -18,7 +18,7 @@ The pilot does not justify new feature breadth. A failed run should first identi
 
 ## Candidate prerequisite
 
-Once published, use the `v0.8.1-rc.6` candidate for the resumed pilot.
+Once published, use the `v0.8.1-rc.7` candidate for the resumed pilot.
 
 `v0.8.1-rc.1` was published successfully, but its first real pilot attempt stopped during Agent Workspace setup before any Agent Task was executed. That run exposed a material Infimount workflow defect: workspace creation still carried agent-type/template and second-path concepts, and a shell-style Local Filesystem root could fail late during namespace binding. rc.2 fixed that product blocker. rc.1 must not be presented as completed pilot evidence.
 
@@ -30,6 +30,8 @@ Once published, use the `v0.8.1-rc.6` candidate for the resumed pilot.
 
 `v0.8.1-rc.5` was published successfully. Its canonical Release workflow and automatic downstream `Post Release Validation` both passed. The resumed real pilot then confirmed the key legacy-root correction: an Agent Workspace could be created on the existing `~` Local Filesystem storage without manually rewriting the storage first. The same real run exposed a separate file-browser workflow defect before the three Agent Task workloads were completed. Paginated folders showed a visible manual **Load more** control, and a continuation cursor obtained before the one-time storage normalization could become stale because list cursors are intentionally bound to the storage revision. Clicking the stale control surfaced an error instead of recovering transparently. PR #105 fixes that defect by auto-loading as the user scrolls, refreshing the current directory when a revision-bound cursor becomes stale, retaining only a screen-reader pagination fallback, and stopping automatic retries after genuine paging failures. rc.5 must not be presented as completed pilot evidence.
 
+`v0.8.1-rc.6` was published successfully. Its canonical Release workflow and automatic downstream `Post Release Validation` both passed. During the resumed rc.6 validation flow, the skipped-activation reminder exposed another user-facing workflow defect: choosing **Skip for now** left the intentionally incomplete activation reminder permanently visible for the rest of the app lifetime because the banner offered **Finish setup** but no dismiss action. PR #107 fixes that defect by adding a session-only dismiss control while preserving the incomplete activation state, keeping **Finish setup** available, and allowing the reminder to return after a later app launch until activation is actually completed. rc.6 must not be presented as completed pilot evidence.
+
 Record:
 
 - prerelease version;
@@ -38,17 +40,17 @@ Record:
 - previous installed stable version;
 - agent client name.
 
-The resumed pilot should start from an installed v0.8.0 environment and install v0.8.1-rc.6 over it. If the prerelease is not offered through the stable updater channel, installer-over-install is the correct candidate upgrade exercise. Do not claim that a prerelease installer proves stable-channel updater behavior.
+The resumed pilot should start from an installed v0.8.0 environment and install v0.8.1-rc.7 over it. If the prerelease is not offered through the stable updater channel, installer-over-install is the correct candidate upgrade exercise. Do not claim that a prerelease installer proves stable-channel updater behavior.
 
-For the controlled task workspace in this pilot, continue to use an **explicit absolute host path**. This keeps the Agent Task workload evidence independent from the separate legacy-root regression below. Shell-variable notation such as `$HOME/...` remains invalid. rc.6 retains the rc.5 support for legacy `~` and `~/...` Local Filesystem roots by canonically normalizing them once before the first workspace namespace binding.
+For the controlled task workspace in this pilot, continue to use an **explicit absolute host path**. This keeps the Agent Task workload evidence independent from the separate legacy-root regression below. Shell-variable notation such as `$HOME/...` remains invalid. rc.7 retains the rc.5 support for legacy `~` and `~/...` Local Filesystem roots by canonically normalizing them once before the first workspace namespace binding.
 
-## rc.5 and rc.6 focused regression checks
+## rc.5, rc.6, and rc.7 focused regression checks
 
-Before the three workload pilots, verify the product corrections that caused rc.5 and rc.6 to exist.
+Before the three workload pilots, verify the product corrections that caused rc.5, rc.6, and rc.7 to exist.
 
 ### Legacy Local Filesystem home alias
 
-Use a v0.8.0 Local Filesystem storage whose configured root is the legacy `~` form and that has no bound Agent Workspace. After upgrading to rc.6:
+Use a v0.8.0 Local Filesystem storage whose configured root is the legacy `~` form and that has no bound Agent Workspace. After upgrading to rc.7:
 
 1. confirm ordinary storage browsing still works;
 2. create one Agent Workspace on that storage through the normal UI;
@@ -72,9 +74,12 @@ Verify all of the following:
 - an already-active HTTP server bound beyond loopback is rejected by the guided path and directs the user to Advanced MCP settings;
 - broad default storage access or additional manual storage grants are rejected by the guided path;
 - closing Add Storage, Agent Workspaces, or Advanced MCP only returns to onboarding when onboarding explicitly opened that dialog;
-- the MCP client-adapter step remains usable at the target desktop viewport without inaccessible controls below the fold.
+- the MCP client-adapter step remains usable at the target desktop viewport without inaccessible controls below the fold;
+- choosing **Skip for now** leaves activation incomplete and shows the reminder without falsely marking Agent Access verified;
+- the reminder exposes both **Finish setup** and a dismiss action; dismissing it removes the reminder for the current app lifetime without changing onboarding completion state;
+- after a later app launch, the reminder returns while activation remains incomplete, and **Finish setup** still resumes the wizard.
 
-These checks validate the rc.5 corrections. They do not replace the three real Agent Task workloads below.
+These checks validate the rc.5 and rc.7 guided-flow corrections. They do not replace the three real Agent Task workloads below.
 
 ### File-browser pagination and stale-cursor recovery
 
@@ -210,7 +215,7 @@ Verify the real publication UI does not expose an overwrite mode. Record `safety
 
 ## Upgrade exercise
 
-Start from v0.8.0 with representative local state, then install v0.8.1-rc.6 over it.
+Start from v0.8.0 with representative local state, then install v0.8.1-rc.7 over it.
 
 The evidence bundle requires all of the following:
 
@@ -248,7 +253,7 @@ Each of the three task records contains:
 
 A candidate/platform evidence bundle passes only when:
 
-- the rc.5 and rc.6 focused regression checks above pass without a material workflow or safety defect;
+- the rc.5, rc.6, and rc.7 focused regression checks above pass without a material workflow or safety defect;
 - coding, document, and data-analysis pilots all pass;
 - all source before/after aggregate hashes match;
 - source MCP exposure is unchanged for every task;
