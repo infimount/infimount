@@ -30,6 +30,14 @@ fn require_current_probe(
     ))
 }
 
+fn record_activation_completed(state: &AppState) {
+    let mut event = infimount_mcp::telemetry::ProductEvent::new(
+        infimount_mcp::telemetry::ProductEventName::ActivationCompleted,
+    );
+    event.success = Some(true);
+    let _ = state.product_events.record(event);
+}
+
 #[tauri::command]
 pub async fn complete_onboarding(state: State<'_, AppState>) -> Result<AppSettings, McpError> {
     let _lifecycle = state.lifecycle_mutation.lock().await;
@@ -41,11 +49,24 @@ pub async fn complete_onboarding(state: State<'_, AppState>) -> Result<AppSettin
     require_current_probe(&probe)?;
     let result = state.app_settings_store.mark_onboarding_completed();
     if result.is_ok() {
-        let mut event = infimount_mcp::telemetry::ProductEvent::new(
-            infimount_mcp::telemetry::ProductEventName::ActivationCompleted,
-        );
-        event.success = Some(true);
-        let _ = state.product_events.record(event);
+        record_activation_completed(&state);
+    }
+    result
+}
+
+/// Complete first-run onboarding for users who intentionally choose storage-only use.
+///
+/// This path does not claim that Agent Access is configured or verified. It only records that the
+/// first-run product tour is complete, so storage-only users are not left in a permanent
+/// "activation incomplete" state. Agent Access can be configured later from its dedicated surface.
+#[tauri::command]
+pub async fn complete_storage_onboarding(
+    state: State<'_, AppState>,
+) -> Result<AppSettings, McpError> {
+    let _lifecycle = state.lifecycle_mutation.lock().await;
+    let result = state.app_settings_store.mark_onboarding_completed();
+    if result.is_ok() {
+        record_activation_completed(&state);
     }
     result
 }
