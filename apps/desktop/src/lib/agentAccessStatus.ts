@@ -16,17 +16,51 @@ export interface AgentAccessSummary {
   tone: "neutral" | "success" | "warning";
 }
 
+function normalizePolicyPrefix(value: string): string {
+  return value.trim().replace(/^\/+|\/+$/g, "");
+}
+
 export function isWorkspaceAgentAccessPrepared(
   workspace: WorkspaceRecord,
   storage: StorageConfig | null | undefined,
 ): boolean {
   if (!storage?.enabled || !storage.mcpExposed || !workspace.policyRuleId) return false;
-  return storage.mcpPolicy.rules.some(
+
+  const accessProfile = workspace.accessProfile;
+  if (accessProfile !== "read_only" && accessProfile !== "read_write") return false;
+  if (accessProfile === "read_write" && storage.readOnly) return false;
+
+  // Guided Agent Access is intentionally workspace-scoped. A broad default grant
+  // belongs to Advanced MCP configuration and must not be presented as a safe
+  // prepared workspace.
+  if (storage.mcpPolicy.default_access !== "none") return false;
+
+  const workspacePrefix = normalizePolicyPrefix(workspace.rootPath);
+  const managedRule = storage.mcpPolicy.rules.find(
     (rule) =>
       rule.id === workspace.policyRuleId &&
       rule.source.kind === "workspace" &&
       rule.source.workspace_id === workspace.id,
   );
+
+  if (
+    !managedRule ||
+    normalizePolicyPrefix(managedRule.prefix) !== workspacePrefix ||
+    managedRule.access !== accessProfile
+  ) {
+    return false;
+  }
+
+  // Match the backend guided-access preflight: an additional positive manual
+  // grant means this storage is no longer the simple least-privilege profile.
+  const hasBroadManualGrant = storage.mcpPolicy.rules.some(
+    (rule) =>
+      rule.id !== workspace.policyRuleId &&
+      rule.source.kind === "manual" &&
+      rule.access !== "none",
+  );
+
+  return !hasBroadManualGrant;
 }
 
 export function summarizeAgentAccess(
