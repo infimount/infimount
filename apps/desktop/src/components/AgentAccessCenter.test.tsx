@@ -1,3 +1,4 @@
+import type { ComponentProps } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -69,8 +70,11 @@ function status(transport: "stdio" | "http", runningHttp = false): McpRuntimeSta
   };
 }
 
-function renderCenter(runtime: McpRuntimeStatus, overrides: Partial<React.ComponentProps<typeof AgentAccessCenter>> = {}) {
-  const props: React.ComponentProps<typeof AgentAccessCenter> = {
+function renderCenter(
+  runtime: McpRuntimeStatus,
+  overrides: Partial<ComponentProps<typeof AgentAccessCenter>> = {},
+) {
+  const props: ComponentProps<typeof AgentAccessCenter> = {
     open: true,
     onOpenChange: vi.fn(),
     status: runtime,
@@ -99,7 +103,7 @@ describe("AgentAccessCenter", () => {
     expect(screen.getByDisplayValue(snippets.stdio)).toBeInTheDocument();
   });
 
-  it("offers explicit HTTP start and stop controls", () => {
+  it("offers explicit HTTP start controls", () => {
     const stopped = renderCenter(status("http"));
     fireEvent.click(screen.getByRole("button", { name: /Start HTTP server/i }));
     expect(stopped.onStartHttp).toHaveBeenCalledTimes(1);
