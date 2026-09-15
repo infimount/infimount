@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { summarizeAgentAccess } from "./agentAccessStatus";
+import { isWorkspaceAgentAccessPrepared, summarizeAgentAccess } from "./agentAccessStatus";
 import type { WorkspaceRecord } from "@/lib/api";
 import type { McpRuntimeStatus, StorageConfig } from "@/types/storage";
 
@@ -99,22 +99,98 @@ describe("summarizeAgentAccess", () => {
     const hiddenStorage = { ...storage, mcpExposed: false };
     expect(summarizeAgentAccess(status("stdio", true), [workspace], [hiddenStorage]).state).toBe("needs_attention");
   });
+});
 
-  it("does not call a broad/manual grant workspace-ready", () => {
-    const manualStorage = {
+describe("isWorkspaceAgentAccessPrepared", () => {
+  it("accepts the exact workspace-managed least-privilege rule", () => {
+    expect(isWorkspaceAgentAccessPrepared(workspace, storage)).toBe(true);
+  });
+
+  it("rejects a stale managed prefix", () => {
+    const stalePrefix: StorageConfig = {
+      ...storage,
+      mcpPolicy: {
+        ...storage.mcpPolicy,
+        rules: storage.mcpPolicy.rules.map((rule) => ({
+          ...rule,
+          prefix: "/agent-workspaces/other",
+        })),
+      },
+    };
+    expect(isWorkspaceAgentAccessPrepared(workspace, stalePrefix)).toBe(false);
+    expect(summarizeAgentAccess(status("stdio", true), [workspace], [stalePrefix]).state).toBe(
+      "needs_attention",
+    );
+  });
+
+  it("rejects a managed rule with the wrong access mode", () => {
+    const wrongAccess: StorageConfig = {
+      ...storage,
+      mcpPolicy: {
+        ...storage.mcpPolicy,
+        rules: storage.mcpPolicy.rules.map((rule) => ({
+          ...rule,
+          access: "read_write" as const,
+        })),
+      },
+    };
+    expect(isWorkspaceAgentAccessPrepared(workspace, wrongAccess)).toBe(false);
+  });
+
+  it("rejects broad default storage access", () => {
+    const broadDefault: StorageConfig = {
+      ...storage,
+      mcpPolicy: {
+        ...storage.mcpPolicy,
+        default_access: "read_only",
+      },
+    };
+    expect(isWorkspaceAgentAccessPrepared(workspace, broadDefault)).toBe(false);
+  });
+
+  it("rejects an additional positive manual grant", () => {
+    const manualGrant: StorageConfig = {
       ...storage,
       mcpPolicy: {
         ...storage.mcpPolicy,
         rules: [
+          ...storage.mcpPolicy.rules,
           {
             id: "manual-rule",
-            prefix: "/",
-            access: "read_only" as const,
-            source: { kind: "manual" as const },
+            prefix: "/other",
+            access: "read_only",
+            source: { kind: "manual" },
           },
         ],
       },
     };
-    expect(summarizeAgentAccess(status("stdio", true), [workspace], [manualStorage]).state).toBe("needs_attention");
+    expect(isWorkspaceAgentAccessPrepared(workspace, manualGrant)).toBe(false);
+  });
+
+  it("rejects read-write Agent Access on read-only storage", () => {
+    const writableWorkspace: WorkspaceRecord = {
+      ...workspace,
+      accessProfile: "read_write",
+    };
+    const readOnlyStorage: StorageConfig = {
+      ...storage,
+      readOnly: true,
+      mcpPolicy: {
+        ...storage.mcpPolicy,
+        rules: storage.mcpPolicy.rules.map((rule) => ({
+          ...rule,
+          access: "read_write" as const,
+        })),
+      },
+    };
+    expect(isWorkspaceAgentAccessPrepared(writableWorkspace, readOnlyStorage)).toBe(false);
+  });
+
+  it("rejects unsupported or missing workspace access profiles", () => {
+    const unscopedWorkspace: WorkspaceRecord = {
+      ...workspace,
+      accessProfile: "none",
+    };
+    expect(isWorkspaceAgentAccessPrepared(unscopedWorkspace, storage)).toBe(false);
   });
 });
