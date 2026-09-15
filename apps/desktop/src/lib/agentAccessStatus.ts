@@ -16,6 +16,19 @@ export interface AgentAccessSummary {
   tone: "neutral" | "success" | "warning";
 }
 
+export function isWorkspaceAgentAccessPrepared(
+  workspace: WorkspaceRecord,
+  storage: StorageConfig | null | undefined,
+): boolean {
+  if (!storage?.enabled || !storage.mcpExposed || !workspace.policyRuleId) return false;
+  return storage.mcpPolicy.rules.some(
+    (rule) =>
+      rule.id === workspace.policyRuleId &&
+      rule.source.kind === "workspace" &&
+      rule.source.workspace_id === workspace.id,
+  );
+}
+
 export function summarizeAgentAccess(
   status: McpRuntimeStatus | null,
   workspaces: WorkspaceRecord[],
@@ -39,9 +52,9 @@ export function summarizeAgentAccess(
     };
   }
 
-  const hasExposedWorkspace = workspaces.some((workspace) => {
+  const hasPreparedWorkspace = workspaces.some((workspace) => {
     const storage = storages.find((candidate) => candidate.id === workspace.storageId);
-    return Boolean(storage?.enabled && storage.mcpExposed);
+    return isWorkspaceAgentAccessPrepared(workspace, storage);
   });
 
   if (status.settings.transport === "stdio") {
@@ -54,11 +67,11 @@ export function summarizeAgentAccess(
       };
     }
 
-    if (!hasExposedWorkspace) {
+    if (!hasPreparedWorkspace) {
       return {
         state: "needs_attention",
         label: "Needs attention",
-        detail: "stdio Agent Access is enabled, but no workspace storage is exposed.",
+        detail: "stdio Agent Access is enabled, but no workspace has a valid managed access rule.",
         tone: "warning",
       };
     }
@@ -71,11 +84,11 @@ export function summarizeAgentAccess(
     };
   }
 
-  if (!hasExposedWorkspace) {
+  if (!hasPreparedWorkspace) {
     return {
       state: "needs_attention",
       label: "Needs attention",
-      detail: "No workspace storage is exposed for HTTP Agent Access.",
+      detail: "No workspace has a valid managed access rule for HTTP Agent Access.",
       tone: "warning",
     };
   }
