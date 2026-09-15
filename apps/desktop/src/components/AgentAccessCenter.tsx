@@ -16,6 +16,7 @@ interface AgentAccessCenterProps {
   snippets: McpClientSnippets | null;
   workspaces: WorkspaceRecord[];
   storages: StorageConfig[];
+  initialWorkspaceId?: string | null;
   onPrepare: (workspace: WorkspaceRecord) => Promise<void>;
   onVerify: () => Promise<void>;
   onStartHttp: () => Promise<void>;
@@ -31,6 +32,7 @@ export function AgentAccessCenter({
   snippets,
   workspaces,
   storages,
+  initialWorkspaceId,
   onPrepare,
   onVerify,
   onStartHttp,
@@ -45,11 +47,18 @@ export function AgentAccessCenter({
 
   useEffect(() => {
     if (!open) return;
+    if (
+      initialWorkspaceId &&
+      workspaces.some((workspace) => workspace.id === initialWorkspaceId)
+    ) {
+      setSelectedWorkspaceId(initialWorkspaceId);
+      return;
+    }
     if (selectedWorkspaceId && workspaces.some((workspace) => workspace.id === selectedWorkspaceId)) {
       return;
     }
     setSelectedWorkspaceId(workspaces[0]?.id ?? "");
-  }, [open, selectedWorkspaceId, workspaces]);
+  }, [initialWorkspaceId, open, selectedWorkspaceId, workspaces]);
 
   useEffect(() => {
     if (!open) {
@@ -67,13 +76,16 @@ export function AgentAccessCenter({
     ? storages.find((storage) => storage.id === selectedWorkspace.storageId) ?? null
     : null;
   const summary = summarizeAgentAccess(status, workspaces, storages);
+  const workspaceBoundaryReady = Boolean(
+    selectedWorkspace && selectedStorage?.enabled && selectedStorage.mcpExposed,
+  );
   const selectedPrepared = Boolean(
-    selectedWorkspace &&
-      selectedStorage?.enabled &&
-      selectedStorage.mcpExposed &&
-      status?.settings.enabled,
+    workspaceBoundaryReady &&
+      status &&
+      (status.settings.transport === "http" || status.settings.enabled),
   );
   const selectedSnippet = status?.settings.transport === "http" ? snippets?.http : snippets?.stdio;
+  const canCopyClientConfig = Boolean(selectedPrepared && selectedSnippet);
 
   const handlePrepare = async () => {
     if (!selectedWorkspace || busy) return;
@@ -114,7 +126,7 @@ export function AgentAccessCenter({
   };
 
   const handleCopy = async () => {
-    if (!selectedSnippet) return;
+    if (!canCopyClientConfig || !selectedSnippet) return;
     await navigator.clipboard.writeText(selectedSnippet);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
@@ -239,7 +251,7 @@ export function AgentAccessCenter({
                     <div className="rounded-lg bg-muted/40 p-3 font-mono text-xs">
                       {status.endpointDisplay}
                     </div>
-                    <Button onClick={() => void handleHttpToggle()} disabled={!selectedPrepared || busy !== null}>
+                    <Button onClick={() => void handleHttpToggle()} disabled={!workspaceBoundaryReady || busy !== null}>
                       {status.runningHttp ? (
                         <Square className="mr-2 h-4 w-4" />
                       ) : (
@@ -266,11 +278,15 @@ export function AgentAccessCenter({
                 <Textarea
                   readOnly
                   rows={8}
-                  value={selectedSnippet ?? "Prepare Agent Access to load the client configuration."}
+                  value={
+                    canCopyClientConfig
+                      ? selectedSnippet ?? ""
+                      : "Prepare Agent Access before configuring a general MCP client."
+                  }
                   className="font-mono text-xs"
                   aria-label="Selected MCP client configuration"
                 />
-                <Button variant="outline" onClick={() => void handleCopy()} disabled={!selectedSnippet}>
+                <Button variant="outline" onClick={() => void handleCopy()} disabled={!canCopyClientConfig}>
                   <Copy className="mr-2 h-4 w-4" />
                   {copied ? "Copied" : "Copy client config"}
                 </Button>
