@@ -18,7 +18,7 @@ The pilot does not justify new feature breadth. A failed run should first identi
 
 ## Candidate prerequisite
 
-Once published, use the `v0.8.1-rc.7` candidate for the resumed pilot.
+Once published, use the `v0.8.1-rc.8` candidate for the resumed pilot.
 
 `v0.8.1-rc.1` was published successfully, but its first real pilot attempt stopped during Agent Workspace setup before any Agent Task was executed. That run exposed a material Infimount workflow defect: workspace creation still carried agent-type/template and second-path concepts, and a shell-style Local Filesystem root could fail late during namespace binding. rc.2 fixed that product blocker. rc.1 must not be presented as completed pilot evidence.
 
@@ -30,7 +30,9 @@ Once published, use the `v0.8.1-rc.7` candidate for the resumed pilot.
 
 `v0.8.1-rc.5` was published successfully. Its canonical Release workflow and automatic downstream `Post Release Validation` both passed. The resumed real pilot then confirmed the key legacy-root correction: an Agent Workspace could be created on the existing `~` Local Filesystem storage without manually rewriting the storage first. The same real run exposed a separate file-browser workflow defect before the three Agent Task workloads were completed. Paginated folders showed a visible manual **Load more** control, and a continuation cursor obtained before the one-time storage normalization could become stale because list cursors are intentionally bound to the storage revision. Clicking the stale control surfaced an error instead of recovering transparently. PR #105 fixes that defect by auto-loading as the user scrolls, refreshing the current directory when a revision-bound cursor becomes stale, retaining only a screen-reader pagination fallback, and stopping automatic retries after genuine paging failures. rc.5 must not be presented as completed pilot evidence.
 
-`v0.8.1-rc.6` was published successfully. Its canonical Release workflow and automatic downstream `Post Release Validation` both passed. During the resumed rc.6 validation flow, the skipped-activation reminder exposed another user-facing workflow defect: choosing **Skip for now** left the intentionally incomplete activation reminder permanently visible for the rest of the app lifetime because the banner offered **Finish setup** but no dismiss action. PR #107 fixes that defect by adding a session-only dismiss control while preserving the incomplete activation state, keeping **Finish setup** available, and allowing the reminder to return after a later app launch until activation is actually completed. rc.6 must not be presented as completed pilot evidence.
+`v0.8.1-rc.6` was published successfully. Its canonical Release workflow and automatic downstream `Post Release Validation` both passed. During the resumed rc.6 validation flow, the skipped-activation reminder exposed another user-facing workflow defect: choosing **Skip for now** left the intentionally incomplete activation reminder permanently visible for the rest of the app lifetime because the banner offered **Finish setup** but no dismiss action. PR #107 fixed that defect by adding a session-only dismiss control while preserving the incomplete activation state, keeping **Finish setup** available, and allowing the reminder to return after a later app launch until activation was actually completed. rc.6 must not be presented as completed pilot evidence.
+
+`v0.8.1-rc.7` was published successfully. Its canonical Release workflow and automatic downstream `Post Release Validation` both passed. The resumed real validation then showed that the reminder correction had fixed a symptom while the underlying product model still coupled normal storage use and agent activation too tightly. Agent Access remained discoverable mainly through MCP administration, storage-only users could still be framed as activation-incomplete, stdio and HTTP did not have sufficiently distinct user-facing runtime semantics, the normal verification wording could be read as endpoint verification, and ordinary `infimount_mcp serve` did not directly enforce the persisted general Agent Access gate. PR #110 replaces that model with a first-class Agent Access surface, legitimate storage-only onboarding completion, explicit stdio/HTTP semantics, precise safety-probe wording, frontend readiness that mirrors backend fail-closed workspace checks, and an enforced general Agent Access runtime gate while keeping `serve-agent-task` independently scoped. rc.7 must not be presented as completed pilot evidence.
 
 Record:
 
@@ -40,17 +42,17 @@ Record:
 - previous installed stable version;
 - agent client name.
 
-The resumed pilot should start from an installed v0.8.0 environment and install v0.8.1-rc.7 over it. If the prerelease is not offered through the stable updater channel, installer-over-install is the correct candidate upgrade exercise. Do not claim that a prerelease installer proves stable-channel updater behavior.
+The resumed pilot should start from an installed v0.8.0 environment and install v0.8.1-rc.8 over it. If the prerelease is not offered through the stable updater channel, installer-over-install is the correct candidate upgrade exercise. Do not claim that a prerelease installer proves stable-channel updater behavior.
 
-For the controlled task workspace in this pilot, continue to use an **explicit absolute host path**. This keeps the Agent Task workload evidence independent from the separate legacy-root regression below. Shell-variable notation such as `$HOME/...` remains invalid. rc.7 retains the rc.5 support for legacy `~` and `~/...` Local Filesystem roots by canonically normalizing them once before the first workspace namespace binding.
+For the controlled task workspace in this pilot, continue to use an **explicit absolute host path**. This keeps the Agent Task workload evidence independent from the separate legacy-root regression below. Shell-variable notation such as `$HOME/...` remains invalid. rc.8 retains the rc.5 support for legacy `~` and `~/...` Local Filesystem roots by canonically normalizing them once before the first workspace namespace binding.
 
-## rc.5, rc.6, and rc.7 focused regression checks
+## rc.5 through rc.8 focused regression checks
 
-Before the three workload pilots, verify the product corrections that caused rc.5, rc.6, and rc.7 to exist.
+Before the three workload pilots, verify the product corrections that caused rc.5 through rc.8 to exist.
 
 ### Legacy Local Filesystem home alias
 
-Use a v0.8.0 Local Filesystem storage whose configured root is the legacy `~` form and that has no bound Agent Workspace. After upgrading to rc.7:
+Use a v0.8.0 Local Filesystem storage whose configured root is the legacy `~` form and that has no bound Agent Workspace. After upgrading to rc.8:
 
 1. confirm ordinary storage browsing still works;
 2. create one Agent Workspace on that storage through the normal UI;
@@ -60,26 +62,41 @@ Use a v0.8.0 Local Filesystem storage whose configured root is the legacy `~` fo
 
 Do this after the upgrade-retention snapshot is captured, because the one-time normalization is an intentional post-upgrade mutation.
 
-### Guided Agent Access
+### Agent Access product boundary
 
-Exercise the normal onboarding flow as **Storage → Workspace → Agent Access → Client → Verify**.
+First exercise storage-only onboarding. Add or retain a storage, choose **Browse storage only**, and verify all of the following:
+
+- onboarding can complete without creating an Agent Workspace or enabling Agent Access;
+- the storage remains browseable;
+- the storage is not newly MCP-exposed as a side effect;
+- the application does not leave a floating activation-incomplete reminder behind;
+- Agent Access remains available later from its dedicated product surface.
+
+Then exercise the normal agent flow as **Storage → Workspace → Agent Access → Connect Client → Safety Probe**.
 
 Verify all of the following:
 
+- Agent Access is a first-class product surface rather than requiring discovery through Advanced MCP settings;
+- **Connect agent** from Agent Workspaces opens Agent Access with the intended workspace selected;
 - the selected workspace must be explicitly prepared; another exposed workspace on the same storage does not make it ready;
 - a first-time read-only setup enables only the read tools;
 - a first-time read-write setup adds only `mkdir` and `write_file` beyond the read tools;
-- when MCP is disabled, guided setup chooses local stdio rather than activating a drafted HTTP listener;
+- when general Agent Access is disabled, guided setup chooses local stdio rather than activating a drafted HTTP listener;
+- stdio is shown as client-launched/on-demand and exposes no background-server Start control;
+- HTTP has explicit stopped/running states and explicit Start/Stop controls;
+- the normal client configuration shown to the user matches the selected transport;
+- the verification action is described as a packaged sidecar/workspace-policy **safety probe** and does not claim to verify a selected HTTP endpoint;
+- readiness requires the exact managed workspace rule identity, source, prefix, access level, `default_access=none`, no broader positive manual grant, and no read/write workspace grant on read-only storage;
 - an already-active MCP server with additional global tools is rejected by the guided path and directs the user to Advanced MCP settings;
 - an already-active HTTP server bound beyond loopback is rejected by the guided path and directs the user to Advanced MCP settings;
 - broad default storage access or additional manual storage grants are rejected by the guided path;
+- disabling normal Agent Access prevents ordinary `infimount_mcp serve` from exposing tools, while the dedicated Agent Task server remains governed by its separate task/workspace path;
+- saving an Advanced MCP stdio configuration does not silently change the explicit general Agent Access gate;
+- persistent warning bars touched by this flow can be dismissed without bypassing their underlying safety enforcement;
 - closing Add Storage, Agent Workspaces, or Advanced MCP only returns to onboarding when onboarding explicitly opened that dialog;
-- the MCP client-adapter step remains usable at the target desktop viewport without inaccessible controls below the fold;
-- choosing **Skip for now** leaves activation incomplete and shows the reminder without falsely marking Agent Access verified;
-- the reminder exposes both **Finish setup** and a dismiss action; dismissing it removes the reminder for the current app lifetime without changing onboarding completion state;
-- after a later app launch, the reminder returns while activation remains incomplete, and **Finish setup** still resumes the wizard.
+- the client-adapter and Agent Access surfaces remain usable at the target desktop viewport without inaccessible controls below the fold.
 
-These checks validate the rc.5 and rc.7 guided-flow corrections. They do not replace the three real Agent Task workloads below.
+These checks validate the rc.5 and rc.8 guided-flow corrections. The rc.7 floating reminder behavior is intentionally superseded by storage-only completion and should not be treated as a retained product requirement. These checks do not replace the three real Agent Task workloads below.
 
 ### File-browser pagination and stale-cursor recovery
 
@@ -215,7 +232,7 @@ Verify the real publication UI does not expose an overwrite mode. Record `safety
 
 ## Upgrade exercise
 
-Start from v0.8.0 with representative local state, then install v0.8.1-rc.7 over it.
+Start from v0.8.0 with representative local state, then install v0.8.1-rc.8 over it.
 
 The evidence bundle requires all of the following:
 
@@ -253,7 +270,7 @@ Each of the three task records contains:
 
 A candidate/platform evidence bundle passes only when:
 
-- the rc.5, rc.6, and rc.7 focused regression checks above pass without a material workflow or safety defect;
+- the rc.5 through rc.8 focused regression checks above pass without a material workflow or safety defect;
 - coding, document, and data-analysis pilots all pass;
 - all source before/after aggregate hashes match;
 - source MCP exposure is unchanged for every task;
