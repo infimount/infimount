@@ -121,11 +121,12 @@ describe("AgentAccessCenter", () => {
     expect(stopped.onStartHttp).toHaveBeenCalledTimes(1);
   });
 
-  it("runs verification and reports a pass", async () => {
+  it("runs the safety probe without claiming endpoint verification", async () => {
     const props = renderCenter(status("stdio"));
-    fireEvent.click(screen.getByRole("button", { name: /Verify connection/i }));
+    expect(screen.getByText(/does not claim to test a selected HTTP endpoint/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Run safety probe/i }));
     await waitFor(() => expect(props.onVerify).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText("Verification passed.")).toBeInTheDocument();
+    expect(await screen.findByText("Safety probe passed.")).toBeInTheDocument();
   });
 
   it("routes users without a workspace to workspace creation", () => {
@@ -135,7 +136,14 @@ describe("AgentAccessCenter", () => {
   });
 
   it("selects an explicit workspace handoff", () => {
-    const second = { ...workspace, id: "workspace-2", name: "Second", policyRuleId: "workspace:workspace-2" };
+    const second: WorkspaceRecord = {
+      ...workspace,
+      id: "workspace-2",
+      storageId: "storage-2",
+      name: "Second",
+      rootPath: "/agent-workspaces/second",
+      policyRuleId: "workspace:workspace-2",
+    };
     const secondStorage: StorageConfig = {
       ...storage,
       id: "storage-2",
@@ -151,7 +159,6 @@ describe("AgentAccessCenter", () => {
         ],
       },
     };
-    second.storageId = "storage-2";
 
     renderCenter(status("stdio"), {
       workspaces: [workspace, second],
