@@ -121,6 +121,7 @@ fn main() {
             commands::generate_download_link,
             commands::get_app_settings,
             commands::complete_onboarding,
+            commands::complete_storage_onboarding,
             commands::skip_onboarding,
             commands::list_mcp_audit_events,
             commands::clear_mcp_audit_events,

@@ -125,12 +125,21 @@ describe("McpSettingsDialog integration", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Save MCP Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save disabled state" }));
     expect(await screen.findByRole("button", { name: "Saving..." })).toBeDisabled();
+
+    expect(onSave).toHaveBeenCalledWith({
+      enabled: false,
+      transport: "stdio",
+      bindAddress: "127.0.0.1",
+      port: 7331,
+      enabledTools: ["list_dir"],
+      authTokenMutation: { action: "keep" },
+    });
 
     resolveSave?.();
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Save MCP Settings" })).toBeEnabled(),
+      expect(screen.getByRole("button", { name: "Save disabled state" })).toBeEnabled(),
     );
   });
 
@@ -353,6 +362,7 @@ describe("McpSettingsDialog integration", () => {
       ...status,
       settings: {
         ...status.settings,
+        enabled: true,
         enabledTools: ["list_dir", "write_file", "delete_path", "generate_download_link"],
       },
     };

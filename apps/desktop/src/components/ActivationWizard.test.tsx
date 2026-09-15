@@ -96,7 +96,7 @@ function renderWizard(overrides: Partial<React.ComponentProps<typeof ActivationW
       onOpenMcpSettings={vi.fn()}
       onPrepareAgentAccess={vi.fn(async () => undefined)}
       onComplete={vi.fn(async () => undefined)}
-      onSkip={vi.fn(async () => undefined)}
+      onBrowseStorageOnly={vi.fn(async () => undefined)}
       onSaveState={vi.fn(async () => undefined)}
       storagesCount={1}
       workspaces={[workspace]}
@@ -172,8 +172,8 @@ describe("ActivationWizard guided setup", () => {
 
   it("renders the storage-first welcome and navigates safely", async () => {
     const onSaveState = vi.fn(async () => undefined);
-    const onSkip = vi.fn(async () => undefined);
-    renderWizard({ initialStep: "welcome", initialCompletedSteps: [], onSaveState, onSkip });
+    const onBrowseStorageOnly = vi.fn(async () => undefined);
+    renderWizard({ initialStep: "welcome", initialCompletedSteps: [], onSaveState, onBrowseStorageOnly });
     expect(screen.getByText("Welcome to Infimount")).toBeInTheDocument();
     expect(screen.getByText("Browse storage")).toBeInTheDocument();
     expect(screen.queryByText(/Adding one does not expose it to an agent/)).not.toBeInTheDocument();
@@ -181,8 +181,8 @@ describe("ActivationWizard guided setup", () => {
     await waitFor(() => expect(onSaveState).toHaveBeenCalledWith("storage", ["welcome"]));
     expect(screen.getByText(/Adding one does not expose it to an agent/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
-    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
-    await waitFor(() => expect(onSkip).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Browse storage only" }));
+    await waitFor(() => expect(onBrowseStorageOnly).toHaveBeenCalled());
   });
 
   it("handles empty storage setup without jumping directly to workspace setup", async () => {

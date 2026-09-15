@@ -146,7 +146,9 @@ export function McpSettingsDialog({
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      await onSave(toSettingsUpdate(settings, authTokenDraft, false));
+      // Saving advanced stdio settings must preserve the explicit Agent Access gate.
+      // It must never silently disable access simply because no HTTP process is involved.
+      await onSave(toSettingsUpdate(settings, authTokenDraft, settings.enabled));
       setAuthTokenDraft(undefined);
     } finally {
       setIsSaving(false);
@@ -198,7 +200,6 @@ export function McpSettingsDialog({
     const policy = policyDrafts[storageId];
     if (!policy) return;
 
-    // Reject blank rules (empty prefix) and root grants
     for (const rule of policy.rules) {
       const trimmed = rule.prefix.trim();
       if (!trimmed) {
@@ -230,14 +231,15 @@ export function McpSettingsDialog({
   const handleApplyPreset = async (preset: { id: string; title: string; enabledTools: string[]; accessMode: McpStoragePolicy["default_access"]; confirmationRules: McpConfirmationRules }) => {
     const nextSettings: McpSettings = {
       ...settings,
-      enabled: false,
+      // Presets change tools and policies. Only the explicit Lock down preset disables
+      // general Agent Access; every other preset preserves the user's current gate.
+      enabled: preset.id === "locked-down" ? false : settings.enabled,
       enabledTools: filterAvailableTools(preset.enabledTools, tools),
     };
     const nextDrafts = buildPresetPolicyDrafts(exposedStorages, policyDrafts, preset);
 
     setApplyingPresetId(preset.id);
 
-    // Apply policy updates BEFORE tool settings; rollback on failure
     const savedDrafts: Record<string, McpStoragePolicy> = {};
     try {
       for (const storage of exposedStorages) {
@@ -245,7 +247,6 @@ export function McpSettingsDialog({
         await onUpdateStoragePolicy(storage.id, nextDrafts[storage.id]);
       }
     } catch {
-      // Rollback policy changes
       for (const storage of exposedStorages) {
         if (savedDrafts[storage.id]) {
           await onUpdateStoragePolicy(storage.id, savedDrafts[storage.id]).catch(() => {});
@@ -260,9 +261,9 @@ export function McpSettingsDialog({
       return;
     }
 
-    // Apply tool settings only after policy updates succeed
     try {
       await onSave(toSettingsUpdate(nextSettings, undefined, nextSettings.enabled));
+      setSettings(nextSettings);
       setPolicyDrafts((current) => ({ ...current, ...nextDrafts }));
       toast({
         title: "Preset applied",
@@ -272,7 +273,6 @@ export function McpSettingsDialog({
             : `${preset.title} is saved for exposed MCP storage.`,
       });
     } catch {
-      // Rollback tool settings to previous state
       for (const storage of exposedStorages) {
         if (savedDrafts[storage.id]) {
           await onUpdateStoragePolicy(storage.id, savedDrafts[storage.id]).catch(() => {});
@@ -305,10 +305,12 @@ export function McpSettingsDialog({
     try {
       if (status?.runningHttp) {
         await onSave(toSettingsUpdate(settings, authTokenDraft, false));
+        setSettings((current) => ({ ...current, enabled: false }));
         setAuthTokenDraft(undefined);
         await onStopHttp();
       } else {
         await onSave(toSettingsUpdate(settings, authTokenDraft, true));
+        setSettings((current) => ({ ...current, enabled: true }));
         setAuthTokenDraft(undefined);
         await onStartHttp();
       }
@@ -355,6 +357,7 @@ export function McpSettingsDialog({
     : "Disabled";
   const confirmationSummary = summarizeConfirmationRules(exposedStorages, policyDrafts);
   const connectAssessment = assessMcpConnectionSafety({
+    agentAccessEnabled: settings.enabled,
     exposedStorageCount: exposedStorages.length,
     enabledToolCount,
     showNetworkWarning,
@@ -374,7 +377,9 @@ export function McpSettingsDialog({
       ? status?.runningHttp
         ? "Stop HTTP Server"
         : "Save & Start HTTP Server"
-      : "Save MCP Settings";
+      : settings.enabled
+        ? "Save stdio Agent Access"
+        : "Save disabled state";
 
   return (
     <>
@@ -382,10 +387,11 @@ export function McpSettingsDialog({
         <DialogContent className="sm:max-w-[760px] max-h-[88vh] overflow-y-auto rounded-2xl border border-border bg-background text-foreground shadow-2xl">
           <DialogHeader>
             <DialogTitle className="text-left text-base font-normal text-[hsl(var(--card-foreground))]">
-              MCP Settings
+              Advanced MCP Settings
             </DialogTitle>
             <DialogDescription className="text-left text-xs text-muted-foreground">
-              Configure the MCP runtime that Infimount exposes locally for external clients.
+              Administer transports, tools, storage policies, approvals, sessions, and audit. Normal
+              workspace connection is available from Agent Access.
             </DialogDescription>
           </DialogHeader>
 
@@ -581,8 +587,6 @@ function buildPresetPolicyDrafts(
       continue;
     }
 
-    // Workspace Agent and Manual Approval change tool availability only. Existing
-    // whole-storage defaults and path grants remain exactly as selected by users.
     next[storage.id] = {
       ...current,
       confirmation_rules: { ...preset.confirmationRules },
@@ -672,16 +676,37 @@ function summarizeConfirmationRules(
 }
 
 function assessMcpConnectionSafety({
+  agentAccessEnabled,
   exposedStorageCount,
   enabledToolCount,
   showNetworkWarning,
   destructiveAccessEnabled,
 }: {
+  agentAccessEnabled: boolean;
   exposedStorageCount: number;
   enabledToolCount: number;
   showNetworkWarning: boolean;
   destructiveAccessEnabled: boolean;
 }): { label: string; description: string; className: string } {
+  // A drafted non-loopback HTTP bind is the most important condition to
+  // surface before a user starts the server. Starting HTTP also enables
+  // general Agent Access, so "currently disabled" must not hide the network
+  // exposure warning.
+  if (showNetworkWarning) {
+    return {
+      label: "Review network exposure",
+      description:
+        "The HTTP bind address is reachable beyond loopback; use only with intentional network boundaries.",
+      className: "text-amber-700 dark:text-amber-300",
+    };
+  }
+  if (!agentAccessEnabled) {
+    return {
+      label: "Agent Access disabled",
+      description: "General MCP clients are blocked until Agent Access is enabled.",
+      className: "text-muted-foreground",
+    };
+  }
   if (exposedStorageCount === 0) {
     return {
       label: "No storage exposed",
@@ -694,13 +719,6 @@ function assessMcpConnectionSafety({
       label: "No functions enabled",
       description: "Agents can connect, but every MCP tool is currently disabled.",
       className: "text-muted-foreground",
-    };
-  }
-  if (showNetworkWarning) {
-    return {
-      label: "Review network exposure",
-      description: "The HTTP bind address is reachable beyond loopback; use only with intentional network boundaries.",
-      className: "text-amber-700 dark:text-amber-300",
     };
   }
   if (destructiveAccessEnabled) {

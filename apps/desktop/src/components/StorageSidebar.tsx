@@ -65,6 +65,9 @@ interface StorageSidebarProps {
   onImportStorages?: () => void;
   onEditStorageConfig?: () => void;
   onExportStorages?: () => void;
+  onOpenAgentAccess?: () => void;
+  agentAccessLabel?: string;
+  agentAccessTone?: "neutral" | "success" | "warning";
   onOpenMcpSettings?: () => void;
   onOpenOnboarding?: () => void;
   onOpenGlobalSearch?: () => void;
@@ -121,6 +124,9 @@ export function StorageSidebar({
   onImportStorages,
   onEditStorageConfig,
   onExportStorages,
+  onOpenAgentAccess,
+  agentAccessLabel = "Not configured",
+  agentAccessTone = "neutral",
   onOpenMcpSettings,
   onOpenOnboarding,
   onOpenGlobalSearch,
@@ -456,7 +462,7 @@ export function StorageSidebar({
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={onOpenMcpSettings}>
                     <Cable className="mr-2 h-4 w-4" />
-                    MCP Settings
+                    Advanced MCP Settings
                   </DropdownMenuItem>
                 </>
               )}
@@ -620,6 +626,34 @@ export function StorageSidebar({
           </div>
         )}
       </ScrollArea>
+
+      {onOpenAgentAccess ? (
+        <div className="border-t border-sidebar-border p-2 shrink-0">
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sidebar-foreground transition-colors hover:bg-sidebar-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+            onClick={onOpenAgentAccess}
+            aria-label={`Agent Access: ${agentAccessLabel}`}
+          >
+            <Cable className="h-4 w-4 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-medium">Agent Access</div>
+              <div className="truncate text-[10px] text-muted-foreground">{agentAccessLabel}</div>
+            </div>
+            <span
+              className={cn(
+                "h-2 w-2 shrink-0 rounded-full",
+                agentAccessTone === "success"
+                  ? "bg-emerald-500"
+                  : agentAccessTone === "warning"
+                    ? "bg-amber-500"
+                    : "bg-muted-foreground/40",
+              )}
+              aria-hidden="true"
+            />
+          </button>
+        </div>
+      ) : null}
 
       <div className="border-t border-sidebar-border h-9 px-3 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2 overflow-hidden">
