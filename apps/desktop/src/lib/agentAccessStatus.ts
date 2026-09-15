@@ -44,12 +44,30 @@ export function summarizeAgentAccess(
     return Boolean(storage?.enabled && storage.mcpExposed);
   });
 
-  if (!status.settings.enabled) {
+  if (status.settings.transport === "stdio") {
+    if (!status.settings.enabled) {
+      return {
+        state: "disabled",
+        label: "Disabled",
+        detail: "General stdio Agent Access is disabled.",
+        tone: "neutral",
+      };
+    }
+
+    if (!hasExposedWorkspace) {
+      return {
+        state: "needs_attention",
+        label: "Needs attention",
+        detail: "stdio Agent Access is enabled, but no workspace storage is exposed.",
+        tone: "warning",
+      };
+    }
+
     return {
-      state: "disabled",
-      label: "Disabled",
-      detail: "General MCP access is disabled.",
-      tone: "neutral",
+      state: "ready_stdio",
+      label: "Ready · stdio on demand",
+      detail: "Your MCP client launches Infimount when it connects.",
+      tone: "success",
     };
   }
 
@@ -57,17 +75,8 @@ export function summarizeAgentAccess(
     return {
       state: "needs_attention",
       label: "Needs attention",
-      detail: "MCP is enabled, but no workspace storage is exposed.",
+      detail: "No workspace storage is exposed for HTTP Agent Access.",
       tone: "warning",
-    };
-  }
-
-  if (status.settings.transport === "stdio") {
-    return {
-      state: "ready_stdio",
-      label: "Ready · stdio on demand",
-      detail: "Your MCP client launches Infimount when it connects.",
-      tone: "success",
     };
   }
 
@@ -83,7 +92,7 @@ export function summarizeAgentAccess(
   return {
     state: "http_stopped",
     label: "HTTP stopped",
-    detail: "Agent Access is configured, but the HTTP server is not running.",
+    detail: "The workspace boundary is ready. Start the HTTP server when you want clients to connect.",
     tone: "warning",
   };
 }
