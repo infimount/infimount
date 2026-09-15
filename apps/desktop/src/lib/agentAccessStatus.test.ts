@@ -11,6 +11,7 @@ const workspace: WorkspaceRecord = {
   rootPath: "/agent-workspaces/workspace",
   templateId: "custom",
   accessProfile: "read_only",
+  policyRuleId: "workspace:workspace-1",
   createdAt: "2026-09-15T00:00:00Z",
   updatedAt: "2026-09-15T00:00:00Z",
   memoryFiles: [],
@@ -32,7 +33,14 @@ const storage = {
   mcpPolicy: {
     version: 2,
     default_access: "none",
-    rules: [],
+    rules: [
+      {
+        id: "workspace:workspace-1",
+        prefix: "/agent-workspaces/workspace",
+        access: "read_only",
+        source: { kind: "workspace", workspace_id: "workspace-1" },
+      },
+    ],
     denied_paths: [],
     confirmation_rules: {
       require_for_write: true,
@@ -72,7 +80,7 @@ describe("summarizeAgentAccess", () => {
     expect(summarizeAgentAccess(status("stdio", false), [], [storage]).state).toBe("not_configured");
   });
 
-  it("reports disabled independently of HTTP process state", () => {
+  it("reports disabled stdio explicitly", () => {
     expect(summarizeAgentAccess(status("stdio", false), [workspace], [storage]).state).toBe("disabled");
   });
 
@@ -83,12 +91,30 @@ describe("summarizeAgentAccess", () => {
   });
 
   it("separates HTTP stopped and running states", () => {
-    expect(summarizeAgentAccess(status("http", true), [workspace], [storage]).state).toBe("http_stopped");
+    expect(summarizeAgentAccess(status("http", false), [workspace], [storage]).state).toBe("http_stopped");
     expect(summarizeAgentAccess(status("http", true, true), [workspace], [storage]).state).toBe("http_running");
   });
 
-  it("flags enabled MCP with no exposed workspace as needs attention", () => {
+  it("flags missing workspace exposure as needs attention", () => {
     const hiddenStorage = { ...storage, mcpExposed: false };
     expect(summarizeAgentAccess(status("stdio", true), [workspace], [hiddenStorage]).state).toBe("needs_attention");
+  });
+
+  it("does not call a broad/manual grant workspace-ready", () => {
+    const manualStorage = {
+      ...storage,
+      mcpPolicy: {
+        ...storage.mcpPolicy,
+        rules: [
+          {
+            id: "manual-rule",
+            prefix: "/",
+            access: "read_only" as const,
+            source: { kind: "manual" as const },
+          },
+        ],
+      },
+    };
+    expect(summarizeAgentAccess(status("stdio", true), [workspace], [manualStorage]).state).toBe("needs_attention");
   });
 });
