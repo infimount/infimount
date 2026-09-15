@@ -295,13 +295,14 @@ export function AgentAccessCenter({
               <section className="rounded-xl border p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <div className="text-sm font-medium">Verify</div>
+                    <div className="text-sm font-medium">Safety verification</div>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Run the packaged sidecar and policy-denial probe before relying on this connection.
+                      Run the packaged sidecar and workspace policy-denial safety probe. This checks
+                      the scoped access model; it does not claim to test a selected HTTP endpoint.
                     </p>
                   </div>
                   <Button variant="outline" onClick={() => void handleVerify()} disabled={!selectedPrepared || busy !== null}>
-                    {busy === "verify" ? "Verifying…" : "Verify connection"}
+                    {busy === "verify" ? "Running probe…" : "Run safety probe"}
                   </Button>
                 </div>
                 {lastVerification ? (
@@ -318,8 +319,8 @@ export function AgentAccessCenter({
                       <CircleAlert className="h-4 w-4" />
                     )}
                     {lastVerification === "passed"
-                      ? "Verification passed."
-                      : "Verification failed. Review Agent Access or Advanced MCP settings."}
+                      ? "Safety probe passed."
+                      : "Safety probe failed. Review Agent Access or Advanced MCP settings."}
                   </div>
                 ) : null}
               </section>
