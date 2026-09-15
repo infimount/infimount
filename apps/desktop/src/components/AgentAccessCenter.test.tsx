@@ -13,6 +13,7 @@ const workspace: WorkspaceRecord = {
   rootPath: "/agent-workspaces/workspace",
   templateId: "custom",
   accessProfile: "read_only",
+  policyRuleId: "workspace:workspace-1",
   createdAt: "2026-09-15T00:00:00Z",
   updatedAt: "2026-09-15T00:00:00Z",
   memoryFiles: [],
@@ -34,7 +35,14 @@ const storage = {
   mcpPolicy: {
     version: 2,
     default_access: "none",
-    rules: [],
+    rules: [
+      {
+        id: "workspace:workspace-1",
+        prefix: "/agent-workspaces/workspace",
+        access: "read_only",
+        source: { kind: "workspace", workspace_id: "workspace-1" },
+      },
+    ],
     denied_paths: [],
     confirmation_rules: {
       require_for_write: true,
@@ -52,10 +60,14 @@ const snippets: McpClientSnippets = {
   http: '{"mcpServers":{"infimount":{"url":"http://127.0.0.1:7331/mcp"}}}',
 };
 
-function status(transport: "stdio" | "http", runningHttp = false): McpRuntimeStatus {
+function status(
+  transport: "stdio" | "http",
+  runningHttp = false,
+  enabled = true,
+): McpRuntimeStatus {
   return {
     settings: {
-      enabled: true,
+      enabled,
       transport,
       bindAddress: "127.0.0.1",
       port: 7331,
@@ -103,8 +115,8 @@ describe("AgentAccessCenter", () => {
     expect(screen.getByDisplayValue(snippets.stdio)).toBeInTheDocument();
   });
 
-  it("offers explicit HTTP start controls", () => {
-    const stopped = renderCenter(status("http"));
+  it("offers explicit HTTP start controls even while the runtime is stopped", () => {
+    const stopped = renderCenter(status("http", false, false));
     fireEvent.click(screen.getByRole("button", { name: /Start HTTP server/i }));
     expect(stopped.onStartHttp).toHaveBeenCalledTimes(1);
   });
@@ -120,5 +132,33 @@ describe("AgentAccessCenter", () => {
     const props = renderCenter(status("stdio"), { workspaces: [] });
     fireEvent.click(screen.getByRole("button", { name: /Create workspace/i }));
     expect(props.onOpenWorkspaces).toHaveBeenCalledTimes(1);
+  });
+
+  it("selects an explicit workspace handoff", () => {
+    const second = { ...workspace, id: "workspace-2", name: "Second", policyRuleId: "workspace:workspace-2" };
+    const secondStorage: StorageConfig = {
+      ...storage,
+      id: "storage-2",
+      mcpPolicy: {
+        ...storage.mcpPolicy,
+        rules: [
+          {
+            id: "workspace:workspace-2",
+            prefix: "/agent-workspaces/second",
+            access: "read_only",
+            source: { kind: "workspace", workspace_id: "workspace-2" },
+          },
+        ],
+      },
+    };
+    second.storageId = "storage-2";
+
+    renderCenter(status("stdio"), {
+      workspaces: [workspace, second],
+      storages: [storage, secondStorage],
+      initialWorkspaceId: second.id,
+    });
+
+    expect(screen.getByRole("combobox", { name: "Agent Access workspace" })).toHaveTextContent("Second");
   });
 });
