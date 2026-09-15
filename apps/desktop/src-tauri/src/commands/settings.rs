@@ -64,11 +64,7 @@ pub async fn complete_storage_onboarding(
     state: State<'_, AppState>,
 ) -> Result<AppSettings, McpError> {
     let _lifecycle = state.lifecycle_mutation.lock().await;
-    let result = state.app_settings_store.mark_onboarding_completed();
-    if result.is_ok() {
-        record_activation_completed(&state);
-    }
-    result
+    state.app_settings_store.mark_onboarding_completed()
 }
 
 #[tauri::command]
