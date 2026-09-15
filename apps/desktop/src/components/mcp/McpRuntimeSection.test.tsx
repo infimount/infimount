@@ -24,7 +24,15 @@ function status(settings: McpSettings, runningHttp = false): McpRuntimeStatus {
   };
 }
 
-function renderSection(settings: McpSettings, runningHttp = false) {
+function renderSection(
+  settings: McpSettings,
+  runningHttp = false,
+  options: {
+    showNetworkWarning?: boolean;
+    requiresHttpRestart?: boolean;
+    nonLoopbackMissingAuth?: boolean;
+  } = {},
+) {
   const onSettingsChange = vi.fn();
   const onSave = vi.fn();
   const onHttpToggle = vi.fn();
@@ -38,9 +46,9 @@ function renderSection(settings: McpSettings, runningHttp = false) {
       isBusy={false}
       isSaving={false}
       isTogglingHttp={false}
-      nonLoopbackMissingAuth={false}
-      showNetworkWarning={false}
-      requiresHttpRestart={false}
+      nonLoopbackMissingAuth={options.nonLoopbackMissingAuth ?? false}
+      showNetworkWarning={options.showNetworkWarning ?? false}
+      requiresHttpRestart={options.requiresHttpRestart ?? false}
       primaryActionLabel={settings.transport === "stdio" ? "Save stdio Agent Access" : "Save & Start HTTP Server"}
       endpointDisplay="Starts on 127.0.0.1:7331/mcp"
       onSave={onSave}
@@ -74,5 +82,32 @@ describe("McpRuntimeSection", () => {
     expect(screen.getByText("Stopped")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Save & Start HTTP Server" }));
     expect(onHttpToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets users dismiss a persistent network-exposure warning without weakening start safety", () => {
+    const httpSettings = {
+      ...baseSettings,
+      transport: "http" as const,
+      bindAddress: "0.0.0.0",
+    };
+    renderSection(httpSettings, false, {
+      showNetworkWarning: true,
+      nonLoopbackMissingAuth: true,
+    });
+
+    expect(screen.getByText(/This bind address is not loopback/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save & Start HTTP Server" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss network exposure warning" }));
+    expect(screen.queryByText(/This bind address is not loopback/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save & Start HTTP Server" })).toBeDisabled();
+  });
+
+  it("lets users dismiss the persistent HTTP restart warning", () => {
+    const httpSettings = { ...baseSettings, transport: "http" as const };
+    renderSection(httpSettings, true, { requiresHttpRestart: true });
+
+    expect(screen.getByText(/Restart the HTTP server/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss restart warning" }));
+    expect(screen.queryByText(/Restart the HTTP server/i)).not.toBeInTheDocument();
   });
 });
