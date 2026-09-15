@@ -1,5 +1,5 @@
-import type { Dispatch, SetStateAction } from "react";
-import { Play, Square } from "lucide-react";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { Play, Square, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,6 +54,8 @@ export function McpRuntimeSection({
   onRotateAuthToken,
   onHttpToggle,
 }: McpRuntimeSectionProps) {
+  const [networkWarningDismissed, setNetworkWarningDismissed] = useState(false);
+  const [restartWarningDismissed, setRestartWarningDismissed] = useState(false);
   const isStdio = settings.transport === "stdio";
   const stdioReady = isStdio && settings.enabled;
   const runtimeLabel = isStdio
@@ -64,6 +66,17 @@ export function McpRuntimeSection({
       ? "Running"
       : "Stopped";
   const runtimeHealthy = isStdio ? stdioReady : Boolean(status?.runningHttp);
+
+  // Dismissal is only for the current warning instance. If the underlying
+  // configuration changes, surface the warning again so a stale dismissal
+  // cannot hide a new network/restart condition.
+  useEffect(() => {
+    setNetworkWarningDismissed(false);
+  }, [settings.bindAddress]);
+
+  useEffect(() => {
+    setRestartWarningDismissed(false);
+  }, [authTokenDraft, settings.bindAddress, settings.enabledTools, settings.port]);
 
   return (
     <div className="grid gap-4 rounded-xl border border-border/80 bg-secondary/35 p-4 md:grid-cols-[1.1fr_0.9fr]">
@@ -200,10 +213,23 @@ export function McpRuntimeSection({
                 ) : null}
               </div>
             </div>
-            {showNetworkWarning ? (
-              <div className="rounded-lg border border-amber-300/80 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
-                This bind address is not loopback. Clients on your LAN may be able to reach this MCP
-                endpoint. A bearer token is required before it can start.
+            {showNetworkWarning && !networkWarningDismissed ? (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-300/80 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
+                <span className="min-w-0 flex-1">
+                  This bind address is not loopback. Clients on your LAN may be able to reach this MCP
+                  endpoint. A bearer token is required before it can start.
+                </span>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="h-6 w-6 shrink-0"
+                  aria-label="Dismiss network exposure warning"
+                  title="Dismiss network exposure warning"
+                  onClick={() => setNetworkWarningDismissed(true)}
+                >
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                </Button>
               </div>
             ) : null}
           </div>
@@ -275,9 +301,22 @@ export function McpRuntimeSection({
           </Button>
         )}
 
-        {!isStdio && requiresHttpRestart ? (
-          <div className="rounded-lg border border-amber-300/80 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
-            MCP settings changed. Restart the HTTP server (Stop then Start) to apply these changes.
+        {!isStdio && requiresHttpRestart && !restartWarningDismissed ? (
+          <div className="flex items-start gap-2 rounded-lg border border-amber-300/80 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
+            <span className="min-w-0 flex-1">
+              MCP settings changed. Restart the HTTP server (Stop then Start) to apply these changes.
+            </span>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6 shrink-0"
+              aria-label="Dismiss restart warning"
+              title="Dismiss restart warning"
+              onClick={() => setRestartWarningDismissed(true)}
+            >
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+            </Button>
           </div>
         ) : null}
       </div>
