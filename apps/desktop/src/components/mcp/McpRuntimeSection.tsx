@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import type { McpRuntimeStatus, McpSettings } from "@/types/storage";
 
 const FIELD_FOCUS_CLASS =
@@ -53,13 +54,24 @@ export function McpRuntimeSection({
   onRotateAuthToken,
   onHttpToggle,
 }: McpRuntimeSectionProps) {
+  const isStdio = settings.transport === "stdio";
+  const stdioReady = isStdio && settings.enabled;
+  const runtimeLabel = isStdio
+    ? stdioReady
+      ? "On demand"
+      : "Disabled"
+    : status?.runningHttp
+      ? "Running"
+      : "Stopped";
+  const runtimeHealthy = isStdio ? stdioReady : Boolean(status?.runningHttp);
+
   return (
     <div className="grid gap-4 rounded-xl border border-border/80 bg-secondary/35 p-4 md:grid-cols-[1.1fr_0.9fr]">
       <div className="space-y-4">
         <div>
           <Label className="text-sm font-medium text-foreground">Transport Settings</Label>
           <p className="mt-1 text-[11px] text-muted-foreground">
-            Choose how clients connect. HTTP settings are applied when you start the server.
+            stdio is client-launched on demand. HTTP runs as a persistent local server.
           </p>
         </div>
 
@@ -86,7 +98,27 @@ export function McpRuntimeSection({
           </Select>
         </div>
 
-        {settings.transport === "http" ? (
+        {isStdio ? (
+          <div className="rounded-lg border border-border/80 bg-card p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-medium text-foreground">General Agent Access</div>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  When enabled, configured MCP clients may launch the bundled stdio sidecar. When
+                  disabled, general stdio connections fail closed before tools are exposed.
+                </p>
+              </div>
+              <Switch
+                aria-label="Enable general Agent Access"
+                checked={settings.enabled}
+                disabled={isBusy}
+                onCheckedChange={(enabled) =>
+                  onSettingsChange((current) => ({ ...current, enabled }))
+                }
+              />
+            </div>
+          </div>
+        ) : (
           <div className="space-y-3">
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
@@ -170,43 +202,64 @@ export function McpRuntimeSection({
             </div>
             {showNetworkWarning ? (
               <div className="rounded-lg border border-amber-300/80 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
-                This bind address is not loopback. Clients on your LAN may be able to reach
-                this MCP endpoint. A bearer token is required before it can start.
+                This bind address is not loopback. Clients on your LAN may be able to reach this MCP
+                endpoint. A bearer token is required before it can start.
               </div>
             ) : null}
           </div>
-        ) : null}
+        )}
       </div>
 
       <div className="space-y-3 rounded-lg border border-border/80 bg-card p-4 shadow-sm">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className="text-sm font-medium text-foreground">Runtime Status</div>
+            <div className="text-sm font-medium text-foreground">
+              {isStdio ? "Agent Access Status" : "HTTP Runtime Status"}
+            </div>
             <p className="mt-1 text-[11px] text-muted-foreground">
-              {status?.runningHttp ? "HTTP server is live." : "HTTP server is not running."}
+              {isStdio
+                ? stdioReady
+                  ? "Ready for client launch. No background server is required."
+                  : "General MCP access is disabled."
+                : status?.runningHttp
+                  ? "HTTP server is live."
+                  : "HTTP server is not running."}
             </p>
           </div>
           <div
             className={`rounded-full px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.14em] ${
-              status?.runningHttp
+              runtimeHealthy
                 ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
                 : "bg-muted text-muted-foreground"
             }`}
           >
-            {status?.runningHttp ? "Running" : "Stopped"}
+            {runtimeLabel}
           </div>
         </div>
 
         <div className="rounded-lg border border-border/80 bg-background p-3">
           <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-            Endpoint
+            {isStdio ? "Launch mode" : "Endpoint"}
           </div>
           <div className="mt-2 break-all font-mono text-xs text-foreground">
-            {endpointDisplay}
+            {isStdio
+              ? settings.enabled
+                ? "Client-launched stdio"
+                : "Agent access disabled"
+              : endpointDisplay}
           </div>
         </div>
 
-        {settings.transport === "http" ? (
+        {isStdio ? (
+          <Button
+            type="button"
+            className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
+            onClick={onSave}
+            disabled={isBusy}
+          >
+            {isSaving ? "Saving..." : primaryActionLabel}
+          </Button>
+        ) : (
           <Button
             type="button"
             className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
@@ -220,21 +273,11 @@ export function McpRuntimeSection({
             )}
             {isTogglingHttp ? "Working..." : primaryActionLabel}
           </Button>
-        ) : (
-          <Button
-            type="button"
-            className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
-            onClick={onSave}
-            disabled={isBusy}
-          >
-            {isSaving ? "Saving..." : primaryActionLabel}
-          </Button>
         )}
 
-        {requiresHttpRestart ? (
+        {!isStdio && requiresHttpRestart ? (
           <div className="rounded-lg border border-amber-300/80 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
-            MCP settings changed. Restart the HTTP server (Stop then Start) to apply these
-            changes.
+            MCP settings changed. Restart the HTTP server (Stop then Start) to apply these changes.
           </div>
         ) : null}
       </div>
