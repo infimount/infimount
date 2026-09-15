@@ -282,6 +282,16 @@ fn load_runtime_state(
     Ok((registry, settings, persisted_auth_token))
 }
 
+fn require_general_agent_access(settings: &McpSettings) -> Result<(), std::io::Error> {
+    if settings.enabled {
+        return Ok(());
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "general Agent Access is disabled; enable Agent Access in Infimount before connecting",
+    ))
+}
+
 async fn run_server(serve: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
@@ -292,6 +302,7 @@ async fn run_server(serve: ServeArgs) -> Result<(), Box<dyn std::error::Error>> 
     let _ = init_telemetry();
 
     let (registry, settings, persisted_auth_token) = load_runtime_state(true)?;
+    require_general_agent_access(&settings)?;
     let effective_auth_token = std::env::var("INFIMOUNT_AUTH_TOKEN")
         .ok()
         .map(|value| value.trim().to_string())
@@ -340,6 +351,7 @@ async fn run_agent_task_server(args: AgentTaskServeArgs) -> Result<(), Box<dyn s
     // Agent Task stdio uses a fixed, separately scoped tool surface. It still
     // loads settings so transaction recovery can identify the active auth ref,
     // but it does not resolve or require the HTTP bearer-token secret itself.
+    // The general Agent Access gate is intentionally not applied to this separately scoped path.
     let (registry, _settings, _) = load_runtime_state(false)?;
     let storage_name = registry
         .load_all()
@@ -435,7 +447,11 @@ fn json_file_status(path: &std::path::Path) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{json_file_status, parse_cli, AgentTaskServeArgs, CliCommand, ServeArgs};
+    use super::{
+        json_file_status, parse_cli, require_general_agent_access, AgentTaskServeArgs, CliCommand,
+        ServeArgs,
+    };
+    use infimount_mcp::settings::McpSettings;
 
     fn strings(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_string()).collect()
@@ -450,6 +466,15 @@ mod tests {
         assert_eq!(json_file_status(&path), "error");
         std::fs::write(&path, b"{}").expect("write valid fixture");
         assert_eq!(json_file_status(&path), "ok");
+    }
+
+    #[test]
+    fn general_sidecar_fails_closed_when_agent_access_is_disabled() {
+        let mut settings = McpSettings::default();
+        settings.enabled = false;
+        assert!(require_general_agent_access(&settings).is_err());
+        settings.enabled = true;
+        assert!(require_general_agent_access(&settings).is_ok());
     }
 
     #[test]
