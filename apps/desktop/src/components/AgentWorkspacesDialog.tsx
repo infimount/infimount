@@ -72,6 +72,7 @@ interface AgentWorkspacesDialogProps {
   auditEvents?: McpAuditEvent[];
   onOpenChange: (open: boolean) => void;
   onSelectStorage: (storageId: string) => void;
+  onConnectAgent?: (workspaceId: string) => void;
 }
 
 function workspaceAccessProfile(workspace: AgentWorkspace): "read_only" | "read_write" | "none" {
@@ -86,6 +87,7 @@ export function AgentWorkspacesDialog({
   auditEvents = [],
   onOpenChange,
   onSelectStorage,
+  onConnectAgent,
 }: AgentWorkspacesDialogProps) {
   const [workspaces, setWorkspaces] = useState<AgentWorkspace[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
@@ -557,16 +559,26 @@ export function AgentWorkspacesDialog({
                             {selectedWorkspace.rootPath}
                           </p>
                         </div>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            onSelectStorage(selectedWorkspace.storageId);
-                            onOpenChange(false);
-                          }}
-                        >
-                          Open storage
-                        </Button>
+                        <div className="flex shrink-0 gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              onSelectStorage(selectedWorkspace.storageId);
+                              onOpenChange(false);
+                            }}
+                          >
+                            Open storage
+                          </Button>
+                          {onConnectAgent ? (
+                            <Button
+                              size="sm"
+                              onClick={() => onConnectAgent(selectedWorkspace.id)}
+                            >
+                              Connect agent
+                            </Button>
+                          ) : null}
+                        </div>
                       </div>
                       <div className="mb-3 flex flex-wrap gap-2">
                         <Badge variant="outline" className="gap-1">

@@ -470,11 +470,17 @@ mod tests {
 
     #[test]
     fn general_sidecar_fails_closed_when_agent_access_is_disabled() {
-        let mut settings = McpSettings::default();
-        settings.enabled = false;
-        assert!(require_general_agent_access(&settings).is_err());
-        settings.enabled = true;
-        assert!(require_general_agent_access(&settings).is_ok());
+        let disabled = McpSettings {
+            enabled: false,
+            ..McpSettings::default()
+        };
+        let enabled = McpSettings {
+            enabled: true,
+            ..McpSettings::default()
+        };
+
+        assert!(require_general_agent_access(&disabled).is_err());
+        assert!(require_general_agent_access(&enabled).is_ok());
     }
 
     #[test]

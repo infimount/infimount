@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { summarizeAgentAccess } from "@/lib/agentAccessStatus";
+import { isWorkspaceAgentAccessPrepared, summarizeAgentAccess } from "@/lib/agentAccessStatus";
 import type { WorkspaceRecord } from "@/lib/api";
 import type { McpClientSnippets, McpRuntimeStatus, StorageConfig } from "@/types/storage";
 
@@ -77,7 +77,7 @@ export function AgentAccessCenter({
     : null;
   const summary = summarizeAgentAccess(status, workspaces, storages);
   const workspaceBoundaryReady = Boolean(
-    selectedWorkspace && selectedStorage?.enabled && selectedStorage.mcpExposed,
+    selectedWorkspace && isWorkspaceAgentAccessPrepared(selectedWorkspace, selectedStorage),
   );
   const selectedPrepared = Boolean(
     workspaceBoundaryReady &&

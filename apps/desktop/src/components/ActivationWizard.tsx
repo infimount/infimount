@@ -54,7 +54,7 @@ export interface ActivationWizardProps {
   onOpenMcpSettings: () => void;
   onPrepareAgentAccess: (workspace: WorkspaceRecord) => Promise<void>;
   onComplete: () => Promise<void>;
-  onSkip: () => Promise<void>;
+  onBrowseStorageOnly: () => Promise<void>;
   onSaveState: (step: WizardStepId | null, completed: WizardStepId[]) => Promise<void>;
   storagesCount: number;
   workspaces: WorkspaceRecord[];
@@ -103,7 +103,7 @@ export function ActivationWizard({
   onOpenMcpSettings,
   onPrepareAgentAccess,
   onComplete,
-  onSkip,
+  onBrowseStorageOnly,
   onSaveState,
   storagesCount,
   workspaces,
@@ -388,8 +388,12 @@ export function ActivationWizard({
             )}
           </div>
           <div className="flex gap-2">
-            <Button type="button" variant="ghost" onClick={() => void onSkip()}>
-              Skip
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => void onBrowseStorageOnly()}
+            >
+              Browse storage only
             </Button>
             {currentStep === "done" ? (
               <Button
@@ -421,8 +425,8 @@ function WelcomeStep() {
           Welcome to Infimount
         </h3>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          Connect storage, create one scoped workspace, then connect an agent. Infimount keeps
-          storage browsing separate from agent access so nothing is exposed just because you added it.
+          Use Infimount as a storage browser, or continue into a scoped workspace and connect an AI
+          agent. Storage browsing is complete on its own and never requires Agent Access.
         </p>
       </div>
 

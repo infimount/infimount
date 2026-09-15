@@ -198,7 +198,7 @@ describe("StorageSidebar", () => {
       ["Import Config", handlers.importConfig],
       ["Edit Config JSON", handlers.editConfig],
       ["Download Config", handlers.exportConfig],
-      ["MCP Settings", handlers.mcp],
+      ["Advanced MCP Settings", handlers.mcp],
       ["Setup Guide", handlers.onboarding],
     ] as const) {
       fireEvent.pointerDown(screen.getByRole("button", { name: "Storage actions" }));
@@ -217,6 +217,21 @@ describe("StorageSidebar", () => {
     fireEvent.contextMenu(screen.getByRole("button", { name: /Google Bucket/i }));
     fireEvent.click(await screen.findByText("Delete"));
     expect(handlers.remove).toHaveBeenCalledWith("gcs");
+  });
+
+  it("surfaces Agent Access as a first-class sidebar status action", async () => {
+    const onOpenAgentAccess = vi.fn();
+    renderSidebar({
+      onOpenAgentAccess,
+      agentAccessLabel: "Ready · stdio on demand",
+      agentAccessTone: "success",
+    });
+
+    const action = screen.getByRole("button", {
+      name: "Agent Access: Ready · stdio on demand",
+    });
+    fireEvent.click(action);
+    expect(onOpenAgentAccess).toHaveBeenCalledTimes(1);
   });
 
   it("copies internally dropped files between storages", async () => {

@@ -688,6 +688,18 @@ function assessMcpConnectionSafety({
   showNetworkWarning: boolean;
   destructiveAccessEnabled: boolean;
 }): { label: string; description: string; className: string } {
+  // A drafted non-loopback HTTP bind is the most important condition to
+  // surface before a user starts the server. Starting HTTP also enables
+  // general Agent Access, so "currently disabled" must not hide the network
+  // exposure warning.
+  if (showNetworkWarning) {
+    return {
+      label: "Review network exposure",
+      description:
+        "The HTTP bind address is reachable beyond loopback; use only with intentional network boundaries.",
+      className: "text-amber-700 dark:text-amber-300",
+    };
+  }
   if (!agentAccessEnabled) {
     return {
       label: "Agent Access disabled",
@@ -707,13 +719,6 @@ function assessMcpConnectionSafety({
       label: "No functions enabled",
       description: "Agents can connect, but every MCP tool is currently disabled.",
       className: "text-muted-foreground",
-    };
-  }
-  if (showNetworkWarning) {
-    return {
-      label: "Review network exposure",
-      description: "The HTTP bind address is reachable beyond loopback; use only with intentional network boundaries.",
-      className: "text-amber-700 dark:text-amber-300",
     };
   }
   if (destructiveAccessEnabled) {

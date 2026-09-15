@@ -1,3 +1,4 @@
+import type { ComponentProps } from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -116,13 +117,17 @@ function makeWorkspace(
   };
 }
 
-function renderDialog(storages: StorageConfig[] = [storage]) {
+function renderDialog(
+  storages: StorageConfig[] = [storage],
+  overrides: Partial<ComponentProps<typeof AgentWorkspacesDialog>> = {},
+) {
   return render(
     <AgentWorkspacesDialog
       open
       storages={storages}
       onOpenChange={vi.fn()}
       onSelectStorage={vi.fn()}
+      {...overrides}
     />,
   );
 }
@@ -212,6 +217,18 @@ describe("AgentWorkspacesDialog", () => {
         expect.objectContaining({ accessProfile: "read_write", applyPolicy: true }),
       );
     });
+  });
+
+  it("continues directly from a workspace into Agent Access", async () => {
+    const ws = makeWorkspace("connect-workspace", "Connect workspace");
+    const onConnectAgent = vi.fn();
+    vi.mocked(listWorkspaces).mockResolvedValue([ws]);
+
+    renderDialog([storage], { onConnectAgent });
+
+    const connect = await screen.findByRole("button", { name: "Connect agent" });
+    fireEvent.click(connect);
+    expect(onConnectAgent).toHaveBeenCalledWith("connect-workspace");
   });
 
   it("blocks the exact shell-variable Local Filesystem root that failed the real pilot", async () => {

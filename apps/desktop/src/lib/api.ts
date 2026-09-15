@@ -530,6 +530,10 @@ export function completeOnboarding(): Promise<AppSettings> {
   return invokeOrThrow<AppSettings>("complete_onboarding");
 }
 
+export function completeStorageOnboarding(): Promise<AppSettings> {
+  return invokeOrThrow<AppSettings>("complete_storage_onboarding");
+}
+
 export function skipOnboarding(): Promise<AppSettings> {
   return invokeOrThrow<AppSettings>("skip_onboarding");
 }
