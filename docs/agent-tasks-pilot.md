@@ -18,7 +18,7 @@ The pilot does not justify new feature breadth. A failed run should first identi
 
 ## Candidate prerequisite
 
-Once published, use the `v0.8.1-rc.8` candidate for the resumed pilot.
+Once published, use the `v0.8.1-rc.9` candidate for the resumed pilot.
 
 `v0.8.1-rc.1` was published successfully, but its first real pilot attempt stopped during Agent Workspace setup before any Agent Task was executed. That run exposed a material Infimount workflow defect: workspace creation still carried agent-type/template and second-path concepts, and a shell-style Local Filesystem root could fail late during namespace binding. rc.2 fixed that product blocker. rc.1 must not be presented as completed pilot evidence.
 
@@ -34,6 +34,8 @@ Once published, use the `v0.8.1-rc.8` candidate for the resumed pilot.
 
 `v0.8.1-rc.7` was published successfully. Its canonical Release workflow and automatic downstream `Post Release Validation` both passed. The resumed real validation then showed that the reminder correction had fixed a symptom while the underlying product model still coupled normal storage use and agent activation too tightly. Agent Access remained discoverable mainly through MCP administration, storage-only users could still be framed as activation-incomplete, stdio and HTTP did not have sufficiently distinct user-facing runtime semantics, the normal verification wording could be read as endpoint verification, and ordinary `infimount_mcp serve` did not directly enforce the persisted general Agent Access gate. PR #110 replaces that model with a first-class Agent Access surface, legitimate storage-only onboarding completion, explicit stdio/HTTP semantics, precise safety-probe wording, frontend readiness that mirrors backend fail-closed workspace checks, and an enforced general Agent Access runtime gate while keeping `serve-agent-task` independently scoped. rc.7 must not be presented as completed pilot evidence.
 
+`v0.8.1-rc.8` was tagged at the intended validated main commit, but its canonical Release workflow stopped before packaging or publication. The sole deterministic Release Gate failure was the packaged stdio activation proof: PR #110 correctly made ordinary `infimount_mcp serve` fail closed unless persisted general Agent Access is enabled, while the activation smoke fixture still persisted `McpSettings::default()` with `enabled=false`. The sidecar therefore exited before MCP initialization and the smoke surfaced `ERR_MCP_HANDSHAKE_FAILED`. PR #112 leaves the production fail-closed gate unchanged, makes the activation fixture model the guided product state by explicitly enabling general Agent Access, asserts that readiness invariant before the packaged-sidecar proof, preserves useful test diagnostics, and moves activation/secret-migration/backup-restore plus the remaining cheap deterministic release-policy fixtures into mandatory pre-tag workflows. rc.8 was not published and must not be presented as completed pilot evidence.
+
 Record:
 
 - prerelease version;
@@ -42,17 +44,17 @@ Record:
 - previous installed stable version;
 - agent client name.
 
-The resumed pilot should start from an installed v0.8.0 environment and install v0.8.1-rc.8 over it. If the prerelease is not offered through the stable updater channel, installer-over-install is the correct candidate upgrade exercise. Do not claim that a prerelease installer proves stable-channel updater behavior.
+The resumed pilot should start from an installed v0.8.0 environment and install v0.8.1-rc.9 over it. If the prerelease is not offered through the stable updater channel, installer-over-install is the correct candidate upgrade exercise. Do not claim that a prerelease installer proves stable-channel updater behavior.
 
-For the controlled task workspace in this pilot, continue to use an **explicit absolute host path**. This keeps the Agent Task workload evidence independent from the separate legacy-root regression below. Shell-variable notation such as `$HOME/...` remains invalid. rc.8 retains the rc.5 support for legacy `~` and `~/...` Local Filesystem roots by canonically normalizing them once before the first workspace namespace binding.
+For the controlled task workspace in this pilot, continue to use an **explicit absolute host path**. This keeps the Agent Task workload evidence independent from the separate legacy-root regression below. Shell-variable notation such as `$HOME/...` remains invalid. rc.9 retains the rc.5 support for legacy `~` and `~/...` Local Filesystem roots by canonically normalizing them once before the first workspace namespace binding.
 
-## rc.5 through rc.8 focused regression checks
+## rc.5 through rc.9 focused regression checks
 
-Before the three workload pilots, verify the product corrections that caused rc.5 through rc.8 to exist.
+Before the three workload pilots, verify the product corrections that caused rc.5 through rc.9 to exist.
 
 ### Legacy Local Filesystem home alias
 
-Use a v0.8.0 Local Filesystem storage whose configured root is the legacy `~` form and that has no bound Agent Workspace. After upgrading to rc.8:
+Use a v0.8.0 Local Filesystem storage whose configured root is the legacy `~` form and that has no bound Agent Workspace. After upgrading to rc.9:
 
 1. confirm ordinary storage browsing still works;
 2. create one Agent Workspace on that storage through the normal UI;
@@ -96,7 +98,7 @@ Verify all of the following:
 - closing Add Storage, Agent Workspaces, or Advanced MCP only returns to onboarding when onboarding explicitly opened that dialog;
 - the client-adapter and Agent Access surfaces remain usable at the target desktop viewport without inaccessible controls below the fold.
 
-These checks validate the rc.5 and rc.8 guided-flow corrections. The rc.7 floating reminder behavior is intentionally superseded by storage-only completion and should not be treated as a retained product requirement. These checks do not replace the three real Agent Task workloads below.
+These checks validate the rc.5 through rc.9 guided-flow corrections. The rc.7 floating reminder behavior is intentionally superseded by storage-only completion and should not be treated as a retained product requirement. These checks do not replace the three real Agent Task workloads below.
 
 ### File-browser pagination and stale-cursor recovery
 
@@ -232,7 +234,7 @@ Verify the real publication UI does not expose an overwrite mode. Record `safety
 
 ## Upgrade exercise
 
-Start from v0.8.0 with representative local state, then install v0.8.1-rc.8 over it.
+Start from v0.8.0 with representative local state, then install v0.8.1-rc.9 over it.
 
 The evidence bundle requires all of the following:
 
@@ -270,7 +272,7 @@ Each of the three task records contains:
 
 A candidate/platform evidence bundle passes only when:
 
-- the rc.5 through rc.8 focused regression checks above pass without a material workflow or safety defect;
+- the rc.5 through rc.9 focused regression checks above pass without a material workflow or safety defect;
 - coding, document, and data-analysis pilots all pass;
 - all source before/after aggregate hashes match;
 - source MCP exposure is unchanged for every task;
