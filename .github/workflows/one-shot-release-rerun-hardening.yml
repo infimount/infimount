@@ -89,15 +89,37 @@ jobs:
           PY
 
           bash scripts/check-zero-manual-release-gate.sh
+          git diff --check
 
-      - name: Commit only the durable fix
+      - name: Export patched files as Git blobs
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          rm .github/workflows/one-shot-release-rerun-hardening.yml
-          git diff --check
-          git status --short
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .github/workflows/release.yml scripts/check-zero-manual-release-gate.sh .github/workflows/one-shot-release-rerun-hardening.yml
-          git commit -m "ci: isolate release publisher reruns"
-          git push origin HEAD:fix/release-draft-rerun-isolation
+
+          create_blob() {
+            local file="$1"
+            local payload
+            payload="$(python3 - "$file" <<'PY'
+          import base64, json, pathlib, sys
+          data = pathlib.Path(sys.argv[1]).read_bytes()
+          print(json.dumps({"content": base64.b64encode(data).decode(), "encoding": "base64"}))
+          PY
+          )"
+            curl --fail --silent --show-error \
+              -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/git/blobs" \
+              -d "$payload" | jq -r '.sha'
+          }
+
+          release_blob="$(create_blob .github/workflows/release.yml)"
+          policy_blob="$(create_blob scripts/check-zero-manual-release-gate.sh)"
+
+          test -n "$release_blob" && test "$release_blob" != null
+          test -n "$policy_blob" && test "$policy_blob" != null
+
+          echo "RELEASE_BLOB_SHA=$release_blob"
+          echo "POLICY_BLOB_SHA=$policy_blob"
