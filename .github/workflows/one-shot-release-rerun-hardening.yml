@@ -26,42 +26,46 @@ jobs:
 
           release = release_path.read_text()
 
-          old_download = '''      - name: Download all artifacts
-                  uses: actions/download-artifact@v7
-                  with:
-                    path: artifacts
-          '''.replace('          ', '')
-          new_download = '''      - name: Download platform build artifacts only
-                  uses: actions/download-artifact@v7
-                  with:
-                    pattern: '*-artifacts'
-                    path: artifacts
-          '''.replace('          ', '')
+          old_download = (
+              "      - name: Download all artifacts\n"
+              "        uses: actions/download-artifact@v7\n"
+              "        with:\n"
+              "          path: artifacts\n"
+          )
+          new_download = (
+              "      - name: Download platform build artifacts only\n"
+              "        uses: actions/download-artifact@v7\n"
+              "        with:\n"
+              "          pattern: '*-artifacts'\n"
+              "          path: artifacts\n"
+          )
 
           if release.count(old_download) != 1:
               raise SystemExit(f'expected exactly one publisher artifact-download block, found {release.count(old_download)}')
           release = release.replace(old_download, new_download)
 
-          old_sbom = '''      - name: Generate mandatory SBOM (SPDX JSON)
-                  uses: anchore/sbom-action@v0
-                  with:
-                    path: sbom-input
-                    output-file: release-assets/SBOM.spdx.json
-                    format: spdx-json
-          '''.replace('          ', '')
-          new_sbom = '''      - name: Generate mandatory SBOM (SPDX JSON)
-                  uses: anchore/sbom-action@v0
-                  with:
-                    path: sbom-input
-                    output-file: release-assets/SBOM.spdx.json
-                    format: spdx-json
-                    # The publisher owns the curated release asset set. Anchore's
-                    # implicit uploads contaminate an existing draft on reruns with
-                    # its pre-augmentation SBOM, which is intentionally not present
-                    # in SHA256SUMS.txt.
-                    upload-artifact: false
-                    upload-release-assets: false
-          '''.replace('          ', '')
+          old_sbom = (
+              "      - name: Generate mandatory SBOM (SPDX JSON)\n"
+              "        uses: anchore/sbom-action@v0\n"
+              "        with:\n"
+              "          path: sbom-input\n"
+              "          output-file: release-assets/SBOM.spdx.json\n"
+              "          format: spdx-json\n"
+          )
+          new_sbom = (
+              "      - name: Generate mandatory SBOM (SPDX JSON)\n"
+              "        uses: anchore/sbom-action@v0\n"
+              "        with:\n"
+              "          path: sbom-input\n"
+              "          output-file: release-assets/SBOM.spdx.json\n"
+              "          format: spdx-json\n"
+              "          # The publisher owns the curated release asset set. Anchore's\n"
+              "          # implicit uploads contaminate an existing draft on reruns with\n"
+              "          # its pre-augmentation SBOM, which is intentionally not present\n"
+              "          # in SHA256SUMS.txt.\n"
+              "          upload-artifact: false\n"
+              "          upload-release-assets: false\n"
+          )
 
           if release.count(old_sbom) != 1:
               raise SystemExit(f'expected exactly one mandatory SBOM block, found {release.count(old_sbom)}')
@@ -70,13 +74,14 @@ jobs:
 
           policy = policy_path.read_text()
           anchor = 'require_file_contains "$RELEASE_WORKFLOW" "add-sidecar-to-sbom.mjs"\n'
-          addition = '''require_file_contains "$RELEASE_WORKFLOW" "pattern: '*-artifacts'"
-          require_file_contains "$RELEASE_WORKFLOW" "upload-artifact: false"
-          require_file_contains "$RELEASE_WORKFLOW" "upload-release-assets: false"
-          if grep -Fq -- "upload-release-assets: true" "$RELEASE_WORKFLOW"; then
-            fail "SBOM generation must not implicitly publish release assets"
-          fi
-          '''.replace('          ', '')
+          addition = (
+              'require_file_contains "$RELEASE_WORKFLOW" "pattern: \'*-artifacts\'"\n'
+              'require_file_contains "$RELEASE_WORKFLOW" "upload-artifact: false"\n'
+              'require_file_contains "$RELEASE_WORKFLOW" "upload-release-assets: false"\n'
+              'if grep -Fq -- "upload-release-assets: true" "$RELEASE_WORKFLOW"; then\n'
+              '  fail "SBOM generation must not implicitly publish release assets"\n'
+              'fi\n'
+          )
           if policy.count(anchor) != 1:
               raise SystemExit(f'expected exactly one policy insertion anchor, found {policy.count(anchor)}')
           policy = policy.replace(anchor, anchor + addition)
