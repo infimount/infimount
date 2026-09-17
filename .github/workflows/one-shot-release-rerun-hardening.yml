@@ -1,0 +1,98 @@
+name: One-shot release rerun hardening
+
+on:
+  push:
+    branches:
+      - fix/release-draft-rerun-isolation
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: fix/release-draft-rerun-isolation
+
+      - name: Apply fail-closed release publisher hardening
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          release_path = Path('.github/workflows/release.yml')
+          policy_path = Path('scripts/check-zero-manual-release-gate.sh')
+
+          release = release_path.read_text()
+
+          old_download = '''      - name: Download all artifacts
+                  uses: actions/download-artifact@v7
+                  with:
+                    path: artifacts
+          '''.replace('          ', '')
+          new_download = '''      - name: Download platform build artifacts only
+                  uses: actions/download-artifact@v7
+                  with:
+                    pattern: '*-artifacts'
+                    path: artifacts
+          '''.replace('          ', '')
+
+          if release.count(old_download) != 1:
+              raise SystemExit(f'expected exactly one publisher artifact-download block, found {release.count(old_download)}')
+          release = release.replace(old_download, new_download)
+
+          old_sbom = '''      - name: Generate mandatory SBOM (SPDX JSON)
+                  uses: anchore/sbom-action@v0
+                  with:
+                    path: sbom-input
+                    output-file: release-assets/SBOM.spdx.json
+                    format: spdx-json
+          '''.replace('          ', '')
+          new_sbom = '''      - name: Generate mandatory SBOM (SPDX JSON)
+                  uses: anchore/sbom-action@v0
+                  with:
+                    path: sbom-input
+                    output-file: release-assets/SBOM.spdx.json
+                    format: spdx-json
+                    # The publisher owns the curated release asset set. Anchore's
+                    # implicit uploads contaminate an existing draft on reruns with
+                    # its pre-augmentation SBOM, which is intentionally not present
+                    # in SHA256SUMS.txt.
+                    upload-artifact: false
+                    upload-release-assets: false
+          '''.replace('          ', '')
+
+          if release.count(old_sbom) != 1:
+              raise SystemExit(f'expected exactly one mandatory SBOM block, found {release.count(old_sbom)}')
+          release = release.replace(old_sbom, new_sbom)
+          release_path.write_text(release)
+
+          policy = policy_path.read_text()
+          anchor = 'require_file_contains "$RELEASE_WORKFLOW" "add-sidecar-to-sbom.mjs"\n'
+          addition = '''require_file_contains "$RELEASE_WORKFLOW" "pattern: '*-artifacts'"
+          require_file_contains "$RELEASE_WORKFLOW" "upload-artifact: false"
+          require_file_contains "$RELEASE_WORKFLOW" "upload-release-assets: false"
+          if grep -Fq -- "upload-release-assets: true" "$RELEASE_WORKFLOW"; then
+            fail "SBOM generation must not implicitly publish release assets"
+          fi
+          '''.replace('          ', '')
+          if policy.count(anchor) != 1:
+              raise SystemExit(f'expected exactly one policy insertion anchor, found {policy.count(anchor)}')
+          policy = policy.replace(anchor, anchor + addition)
+          policy_path.write_text(policy)
+          PY
+
+          bash scripts/check-zero-manual-release-gate.sh
+
+      - name: Commit only the durable fix
+        run: |
+          set -euo pipefail
+          rm .github/workflows/one-shot-release-rerun-hardening.yml
+          git diff --check
+          git status --short
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .github/workflows/release.yml scripts/check-zero-manual-release-gate.sh .github/workflows/one-shot-release-rerun-hardening.yml
+          git commit -m "ci: isolate release publisher reruns"
+          git push origin HEAD:fix/release-draft-rerun-isolation
