@@ -19,5 +19,5 @@ if "$SIDECAR" definitely-not-a-command >/dev/null 2>&1; then
   exit 1
 fi
 
-INFIMOUNT_MCP_PATH="$SIDECAR" cargo test -p infimount \
-  complete_demo_activation_over_packaged_stdio_sidecar -- --ignored
+RUST_BACKTRACE=1 INFIMOUNT_MCP_PATH="$SIDECAR" cargo test -p infimount \
+  complete_demo_activation_over_packaged_stdio_sidecar -- --ignored --nocapture
