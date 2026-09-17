@@ -49,6 +49,10 @@ const validateCommit = (commit, version) => {
   }
 };
 
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const containsIdentityToken = (text, value) =>
+  new RegExp(`(^|[^0-9A-Za-z.+-])${escapeRegex(value)}(?=$|[^0-9A-Za-z.+-])`, "m").test(text);
+
 const runCore = (args, options = {}) =>
   execFileSync(process.execPath, [CORE, ...args], {
     encoding: "utf8",
@@ -84,8 +88,12 @@ const rewriteGeneratedIdentity = (out, version, commit) => {
 
   const finalEvidence = fs.readFileSync(evidencePath, "utf8");
   const finalRunbook = fs.readFileSync(runbookPath, "utf8");
-  const staleVersionRemains = oldVersion !== version && (finalEvidence.includes(oldVersion) || finalRunbook.includes(oldVersion));
-  const staleCommitRemains = oldCommit !== commit && (finalEvidence.includes(oldCommit) || finalRunbook.includes(oldCommit));
+  const staleVersionRemains =
+    oldVersion !== version &&
+    (containsIdentityToken(finalEvidence, oldVersion) || containsIdentityToken(finalRunbook, oldVersion));
+  const staleCommitRemains =
+    oldCommit !== commit &&
+    (containsIdentityToken(finalEvidence, oldCommit) || containsIdentityToken(finalRunbook, oldCommit));
   if (staleVersionRemains || staleCommitRemains) {
     fail("historical candidate identity remains in generated pilot artifacts");
   }
@@ -122,6 +130,13 @@ const prepare = (args) => {
 };
 
 const selfTest = () => {
+  if (!containsIdentityToken("Candidate: 0.8.1-rc.1\n", "0.8.1-rc.1")) {
+    fail("identity-token self-test must match an exact candidate version");
+  }
+  if (containsIdentityToken("Candidate: 0.8.1-rc.10\n", "0.8.1-rc.1")) {
+    fail("identity-token self-test must not treat rc.1 as present inside rc.10");
+  }
+
   try {
     runCore(["self-test"], { capture: true });
   } catch (error) {
