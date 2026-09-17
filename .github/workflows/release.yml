@@ -1010,9 +1010,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Download all artifacts
+      - name: Download platform build artifacts only
         uses: actions/download-artifact@v7
         with:
+          pattern: '*-artifacts'
           path: artifacts
 
       - name: Display structure of downloaded files
@@ -1099,6 +1100,12 @@ jobs:
           path: sbom-input
           output-file: release-assets/SBOM.spdx.json
           format: spdx-json
+          # The publisher owns the curated release asset set. Anchore's
+          # implicit uploads contaminate an existing draft on reruns with
+          # its pre-augmentation SBOM, which is intentionally not present
+          # in SHA256SUMS.txt.
+          upload-artifact: false
+          upload-release-assets: false
 
       - name: Add explicit bundled-sidecar component to SBOM
         run: node scripts/add-sidecar-to-sbom.mjs release-assets/SBOM.spdx.json sbom-input/sidecars "${GITHUB_REF#refs/tags/v}"
