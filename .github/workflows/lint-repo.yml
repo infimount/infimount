@@ -34,6 +34,11 @@ jobs:
           "$(go env GOPATH)/bin/actionlint"
       - name: Zero-manual release policy
         run: ./scripts/check-zero-manual-release-gate.sh
+      - name: Deterministic release policy fixtures
+        run: |
+          node scripts/check-upgrade-fixtures.mjs
+          ./scripts/smoke-install-scripts.sh
+          ./scripts/test-packaged-sidecar-checksum.sh
 
   lint-yaml:
     name: YAML Lint
