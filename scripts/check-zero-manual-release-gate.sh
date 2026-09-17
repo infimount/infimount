@@ -89,6 +89,12 @@ require_file_contains "$RELEASE_WORKFLOW" "check-release-consistency.mjs"
 require_file_contains "$RELEASE_WORKFLOW" "check-feature-docs.mjs"
 require_file_contains "$RELEASE_WORKFLOW" "check-updater-assets.sh"
 require_file_contains "$RELEASE_WORKFLOW" "add-sidecar-to-sbom.mjs"
+require_file_contains "$RELEASE_WORKFLOW" "pattern: '*-artifacts'"
+require_file_contains "$RELEASE_WORKFLOW" "upload-artifact: false"
+require_file_contains "$RELEASE_WORKFLOW" "upload-release-assets: false"
+if grep -Fq -- "upload-release-assets: true" "$RELEASE_WORKFLOW"; then
+  fail "SBOM generation must not implicitly publish release assets"
+fi
 require_file_contains "$RELEASE_WORKFLOW" "Cryptographically verify updater signatures"
 require_file_contains "$RELEASE_WORKFLOW" "Verify Windows Authenticode chain"
 require_file_contains "$RELEASE_WORKFLOW" "Re-download and validate draft release assets"
