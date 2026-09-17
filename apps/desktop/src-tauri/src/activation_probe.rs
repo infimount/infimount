@@ -1443,6 +1443,15 @@ mod tests {
         assert!(is_executable_file(&binary));
         let fixture = create_demo_fixture();
         let target = select_probe_target(&fixture.registry).expect("valid activation target");
+        let settings: infimount_mcp::settings::McpSettings = serde_json::from_slice(
+            &std::fs::read(target.config_dir.join("mcp_settings.json"))
+                .expect("read activation MCP settings"),
+        )
+        .expect("parse activation MCP settings");
+        assert!(
+            settings.enabled,
+            "activation fixture must enable general Agent Access before launching ordinary MCP serve"
+        );
         let digest = sidecar_sha256(&binary).unwrap();
         let report = run_sidecar_probe(&binary, &digest, &target);
         report.result.expect("complete stdio activation proof");
@@ -1525,9 +1534,11 @@ mod tests {
                 checkpoint_ids: vec![],
             })
             .expect("save workspace registry");
+        let mut mcp_settings = infimount_mcp::settings::McpSettings::default();
+        mcp_settings.enabled = true;
         std::fs::write(
             config_dir.join("mcp_settings.json"),
-            serde_json::to_vec_pretty(&infimount_mcp::settings::McpSettings::default()).unwrap(),
+            serde_json::to_vec_pretty(&mcp_settings).unwrap(),
         )
         .expect("save MCP settings");
 
