@@ -113,12 +113,16 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb gnome-keyring dbus-x11
+        run: bash scripts/ci-apt-install.sh libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb gnome-keyring dbus-x11
 
       - name: Run desktop smoke
         run: ./scripts/smoke-desktop.sh
+
+      - name: Run release-critical state smokes
+        run: |
+          ./scripts/smoke-activation.sh
+          ./scripts/smoke-secret-migration.sh
+          ./scripts/smoke-backup-restore.sh
 
   storage-simulator:
     name: Storage Simulator (OpenDAL)
