@@ -1534,8 +1534,10 @@ mod tests {
                 checkpoint_ids: vec![],
             })
             .expect("save workspace registry");
-        let mut mcp_settings = infimount_mcp::settings::McpSettings::default();
-        mcp_settings.enabled = true;
+        let mcp_settings = infimount_mcp::settings::McpSettings {
+            enabled: true,
+            ..Default::default()
+        };
         std::fs::write(
             config_dir.join("mcp_settings.json"),
             serde_json::to_vec_pretty(&mcp_settings).unwrap(),
