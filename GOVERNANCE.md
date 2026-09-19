@@ -1,67 +1,53 @@
 # Infimount Governance
 
-This document describes the governance model for the Infimount project.
+Infimount is an early-stage open-source project. Its governance should describe how the project actually operates today, not imitate the structure of a large foundation project before that structure exists.
 
-## Overview
+## Current maintainer
 
-Infimount is governed by a **Technical Steering Committee (TSC)** that makes decisions about the project's technical direction, releases, and community standards.
+**Rajan Kadeval ([@roylkng](https://github.com/roylkng))** is the current project maintainer and is responsible for release decisions, repository administration, roadmap direction, and final merge decisions.
 
-## Roles
+This role is operational, not permanent ownership of the community. Governance will evolve when sustained external participation makes broader decision-making useful.
 
-### Contributors
-Anyone who contributes to Infimount (code, documentation, issues, reviews) is a **Contributor**. Contributors are the lifeblood of the project.
+## Contributors
 
-### Committers
-**Committers** are Contributors who have demonstrated sustained, high-quality contributions and have been granted write access to the repository. Committers can:
-- Merge pull requests (with approval)
-- Triage issues
-- Review code
+Anyone who contributes code, documentation, issues, testing, review, design feedback, or reproducible bug reports is a contributor.
 
-### Maintainers
-**Maintainers** are Committers who have taken on additional responsibility for the project's overall health. Maintainers can:
-- Approve and merge pull requests
-- Make release decisions
-- Vote on TSC matters
-- Mentor new contributors
+Contributors are encouraged to:
 
-### TSC Members
-The **Technical Steering Committee** consists of Maintainers who guide the project's direction. TSC responsibilities include:
-- Setting technical direction and roadmap
-- Resolving disputes
-- Managing releases
-- Maintaining community standards
+- open issues for material bugs or proposed changes;
+- keep pull requests focused and reviewable;
+- include tests or reproducible evidence where behavior changes;
+- call out security, privacy, compatibility, or migration risks explicitly;
+- challenge project assumptions with evidence.
 
-## Decision Making
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution mechanics and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community expectations.
 
-### Lazy Consensus
-Most decisions are made through **lazy consensus**:
-1. A proposal is made (issue, PR, or discussion)
-2. If no objections are raised within 72 hours, the proposal is accepted
-3. Silence is interpreted as agreement
+## Decision making
 
-### Voting
-For significant decisions (breaking changes, new Maintainers, governance changes), a formal vote may be called:
-- Each TSC member has one vote
-- Decisions require a simple majority
-- Voting period is 7 days
-- Abstentions do not count toward the total
+Routine decisions are made in the relevant issue or pull request and should be explainable from the project goals, existing contracts, tests, and evidence.
 
-## Becoming a Maintainer
+For changes with significant compatibility, security, storage-integrity, or user-data implications, the maintainer may require additional review or retained validation evidence before merge.
 
-To become a Maintainer:
-1. Demonstrate sustained, high-quality contributions over 3+ months
-2. Show good judgment in code reviews and issue triage
-3. Be nominated by an existing Maintainer
-4. Receive approval from the TSC (lazy consensus)
+The project prefers reversible decisions and explicit trade-offs over process for its own sake.
 
-## Code of Conduct
+## Becoming a maintainer
 
-All participants must follow our [Code of Conduct](CODE_OF_CONDUCT.md).
+As the contributor base grows, maintainership can be extended to contributors who demonstrate sustained technical judgment and responsibility for project health. Signals include:
 
-## Amendments
+1. repeated high-quality contributions over time;
+2. constructive code and design review;
+3. good judgment around compatibility, security, and user-data risks;
+4. willingness to maintain features after initial implementation;
+5. alignment with the project's local-first and explicit-control principles.
 
-This governance document may be amended by a TSC vote with a 2/3 majority.
+When additional maintainers exist, this document will name them and define any decision or voting model that is actually in use.
 
----
+## Security-sensitive decisions
 
-*This governance model is inspired by the Apache Software Foundation and CNCF project governance practices.*
+Security vulnerabilities should follow [SECURITY.md](SECURITY.md) rather than being disclosed first in a public issue.
+
+Changes affecting MCP permissions, filesystem/path boundaries, credentials, updater trust, or destructive storage operations receive additional scrutiny because mistakes at those boundaries can affect user data or agent authority.
+
+## Governance changes
+
+This document evolves with the project. Material governance changes should be proposed publicly and include the reason the current model is no longer sufficient.
