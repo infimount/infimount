@@ -260,6 +260,22 @@ class WebDriver {
     await this.sendKeys(id, value);
   }
 
+  async assertSelectPreselected(triggerSelector, label) {
+    await this.clickCss(triggerSelector);
+    const option = await this.waitElement(
+      "xpath",
+      `//*[@role='option' and contains(normalize-space(.), ${xpathLiteral(label)})]`,
+    );
+    const ariaSelected = await this.attribute(option, "aria-selected");
+    const dataState = await this.attribute(option, "data-state");
+    if (ariaSelected !== "true" && dataState !== "checked") {
+      fail(
+        `select was not preselected to ${label}; aria-selected=${ariaSelected} data-state=${dataState}`,
+      );
+    }
+    await this.clickElement(option);
+  }
+
   async selectOption(triggerSelector, label) {
     await this.clickCss(triggerSelector);
     const option = await this.waitElement(
@@ -355,14 +371,10 @@ async function connectPreparedWorkspace(driver, expectedName) {
   await driver.clickText("Connect agent");
   await driver.waitText("Connect an AI client to one scoped workspace");
 
-  const workspaceSelect = await driver.waitElement(
-    "css selector",
+  await driver.assertSelectPreselected(
     '[aria-label="Agent Access workspace"]',
+    expectedName,
   );
-  const selectedText = await driver.text(workspaceSelect);
-  if (!selectedText.includes(expectedName)) {
-    fail(`Connect agent did not preselect ${expectedName}; selected=${selectedText}`);
-  }
 
   await driver.clickText("Prepare agent access", 30000);
   await driver.waitElement("xpath", clickableTextXpath("Re-check agent access"), 30000);
