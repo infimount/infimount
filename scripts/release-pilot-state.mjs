@@ -95,6 +95,15 @@ function seed(home) {
   fs.mkdirSync(path.join(home, "outside"), { recursive: true });
   fs.writeFileSync(path.join(home, "pilot-browser.txt"), "release pilot browser fixture\n");
 
+  for (const directory of ["pagination", "pagination-stale"]) {
+    const root = path.join(home, directory);
+    fs.mkdirSync(root, { recursive: true });
+    for (let index = 0; index < 450; index += 1) {
+      const name = `file-${String(index).padStart(3, "0")}.txt`;
+      fs.writeFileSync(path.join(root, name), `${directory} ${index}\n`);
+    }
+  }
+
   const storage = {
     schema_version: 2,
     id: STORAGE_ID,

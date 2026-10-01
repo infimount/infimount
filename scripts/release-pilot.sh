@@ -61,6 +61,10 @@ chmod 700 "$TMP_HOME/.runtime"
 echo "===== RELEASE PILOT: SEED ISOLATED HOME ====="
 HOME="$TMP_HOME" node "$ROOT_DIR/scripts/release-pilot-state.mjs" seed --home "$TMP_HOME"
 
+PILOT_KIT="$TMP_HOME/pilot-kit"
+HOME="$TMP_HOME" node "$ROOT_DIR/scripts/agent-task-pilot-kit-core.mjs" prepare --out "$PILOT_KIT"   >"$TMP_HOME/pilot-kit-summary.json"
+export INFIMOUNT_PILOT_KIT="$PILOT_KIT"
+
 echo
 echo "===== RELEASE PILOT: BUILD REAL DESKTOP + SIDECAR ====="
 pnpm --dir "$ROOT_DIR/apps/desktop" build
@@ -155,4 +159,10 @@ echo "stdio_no_background_start=yes"
 echo "http_explicit_start_stop=yes"
 echo "ordinary_stdio_disabled_gate=yes"
 echo "guided_disabled_setup_returns_to_stdio=yes"
+echo "pagination_450_entries=yes"
+echo "pagination_stale_cursor_recovery=yes"
+echo "agent_task_coding=yes"
+echo "agent_task_document=yes"
+echo "agent_task_data_analysis=yes"
+echo "agent_task_publication_safety=yes"
 echo "========================================"
