@@ -8,6 +8,7 @@
     "test:docs": "node scripts/check-feature-docs.mjs && node scripts/check-release-doc-tooling.mjs && node scripts/check-release-rehearsal-version.mjs && node scripts/check-release-version-model.mjs && node scripts/check-agent-task-pilot-evidence.mjs tests/fixtures/agent-tasks-pilot/synthetic-evidence.json --allow-synthetic && node scripts/agent-task-pilot-kit.mjs self-test && bash scripts/test-prepare-ci-apt-sources.sh",
     "test:pilot-evidence:fixture": "node scripts/check-agent-task-pilot-evidence.mjs tests/fixtures/agent-tasks-pilot/synthetic-evidence.json --allow-synthetic",
     "test:pilot-kit": "node scripts/agent-task-pilot-kit.mjs self-test",
+    "test:release-pilot": "bash scripts/release-pilot.sh",
     "test:upgrade-fixtures": "node scripts/check-upgrade-fixtures.mjs",
     "test:release": "bash scripts/release-test-gate.sh",
     "test:release:policy": "bash scripts/check-zero-manual-release-gate.sh",
