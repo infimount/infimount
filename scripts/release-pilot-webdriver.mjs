@@ -376,7 +376,7 @@ async function connectPreparedWorkspace(driver, expectedName) {
     expectedName,
   );
 
-  await driver.clickText("Prepare agent access", 30000);
+  await driver.clickAnyText(["Prepare agent access", "Re-check agent access"], 30000);
   await driver.waitElement("xpath", clickableTextXpath("Re-check agent access"), 30000);
   await driver.waitText("stdio is on demand", 30000);
   const httpStartButtons = await driver.findAll(
