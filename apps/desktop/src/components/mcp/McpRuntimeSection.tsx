@@ -104,6 +104,7 @@ export function McpRuntimeSection({
             }
           >
             <SelectTrigger
+              aria-label="MCP transport"
               className={`border border-border bg-card text-sm text-[hsl(var(--card-foreground))] ${FIELD_FOCUS_CLASS}`}
             >
               <SelectValue />

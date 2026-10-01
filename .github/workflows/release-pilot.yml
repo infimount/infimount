@@ -1,0 +1,93 @@
+name: Release Pilot
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/release-pilot.yml"
+      - "apps/desktop/**"
+      - "crates/core/**"
+      - "crates/mcp/**"
+      - "scripts/build-mcp-sidecar.sh"
+      - "scripts/prepare-mcp-sidecar.mjs"
+      - "scripts/release-pilot*.sh"
+      - "scripts/release-pilot*.mjs"
+      - "package.json"
+      - "pnpm-lock.yaml"
+  push:
+    branches:
+      - "release/v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+concurrency:
+  group: release-pilot-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop-release-pilot:
+    name: Desktop Release Pilot
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      INFIMOUNT_PILOT_HOME: /tmp/infimount-release-pilot
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux desktop and WebDriver dependencies
+        run: >-
+          bash scripts/ci-apt-install.sh
+          libgtk-3-dev
+          libwebkit2gtk-4.1-dev
+          libappindicator3-dev
+          librsvg2-dev
+          patchelf
+          xvfb
+          gnome-keyring
+          dbus-x11
+          libsecret-tools
+          webkit2gtk-driver
+
+      - name: Install pinned tauri-driver
+        run: cargo install tauri-driver --version 2.1.0 --locked
+
+      - name: Run real desktop release pilot
+        run: pnpm test:release-pilot
+
+      - name: Upload release pilot state on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-pilot-failure-state
+          path: |
+            /tmp/infimount-release-pilot/.infimount
+            /tmp/infimount-release-pilot/.release-pilot-baseline
+          if-no-files-found: ignore
+          include-hidden-files: true
+          retention-days: 7
