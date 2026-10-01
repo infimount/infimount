@@ -237,7 +237,13 @@ class WebDriver {
           if (snapshot.includes("Storage and MCP access are disabled")) {
             throw new Error(`app entered restricted recovery mode: ${snapshot}`);
           }
-          return snapshot.includes("Pilot Home");
+          return Boolean(
+            await this.find(
+              "css selector",
+              '[role="button"][aria-label="Pilot Home"]',
+              true,
+            ),
+          );
         },
         timeoutMs,
         "operational storage browser",
@@ -315,7 +321,7 @@ async function storageOnlySession(driver) {
   await driver.createSession();
   try {
     await driver.waitOperationalStorage(20000);
-    await driver.waitText("pilot-browser.txt", 20000);
+    await driver.waitElement("css selector", '[aria-label="pilot-browser.txt"]', 20000);
     await openStorageMenu(driver);
     await driver.clickText("Setup Guide");
     await driver.waitText("Welcome to Infimount");
@@ -376,7 +382,7 @@ async function readOnlyAgentAccessSession(driver) {
   try {
     await driver.waitAbsent("xpath", textXpath("Welcome to Infimount"));
     await driver.waitOperationalStorage(20000);
-    await driver.waitText("pilot-browser.txt", 20000);
+    await driver.waitElement("css selector", '[aria-label="pilot-browser.txt"]', 20000);
     await driver.waitElement("css selector", 'button[aria-label^="Agent Access:"]');
 
     await createWorkspace(driver, { name: READ_ONLY_WORKSPACE, allowWrites: false });
