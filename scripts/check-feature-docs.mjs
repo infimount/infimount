@@ -94,10 +94,10 @@ if (!fs.existsSync("docs/agent-tasks.md")) {
   fail("docs/agent-tasks.md is missing");
 }
 const agentTasks = read("docs/agent-tasks.md");
-if (/targeted for \\*\\*v0\\.8\\.1\\*\\*/i.test(agentTasks)) {
+if (/targeted for \*\*v0\.8\.1\*\*/i.test(agentTasks)) {
   fail("docs/agent-tasks.md must not describe Agent Tasks as merely targeted for v0.8.1 after a published candidate exists");
 }
-if (!/published.*v0\\.8\\.1-rc\\./i.test(agentTasks)) {
+if (!/published.*v0\.8\.1-rc\./i.test(agentTasks)) {
   fail("docs/agent-tasks.md should identify the published v0.8.1 release candidate");
 }
 if (agentTasks.includes("publish-receipt.json")) {
