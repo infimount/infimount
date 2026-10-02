@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
@@ -16,6 +17,11 @@ const STATE_SCRIPT = path.join(ROOT_DIR, "scripts", "release-pilot-state.mjs");
 const READ_ONLY_WORKSPACE = "Release pilot workspace";
 const READ_ONLY_ROOT = "agent-workspaces/release-pilot-workspace";
 const WRITABLE_WORKSPACE = "Release pilot writable";
+const AGENT_TASK_SOURCE_FILE = "agent-task-source.txt";
+const AGENT_TASK_SOURCE_CONTENT = "release pilot source bytes must remain unchanged\n";
+const AGENT_TASK_OUTPUT_V1 = "deterministic agent output v1\n";
+const AGENT_TASK_OUTPUT_V2 = "deterministic agent output v2\n";
+const AGENT_TASK_DESTINATION_DIR = "publish-destination";
 
 function fail(message) {
   throw new Error(`Release pilot WebDriver failed: ${message}`);
@@ -156,6 +162,14 @@ class WebDriver {
     return await this.request("GET", this.endpoint(`/element/${id}/attribute/${encodeURIComponent(name)}`));
   }
 
+  async displayed(id) {
+    return await this.request("GET", this.endpoint(`/element/${id}/displayed`));
+  }
+
+  async execute(script, args = []) {
+    return await this.request("POST", this.endpoint("/execute/sync"), { script, args });
+  }
+
   async waitFor(fn, timeoutMs, label) {
     const deadline = Date.now() + timeoutMs;
     let lastError;
@@ -188,14 +202,42 @@ class WebDriver {
     );
   }
 
-  async clickCss(selector) {
-    const id = await this.waitElement("css selector", selector);
-    await this.clickElement(id);
+  async clickLocated(using, value, timeoutMs = 15000) {
+    await this.waitFor(
+      async () => {
+        const id = await this.find(using, value, true);
+        if (!id) return false;
+        try {
+          await this.execute(
+            `const el = arguments[0];
+             if (el && typeof el.scrollIntoView === "function") {
+               el.scrollIntoView({ block: "center", inline: "nearest" });
+             }
+             return true;`,
+            [{ [ELEMENT_KEY]: id }],
+          );
+          await sleep(50);
+          await this.clickElement(id);
+          return true;
+        } catch (error) {
+          const message = String(error?.message || error);
+          if (/element not interactable|stale element|click intercepted|no such element/i.test(message)) {
+            return false;
+          }
+          throw error;
+        }
+      },
+      timeoutMs,
+      `clickable ${using}=${value}`,
+    );
+  }
+
+  async clickCss(selector, timeoutMs = 15000) {
+    await this.clickLocated("css selector", selector, timeoutMs);
   }
 
   async clickText(text, timeoutMs = 15000) {
-    const id = await this.waitElement("xpath", clickableTextXpath(text), timeoutMs);
-    await this.clickElement(id);
+    await this.clickLocated("xpath", clickableTextXpath(text), timeoutMs);
   }
 
   async clickAnyText(texts, timeoutMs = 15000) {
@@ -255,8 +297,12 @@ class WebDriver {
   }
 
   async setInput(selector, value) {
-    const id = await this.waitElement("css selector", selector);
+    let id = await this.waitElement("css selector", selector);
     await this.clearElement(id);
+    // Controlled React inputs may be replaced after clear. Reacquire the
+    // element before every subsequent WebDriver action instead of retaining a
+    // stale node identifier.
+    id = await this.waitElement("css selector", selector);
     await this.sendKeys(id, value);
   }
 
@@ -284,6 +330,57 @@ class WebDriver {
     );
     await this.clickElement(option);
   }
+
+  async assertNoSelectOption(triggerSelector, forbiddenText, closeWithLabel) {
+    await this.clickCss(triggerSelector);
+    const forbidden = await this.find(
+      "xpath",
+      `//*[@role='option' and contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), ${xpathLiteral(forbiddenText.toLowerCase())})]`,
+      true,
+    );
+    if (forbidden) fail(`select unexpectedly exposes forbidden option: ${forbiddenText}`);
+    const close = await this.waitElement(
+      "xpath",
+      `//*[@role='option' and contains(normalize-space(.), ${xpathLiteral(closeWithLabel)})]`,
+    );
+    await this.clickElement(close);
+  }
+
+  async closeDialogContaining(text) {
+    const dialog = await this.waitElement(
+      "xpath",
+      `//*[@role='dialog' and contains(normalize-space(.), ${xpathLiteral(text)})]`,
+    );
+    const close = await this.find(
+      "xpath",
+      `//*[@role='dialog' and contains(normalize-space(.), ${xpathLiteral(text)})]//button[.//span[normalize-space(.)='Close']]`,
+      true,
+    );
+    if (!close) fail(`close control missing for dialog containing ${text}`);
+    await this.clickElement(close);
+    await this.waitFor(
+      async () => !(await this.displayed(dialog).catch(() => false)),
+      10000,
+      `dialog containing ${text} to close`,
+    );
+  }
+
+  async scrollFileListToEnd() {
+    const listbox = await this.waitElement("css selector", '[role="listbox"]');
+    await this.execute(
+      `const el = arguments[0];
+       el.scrollTop = 0;
+       el.dispatchEvent(new Event("scroll", { bubbles: false }));
+       el.scrollTop = el.scrollHeight;
+       el.dispatchEvent(new Event("scroll", { bubbles: false }));
+       return { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight };`,
+      [{ [ELEMENT_KEY]: listbox }],
+    );
+  }
+}
+
+function sha256Bytes(bytes) {
+  return crypto.createHash("sha256").update(bytes).digest("hex");
 }
 
 function runState(command) {
@@ -326,6 +423,190 @@ function assertGeneralServeFailsClosed() {
     fail("ordinary stdio serve succeeded while the persisted Agent Access gate was disabled");
   }
   console.log("ordinary_stdio_disabled_gate=passed");
+}
+
+async function assertTaskScopedSidecarWorks(taskId) {
+  const mcpSettings = JSON.parse(
+    fs.readFileSync(path.join(HOME_DIR, ".infimount", "mcp_settings.json"), "utf8"),
+  );
+  if (mcpSettings.enabled !== false) {
+    fail("task-scoped sidecar independence probe requires general Agent Access to be disabled");
+  }
+
+  const storages = JSON.parse(
+    fs.readFileSync(path.join(HOME_DIR, ".infimount", "storages.json"), "utf8"),
+  );
+  const workspaceDoc = JSON.parse(
+    fs.readFileSync(path.join(HOME_DIR, ".infimount", "workspaces.json"), "utf8"),
+  );
+  const workspace = (workspaceDoc.workspaces || []).find(
+    (item) => item.name === WRITABLE_WORKSPACE,
+  );
+  if (!workspace) fail("read-write workspace missing for task-scoped sidecar probe");
+  const storage = storages.find((item) => item.id === workspace.storageId);
+  if (!storage) fail("workspace storage missing for task-scoped sidecar probe");
+  if (!workspace.policyRuleId || !workspace.storageNamespaceFingerprint) {
+    fail("workspace binding metadata missing for task-scoped sidecar probe");
+  }
+
+  const workspacePrefix = workspace.rootPath;
+  const taskPrefix = `${String(workspace.rootPath).replace(/^\/+|\/+$/g, "")}/tasks/${taskId}`;
+  const outputsPrefix = `${taskPrefix}/outputs`;
+  const taskInputPath = `/${storage.name}/${taskPrefix}/inputs/${AGENT_TASK_SOURCE_FILE}`;
+  const outsidePath = `/${storage.name}/pilot-browser.txt`;
+
+  const args = [
+    "serve-agent-task",
+    "--task-id", taskId,
+    "--storage-id", storage.id,
+    "--workspace-id", workspace.id,
+    "--policy-rule-id", workspace.policyRuleId,
+    "--storage-namespace-fingerprint", workspace.storageNamespaceFingerprint,
+    "--workspace-prefix", workspacePrefix,
+    "--task-prefix", taskPrefix,
+    "--outputs-prefix", outputsPrefix,
+  ];
+  const child = spawn(SIDECAR, args, {
+    cwd: ROOT_DIR,
+    env: { ...process.env, HOME: HOME_DIR },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  const responses = new Map();
+  let stdoutBuffer = "";
+  let stderrTail = "";
+  let protocolError = null;
+
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    stderrTail = (stderrTail + chunk).slice(-4000);
+  });
+  child.stdout.on("data", (chunk) => {
+    stdoutBuffer += chunk;
+    for (;;) {
+      const newline = stdoutBuffer.indexOf("\n");
+      if (newline < 0) break;
+      const line = stdoutBuffer.slice(0, newline).trim();
+      stdoutBuffer = stdoutBuffer.slice(newline + 1);
+      if (!line) continue;
+      try {
+        const message = JSON.parse(line);
+        if (message && Number.isInteger(message.id)) {
+          responses.set(message.id, message);
+        }
+      } catch {
+        protocolError = `task-scoped sidecar emitted non-JSON stdout: ${line.slice(0, 500)}`;
+      }
+    }
+  });
+
+  const send = (message) => {
+    if (!child.stdin.writable) {
+      fail("task-scoped packaged sidecar stdin closed unexpectedly");
+    }
+    child.stdin.write(`${JSON.stringify(message)}\n`);
+  };
+
+  const waitResponse = async (id, timeoutMs = 7000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (protocolError) fail(protocolError);
+      if (responses.has(id)) return responses.get(id);
+      if (child.exitCode !== null) {
+        fail(
+          `task-scoped packaged sidecar exited before response ${id} with ${child.exitCode}: ${stderrTail}`,
+        );
+      }
+      await sleep(25);
+    }
+    fail(`timed out waiting for task-scoped MCP response ${id}: ${stderrTail}`);
+  };
+
+  try {
+    send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "infimount-release-pilot", version: "1" },
+      },
+    });
+    const initialize = await waitResponse(1);
+    if (!initialize?.result || initialize.error) {
+      fail(`task-scoped packaged sidecar MCP initialize failed: ${JSON.stringify(initialize)}`);
+    }
+
+    send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    send({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
+    const toolsResponse = await waitResponse(2);
+    const toolNames = (toolsResponse?.result?.tools || [])
+      .map((tool) => tool.name)
+      .filter(Boolean)
+      .sort();
+    const expectedTools = [
+      "list_dir",
+      "mkdir",
+      "read_file",
+      "search_paths",
+      "stat_path",
+      "write_file",
+    ].sort();
+    if (JSON.stringify(toolNames) !== JSON.stringify(expectedTools)) {
+      fail(`task-scoped sidecar tool set mismatch: ${JSON.stringify(toolNames)}`);
+    }
+
+    send({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: {
+        name: "read_file",
+        arguments: { path: taskInputPath, as_text: true },
+      },
+    });
+    const allowed = await waitResponse(3);
+    const allowedText = JSON.stringify(allowed);
+    if (
+      !allowed ||
+      allowed.error ||
+      allowed?.result?.isError === true ||
+      !allowedText.includes(AGENT_TASK_SOURCE_CONTENT.trim())
+    ) {
+      fail(`task-scoped sidecar could not read prepared input: ${allowedText.slice(0, 1500)}`);
+    }
+
+    send({
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: {
+        name: "read_file",
+        arguments: { path: outsidePath, as_text: true },
+      },
+    });
+    const denied = await waitResponse(4);
+    const deniedText = JSON.stringify(denied);
+    if (!denied || !deniedText.includes("ERR_SESSION_FORBIDDEN")) {
+      fail(`task-scoped sidecar did not deny out-of-task read: ${deniedText.slice(0, 1500)}`);
+    }
+
+    console.log("agent_task_scoped_sidecar_independent_gate=passed");
+    console.log("agent_task_scoped_sidecar_tool_surface=passed");
+    console.log("agent_task_scoped_sidecar_confinement=passed");
+  } finally {
+    child.stdin.end();
+    const deadline = Date.now() + 3000;
+    while (child.exitCode === null && Date.now() < deadline) {
+      await sleep(25);
+    }
+    if (child.exitCode === null) {
+      child.kill("SIGKILL");
+      await sleep(100);
+    }
+  }
 }
 
 async function openStorageMenu(driver) {
@@ -389,13 +670,45 @@ async function connectPreparedWorkspace(driver, expectedName) {
 }
 
 async function readOnlyAgentAccessSession(driver) {
-  console.log("phase=legacy-root-read-only-agent-access");
+  console.log("phase=legacy-root-read-only-agent-access-and-stale-pagination");
   await driver.createSession();
   try {
     await driver.waitAbsent("xpath", textXpath("Welcome to Infimount"));
     await driver.waitOperationalStorage(20000);
     await driver.waitElement("css selector", '[aria-label="pilot-browser.txt"]', 20000);
     await driver.waitElement("css selector", 'button[aria-label^="Agent Access:"]');
+
+    // Load the first 200-entry page before any workspace mutation. Workspace
+    // binding below increments the storage revision, intentionally making this
+    // continuation cursor stale while the browser stays mounted.
+    const paginationFolder = await driver.waitElement(
+      "css selector",
+      '[role="option"][aria-label="pagination"]',
+      20000,
+    );
+    await driver.request(
+      "POST",
+      driver.endpoint(`/element/${paginationFolder}/value`),
+      { text: "\\uE007", value: ["\\uE007"] },
+    ).catch(() => null);
+    await driver.execute(
+      `const el = document.querySelector('[role="option"][aria-label="pagination"]');
+       if (!el) return false;
+       el.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, view: window }));
+       return true;`,
+    );
+    await driver.waitElement("css selector", '[aria-label="page-0000.txt"]', 20000);
+    const hiddenLoadMore = await driver.waitElement(
+      "xpath",
+      "//button[contains(normalize-space(.), 'Load more')]",
+      20000,
+    );
+    const loadMoreClass = String(await driver.attribute(hiddenLoadMore, "class") || "");
+    if (!loadMoreClass.split(/\s+/).includes("sr-only")) {
+      fail(`pagination Load more fallback is not screen-reader-only: ${loadMoreClass}`);
+    }
+    console.log("pagination_first_page_loaded=yes");
+    console.log("visible_load_more_control=no");
 
     await createWorkspace(driver, { name: READ_ONLY_WORKSPACE, allowWrites: false });
 
@@ -408,10 +721,46 @@ async function readOnlyAgentAccessSession(driver) {
     await connectPreparedWorkspace(driver, READ_ONLY_WORKSPACE);
     await driver.clickText("Run safety probe", 30000);
     await driver.waitText("Safety probe passed.", 45000);
+
+    // Return to the still-mounted /pagination browser. Its original cursor is
+    // now storage-revision-stale. Scrolling must recover from page one
+    // internally and then auto-continue to the last fixture.
+    await driver.closeDialogContaining("Connect an AI client to one scoped workspace");
+    let reachedLast = false;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await driver.scrollFileListToEnd();
+      await sleep(800);
+      const last = await driver.find("css selector", '[aria-label="page-0259.txt"]', true);
+      if (last && await driver.displayed(last)) {
+        reachedLast = true;
+        break;
+      }
+      const snapshot = await driver.bodySnapshot(12000);
+      if (snapshot.includes("More files could not be loaded")) {
+        fail(`pagination surfaced a continuation error after stale cursor recovery: ${snapshot}`);
+      }
+    }
+    if (!reachedLast) {
+      fail("pagination did not auto-continue to page-0259.txt after stale cursor recovery");
+    }
+    const remainingLoadMore = await driver.find(
+      "xpath",
+      "//button[contains(normalize-space(.), 'Load more')]",
+      true,
+    );
+    if (remainingLoadMore) {
+      const remainingClass = String(await driver.attribute(remainingLoadMore, "class") || "");
+      if (!remainingClass.split(/\s+/).includes("sr-only")) {
+        fail(`pagination Load more fallback became visible after continuation: ${remainingClass}`);
+      }
+    }
+    console.log("pagination_auto_continuation=passed");
+    console.log("stale_cursor_recovery=passed");
   } finally {
     await driver.quit();
   }
   runState("assert-read-only-agent-access");
+  runState("assert-pagination");
 }
 
 async function readWriteAndHttpSession(driver) {
@@ -459,6 +808,171 @@ async function guidedReenableSession(driver) {
   runState("assert-guided-reenable");
 }
 
+async function agentTaskPublicationSession(driver) {
+  console.log("phase=agent-task-publication-safety");
+  const sourcePath = path.join(HOME_DIR, AGENT_TASK_SOURCE_FILE);
+  const sourceBefore = fs.readFileSync(sourcePath);
+  if (sourceBefore.toString("utf8") !== AGENT_TASK_SOURCE_CONTENT) {
+    fail("Agent Task source fixture does not match expected bytes");
+  }
+  const sourceDigestBefore = sha256Bytes(sourceBefore);
+  const storageRegistryPath = path.join(HOME_DIR, ".infimount", "storages.json");
+  const storageRegistryDigestBefore = sha256Bytes(fs.readFileSync(storageRegistryPath));
+
+  await driver.createSession();
+  try {
+    await driver.waitOperationalStorage(20000);
+    const sourceCard = await driver.waitElement(
+      "css selector",
+      `[role="option"][aria-label="${AGENT_TASK_SOURCE_FILE}"]`,
+      20000,
+    );
+    await driver.clickElement(sourceCard);
+    await driver.clickText("Use with agent");
+    await driver.waitText("Prepare Agent Task");
+
+    await driver.setInput("#agent-task-objective", "Produce one deterministic reviewed result for publication safety validation.");
+    await driver.setInput("#agent-task-outputs", "result.md");
+    await driver.assertSelectPreselected('[aria-label="Local Agent Workspace"]', WRITABLE_WORKSPACE);
+
+    await driver.clickText("Review scope", 30000);
+    const preflight = await driver.waitElement(
+      "css selector",
+      '[data-testid="agent-task-preflight"]',
+      30000,
+    );
+    const preflightText = await driver.text(preflight);
+    if (!preflightText.includes("1") || !preflightText.includes("Prepared size")) {
+      fail(`Agent Task preflight did not expose the expected single-file scope: ${preflightText}`);
+    }
+    await driver.clickText("Prepare task", 30000);
+    await driver.waitElement("css selector", '[data-testid="agent-task-prepared"]', 30000);
+
+    const taskRootElement = await driver.waitElement(
+      "xpath",
+      "//*[@data-testid='agent-task-prepared']//code[contains(normalize-space(.), 'tasks/')]",
+      30000,
+    );
+    const taskRoot = (await driver.text(taskRootElement)).trim().replace(/^\/+/, "");
+    if (!/^tasks\/[0-9a-f-]{36}$/i.test(taskRoot)) {
+      fail(`unexpected prepared Agent Task root: ${taskRoot}`);
+    }
+    const taskId = taskRoot.split("/").at(-1);
+    await assertTaskScopedSidecarWorks(taskId);
+    const hostTaskRoot = path.join(HOME_DIR, "agent-workspaces", "release-pilot-writable", taskRoot);
+    const outputsRoot = path.join(hostTaskRoot, "outputs");
+    fs.mkdirSync(outputsRoot, { recursive: true });
+    const resultPath = path.join(outputsRoot, "result.md");
+    fs.writeFileSync(resultPath, AGENT_TASK_OUTPUT_V1);
+
+    await driver.clickText("Review outputs", 30000);
+    await driver.waitElement("css selector", '[data-testid="agent-task-output-review"]', 30000);
+    await driver.waitText(AGENT_TASK_OUTPUT_V1.trim(), 30000);
+    await driver.waitText("0 of 1 selected", 30000);
+    console.log("agent_task_nothing_selected_by_default=passed");
+
+    await driver.clickCss('button[aria-label="Publish outputs/result.md"]');
+    await driver.assertSelectPreselected('[aria-label="Publication destination storage"]', "Pilot Home");
+    await driver.setInput("#agent-task-publication-dir", AGENT_TASK_DESTINATION_DIR);
+    await driver.assertNoSelectOption(
+      '[aria-label="Publication conflict policy"]',
+      "overwrite",
+      "Fail",
+    );
+
+    await driver.clickText("Review publication", 30000);
+    let preview = await driver.waitElement(
+      "css selector",
+      '[data-testid="agent-task-publication-preview"]',
+      30000,
+    );
+    let previewText = await driver.text(preview);
+    if (!/Conflicts\s*1/i.test(previewText)) {
+      fail(`fail-conflict preview did not report one conflict: ${previewText}`);
+    }
+    const blockedPublish = await driver.find(
+      "xpath",
+      "//button[contains(normalize-space(.), 'Publish 1 approved output')]",
+      true,
+    );
+    if (blockedPublish) {
+      fail("fail-conflict publication unexpectedly exposed an enabled publish action");
+    }
+    console.log("agent_task_fail_conflict_rejected=passed");
+    console.log("agent_task_overwrite_unavailable=passed");
+
+    await driver.selectOption('[aria-label="Publication conflict policy"]', "Keep both");
+    await driver.clickText("Review publication", 30000);
+    preview = await driver.waitElement(
+      "css selector",
+      '[data-testid="agent-task-publication-preview"]',
+      30000,
+    );
+    await driver.waitFor(
+      async () => {
+        const text = await driver.text(preview);
+        return /Rename\s*1/i.test(text) && /Conflicts\s*0/i.test(text);
+      },
+      30000,
+      "rename publication preview",
+    );
+
+    // Invalidate the approved bytes after preview. The backend must rebuild
+    // the current plan and reject this stale review rather than publishing.
+    fs.writeFileSync(resultPath, AGENT_TASK_OUTPUT_V2);
+    await driver.clickText("Publish 1 approved output", 30000);
+    await driver.waitText("changed since it was reviewed", 30000);
+    console.log("agent_task_stale_preview_rejected=passed");
+
+    await driver.clickText("Refresh outputs", 30000);
+    await driver.waitText(AGENT_TASK_OUTPUT_V2.trim(), 30000);
+    await driver.clickCss('button[aria-label="Publish outputs/result.md"]');
+    await driver.assertSelectPreselected('[aria-label="Publication destination storage"]', "Pilot Home");
+    await driver.setInput("#agent-task-publication-dir", AGENT_TASK_DESTINATION_DIR);
+    await driver.selectOption('[aria-label="Publication conflict policy"]', "Keep both");
+    await driver.clickText("Review publication", 30000);
+    await driver.waitFor(
+      async () => {
+        const current = await driver.find(
+          "css selector",
+          '[data-testid="agent-task-publication-preview"]',
+          true,
+        );
+        if (!current) return false;
+        const text = await driver.text(current);
+        return /Rename\s*1/i.test(text) && /Conflicts\s*0/i.test(text);
+      },
+      30000,
+      "fresh rename publication preview",
+    );
+    await driver.clickText("Publish 1 approved output", 30000);
+    const success = await driver.waitElement(
+      "css selector",
+      '[data-testid="agent-task-publication-success"]',
+      30000,
+    );
+    const successText = await driver.text(success);
+    if (!successText.includes("Receipt:")) {
+      fail(`publication success did not expose a receipt: ${successText}`);
+    }
+    console.log(`agent_task_id=${taskId}`);
+    console.log("agent_task_publication_success=passed");
+  } finally {
+    await driver.quit();
+  }
+
+  const sourceAfter = fs.readFileSync(sourcePath);
+  if (sha256Bytes(sourceAfter) !== sourceDigestBefore) {
+    fail("Agent Task source bytes changed across prepare/review/publication");
+  }
+  const storageRegistryDigestAfter = sha256Bytes(fs.readFileSync(storageRegistryPath));
+  if (storageRegistryDigestAfter !== storageRegistryDigestBefore) {
+    fail("Agent Task flow changed the storage registry or MCP exposure");
+  }
+  console.log("agent_task_source_mcp_exposure_unchanged=passed");
+  runState("assert-agent-task-publication");
+}
+
 async function main() {
   if (!HOME_DIR || HOME_DIR === path.parse(HOME_DIR).root) fail("unsafe pilot HOME");
   requireFile(APP_BINARY, "desktop application");
@@ -485,6 +999,7 @@ async function main() {
     await storageOnlySession(driver);
     await readOnlyAgentAccessSession(driver);
     await readWriteAndHttpSession(driver);
+    await agentTaskPublicationSession(driver);
     await guidedReenableSession(driver);
     runState("summary");
     console.log("release_pilot_webdriver=passed");

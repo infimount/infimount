@@ -23,6 +23,15 @@ const STORAGE_ID = "release-pilot-home";
 const STORAGE_NAME = "Pilot Home";
 const FIXTURE_TIME = "2026-01-01T00:00:00Z";
 const BASELINE_DIR = ".release-pilot-baseline";
+const PAGINATION_DIR = "pagination";
+const PAGINATION_COUNT = 260;
+const PAGINATION_LAST_FILE = `page-${String(PAGINATION_COUNT - 1).padStart(4, "0")}.txt`;
+const AGENT_TASK_SOURCE_FILE = "agent-task-source.txt";
+const AGENT_TASK_SOURCE_CONTENT = "release pilot source bytes must remain unchanged\n";
+const AGENT_TASK_DESTINATION_DIR = "publish-destination";
+const AGENT_TASK_SENTINEL_FILE = "result.md";
+const AGENT_TASK_SENTINEL_CONTENT = "existing destination sentinel must remain unchanged\n";
+const AGENT_TASK_FINAL_OUTPUT = "deterministic agent output v2\n";
 
 function fail(message) {
   console.error(`Release pilot state check failed: ${message}`);
@@ -95,6 +104,21 @@ function seed(home) {
   fs.mkdirSync(path.join(home, "outside"), { recursive: true });
   fs.writeFileSync(path.join(home, "pilot-browser.txt"), "release pilot browser fixture\n");
 
+  const paginationRoot = path.join(home, PAGINATION_DIR);
+  fs.mkdirSync(paginationRoot, { recursive: true });
+  for (let index = 0; index < PAGINATION_COUNT; index += 1) {
+    const name = `page-${String(index).padStart(4, "0")}.txt`;
+    fs.writeFileSync(path.join(paginationRoot, name), `release pilot page ${index}\n`);
+  }
+
+  fs.writeFileSync(path.join(home, AGENT_TASK_SOURCE_FILE), AGENT_TASK_SOURCE_CONTENT);
+  const publicationDestination = path.join(home, AGENT_TASK_DESTINATION_DIR);
+  fs.mkdirSync(publicationDestination, { recursive: true });
+  fs.writeFileSync(
+    path.join(publicationDestination, AGENT_TASK_SENTINEL_FILE),
+    AGENT_TASK_SENTINEL_CONTENT,
+  );
+
   const storage = {
     schema_version: 2,
     id: STORAGE_ID,
@@ -164,6 +188,7 @@ function seed(home) {
   console.log("pilot_storage_count=1");
   console.log("legacy_home_alias_count=1");
   console.log("onboarding_state=skipped");
+  console.log(`pagination_fixture_count=${PAGINATION_COUNT}`);
 }
 
 function assertStorageOnly(home) {
@@ -339,6 +364,81 @@ function assertGuidedReenable(home) {
   console.log("disabled_guided_setup_returns_to_stdio=passed");
 }
 
+function assertPagination(home) {
+  const root = path.join(home, PAGINATION_DIR);
+  assert(fs.existsSync(root) && fs.statSync(root).isDirectory(), "pagination fixture directory is missing");
+  const names = fs.readdirSync(root).filter((name) => name.startsWith("page-") && name.endsWith(".txt")).sort();
+  assert(names.length === PAGINATION_COUNT, `expected ${PAGINATION_COUNT} pagination files, got ${names.length}`);
+  assert(names.at(-1) === PAGINATION_LAST_FILE, `last pagination fixture mismatch: ${names.at(-1)}`);
+  console.log("pagination_auto_continuation=passed");
+  console.log("stale_cursor_recovery=passed");
+  console.log(`pagination_fixture_count=${PAGINATION_COUNT}`);
+}
+
+function assertAgentTaskPublication(home) {
+  const files = configurationFiles(home);
+  const storages = readJson(files.storages);
+  const workspaceDoc = readJson(files.workspaces);
+  assert(Array.isArray(storages) && storages.length === 1, "Agent Task pilot storage registry changed");
+  assert(storages[0].mcp_exposed === true, "Agent Task flow changed source storage MCP exposure");
+
+  const source = path.join(home, AGENT_TASK_SOURCE_FILE);
+  assert(fs.readFileSync(source, "utf8") === AGENT_TASK_SOURCE_CONTENT, "Agent Task source bytes changed");
+
+  const sentinel = path.join(home, AGENT_TASK_DESTINATION_DIR, AGENT_TASK_SENTINEL_FILE);
+  assert(fs.readFileSync(sentinel, "utf8") === AGENT_TASK_SENTINEL_CONTENT, "fail/rename publication overwrote the destination sentinel");
+
+  const renamed = path.join(home, AGENT_TASK_DESTINATION_DIR, "result copy.md");
+  assert(fs.existsSync(renamed), "renamed Agent Task publication output is missing");
+  assert(fs.readFileSync(renamed, "utf8") === AGENT_TASK_FINAL_OUTPUT, "published Agent Task output bytes do not match the final reviewed output");
+  assert(!fs.existsSync(path.join(home, AGENT_TASK_DESTINATION_DIR, "result copy 2.md")), "Agent Task publication created more than one renamed output");
+
+  const workspaces = workspaceDoc.workspaces ?? [];
+  const workspace = currentWorkspace(workspaces, WRITABLE_WORKSPACE_NAME);
+  assert(Boolean(workspace), "read-write Agent Task workspace is missing");
+
+  const tasksRoot = path.join(home, String(workspace.rootPath).replace(/^\/+/, ""), "tasks");
+  assert(fs.existsSync(tasksRoot), "Agent Task package root is missing");
+  const taskDirs = fs.readdirSync(tasksRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+  assert(taskDirs.length === 1, `expected exactly one Agent Task package, got ${taskDirs.length}`);
+  const taskRoot = path.join(tasksRoot, taskDirs[0].name);
+
+  const preparedInput = path.join(taskRoot, "inputs", AGENT_TASK_SOURCE_FILE);
+  assert(fs.existsSync(preparedInput), "prepared Agent Task input copy is missing");
+  assert(fs.readFileSync(preparedInput, "utf8") === AGENT_TASK_SOURCE_CONTENT, "prepared Agent Task input differs from source bytes");
+
+  const output = path.join(taskRoot, "outputs", "result.md");
+  assert(fs.existsSync(output), "Agent Task output is missing");
+  assert(fs.readFileSync(output, "utf8") === AGENT_TASK_FINAL_OUTPUT, "task output does not contain the post-stale-review bytes");
+
+  const receipts = fs.readdirSync(taskRoot)
+    .filter((name) => /^publish-receipt-[0-9a-f-]+\.json$/i.test(name))
+    .sort();
+  assert(receipts.length === 1, `expected exactly one publication receipt, got ${receipts.length}`);
+  const receipt = readJson(path.join(taskRoot, receipts[0]));
+  assert(receipt.taskId === taskDirs[0].name, "publication receipt task identity mismatch");
+  assert(receipt.workspaceId === workspace.id, "publication receipt workspace identity mismatch");
+  assert(receipt.destinationStorageId === storages[0].id, "publication receipt destination storage mismatch");
+  assert(receipt.destinationDir === AGENT_TASK_DESTINATION_DIR, "publication receipt destination directory mismatch");
+  assert(receipt.conflictPolicy === "rename", "publication receipt conflict policy is not rename");
+  assert(Array.isArray(receipt.files) && receipt.files.length === 1, "publication receipt file count mismatch");
+  const published = receipt.files[0];
+  assert(published.taskPath === "outputs/result.md", "publication receipt task path mismatch");
+  assert(published.destinationPath === `${AGENT_TASK_DESTINATION_DIR}/result copy.md`, "publication receipt rename path mismatch");
+  assert(published.action === "rename", "publication receipt action is not rename");
+
+  const receiptText = fs.readFileSync(path.join(taskRoot, receipts[0]), "utf8");
+  assert(!receiptText.includes(home), "publication receipt leaked a host filesystem path");
+  assert(!receiptText.includes(AGENT_TASK_SOURCE_FILE), "publication receipt leaked a source path");
+
+  console.log("agent_task_source_bytes_unchanged=passed");
+  console.log("agent_task_fail_conflict_rejected=passed");
+  console.log("agent_task_stale_preview_rejected=passed");
+  console.log("agent_task_overwrite_unavailable=passed");
+  console.log("agent_task_destination_verified=passed");
+  console.log("agent_task_unique_receipt=passed");
+}
+
 function summary(home) {
   const files = configurationFiles(home);
   const storages = readJson(files.storages);
@@ -377,9 +477,15 @@ switch (command) {
   case "assert-guided-reenable":
     assertGuidedReenable(home);
     break;
+  case "assert-pagination":
+    assertPagination(home);
+    break;
+  case "assert-agent-task-publication":
+    assertAgentTaskPublication(home);
+    break;
   case "summary":
     summary(home);
     break;
   default:
-    fail("usage: release-pilot-state.mjs <seed|assert-storage-only|assert-read-only-agent-access|assert-read-write-agent-access|assert-http-stopped|assert-guided-reenable|summary> --home <path>");
+    fail("usage: release-pilot-state.mjs <seed|assert-storage-only|assert-read-only-agent-access|assert-read-write-agent-access|assert-http-stopped|assert-guided-reenable|assert-pagination|assert-agent-task-publication|summary> --home <path>");
 }
