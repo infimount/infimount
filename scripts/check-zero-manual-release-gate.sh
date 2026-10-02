@@ -151,6 +151,7 @@ require_file_contains "$SYNC_VERSION_WORKFLOW" 'workflows: ["Release"]'
 require_file_contains "$SYNC_VERSION_WORKFLOW" "github.event.workflow_run.head_branch"
 require_file_contains "$SYNC_VERSION_WORKFLOW" "github.event.workflow_run.conclusion == 'success'"
 require_file_contains "$SYNC_VERSION_WORKFLOW" "!contains(github.event.workflow_run.head_branch, '-')"
+require_file_contains "$SYNC_VERSION_WORKFLOW" "<!-- release-candidate:start -->"
 
 require_file_contains "$RELEASING_DOC" "Zero manual product test execution"
 require_file_contains "$RELEASING_DOC" "Manual product test execution must not be a release gate"
