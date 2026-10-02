@@ -129,14 +129,24 @@ replaceOptional(
 
 const candidatePattern = `v${version}-rc\\.\\d+`;
 replaceAllOptional("README.md", [
-  [new RegExp(`Agent Tasks are included in the published \\[${candidatePattern}\\]\\(https://github\\.com/infimount/infimount/releases/tag/${candidatePattern}\\) prerelease\\. The current v${previousVersion.replaceAll(".", "\\.")} stable release does not include this workflow\\.`, "g"), `Agent Tasks are included in ${tag}.`],
+  [new RegExp(`Agent Tasks are included in the published \\\\[${candidatePattern}\\\\]\\\\(https://github\\\\.com/infimount/infimount/releases/tag/${candidatePattern}\\\\) prerelease\\\\. The current v${previousVersion.replaceAll(".", "\\\\.")} stable release does not include this workflow\\\\.`, "g"), `Agent Tasks are included in ${tag}.`],
+  [new RegExp(`Agent Tasks are included in the ${candidatePattern} qualification candidate\\\\. The current v${previousVersion.replaceAll(".", "\\\\.")} stable release does not include this workflow\\\\.`, "g"), `Agent Tasks are included in ${tag}.`],
+  [new RegExp(`Agent Tasks are included in the ${candidatePattern} qualification candidate\\\\.`, "g"), `Agent Tasks are included in ${tag}.`],
   [new RegExp(`Agent Tasks in published ${candidatePattern}:`, "g"), `Agent Tasks in ${tag}:`],
+  [new RegExp(`Agent Tasks in ${candidatePattern}:`, "g"), `Agent Tasks in ${tag}:`],
 ]);
 replaceAllOptional("docs/agent-tasks.md", [
-  [new RegExp(`The complete implementation is included in the published \\*\\*\\[${candidatePattern}\\]\\(https://github\\.com/infimount/infimount/releases/tag/${candidatePattern}\\)\\*\\* prerelease\\. The current v${previousVersion.replaceAll(".", "\\.")} stable release does not include this workflow\\.`, "g"), `The complete implementation is included in **${tag}**.`],
+  [new RegExp(`The complete implementation is included in the published \\\\*\\\\*\\\\[${candidatePattern}\\\\]\\\\(https://github\\\\.com/infimount/infimount/releases/tag/${candidatePattern}\\\\)\\\\*\\\\* prerelease\\\\. The current v${previousVersion.replaceAll(".", "\\\\.")} stable release does not include this workflow\\\\.`, "g"), `The complete implementation is included in **${tag}**.`],
+  [new RegExp(`The complete implementation is included in the \\\\*\\\\*\\\\[${candidatePattern}\\\\]\\\\(https://github\\\\.com/infimount/infimount/releases/tag/${candidatePattern}\\\\)\\\\*\\\\* qualification candidate\\\\. The current v${previousVersion.replaceAll(".", "\\\\.")} stable release does not include this workflow\\\\.`, "g"), `The complete implementation is included in **${tag}**.`],
+  [new RegExp(`Use the published ${candidatePattern} candidate`, "g"), `Use ${tag}`],
 ]);
 replaceAllOptional("docs/llms.txt", [
   [new RegExp(`Agent Tasks in published ${candidatePattern}:`, "g"), `Agent Tasks in ${tag}:`],
+  [new RegExp(`Agent Tasks in ${candidatePattern}:`, "g"), `Agent Tasks in ${tag}:`],
+]);
+replaceAllOptional("docs/index.html", [
+  [new RegExp(`Agent Tasks in rc\\\\.\\\\d+`, "g"), `Agent Tasks in ${tag}`],
+  [new RegExp(`In ${candidatePattern},`, "g"), `In ${tag},`],
 ]);
 
 const releaseStateReplacements = [
@@ -178,5 +188,12 @@ replaceOptional(
   /^> .*not been published[^\n]*\n\n?/m,
   "",
 );
+
+const staleCandidateIdentity = new RegExp(`v${version.replaceAll(".", "\\.")}-rc\\.\\d+`);
+for (const path of ["README.md", "docs/index.html", "docs/llms.txt", "docs/agent-tasks.md"]) {
+  if (staleCandidateIdentity.test(read(path))) {
+    throw new Error(`${path}: stable promotion left a prerelease candidate identity behind`);
+  }
+}
 
 console.log(`Prepared stable public documentation for ${tag} (${date}); previous stable was v${previousVersion}.`);
