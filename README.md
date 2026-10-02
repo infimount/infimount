@@ -33,7 +33,7 @@
 <!-- release-candidate:start -->
 **Validated release candidate:** [v0.8.1-rc.13](https://github.com/infimount/infimount/releases/tag/v0.8.1-rc.13)
 
-rc.13 is the final release-infrastructure qualification candidate for v0.8.1. Application/runtime behavior is unchanged from rc.12; rc.13 exists to exercise the current GitHub Actions release stack, final published-document checks, and stable-promotion fallback on a real immutable tag. The remaining product-validation step after publication is the real coding, document, and data-analysis usefulness pilot.
+rc.13 is the published and fully automated-validated final candidate for v0.8.1. Application/runtime behavior is unchanged from rc.12. Its canonical Release and automatic Post Release Validation passed on the current GitHub Actions stack, including artifact download v8, provenance v4, public asset re-download, and the published v0.8.0-to-rc.13 Linux installer upgrade. The remaining promotion evidence is the real coding, document, and data-analysis usefulness pilot.
 
 To test rc.13 without changing the stable `latest` channel:
 
@@ -100,7 +100,7 @@ Install scripts verify selected downloads against `SHA256SUMS.txt`. Pin this sta
 - **Work like a desktop file manager:** grid and list views, rich previews, drag-and-drop upload, bookmarks, recents, keyboard navigation, global search stop, dual-pane transfer workflows, conflict handling, and transfer queue.
 - **Validate before you trust a backend:** reachability checks report grouped capabilities, sanitized fix hints, and MCP readiness notes.
 - **Control MCP access explicitly:** new storages are not exposed to MCP by default. Enable selected storages, tool lists, path policies, read-only mode, confirmations, and local audit logs.
-- **Prepare bounded agent work:** Agent Tasks are included in the v0.8.1-rc.13 qualification candidate. They copy only selected files into a local Agent Workspace, hand the task to Codex through the existing MCP boundary, review outputs, and publish explicitly approved unchanged files with create-only writes.
+- **Prepare bounded agent work:** Agent Tasks are included in the published v0.8.1-rc.13 candidate. They copy only selected files into a local Agent Workspace, hand the task to Codex through the existing MCP boundary, review outputs, and publish explicitly approved unchanged files with create-only writes.
 - **Stay backend-agnostic:** file operations route through Apache OpenDAL so capabilities are detected and documented per backend.
 
 ## Workbench
@@ -126,7 +126,7 @@ Agent Workspaces define a safer storage-scoped MCP boundary for agents and Agent
 
 ## Agent Tasks
 
-Agent Tasks are included in the v0.8.1-rc.13 qualification candidate. The current v0.8.0 stable release does not include this workflow. Automated release, upgrade, publication-safety, and scoped-MCP checks are green; real coding, document, and data-analysis usefulness remains the final product-validation pilot before stable promotion.
+Agent Tasks are included in the published v0.8.1-rc.13 candidate. The current v0.8.0 stable release does not include this workflow. Automated release, upgrade, publication-safety, and scoped-MCP checks are green; real coding, document, and data-analysis usefulness remains the final product-validation pilot before stable promotion.
 
 - Prepare only the files selected in the File Browser into a bounded `tasks/<uuid>/inputs/` snapshot. Preparation never moves or mutates the source and never grants new MCP access to it.
 - Use an explicitly read-write Local Filesystem Agent Workspace for task outputs. Read-write workspace creation is a separate desktop opt-in.
