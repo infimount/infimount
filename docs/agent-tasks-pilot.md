@@ -18,7 +18,7 @@ The pilot does not justify new feature breadth. A failed run should first identi
 
 ## Candidate prerequisite
 
-Use [`v0.8.1-rc.13`](https://github.com/infimount/infimount/releases/tag/v0.8.1-rc.13) for the final resumed pilot after it is published. rc.13 carries the same application/runtime behavior as rc.12 and exists to qualify the current release-action stack, final public-document checks, and stable-promotion fallback before the three real workload usefulness judgments described below.
+Use the published [`v0.8.1-rc.13`](https://github.com/infimount/infimount/releases/tag/v0.8.1-rc.13) for the final resumed pilot. rc.13 carries the same application/runtime behavior as rc.12. Its canonical Release and automatic Post Release Validation are green on the current release stack; the remaining evidence is the three real workload usefulness judgments described below.
 
 `v0.8.1-rc.1` was published successfully, but its first real pilot attempt stopped during Agent Workspace setup before any Agent Task was executed. That run exposed a material Infimount workflow defect: workspace creation still carried agent-type/template and second-path concepts, and a shell-style Local Filesystem root could fail late during namespace binding. rc.2 fixed that product blocker. rc.1 must not be presented as completed pilot evidence.
 
@@ -45,7 +45,7 @@ Use [`v0.8.1-rc.13`](https://github.com/infimount/infimount/releases/tag/v0.8.1-
 
 `v0.8.1-rc.12` was then published successfully from the qualified merge commit. Its canonical Release passed every deterministic gate, all three platform builds, the corrected pre-artifact Linux v0.8.0-to-rc.12 installer-over-install exercise, draft re-download validation, publication, and published-release re-download validation. Automatic Post Release Validation also passed and independently re-downloaded the public Linux package and repeated the v0.8.0-to-rc.12 upgrade with user configuration untouched and storage identity/exposure retained. rc.12 established the final application/runtime behavior, but subsequent documentation and GitHub Actions maintenance changed the exact release/promotion machinery, so stable promotion now requires one final infrastructure candidate.
 
-`v0.8.1-rc.13` carries no application/runtime behavior change from rc.12. It qualifies the current `actions/download-artifact@v8`, `actions/attest-build-provenance@v4`, Pages/CI action refresh, published-release documentation guard, and stable-document fallback on one real immutable tag. Only after rc.13 Release and Post Release Validation are green should the three real coding, document, and data-analysis usefulness judgments be recorded against rc.13.
+`v0.8.1-rc.13` carries no application/runtime behavior change from rc.12. Its canonical Release and automatic Post Release Validation passed on the current release stack. The run exercised `actions/download-artifact@v8`, `actions/attest-build-provenance@v4`, public artifact re-download, the published-release documentation guard, and the public v0.8.0-to-rc.13 Linux installer upgrade. rc.13 is therefore the active final candidate for the three real coding, document, and data-analysis usefulness judgments.
 
 Record:
 
