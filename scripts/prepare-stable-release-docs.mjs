@@ -133,11 +133,13 @@ for (const path of ["README.md", "docs/index.html", "docs/llms.txt", "docs/agent
 }
 
 replaceAllOptional("README.md", [
+  [`Agent Tasks are included in the ${tag} qualification candidate. The current v${previousVersion} stable release does not include this workflow.`, `Agent Tasks are included in ${tag}.`],
   [`Agent Tasks are included in the ${tag} qualification candidate.`, `Agent Tasks are included in ${tag}.`],
   [`Agent Tasks in published ${tag}:`, `Agent Tasks in ${tag}:`],
 ]);
 replaceAllOptional("docs/agent-tasks.md", [
-  [`**[${tag}](${releaseUrl})** qualification candidate`, `**${tag}**`],
+  [`The complete implementation is included in the **[${tag}](${releaseUrl})** qualification candidate. The current v${previousVersion} stable release does not include this workflow.`, `The complete implementation is included in **${tag}**.`],
+  [`the **[${tag}](${releaseUrl})** qualification candidate`, `**${tag}**`],
   [`Use the published ${tag} candidate`, `Use ${tag}`],
 ]);
 replaceAllOptional("docs/index.html", [
