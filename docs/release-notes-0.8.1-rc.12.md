@@ -1,8 +1,21 @@
 # Infimount 0.8.1-rc.12: preserve the Linux release upgrade boundary
 
-Release: not published yet.
+Release: https://github.com/infimount/infimount/releases/tag/v0.8.1-rc.12
 
 Infimount 0.8.1-rc.12 carries the same product behavior as rc.11 and fixes the canonical Linux release-job ordering exposed by the first rc.11 tag.
+
+## Release outcome
+
+rc.12 is published and fully validated through the automated release boundary.
+
+- the canonical Release workflow passed;
+- Linux, macOS, and Windows builds passed;
+- Linux exercised the exact freshly built rc.12 package through a real v0.8.0-to-rc.12 installer-over-install flow before the candidate-installing artifact smoke;
+- updater signatures, SBOM coverage, checksums, install scripts, provenance, draft re-download, publication, and published-release re-download validation passed;
+- automatic Post Release Validation passed;
+- the post-release job re-downloaded the public rc.12 Linux package and independently repeated the v0.8.0-to-rc.12 installer exercise with user configuration untouched and storage state retained.
+
+The remaining product-validation work is deliberately separate: one real coding task, one document task, and one data-analysis task must be judged materially useful by a human. That evidence informs stable promotion but is not a manual release-test gate.
 
 ## Why rc.12
 
@@ -78,9 +91,9 @@ It retains the already-automated release-pilot coverage for:
 
 The three real coding, document, and data-analysis workload usefulness judgments remain human product-validation evidence. Deterministic CI is not a substitute for those judgments.
 
-## rc.12 release validation
+## rc.12 release validation completed
 
-Before creating `v0.8.1-rc.12`, the exact release-preparation head must pass:
+The exact rc.12 release-preparation head passed:
 
 - CI;
 - Integration Tests;
@@ -89,9 +102,9 @@ Before creating `v0.8.1-rc.12`, the exact release-preparation head must pass:
 - Dependency Audit;
 - Repo Lint.
 
-The release branch must also pass the real desktop Release Pilot.
+The release branch also passed the real desktop Release Pilot.
 
-After tagging, the canonical Release must pass:
+After tagging, the canonical Release passed:
 
 - every deterministic Release Gate;
 - the exact freshly built Linux candidate through the previous-stable-to-candidate installer-over-install pilot before any candidate-installing artifact smoke;
@@ -104,7 +117,7 @@ After tagging, the canonical Release must pass:
 
 The automatic downstream `Post Release Validation` must then pass, including the published-package Linux installer-over-install check.
 
-Only after those checks are green should rc.12 be treated as the active final real-pilot candidate.
+Those checks are green. rc.12 is the active final real-pilot candidate.
 
 ## Known boundaries
 
