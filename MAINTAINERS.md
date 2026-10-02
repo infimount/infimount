@@ -1,49 +1,51 @@
 # Infimount Maintainers
 
-This file lists the current maintainers of the Infimount project.
+This file lists the people currently responsible for maintaining the Infimount project.
 
-## Technical Steering Committee (TSC)
+## Current maintainers
 
 | Name | GitHub | Role | Areas |
-|------|--------|------|-------|
+| --- | --- | --- | --- |
 | Rajan Kadeval | [@roylkng](https://github.com/roylkng) | Lead Maintainer | Core, Desktop, Infrastructure |
 
-## Areas of Responsibility
+## Areas of responsibility
 
 ### Core (`crates/core/`)
+
 - Rust backend logic
 - OpenDAL integration
 - Storage operators
 
-**Maintainers:** @roylkng
+**Maintainer:** @roylkng
 
-### Desktop App (`apps/desktop/`)
+### Desktop app (`apps/desktop/`)
+
 - Tauri integration
 - React frontend
 - UI/UX
 
-**Maintainers:** @roylkng
+**Maintainer:** @roylkng
 
-### Infrastructure
+### Infrastructure and release engineering
+
 - CI/CD workflows
 - Release management
-- Documentation
+- Security/release documentation
+- GitHub Pages and public documentation
 
-**Maintainers:** @roylkng
+**Maintainer:** @roylkng
 
-## Emeritus Maintainers
+## Emeritus maintainers
 
-*None yet — this section honors past maintainers who have stepped down.*
+None yet. This section will record maintainers who step down after sustained responsibility for the project.
 
-## Becoming a Maintainer
+## Becoming a maintainer
 
-See [GOVERNANCE.md](GOVERNANCE.md) for the process to become a maintainer.
+See [GOVERNANCE.md](GOVERNANCE.md) for the current maintainer model and the signals used when extending maintainership.
 
 ## Contact
 
-- **General:** Open an issue on GitHub
-- **Security:** See [SECURITY.md](SECURITY.md)
+- **General:** open an issue on GitHub
+- **Security:** follow [SECURITY.md](SECURITY.md)
 
----
-
-*Last updated: February 2026*
+_Last reviewed: October 2026._

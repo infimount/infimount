@@ -1,6 +1,8 @@
 # Infimount v0.8 — Trust & Activation
 ## Execution-grade implementation plan for coding agents
 
+> Historical implementation plan. This document records the design and execution plan used to build v0.8.0. It is retained for architecture history and must not override current behavior or policy. Current sources of truth are `README.md`, `PRODUCT.md`, `SECURITY.md`, `docs/security.md`, `docs/releasing.md`, the ADRs, and the active GitHub workflows.
+
 **Target repository:** `infimount/infimount`
 **Target release:** `v0.8.0`
 **Planning baseline:** `main` as reviewed in July 2026. Before coding, record the actual HEAD SHA and re-check every referenced file.
@@ -10,7 +12,7 @@
 
 # 1. Agent execution contract
 
-This document is the implementation source of truth for v0.8. A coding agent must follow these rules:
+This document was the implementation source of truth while v0.8 was being built. For historical reconstruction, the original execution rules were:
 
 1. Implement work in the PR order defined in section 6. Do not combine unrelated PRs.
 2. Run the complete validation commands for each PR before moving to the next PR.
