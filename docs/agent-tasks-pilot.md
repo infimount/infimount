@@ -161,6 +161,33 @@ node scripts/check-agent-task-pilot-evidence.mjs \
 
 `--allow-synthetic` is for repository fixtures only. A real pilot bundle must pass without that flag.
 
+## Explicit quality acceptance
+
+After all deterministic workload, safety, upgrade, source-integrity, publication, and evidence-shape checks are complete, keep the real evidence file in a quality-pending state:
+
+- `synthetic=false`;
+- each of the three task `passed` fields remains `false`;
+- `overallPassed=false`;
+- all observed deterministic fields are filled from the real rc.13 run.
+
+Validate that state without converting it into a pass:
+
+```bash
+node scripts/check-agent-task-pilot-evidence.mjs \
+  /path/to/pilot-evidence.pending.json \
+  --allow-pending-quality
+```
+
+Only after a human has reviewed the actual coding, document, and data-analysis outputs plus the private UI evidence and judged all three materially useful/correct may the final acceptance command run:
+
+```bash
+pnpm pilot:accept-quality -- \
+  --evidence /path/to/pilot-evidence.pending.json \
+  --accept-quality
+```
+
+That command first revalidates the pending deterministic evidence, then changes only the three task `passed` fields and `overallPassed`, writes a separate accepted evidence file, and runs the normal real-evidence validator. It refuses synthetic evidence and refuses to overwrite the pending record.
+
 ## Source-selection digest
 
 Each pilot records a before/after SHA-256 for the exact selected source bytes. The evidence file stores only the aggregate digest, never the source paths.
