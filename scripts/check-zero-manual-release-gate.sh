@@ -21,6 +21,22 @@ require_file_contains() {
   grep -Fq -- "$needle" "$file" || fail "$file must contain: $needle"
 }
 
+require_file_before() {
+  local file=$1
+  local first=$2
+  local second=$3
+  local first_line
+  local second_line
+
+  first_line="$(grep -nF -- "$first" "$file" | head -n 1 | cut -d: -f1)"
+  second_line="$(grep -nF -- "$second" "$file" | head -n 1 | cut -d: -f1)"
+
+  [[ -n "$first_line" ]] || fail "$file must contain ordered marker: $first"
+  [[ -n "$second_line" ]] || fail "$file must contain ordered marker: $second"
+  (( first_line < second_line )) ||
+    fail "$file must place '$first' before '$second'"
+}
+
 extract_job_block() {
   local job=$1
   awk -v target="  ${job}:" '
@@ -85,6 +101,7 @@ done
 require_file_contains "$RELEASE_WORKFLOW" "smoke-linux-release-artifacts.sh"
 require_file_contains "$RELEASE_WORKFLOW" "smoke-linux-upgrade-install.sh"
 require_file_contains "$RELEASE_WORKFLOW" "previous-stable to candidate Linux installer upgrade"
+require_file_before "$RELEASE_WORKFLOW" "smoke-linux-upgrade-install.sh" "smoke-linux-release-artifacts.sh"
 require_file_contains "$RELEASE_WORKFLOW" "check-release-assets.sh"
 require_file_contains "$RELEASE_WORKFLOW" "smoke-install-scripts.sh"
 require_file_contains "$RELEASE_WORKFLOW" "check-release-consistency.mjs"
