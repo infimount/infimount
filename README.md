@@ -226,7 +226,7 @@ Operational guides: [Agent Workspaces](docs/agent-workspaces.md), [Agent Tasks](
 ### Prerequisites
 
 - **Rust 1.94+** — [rustup.rs](https://rustup.rs/) (the pinned workspace toolchain and current MSRV)
-- **Node.js 18+** and **pnpm** — [pnpm.io](https://pnpm.io/installation)
+- **Node.js 24** and **pnpm 10** — [pnpm.io](https://pnpm.io/installation)
 - **Tauri dependencies** — [Platform-specific setup](https://tauri.app/start/prerequisites/)
 
 ### Quick Start
