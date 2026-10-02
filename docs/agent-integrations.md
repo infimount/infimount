@@ -26,7 +26,7 @@ Use this for clients that launch MCP servers themselves, including Claude Deskto
 }
 ```
 
-Always copy the canonical bundled-sidecar path from Infimount MCP Settings. Do not use a bare command from `PATH`; Infimount rejects non-executable, unhealthy, or version-mismatched sidecars. Packaged Linux builds also verify the binary against the bundled SHA-256 resource; signed macOS and Windows builds rely on the mandatory platform signature verification performed by the release pipeline and operating system.
+Always copy the canonical bundled-sidecar path from Infimount MCP Settings. Do not use a bare command from `PATH`; Infimount rejects non-executable, unhealthy, or version-mismatched sidecars. Explicitly platform-unsigned packages verify the bundled sidecar against the package-bound SHA-256 resource. When macOS or Windows platform signing is configured, the release pipeline additionally verifies the native signature and publisher identity.
 
 ## Generic local HTTP MCP config
 
