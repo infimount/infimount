@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Infimount | One surface for every storage</title>
-    <meta name="description" content="Infimount is an open-source desktop storage workbench for local files and cloud storage, with explicit MCP access for AI agents." />
+    <meta name="description" content="Infimount is an open-source desktop storage workbench for local files and cloud storage, with explicit MCP access and review-first Agent Tasks for AI agents." />
     <meta name="keywords" content="Infimount, storage browser, S3/S3-compatible, WebDAV, SFTP, MCP server, local-first storage, AI agents" />
     <meta name="robots" content="index,follow,max-image-preview:large" />
     <meta name="theme-color" content="#f4f1ea" />
@@ -15,12 +15,12 @@
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Infimount" />
     <meta property="og:title" content="Infimount | One surface for every storage" />
-    <meta property="og:description" content="Browse local files and cloud storage in one native app. Give AI agents only the storage access you choose." />
+    <meta property="og:description" content="Browse local files and cloud storage in one native app. Give AI agents scoped MCP access and review Agent Task outputs before publication." />
     <meta property="og:url" content="https://infimount.github.io/infimount/" />
     <meta property="og:image" content="https://infimount.github.io/infimount/assets/infimount-banner.png" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Infimount | One surface for every storage" />
-    <meta name="twitter:description" content="A local-first desktop storage workbench with explicit MCP access for AI agents." />
+    <meta name="twitter:description" content="A local-first desktop storage workbench with scoped MCP access and review-first Agent Tasks." />
     <meta name="twitter:image" content="https://infimount.github.io/infimount/assets/infimount-banner.png" />
     <script type="application/ld+json">
       {
@@ -128,6 +128,11 @@
       .fact + .fact { padding-left: 18px; border-left: 1px solid var(--rule); }
       .fact strong { display: block; font-size: .88rem; }
       .fact span { display: block; margin-top: 4px; color: var(--muted); font-size: .78rem; }
+
+      .candidate-strip { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-top: 22px; padding: 18px 20px; border: 1px solid var(--rule); border-radius: var(--radius); background: rgba(255,255,255,.34); }
+      .candidate-strip strong { display: block; font-size: .92rem; }
+      .candidate-strip span { display: block; margin-top: 4px; color: var(--muted); font-size: .8rem; }
+      .candidate-strip a { flex: 0 0 auto; color: var(--orange-dark); font-size: .82rem; font-weight: 800; text-decoration: none; }
 
       .section { padding: 88px 0; }
       .section-soft { background: var(--paper-2); }
@@ -247,6 +252,7 @@
         .section { padding: 74px 0; }
         .step { min-height: auto; }
         .step h3 { margin-top: 30px; }
+        .candidate-strip { align-items: flex-start; flex-direction: column; }
         .boundary-flow { grid-template-columns: 1fr; }
         .boundary-arrow { transform: rotate(90deg); justify-self: center; }
         .command { grid-template-columns: 1fr auto; gap: 8px; padding: 14px 0; }
@@ -284,14 +290,14 @@
       <section class="hero shell" aria-labelledby="hero-title">
         <div class="hero-grid">
           <div data-reveal>
-            <p class="release-label">v0.8.0 stable · open source</p>
+            <p class="release-label">v0.8.0 stable · v0.8.1-rc.12 validated candidate</p>
             <h1 id="hero-title">One surface for <span>every storage.</span></h1>
             <p class="hero-lead"><strong>Browse local files and cloud storage in one native desktop app.</strong> When an AI agent needs access, give it only the storages, paths, and tools you choose.</p>
             <div class="hero-actions">
               <a class="button button-primary" href="https://github.com/infimount/infimount/releases/latest">Download v0.8.0</a>
               <a class="button button-secondary" href="https://github.com/infimount/infimount">View on GitHub</a>
             </div>
-            <div class="hero-proof" aria-label="Product highlights"><span>Local-first</span><span>Apache OpenDAL</span><span>MCP built in</span><span>MIT licensed</span></div>
+            <div class="hero-proof" aria-label="Product highlights"><span>Local-first</span><span>Apache OpenDAL</span><span>MCP built in</span><span>Agent Tasks in rc.12</span><span>MIT licensed</span></div>
           </div>
 
           <figure class="product-frame" data-reveal>
@@ -307,6 +313,12 @@
           <div class="fact"><strong>Safe by default</strong><span>New storages are not exposed to MCP</span></div>
           <div class="fact"><strong>No hosted backend required</strong><span>Configuration and credentials stay local</span></div>
         </div>
+        <!-- release-candidate:start -->
+        <div class="candidate-strip" data-reveal>
+          <div><strong>v0.8.1-rc.12 is the active validated candidate.</strong><span>Agent Tasks, scoped task MCP, pagination recovery, publication safety, and v0.8.0-to-candidate package upgrades are automated and green. Real coding, document, and data-analysis usefulness remains the final product pilot before stable promotion.</span></div>
+          <a href="https://github.com/infimount/infimount/releases/tag/v0.8.1-rc.12">View rc.12 release ↗</a>
+        </div>
+        <!-- release-candidate:end -->
       </section>
 
       <section id="how" class="section shell" aria-labelledby="how-title">
@@ -356,8 +368,8 @@
           <div class="agent-copy" data-reveal>
             <span class="agent-badge">MCP access is off for new storages by default</span>
             <h2 id="agents-title">Give an agent a room, <span>not the house.</span></h2>
-            <p>Infimount separates the desktop control plane from the MCP data plane. You decide which storage an agent can see, where it can go, what it can do, and which actions need confirmation.</p>
-            <div class="hero-actions"><a class="button button-primary" href="https://github.com/infimount/infimount/blob/main/docs/mcp-client-setup.md">Set up an MCP client</a><a class="button button-secondary" href="https://github.com/infimount/infimount/blob/main/docs/security.md">Read the security model</a></div>
+            <p>Infimount separates the desktop control plane from the MCP data plane. You decide which storage an agent can see, where it can go, what it can do, and which actions need confirmation.</p><p>In v0.8.1-rc.12, Agent Tasks prepare only explicitly selected files into a bounded local workspace, keep source access unchanged, review output hashes and previews, and publish nothing until you approve an exact create-only plan.</p>
+            <div class="hero-actions"><a class="button button-primary" href="https://github.com/infimount/infimount/blob/main/docs/mcp-client-setup.md">Set up an MCP client</a><a class="button button-secondary" href="https://github.com/infimount/infimount/blob/main/docs/agent-tasks.md">Read Agent Tasks</a><a class="button button-secondary" href="https://github.com/infimount/infimount/blob/main/docs/security.md">Read the security model</a></div>
           </div>
 
           <div class="boundary" data-reveal aria-label="Infimount agent access flow">
@@ -420,10 +432,10 @@
         <div class="footer-grid">
           <div class="footer-brand"><a class="wordmark" href="./"><img class="brand-logo" src="./assets/infimount-logo-web.png" alt="" width="32" height="32" /><span>infimount</span></a><p>One surface for every storage. Open source, local-first, and built with Tauri, Rust, React, and Apache OpenDAL.</p></div>
           <div><h3>Product</h3><a href="#how">How it works</a><a href="#storage">Storage</a><a href="#agents">Agent access</a><a href="#install">Install</a></div>
-          <div><h3>Resources</h3><a href="https://github.com/infimount/infimount/blob/main/docs/backend-capabilities.md">Capabilities</a><a href="https://github.com/infimount/infimount/blob/main/docs/mcp-client-setup.md">MCP setup</a><a href="https://github.com/infimount/infimount/releases">Releases</a></div>
+          <div><h3>Resources</h3><a href="https://github.com/infimount/infimount/blob/main/docs/backend-capabilities.md">Capabilities</a><a href="https://github.com/infimount/infimount/blob/main/docs/mcp-client-setup.md">MCP setup</a><a href="https://github.com/infimount/infimount/blob/main/docs/agent-tasks.md">Agent Tasks</a><a href="https://github.com/infimount/infimount/releases">Releases</a></div>
           <div><h3>Project</h3><a href="https://github.com/infimount/infimount">GitHub</a><a href="https://github.com/infimount/infimount/blob/main/LICENSE">MIT license</a><a href="https://www.linkedin.com/company/infimount">LinkedIn</a></div>
         </div>
-        <div class="footer-bottom"><span>© Infimount contributors</span><span>Storage configuration and credentials remain local by default.</span></div>
+        <div class="footer-bottom"><span>© Infimount contributors</span><span>Storage configuration stays local; credential material uses native OS secret storage.</span></div>
       </div>
     </footer>
 
