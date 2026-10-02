@@ -25,6 +25,7 @@ if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version)) {
 const prerelease = version.includes("-");
 const unpublishedCandidate = process.env.INFIMOUNT_UNPUBLISHED_CANDIDATE === "1" && !prerelease;
 const candidateChannel = prerelease || unpublishedCandidate;
+const requirePublishedRelease = process.env.INFIMOUNT_REQUIRE_PUBLISHED_RELEASE === "1";
 const coreVersion = version.split("-", 1)[0];
 
 for (const [path, actual] of [
@@ -60,7 +61,10 @@ for (const path of [
 contains(releaseNotesPath, `Infimount ${version}`);
 if (candidateChannel) {
   const releaseLink = `https://github.com/infimount/infimount/releases/tag/${tag}`;
-  if (!read(releaseNotesPath).includes(releaseLink)) {
+  if (requirePublishedRelease) {
+    contains(releaseNotesPath, releaseLink);
+    excludes(releaseNotesPath, "Release: not published yet.");
+  } else if (!read(releaseNotesPath).includes(releaseLink)) {
     contains(releaseNotesPath, "Release: not published yet.");
   }
 } else {
@@ -78,7 +82,7 @@ if (!stableMatch) {
   fail("README.md must declare one canonical Current stable release link");
 }
 const publicStableVersion = stableMatch[1];
-const candidateLine = readme.match(/\*\*Release candidate under validation:\*\* v(\d+\.\d+\.\d+) \(not published yet\)/);
+const candidateLine = readme.match(/\*\*Validated release candidate:\*\* \[v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\]\(https:\/\/github\.com\/infimount\/infimount\/releases\/tag\/v\1\)/);
 const index = read("docs/index.html");
 const llms = read("docs/llms.txt");
 
@@ -89,16 +93,19 @@ if (candidateChannel) {
   contains("docs/index.html", `"softwareVersion": "${publicStableVersion}"`);
   contains("docs/llms.txt", `Current stable release: v${publicStableVersion}`);
 
-  if (candidateLine && candidateLine[1] !== coreVersion) {
-    fail(`README.md candidate ${candidateLine[1]} does not match ${coreVersion}`);
+  if (!candidateLine) {
+    fail("README.md must identify the exact validated prerelease candidate without replacing stable");
   }
-  const llmsCandidate = llms.match(/Release candidate under validation: v(\d+\.\d+\.\d+) \(not published yet\)/);
-  if (llmsCandidate && llmsCandidate[1] !== coreVersion) {
-    fail(`docs/llms.txt candidate ${llmsCandidate[1]} does not match ${coreVersion}`);
+  if (candidateLine[1] !== version) {
+    fail(`README.md candidate ${candidateLine[1]} does not match ${version}`);
   }
-  const indexCandidate = index.match(/v(\d+\.\d+\.\d+) release candidate/);
-  if (indexCandidate && indexCandidate[1] !== coreVersion) {
-    fail(`docs/index.html candidate ${indexCandidate[1]} does not match ${coreVersion}`);
+  const llmsCandidate = llms.match(/Validated release candidate: v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/);
+  if (!llmsCandidate || llmsCandidate[1] !== version) {
+    fail(`docs/llms.txt must identify validated release candidate v${version}`);
+  }
+  const indexCandidate = index.match(/v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?) validated candidate/);
+  if (!indexCandidate || indexCandidate[1] !== version) {
+    fail(`docs/index.html must identify v${version} as the validated candidate`);
   }
 
   contains("CHANGELOG.md", `## [${coreVersion}] - Unreleased release candidate`);
@@ -114,6 +121,9 @@ if (candidateChannel) {
   excludes("README.md", "not published yet");
   excludes("docs/index.html", "not published yet");
   excludes("docs/llms.txt", "not published yet");
+  excludes("README.md", "<!-- release-candidate:start -->");
+  excludes("docs/index.html", "<!-- release-candidate:start -->");
+  excludes("docs/llms.txt", "Validated release candidate:");
 }
 
 const msrv = workspaceCargoToml.match(/^rust-version\s*=\s*"([^"]+)"/m)?.[1];

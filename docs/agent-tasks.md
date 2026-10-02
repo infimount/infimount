@@ -1,6 +1,6 @@
 # Agent Tasks
 
-Agent Tasks are the next Infimount workflow for bounded agent work on existing files. The complete implementation is on `main` and is targeted for **v0.8.1**. The current v0.8.0 stable release does not include this workflow.
+Agent Tasks are Infimount's bounded workflow for agent work on existing files. The complete implementation is included in the published **[v0.8.1-rc.12](https://github.com/infimount/infimount/releases/tag/v0.8.1-rc.12)** prerelease. The current v0.8.0 stable release does not include this workflow. Automated release, upgrade, scoped-MCP, stale-review, conflict, destination-verification, and publication-receipt checks are green; the remaining product-validation step is real coding, document, and data-analysis usefulness.
 
 The design composes existing Infimount storage, Agent Workspace, MCP policy, client-integration, transfer, confirmation, and audit primitives. It does not introduce an agent runtime, semantic index, synchronization engine, hosted backend, or second authorization system.
 
@@ -192,7 +192,7 @@ The product loop is implemented on `main` through six completed slices:
 5. **Output review**: bounded discovery, preview, byte size, and SHA-256 review of `outputs/`.
 6. **Safe publication**: mandatory preview, staleness token, create-only writes, fail/rename conflict handling, destination verification, and unique receipts.
 
-The next product-validation phase is **pilot evidence**, not more feature breadth. It should exercise real coding, document, and data-analysis tasks, capture action-driven UI evidence, and include the normal v0.8.0 to v0.8.1 install/update path. Pilot evidence informs promotion and follow-on work. It is not a manual product-test requirement in the automated release gate.
+The remaining product-validation phase is **real pilot evidence**, not more feature breadth. Use the published v0.8.1-rc.12 candidate for coding, document, and data-analysis tasks, capture action-driven UI evidence, and retain the already-automated v0.8.0-to-candidate install/upgrade proof. Pilot evidence informs stable promotion and follow-on work. It is not a manual product-test requirement in the automated release gate.
 
 Use the [Agent Tasks v0.8.1 pilot protocol](agent-tasks-pilot.md) to collect privacy-safe, candidate-bound evidence and validate it without conflating synthetic fixtures with real pilot completion.
 

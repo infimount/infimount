@@ -30,6 +30,24 @@
 
 **Current stable release:** [v0.8.0](https://github.com/infimount/infimount/releases/tag/v0.8.0)
 
+<!-- release-candidate:start -->
+**Validated release candidate:** [v0.8.1-rc.12](https://github.com/infimount/infimount/releases/tag/v0.8.1-rc.12)
+
+The canonical Release and automatic Post Release Validation are green for rc.12, including Linux v0.8.0-to-rc.12 installer-over-install validation before and after publication. Agent Tasks are included in this prerelease. The remaining product-validation step is the real coding, document, and data-analysis usefulness pilot; the stable channel remains v0.8.0.
+
+To test rc.12 without changing the stable `latest` channel:
+
+```bash
+curl -fsSL https://github.com/infimount/infimount/releases/download/v0.8.1-rc.12/install.sh | INFIMOUNT_VERSION=v0.8.1-rc.12 sh
+```
+
+Windows PowerShell:
+
+```powershell
+$env:INFIMOUNT_VERSION='v0.8.1-rc.12'; irm https://github.com/infimount/infimount/releases/download/v0.8.1-rc.12/install.ps1 | iex
+```
+<!-- release-candidate:end -->
+
 ### Linux
 
 ```bash
@@ -82,7 +100,7 @@ Install scripts verify selected downloads against `SHA256SUMS.txt`. Pin this sta
 - **Work like a desktop file manager:** grid and list views, rich previews, drag-and-drop upload, bookmarks, recents, keyboard navigation, global search stop, dual-pane transfer workflows, conflict handling, and transfer queue.
 - **Validate before you trust a backend:** reachability checks report grouped capabilities, sanitized fix hints, and MCP readiness notes.
 - **Control MCP access explicitly:** new storages are not exposed to MCP by default. Enable selected storages, tool lists, path policies, read-only mode, confirmations, and local audit logs.
-- **Prepare bounded agent work:** Agent Tasks on `main`, targeted for v0.8.1, copy only selected files into a local Agent Workspace, hand the task to Codex through the existing MCP boundary, review outputs, and publish explicitly approved unchanged files with create-only writes.
+- **Prepare bounded agent work:** Agent Tasks are included in the published v0.8.1-rc.12 candidate. They copy only selected files into a local Agent Workspace, hand the task to Codex through the existing MCP boundary, review outputs, and publish explicitly approved unchanged files with create-only writes.
 - **Stay backend-agnostic:** file operations route through Apache OpenDAL so capabilities are detected and documented per backend.
 
 ## Workbench
@@ -101,14 +119,14 @@ Agent Workspaces define a safer storage-scoped MCP boundary for agents and Agent
 
 - Create a plain workspace by choosing a name and storage. Infimount derives `/agent-workspaces/<name>` inside that storage and shows the storage-relative location instead of asking for a second host path.
 - Apply a managed workspace-scoped MCP policy automatically. New workspaces are read-only for agents unless the desktop user explicitly opts into writes.
-- Require an explicit absolute Local Filesystem storage root for workspace namespace binding; shell-style `$HOME/...`, `~/...`, missing, or relative roots are rejected before workspace creation.
+- Persist Local Filesystem workspace namespaces as canonical absolute host paths. Legacy browsing roots such as `~` and `~/projects` are accepted and normalized once at first workspace binding; shell-variable forms such as `$HOME/...` remain invalid.
 - Keep older current-schema template memory files and checkpoints available as compatibility behavior for existing workspaces; new workspace creation no longer asks for coding, research, or data-analysis agent types.
 - Review workspace activity grouped from local events and MCP audit events that fall under the workspace root.
 - Bind each workspace to the storage namespace it references; changing the storage namespace or removing the storage while workspaces are bound is blocked until the workspaces are recreated.
 
 ## Agent Tasks
 
-Agent Tasks are implemented on `main` and targeted for v0.8.1. The current v0.8.0 stable release does not include this workflow.
+Agent Tasks are included in the published [v0.8.1-rc.12](https://github.com/infimount/infimount/releases/tag/v0.8.1-rc.12) prerelease. The current v0.8.0 stable release does not include this workflow. Automated release, upgrade, publication-safety, and scoped-MCP checks are green; real coding, document, and data-analysis usefulness remains the final product-validation pilot before stable promotion.
 
 - Prepare only the files selected in the File Browser into a bounded `tasks/<uuid>/inputs/` snapshot. Preparation never moves or mutates the source and never grants new MCP access to it.
 - Use an explicitly read-write Local Filesystem Agent Workspace for task outputs. Read-write workspace creation is a separate desktop opt-in.
@@ -258,7 +276,7 @@ Outputs:
 - [x] Keyboard navigation in virtualized file grid and table views
 - [x] OAuth-backed Google Drive and OneDrive with guided local loopback connect, plus SFTP remote-file browsing through OpenDAL
 - [x] Capability-aware storage validation summaries with fix hints and MCP readiness notes
-- [x] Agent Tasks implementation on `main`: bounded preparation, Codex handoff, output review, and create-only approved publication; real pilot evidence is the next product-validation phase before broader promotion
+- [x] Agent Tasks in published v0.8.1-rc.12: bounded preparation, Codex handoff, output review, create-only approved publication, and automated release-safety coverage; real three-workload usefulness evidence remains the final product-validation phase before stable promotion
 - [ ] Additional large-directory polish
 
 ### Future Plans

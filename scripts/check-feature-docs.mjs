@@ -94,8 +94,11 @@ if (!fs.existsSync("docs/agent-tasks.md")) {
   fail("docs/agent-tasks.md is missing");
 }
 const agentTasks = read("docs/agent-tasks.md");
-if (!agentTasks.includes("targeted for **v0.8.1**")) {
-  fail("docs/agent-tasks.md must preserve the planned v0.8.1 Agent Tasks release target");
+if (/targeted for \*\*v0\.8\.1\*\*/i.test(agentTasks)) {
+  fail("docs/agent-tasks.md must not describe Agent Tasks as merely targeted for v0.8.1 after a published candidate exists");
+}
+if (!/published.*v0\.8\.1-rc\./i.test(agentTasks)) {
+  fail("docs/agent-tasks.md should identify the published v0.8.1 release candidate");
 }
 if (agentTasks.includes("publish-receipt.json")) {
   fail("docs/agent-tasks.md must document unique publication receipts, not a mutable static receipt");
@@ -136,6 +139,32 @@ for (const phrase of [
   if (!pilot.toLowerCase().includes(phrase.toLowerCase())) {
     fail(`docs/agent-tasks-pilot.md should mention ${phrase}`);
   }
+}
+
+const securityPolicy = read("SECURITY.md");
+for (const phrase of ["0.8.x", "native secret store", "opaque secret references", "fails closed"]) {
+  if (!securityPolicy.toLowerCase().includes(phrase.toLowerCase())) {
+    fail(`SECURITY.md should mention ${phrase}`);
+  }
+}
+for (const stale of [
+  "Credentials are currently stored in that config file as plain JSON values.",
+  "Credentials are not encrypted at rest by Infimount in the current release.",
+  "| 0.1.x",
+]) {
+  if (securityPolicy.includes(stale)) {
+    fail(`SECURITY.md contains stale security guidance: ${stale}`);
+  }
+}
+if (
+  readme.includes(
+    "shell-style `$HOME/...`, `~/...`, missing, or relative roots are rejected before workspace creation",
+  )
+) {
+  fail("README.md must not claim legacy ~/... roots are rejected by workspace setup");
+}
+if (!readme.includes("Legacy browsing roots such as `~` and `~/projects` are accepted and normalized once")) {
+  fail("README.md should document legacy home-alias normalization");
 }
 
 const llms = read("docs/llms.txt");

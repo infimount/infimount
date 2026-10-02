@@ -56,6 +56,8 @@ jobs:
             node scripts/sync-release-version.mjs "${{ steps.release.outputs.tag }}"
 
       - name: Verify version, docs, changelog, and release notes
+        env:
+          INFIMOUNT_REQUIRE_PUBLISHED_RELEASE: "1"
         run: node scripts/check-release-consistency.mjs "${{ steps.release.outputs.tag }}"
 
       - name: Verify feature documentation consistency

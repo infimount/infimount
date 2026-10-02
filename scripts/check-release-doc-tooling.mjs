@@ -51,7 +51,7 @@ try {
   writeVersionFiles(candidate);
   write(
     "README.md",
-    `# Fixture\n\n**Current stable release:** [v${stable}](https://github.com/infimount/infimount/releases/tag/v${stable})\n\nInstall with INFIMOUNT_VERSION=v${stable}.\n\n## Agent Tasks\n\nAgent Tasks are implemented on \`main\` and targeted for v${core}. The current v${stable} stable release does not include this workflow.\n\nAgent Tasks on main, targeted for v${core}: fixture. ${pilotSentence}\n\nRust 1.94+\n`,
+    `# Fixture\n\n**Current stable release:** [v${stable}](https://github.com/infimount/infimount/releases/tag/v${stable})\n\n<!-- release-candidate:start -->\n**Validated release candidate:** [v${candidate}](https://github.com/infimount/infimount/releases/tag/v${candidate})\n\nCandidate fixture.\n<!-- release-candidate:end -->\n\nInstall with INFIMOUNT_VERSION=v${stable}.\n\n## Agent Tasks\n\nAgent Tasks are included in the published [v${candidate}](https://github.com/infimount/infimount/releases/tag/v${candidate}) prerelease. The current v${stable} stable release does not include this workflow.\n\nAgent Tasks in published v${candidate}: fixture. ${pilotSentence}\n\nRust 1.94+\n`,
   );
   write(
     "CHANGELOG.md",
@@ -59,16 +59,16 @@ try {
   );
   write(
     "docs/index.html",
-    `<!doctype html><meta name="fixture"><script type="application/ld+json">{"softwareVersion": "${stable}"}</script><p class="release-label">v${stable} stable · open source</p><a>Download v${stable}</a><p class="kicker">Install v${stable}</p><a href="https://github.com/infimount/infimount/releases/tag/v${stable}">Open the v${stable} release</a>`,
+    `<!doctype html><meta name="fixture"><script type="application/ld+json">{"softwareVersion": "${stable}"}</script><p class="release-label">v${stable} stable · v${candidate} validated candidate</p><!-- release-candidate:start --><div>v${candidate} validated candidate</div><!-- release-candidate:end --><a>Download v${stable}</a><p class="kicker">Install v${stable}</p><a href="https://github.com/infimount/infimount/releases/tag/v${stable}">Open the v${stable} release</a>`,
   );
   write(
     "docs/llms.txt",
-    `# Fixture\n\n- Current stable release: v${stable}\n- Agent Tasks on main, targeted for v${core}: fixture.\n`,
+    `# Fixture\n\n- Current stable release: v${stable}\n- Validated release candidate: v${candidate}\n- Candidate release: https://github.com/infimount/infimount/releases/tag/v${candidate}\n- Candidate status: fixture\n- Agent Tasks in published v${candidate}: fixture.\n`,
   );
   write("docs/agent-workspaces.md", "# agent-workspaces.md\n");
   write(
     "docs/agent-tasks.md",
-    `# Agent Tasks\n\nThe complete implementation is on \`main\` and is targeted for **v${core}**. The current v${stable} stable release does not include this workflow.\n\n${pilotParagraph}\n`,
+    `# Agent Tasks\n\nThe complete implementation is included in the published **[v${candidate}](https://github.com/infimount/infimount/releases/tag/v${candidate})** prerelease. The current v${stable} stable release does not include this workflow.\n\n${pilotParagraph}\n`,
   );
   for (const doc of ["recovery.md", "troubleshooting.md", "privacy.md", "migration-v0.8.md"]) {
     write(`docs/${doc}`, `# ${doc}\n`);
@@ -79,6 +79,14 @@ try {
   );
 
   run("check-release-consistency.mjs", [`v${candidate}`]);
+
+  write(
+    `docs/release-notes-${candidate}.md`,
+    `# Infimount ${candidate}: Fixture\n\nRelease: https://github.com/infimount/infimount/releases/tag/v${candidate}\n`,
+  );
+  run("check-release-consistency.mjs", [`v${candidate}`], {
+    INFIMOUNT_REQUIRE_PUBLISHED_RELEASE: "1",
+  });
 
   writeVersionFiles(core);
   write(
@@ -98,6 +106,8 @@ try {
   assert.match(readme, /Current stable release:\*\* \[v1\.3\.0\]/);
   assert.match(readme, /INFIMOUNT_VERSION=v1\.3\.0/);
   assert.doesNotMatch(readme, /Current stable release:\*\* \[v1\.2\.3\]/);
+  assert.doesNotMatch(readme, /release-candidate:start/);
+  assert.doesNotMatch(readme, /v1\.3\.0-rc\.1/);
   assert.match(readme, /Agent Tasks are included in v1\.3\.0\./);
   assert.match(readme, /Agent Tasks in v1\.3\.0: fixture/);
   assert.match(readme, /Real pilot evidence is the next product-validation phase before broader promotion\./);
@@ -106,7 +116,10 @@ try {
   assert.doesNotMatch(readme, /current v1\.2\.3 stable release does not include/i);
   assert.match(changelog, /## \[1\.3\.0\] - 2030-01-02/);
   assert.match(index, /"softwareVersion": "1\.3\.0"/);
+  assert.doesNotMatch(index, /validated candidate/);
+  assert.doesNotMatch(index, /release-candidate:start/);
   assert.match(llms, /Current stable release: v1\.3\.0/);
+  assert.doesNotMatch(llms, /Validated release candidate:/);
   assert.match(llms, /Agent Tasks in v1\.3\.0: fixture/);
   assert.doesNotMatch(llms, /targeted for v1\.3\.0/);
   assert.match(agentTasks, /The complete implementation is included in \*\*v1\.3\.0\*\*\./);
