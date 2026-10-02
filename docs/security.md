@@ -1,5 +1,7 @@
 # Security Model
 
+For supported versions and private vulnerability reporting, see the repository [Security Policy](../SECURITY.md).
+
 Infimount is local-first by design. It does not require an Infimount-hosted backend to store your storage registry, runtime settings, or credentials.
 
 ## Local Data Storage
@@ -9,7 +11,7 @@ Default local files:
 - `~/.infimount/storages.json`: storage registry and backend configuration.
 - `~/.infimount/mcp_settings.json`: MCP runtime settings, transport, bind address, port, secret reference, and enabled tool list.
 
-Storage credentials, OAuth tokens, and desktop MCP bearer tokens are stored in the operating system's native secret store. The v0.8 release candidate never falls back to plaintext credential persistence. Registry and settings files contain only public configuration and opaque secret references.
+Storage credentials, OAuth tokens, and desktop MCP bearer tokens are stored in the operating system's native secret store. Current v0.8 releases do not fall back to plaintext credential persistence. Registry and settings files contain only public configuration and opaque secret references.
 
 ## Secret Handling
 
