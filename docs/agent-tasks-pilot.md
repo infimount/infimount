@@ -18,7 +18,7 @@ The pilot does not justify new feature breadth. A failed run should first identi
 
 ## Candidate prerequisite
 
-Once published, use the `v0.8.1-rc.11` candidate for the resumed pilot.
+Once published, use the `v0.8.1-rc.12` candidate for the resumed pilot.
 
 `v0.8.1-rc.1` was published successfully, but its first real pilot attempt stopped during Agent Workspace setup before any Agent Task was executed. That run exposed a material Infimount workflow defect: workspace creation still carried agent-type/template and second-path concepts, and a shell-style Local Filesystem root could fail late during namespace binding. rc.2 fixed that product blocker. rc.1 must not be presented as completed pilot evidence.
 
@@ -38,8 +38,10 @@ Once published, use the `v0.8.1-rc.11` candidate for the resumed pilot.
 
 `v0.8.1-rc.9` was tagged at the intended validated main commit. Its canonical Release workflow passed every release gate and all three Linux, macOS, and Windows builds, proving the rc.8 activation correction and the strengthened pre-tag state-smoke parity. Publication then failed during draft revalidation on a rerun because `anchore/sbom-action` implicitly attached its raw pre-augmentation `infimount-create-release.spdx.json` to the existing draft. That action-owned file was intentionally outside the curated `SHA256SUMS.txt`, whose release SBOM is the post-processed `SBOM.spdx.json`. PR #114 fixes that producer/publisher boundary by disabling Anchore's implicit workflow-artifact and release-asset uploads, restricting the publisher's artifact download to `*-artifacts`, and keeping checksum validation strict. rc.9 was not published and must not be presented as completed pilot evidence.
 
-`v0.8.1-rc.10` was published successfully. Its canonical Release workflow passed every release gate, all three platform builds, draft re-download validation, publication, and published-release re-download validation; the automatic downstream `Post Release Validation` also passed. The resumed real validation then confirmed rc.7-to-rc.10 first-launch retention byte-for-byte for storage/workspace/MCP/app settings, legitimate storage-only onboarding after a previously skipped state, and legacy `~` root normalization through real workspace creation without manual storage editing. PR #117 automated those real-desktop onboarding, workspace, Agent Access, safety-probe, stdio/HTTP, and fail-closed checks. PR #119 extended the same real Tauri/WebDriver pilot to >200-entry auto-pagination, deliberate revision-stale cursor recovery, Agent Task preparation/review/publication safety, and independently scoped `serve-agent-task` confinement. PR #120 added a real packaged v0.8.0-to-candidate Linux installer-over-install harness and requires that same upgrade proof in canonical Release and Post Release Validation. rc.11 carries the same product behavior with these release-pilot and installer invariants automated; the three real workload usefulness judgments remain human product-validation evidence and are not replaced by CI.
+`v0.8.1-rc.10` was published successfully. Its canonical Release workflow passed every release gate, all three platform builds, draft re-download validation, publication, and published-release re-download validation; the automatic downstream `Post Release Validation` also passed. The resumed real validation then confirmed rc.7-to-rc.10 first-launch retention byte-for-byte for storage/workspace/MCP/app settings, legitimate storage-only onboarding after a previously skipped state, and legacy `~` root normalization through real workspace creation without manual storage editing. PR #117 automated those real-desktop onboarding, workspace, Agent Access, safety-probe, stdio/HTTP, and fail-closed checks. PR #119 extended the same real Tauri/WebDriver pilot to >200-entry auto-pagination, deliberate revision-stale cursor recovery, Agent Task preparation/review/publication safety, and independently scoped `serve-agent-task` confinement. PR #120 added a real packaged v0.8.0-to-candidate Linux installer-over-install harness and requires that same upgrade proof in canonical Release and Post Release Validation. The three real workload usefulness judgments remain human product-validation evidence and are not replaced by CI.
 
+
+`v0.8.1-rc.11` was tagged at the intended validated main commit after the release-pilot and installer-upgrade automation landed. Its canonical Release workflow passed every deterministic Release Gate, and the macOS and Windows platform builds succeeded. The Linux build produced a valid candidate package and passed the normal Linux artifact smoke, but the new installer-over-install gate then failed before exercising the upgrade path because that artifact smoke had already installed the candidate package on the runner. The upgrade harness correctly refused to mutate an installation it did not create. Publication was skipped and no rc.11 GitHub Release was published. PR #123 fixes the release orchestration by running the previous-stable-to-candidate upgrade before the artifact smoke that installs the candidate, keeps the harness fail-closed, and adds a zero-manual policy assertion that preserves that ordering. rc.11 must not be presented as completed pilot evidence.
 Record:
 
 - prerelease version;
@@ -48,17 +50,17 @@ Record:
 - previous installed stable version;
 - agent client name.
 
-The resumed pilot should start from an installed v0.8.0 environment and install v0.8.1-rc.11 over it. If the prerelease is not offered through the stable updater channel, installer-over-install is the correct candidate upgrade exercise. Do not claim that a prerelease installer proves stable-channel updater behavior.
+The resumed pilot should start from an installed v0.8.0 environment and install v0.8.1-rc.12 over it. If the prerelease is not offered through the stable updater channel, installer-over-install is the correct candidate upgrade exercise. Do not claim that a prerelease installer proves stable-channel updater behavior.
 
-For the controlled task workspace in this pilot, continue to use an **explicit absolute host path**. This keeps the Agent Task workload evidence independent from the separate legacy-root regression below. Shell-variable notation such as `$HOME/...` remains invalid. rc.11 retains the rc.5 support for legacy `~` and `~/...` Local Filesystem roots by canonically normalizing them once before the first workspace namespace binding.
+For the controlled task workspace in this pilot, continue to use an **explicit absolute host path**. This keeps the Agent Task workload evidence independent from the separate legacy-root regression below. Shell-variable notation such as `$HOME/...` remains invalid. rc.12 retains the rc.5 support for legacy `~` and `~/...` Local Filesystem roots by canonically normalizing them once before the first workspace namespace binding.
 
-## rc.5 through rc.11 focused regression checks
+## rc.5 through rc.12 focused regression checks
 
-Before the three workload pilots, verify the product corrections that caused rc.5 through rc.11 to exist.
+Before the three workload pilots, verify the product corrections that caused rc.5 through rc.12 to exist.
 
 ### Legacy Local Filesystem home alias
 
-Use a v0.8.0 Local Filesystem storage whose configured root is the legacy `~` form and that has no bound Agent Workspace. After upgrading to rc.11:
+Use a v0.8.0 Local Filesystem storage whose configured root is the legacy `~` form and that has no bound Agent Workspace. After upgrading to rc.12:
 
 1. confirm ordinary storage browsing still works;
 2. create one Agent Workspace on that storage through the normal UI;
@@ -102,7 +104,7 @@ Verify all of the following:
 - closing Add Storage, Agent Workspaces, or Advanced MCP only returns to onboarding when onboarding explicitly opened that dialog;
 - the client-adapter and Agent Access surfaces remain usable at the target desktop viewport without inaccessible controls below the fold.
 
-These checks validate the rc.5 through rc.11 guided-flow corrections. The rc.7 floating reminder behavior is intentionally superseded by storage-only completion and should not be treated as a retained product requirement. These checks do not replace the three real Agent Task workloads below.
+These checks validate the rc.5 through rc.12 guided-flow corrections. The rc.7 floating reminder behavior is intentionally superseded by storage-only completion and should not be treated as a retained product requirement. These checks do not replace the three real Agent Task workloads below.
 
 ### File-browser pagination and stale-cursor recovery
 
@@ -238,7 +240,7 @@ Verify the real publication UI does not expose an overwrite mode. Record `safety
 
 ## Upgrade exercise
 
-Start from v0.8.0 with representative local state, then install v0.8.1-rc.11 over it.
+Start from v0.8.0 with representative local state, then install v0.8.1-rc.12 over it.
 
 The evidence bundle requires all of the following:
 
@@ -276,7 +278,7 @@ Each of the three task records contains:
 
 A candidate/platform evidence bundle passes only when:
 
-- the rc.5 through rc.11 focused regression checks above pass without a material workflow or safety defect;
+- the rc.5 through rc.12 focused regression checks above pass without a material workflow or safety defect;
 - coding, document, and data-analysis pilots all pass;
 - all source before/after aggregate hashes match;
 - source MCP exposure is unchanged for every task;
