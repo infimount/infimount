@@ -18,7 +18,7 @@ The pilot does not justify new feature breadth. A failed run should first identi
 
 ## Candidate prerequisite
 
-Once published, use the `v0.8.1-rc.12` candidate for the resumed pilot.
+Use the published [`v0.8.1-rc.12`](https://github.com/infimount/infimount/releases/tag/v0.8.1-rc.12) candidate for the resumed pilot. Its canonical Release and automatic Post Release Validation are green; the remaining evidence is the three real workload usefulness judgments described below.
 
 `v0.8.1-rc.1` was published successfully, but its first real pilot attempt stopped during Agent Workspace setup before any Agent Task was executed. That run exposed a material Infimount workflow defect: workspace creation still carried agent-type/template and second-path concepts, and a shell-style Local Filesystem root could fail late during namespace binding. rc.2 fixed that product blocker. rc.1 must not be presented as completed pilot evidence.
 
@@ -42,6 +42,8 @@ Once published, use the `v0.8.1-rc.12` candidate for the resumed pilot.
 
 
 `v0.8.1-rc.11` was tagged at the intended validated main commit after the release-pilot and installer-upgrade automation landed. Its canonical Release workflow passed every deterministic Release Gate, and the macOS and Windows platform builds succeeded. The Linux build produced a valid candidate package and passed the normal Linux artifact smoke, but the new installer-over-install gate then failed before exercising the upgrade path because that artifact smoke had already installed the candidate package on the runner. The upgrade harness correctly refused to mutate an installation it did not create. Publication was skipped and no rc.11 GitHub Release was published. PR #123 fixes the release orchestration by running the previous-stable-to-candidate upgrade before the artifact smoke that installs the candidate, keeps the harness fail-closed, and adds a zero-manual policy assertion that preserves that ordering. rc.11 must not be presented as completed pilot evidence.
+
+`v0.8.1-rc.12` was then published successfully from the qualified merge commit. Its canonical Release passed every deterministic gate, all three platform builds, the corrected pre-artifact Linux v0.8.0-to-rc.12 installer-over-install exercise, draft re-download validation, publication, and published-release re-download validation. Automatic Post Release Validation also passed and independently re-downloaded the public Linux package and repeated the v0.8.0-to-rc.12 upgrade with user configuration untouched and storage identity/exposure retained. rc.12 is therefore the active final candidate for the three real coding, document, and data-analysis usefulness judgments; automated success must still not be represented as those human workload passes.
 
 Record:
 
