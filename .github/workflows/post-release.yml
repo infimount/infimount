@@ -98,6 +98,18 @@ jobs:
             curl --fail --silent --show-error --location --head --retry 5 "$url" >/dev/null
           done < <(jq -r '.platforms[].url' published-release-assets/latest.json)
 
+      - name: Install Linux installer-upgrade dependencies
+        run: bash scripts/ci-apt-install.sh xvfb gnome-keyring dbus-x11 libsecret-tools
+
+      - name: Exercise published previous-stable to candidate Linux installer upgrade
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          bash scripts/smoke-linux-upgrade-install.sh \
+            published-release-assets/Infimount-amd64.deb \
+            "${RELEASE_TAG#v}"
+
       - name: Verify Homebrew update can resolve checksums
         if: ${{ !contains(steps.release.outputs.tag, '-') }}
         run: ./scripts/check-homebrew-update.sh "${{ steps.release.outputs.tag }}"
