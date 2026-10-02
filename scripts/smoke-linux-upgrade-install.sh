@@ -51,6 +51,7 @@ APP_PID=""
 
 cleanup() {
   local rc=$?
+  trap - EXIT
   if [[ -n "$APP_PID" ]]; then
     kill "$APP_PID" >/dev/null 2>&1 || true
     wait "$APP_PID" >/dev/null 2>&1 || true
@@ -275,13 +276,15 @@ hash -r
 STABLE_BIN="$(command -v infimount || true)"
 [[ -x "$STABLE_BIN" ]] || fail "stable desktop binary is not installed"
 
-STABLE_SIDECAR="$(dpkg -L "$STABLE_PACKAGE" | while IFS= read -r file; do
+STABLE_SIDECAR=""
+while IFS= read -r file; do
   if [[ -f "$file" && -x "$file" && "$(basename "$file")" == "mcp" ]]; then
-    printf '%s\n' "$file"
+    STABLE_SIDECAR="$file"
     break
   fi
-done)"
-[[ -x "$STABLE_SIDECAR" ]] || fail "stable packaged MCP sidecar was not found"
+done < <(dpkg -L "$STABLE_PACKAGE")
+[[ -n "$STABLE_SIDECAR" && -x "$STABLE_SIDECAR" ]] ||
+  fail "stable packaged MCP sidecar was not found"
 [[ "$("$STABLE_SIDECAR" --version)" == "infimount_mcp $STABLE_VERSION" ]] ||
   fail "stable packaged sidecar version mismatch"
 
@@ -327,13 +330,15 @@ hash -r
 CANDIDATE_BIN="$(command -v infimount || true)"
 [[ -x "$CANDIDATE_BIN" ]] || fail "candidate desktop binary is not installed"
 
-CANDIDATE_SIDECAR="$(dpkg -L "$CANDIDATE_PACKAGE" | while IFS= read -r file; do
+CANDIDATE_SIDECAR=""
+while IFS= read -r file; do
   if [[ -f "$file" && -x "$file" && "$(basename "$file")" == "mcp" ]]; then
-    printf '%s\n' "$file"
+    CANDIDATE_SIDECAR="$file"
     break
   fi
-done)"
-[[ -x "$CANDIDATE_SIDECAR" ]] || fail "candidate packaged MCP sidecar was not found"
+done < <(dpkg -L "$CANDIDATE_PACKAGE")
+[[ -n "$CANDIDATE_SIDECAR" && -x "$CANDIDATE_SIDECAR" ]] ||
+  fail "candidate packaged MCP sidecar was not found"
 [[ "$("$CANDIDATE_SIDECAR" --version)" == "infimount_mcp $CANDIDATE_VERSION" ]] ||
   fail "candidate packaged sidecar version mismatch"
 
