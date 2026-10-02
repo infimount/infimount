@@ -127,6 +127,18 @@ replaceOptional(
   "",
 );
 
+const candidatePattern = `v${version}-rc\\.\\d+`;
+replaceAllOptional("README.md", [
+  [new RegExp(`Agent Tasks are included in the published \\[${candidatePattern}\\]\\(https://github\\.com/infimount/infimount/releases/tag/${candidatePattern}\\) prerelease\\. The current v${previousVersion.replaceAll(".", "\\.")} stable release does not include this workflow\\.`, "g"), `Agent Tasks are included in ${tag}.`],
+  [new RegExp(`Agent Tasks in published ${candidatePattern}:`, "g"), `Agent Tasks in ${tag}:`],
+]);
+replaceAllOptional("docs/agent-tasks.md", [
+  [new RegExp(`The complete implementation is included in the published \\*\\*\\[${candidatePattern}\\]\\(https://github\\.com/infimount/infimount/releases/tag/${candidatePattern}\\)\\*\\* prerelease\\. The current v${previousVersion.replaceAll(".", "\\.")} stable release does not include this workflow\\.`, "g"), `The complete implementation is included in **${tag}**.`],
+]);
+replaceAllOptional("docs/llms.txt", [
+  [new RegExp(`Agent Tasks in published ${candidatePattern}:`, "g"), `Agent Tasks in ${tag}:`],
+]);
+
 const releaseStateReplacements = [
   [
     `Agent Tasks are implemented on \`main\` and targeted for v${version}. The current v${previousVersion} stable release does not include this workflow.`,
@@ -154,18 +166,6 @@ const releaseStateReplacements = [
 for (const path of ["README.md", "docs/agent-tasks.md", "docs/llms.txt"]) {
   if (fs.existsSync(path)) replaceAllOptional(path, releaseStateReplacements);
 }
-
-const candidatePattern = `v${version}-rc\\.\\d+`;
-replaceAllOptional("README.md", [
-  [new RegExp(`Agent Tasks are included in the published \\[${candidatePattern}\\]\\(https://github\\.com/infimount/infimount/releases/tag/${candidatePattern}\\) prerelease\\. The current v${previousVersion.replaceAll(".", "\\.")} stable release does not include this workflow\\.`, "g"), `Agent Tasks are included in ${tag}.`],
-  [new RegExp(`Agent Tasks in published ${candidatePattern}:`, "g"), `Agent Tasks in ${tag}:`],
-]);
-replaceAllOptional("docs/agent-tasks.md", [
-  [new RegExp(`The complete implementation is included in the published \\*\\*\\[${candidatePattern}\\]\\(https://github\\.com/infimount/infimount/releases/tag/${candidatePattern}\\)\\*\\* prerelease\\. The current v${previousVersion.replaceAll(".", "\\.")} stable release does not include this workflow\\.`, "g"), `The complete implementation is included in **${tag}**.`],
-]);
-replaceAllOptional("docs/llms.txt", [
-  [new RegExp(`Agent Tasks in published ${candidatePattern}:`, "g"), `Agent Tasks in ${tag}:`],
-]);
 
 replaceRequired(
   releaseNotesPath,
