@@ -446,9 +446,10 @@ jobs:
       - name: Install RPM extraction fallback tooling
         run: bash scripts/ci-apt-install.sh libarchive-tools
 
-      - name: Smoke check Linux artifacts
-        run: ./scripts/smoke-linux-release-artifacts.sh out/linux
-
+      # Keep the upgrade pilot first: the artifact smoke installs the candidate
+      # package and intentionally leaves it installed for executable inspection.
+      # The upgrade harness requires a clean runner and removes every package it
+      # installs before returning.
       - name: Exercise previous-stable to candidate Linux installer upgrade
         env:
           GH_TOKEN: ${{ github.token }}
@@ -456,6 +457,9 @@ jobs:
           bash scripts/smoke-linux-upgrade-install.sh \
             out/linux/Infimount-amd64.deb \
             "${GITHUB_REF#refs/tags/v}"
+
+      - name: Smoke check Linux artifacts
+        run: ./scripts/smoke-linux-release-artifacts.sh out/linux
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v6
