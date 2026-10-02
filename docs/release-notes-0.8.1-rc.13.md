@@ -29,6 +29,20 @@ After rc.12, no application/runtime source changed. The repository did, however,
 
 rc.13 is therefore an infrastructure/promotion candidate, not another product-feature candidate.
 
+## Release outcome
+
+rc.13 is published and fully validated through the automated release boundary.
+
+- all deterministic Release Gates passed;
+- Linux, macOS, and Windows platform builds passed;
+- the previous-stable-to-candidate Linux installer upgrade ran before candidate-installing artifact smoke and passed;
+- `actions/download-artifact@v8` downloaded the curated platform artifacts successfully;
+- `actions/attest-build-provenance@v4` created signed Sigstore/Rekor provenance for 45 subjects;
+- updater signatures, merged updater metadata, SBOM sidecar coverage, checksums, install-script smoke, draft re-download, publication, and published-release re-download passed;
+- automatic Post Release Validation re-downloaded the public assets, enforced the published release-note URL, and independently repeated the public v0.8.0-to-rc.13 Linux installer upgrade successfully;
+- updater signing is verified; macOS platform signing and Windows platform signing were not configured for rc.13, so those packages exercised the explicit unsigned-platform path.
+
+
 ## Product behavior
 
 The application behavior remains the rc.12 behavior:
@@ -47,9 +61,9 @@ The application behavior remains the rc.12 behavior:
 - packaged sidecar confinement;
 - v0.8.0-to-candidate installer-over-install retention checks.
 
-## rc.13 qualification
+## rc.13 qualification completed
 
-Before the tag is created, the exact release-preparation head must pass:
+Before the tag was created, the exact release-preparation head passed:
 
 - CI;
 - Integration Tests;
@@ -60,7 +74,7 @@ Before the tag is created, the exact release-preparation head must pass:
 - Installer Upgrade Harness;
 - the real desktop Release Pilot.
 
-After tagging, the canonical Release must prove the current release workflow on a real immutable candidate, including:
+After tagging, the canonical Release proved the current release workflow on a real immutable candidate, including:
 
 - all deterministic Release Gates;
 - the previous-stable-to-candidate Linux installer upgrade before candidate-installing artifact smoke;
@@ -73,7 +87,7 @@ After tagging, the canonical Release must prove the current release workflow on 
 - publication;
 - published-release re-download validation.
 
-Automatic Post Release Validation must then pass against the published rc.13 assets, including the public-package Linux upgrade check and the published release-note URL guard.
+Automatic Post Release Validation also passed against the published rc.13 assets, including the public-package Linux upgrade check and the published release-note URL guard.
 
 ## Final product-validation boundary
 
@@ -87,7 +101,7 @@ The deterministic workload validators may verify structure, calculations, patch 
 
 ## Signing boundary
 
-Every release requires cryptographically signed updater artifacts. macOS platform signing/notarization and Windows Authenticode are exercised when their complete signing credentials are configured; otherwise the release explicitly records that the platform package is unsigned. The rc.13 run is the correct place to qualify any newly configured platform-signing credentials before stable promotion.
+Every release requires cryptographically signed updater artifacts. macOS platform signing/notarization and Windows Authenticode are exercised when their complete signing credentials are configured; otherwise the release explicitly records that the platform package is unsigned. The rc.13 run confirmed that updater signing is configured, while Apple and Windows platform-signing credentials are currently absent. Stable promotion may intentionally retain that explicit unsigned-platform status, or native signing credentials must be configured and qualified on another candidate before stable.
 
 ## Known boundaries
 
