@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Real-world Agent Task pilots are treated as product-validation evidence for broader promotion and follow-on work, not as a manual product-test requirement in the automated release gate.
 - Public README, Pages, LLM index, security policy, backend/migration guides, and Agent Task docs now distinguish the v0.8.0 stable channel from the published v0.8.1-rc.12 validation candidate and reflect the native-secret-store security model.
 - Prerelease documentation now carries its deterministic release URL before tagging, Post Release Validation rejects stale unpublished markers, and stable-document promotion removes candidate-only public state.
-- Final v0.8.1 release qualification refreshes GitHub Actions to their Node 24-era majors and validates the stable-document fallback from an explicit candidate marker rather than mutable wording.
+- Final v0.8.1 release qualification refreshes GitHub Actions to their Node 24-era majors, validates the stable-document fallback from an explicit candidate marker, and passes canonical Release plus Post Release Validation on published rc.13.
 
 ### Security
 

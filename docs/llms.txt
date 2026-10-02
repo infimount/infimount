@@ -12,7 +12,7 @@ selected storages through MCP for local AI assistants and agent workflows.
 - Current stable release: v0.8.0
 - Validated release candidate: v0.8.1-rc.13
 - Candidate release: https://github.com/infimount/infimount/releases/tag/v0.8.1-rc.13
-- Candidate status: final release-infrastructure qualification candidate; application behavior is unchanged from rc.12, and the real coding/document/data-analysis usefulness pilot remains after publication before stable promotion.
+- Candidate status: published and fully automated-validated on the current release stack; application behavior is unchanged from rc.12, and the real coding/document/data-analysis usefulness pilot remains before stable promotion.
 - Releases: https://github.com/infimount/infimount/releases/latest
 - Homebrew tap: https://github.com/infimount/homebrew-infimount
 - LinkedIn: https://www.linkedin.com/company/infimount
