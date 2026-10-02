@@ -18,7 +18,7 @@ The pilot does not justify new feature breadth. A failed run should first identi
 
 ## Candidate prerequisite
 
-Use the published [`v0.8.1-rc.12`](https://github.com/infimount/infimount/releases/tag/v0.8.1-rc.12) candidate for the resumed pilot. Its canonical Release and automatic Post Release Validation are green; the remaining evidence is the three real workload usefulness judgments described below.
+Use [`v0.8.1-rc.13`](https://github.com/infimount/infimount/releases/tag/v0.8.1-rc.13) for the final resumed pilot after it is published. rc.13 carries the same application/runtime behavior as rc.12 and exists to qualify the current release-action stack, final public-document checks, and stable-promotion fallback before the three real workload usefulness judgments described below.
 
 `v0.8.1-rc.1` was published successfully, but its first real pilot attempt stopped during Agent Workspace setup before any Agent Task was executed. That run exposed a material Infimount workflow defect: workspace creation still carried agent-type/template and second-path concepts, and a shell-style Local Filesystem root could fail late during namespace binding. rc.2 fixed that product blocker. rc.1 must not be presented as completed pilot evidence.
 
@@ -43,7 +43,9 @@ Use the published [`v0.8.1-rc.12`](https://github.com/infimount/infimount/releas
 
 `v0.8.1-rc.11` was tagged at the intended validated main commit after the release-pilot and installer-upgrade automation landed. Its canonical Release workflow passed every deterministic Release Gate, and the macOS and Windows platform builds succeeded. The Linux build produced a valid candidate package and passed the normal Linux artifact smoke, but the new installer-over-install gate then failed before exercising the upgrade path because that artifact smoke had already installed the candidate package on the runner. The upgrade harness correctly refused to mutate an installation it did not create. Publication was skipped and no rc.11 GitHub Release was published. PR #123 fixes the release orchestration by running the previous-stable-to-candidate upgrade before the artifact smoke that installs the candidate, keeps the harness fail-closed, and adds a zero-manual policy assertion that preserves that ordering. rc.11 must not be presented as completed pilot evidence.
 
-`v0.8.1-rc.12` was then published successfully from the qualified merge commit. Its canonical Release passed every deterministic gate, all three platform builds, the corrected pre-artifact Linux v0.8.0-to-rc.12 installer-over-install exercise, draft re-download validation, publication, and published-release re-download validation. Automatic Post Release Validation also passed and independently re-downloaded the public Linux package and repeated the v0.8.0-to-rc.12 upgrade with user configuration untouched and storage identity/exposure retained. rc.12 is therefore the active final candidate for the three real coding, document, and data-analysis usefulness judgments; automated success must still not be represented as those human workload passes.
+`v0.8.1-rc.12` was then published successfully from the qualified merge commit. Its canonical Release passed every deterministic gate, all three platform builds, the corrected pre-artifact Linux v0.8.0-to-rc.12 installer-over-install exercise, draft re-download validation, publication, and published-release re-download validation. Automatic Post Release Validation also passed and independently re-downloaded the public Linux package and repeated the v0.8.0-to-rc.12 upgrade with user configuration untouched and storage identity/exposure retained. rc.12 established the final application/runtime behavior, but subsequent documentation and GitHub Actions maintenance changed the exact release/promotion machinery, so stable promotion now requires one final infrastructure candidate.
+
+`v0.8.1-rc.13` carries no application/runtime behavior change from rc.12. It qualifies the current `actions/download-artifact@v8`, `actions/attest-build-provenance@v4`, Pages/CI action refresh, published-release documentation guard, and stable-document fallback on one real immutable tag. Only after rc.13 Release and Post Release Validation are green should the three real coding, document, and data-analysis usefulness judgments be recorded against rc.13.
 
 Record:
 
@@ -53,17 +55,17 @@ Record:
 - previous installed stable version;
 - agent client name.
 
-The resumed pilot should start from an installed v0.8.0 environment and install v0.8.1-rc.12 over it. If the prerelease is not offered through the stable updater channel, installer-over-install is the correct candidate upgrade exercise. Do not claim that a prerelease installer proves stable-channel updater behavior.
+The resumed pilot should start from an installed v0.8.0 environment and install v0.8.1-rc.13 over it. If the prerelease is not offered through the stable updater channel, installer-over-install is the correct candidate upgrade exercise. Do not claim that a prerelease installer proves stable-channel updater behavior.
 
-For the controlled task workspace in this pilot, continue to use an **explicit absolute host path**. This keeps the Agent Task workload evidence independent from the separate legacy-root regression below. Shell-variable notation such as `$HOME/...` remains invalid. rc.12 retains the rc.5 support for legacy `~` and `~/...` Local Filesystem roots by canonically normalizing them once before the first workspace namespace binding.
+For the controlled task workspace in this pilot, continue to use an **explicit absolute host path**. This keeps the Agent Task workload evidence independent from the separate legacy-root regression below. Shell-variable notation such as `$HOME/...` remains invalid. rc.13 retains the rc.5 support for legacy `~` and `~/...` Local Filesystem roots by canonically normalizing them once before the first workspace namespace binding.
 
-## rc.5 through rc.12 focused regression checks
+## rc.5 through rc.13 focused regression checks
 
-Before the three workload pilots, verify the product corrections that caused rc.5 through rc.12 to exist.
+Before the three workload pilots, verify the product corrections that caused rc.5 through rc.13 to exist.
 
 ### Legacy Local Filesystem home alias
 
-Use a v0.8.0 Local Filesystem storage whose configured root is the legacy `~` form and that has no bound Agent Workspace. After upgrading to rc.12:
+Use a v0.8.0 Local Filesystem storage whose configured root is the legacy `~` form and that has no bound Agent Workspace. After upgrading to rc.13:
 
 1. confirm ordinary storage browsing still works;
 2. create one Agent Workspace on that storage through the normal UI;
@@ -107,7 +109,7 @@ Verify all of the following:
 - closing Add Storage, Agent Workspaces, or Advanced MCP only returns to onboarding when onboarding explicitly opened that dialog;
 - the client-adapter and Agent Access surfaces remain usable at the target desktop viewport without inaccessible controls below the fold.
 
-These checks validate the rc.5 through rc.12 guided-flow corrections. The rc.7 floating reminder behavior is intentionally superseded by storage-only completion and should not be treated as a retained product requirement. These checks do not replace the three real Agent Task workloads below.
+These checks validate the rc.5 through rc.13 guided-flow corrections. The rc.7 floating reminder behavior is intentionally superseded by storage-only completion and should not be treated as a retained product requirement. These checks do not replace the three real Agent Task workloads below.
 
 ### File-browser pagination and stale-cursor recovery
 
@@ -158,6 +160,33 @@ node scripts/check-agent-task-pilot-evidence.mjs \
 ```
 
 `--allow-synthetic` is for repository fixtures only. A real pilot bundle must pass without that flag.
+
+## Explicit quality acceptance
+
+After all deterministic workload, safety, upgrade, source-integrity, publication, and evidence-shape checks are complete, keep the real evidence file in a quality-pending state:
+
+- `synthetic=false`;
+- each of the three task `passed` fields remains `false`;
+- `overallPassed=false`;
+- all observed deterministic fields are filled from the real rc.13 run.
+
+Validate that state without converting it into a pass:
+
+```bash
+node scripts/check-agent-task-pilot-evidence.mjs \
+  /path/to/pilot-evidence.pending.json \
+  --allow-pending-quality
+```
+
+Only after a human has reviewed the actual coding, document, and data-analysis outputs plus the private UI evidence and judged all three materially useful/correct may the final acceptance command run:
+
+```bash
+pnpm pilot:accept-quality -- \
+  --evidence /path/to/pilot-evidence.pending.json \
+  --accept-quality
+```
+
+That command first revalidates the pending deterministic evidence, then changes only the three task `passed` fields and `overallPassed`, writes a separate accepted evidence file, and runs the normal real-evidence validator. It refuses synthetic evidence and refuses to overwrite the pending record.
 
 ## Source-selection digest
 
@@ -243,7 +272,7 @@ Verify the real publication UI does not expose an overwrite mode. Record `safety
 
 ## Upgrade exercise
 
-Start from v0.8.0 with representative local state, then install v0.8.1-rc.12 over it.
+Start from v0.8.0 with representative local state, then install v0.8.1-rc.13 over it.
 
 The evidence bundle requires all of the following:
 
@@ -281,7 +310,7 @@ Each of the three task records contains:
 
 A candidate/platform evidence bundle passes only when:
 
-- the rc.5 through rc.12 focused regression checks above pass without a material workflow or safety defect;
+- the rc.5 through rc.13 focused regression checks above pass without a material workflow or safety defect;
 - coding, document, and data-analysis pilots all pass;
 - all source before/after aggregate hashes match;
 - source MCP exposure is unchanged for every task;

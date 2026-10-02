@@ -65,7 +65,7 @@ jobs:
 
       - name: Promote public documentation to stable identity
         run: |
-          if grep -Fq 'Release candidate under validation' README.md; then
+          if grep -Fq '<!-- release-candidate:start -->' README.md; then
             node scripts/prepare-stable-release-docs.mjs "${{ steps.resolve_tag.outputs.tag }}"
           else
             echo "Public documentation is already promoted to a stable identity."
