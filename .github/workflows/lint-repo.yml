@@ -75,3 +75,5 @@ jobs:
           git ls-files -z "*.md" | xargs -0 -r pnpm exec markdownlint --config .markdownlint.yaml
       - name: Check product documentation and release-doc tooling
         run: pnpm test:docs
+      - name: Check rc.10 real-pilot harness syntax
+        run: pnpm test:rc10-pilot-harness

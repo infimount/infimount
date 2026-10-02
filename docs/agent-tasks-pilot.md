@@ -152,6 +152,59 @@ node scripts/check-agent-task-pilot-evidence.mjs \
 
 `--allow-synthetic` is for repository fixtures only. A real pilot bundle must pass without that flag.
 
+## Automated Linux rc.10 final pilot
+
+The Linux amd64 rc.10 pilot can automate every deterministic step with:
+
+```bash
+pnpm pilot:rc10:real
+```
+
+The command is intentionally fail-closed. It requires Infimount to be closed and the
+installed package to start at `0.8.1-rc.10`. It then:
+
+- creates a private isolated pilot root under
+  `~/.infimount-rc10-final-pilot`;
+- records an aggregate digest of the real `~/.infimount` tree without copying
+  its contents into pilot evidence;
+- downloads the published v0.8.0 and rc.10 Debian packages and verifies their
+  pinned SHA-256 digests;
+- temporarily installs v0.8.0, without launching it against the real user HOME;
+- installs rc.10 over the representative v0.8.0 state and verifies exact
+  configuration/storage/workspace retention;
+- restores rc.10 automatically if the package exercise is interrupted;
+- prepares the canonical coding, document, and data-analysis workloads;
+- preserves the user's existing Codex authentication through `CODEX_HOME`
+  while keeping all Infimount state in the isolated HOME;
+- drives the published rc.10 desktop through Tauri WebDriver;
+- launches each workload through Infimount's **Open in Codex** handoff;
+- waits for real Codex outputs and runs the canonical workload validators;
+- exercises stale-preview, fail-conflict, rename, no-overwrite, destination-byte,
+  source-digest, source-MCP-exposure, and receipt checks;
+- stores private screenshots and a privacy-safe
+  `pilot-evidence.pending.json`.
+
+The automated command deliberately does **not** mark the workload outputs useful.
+Review `evidence/QUALITY-REVIEW.md` and the private outputs/screenshots. Only
+after accepting their usefulness and correctness, run:
+
+```bash
+pnpm pilot:rc10:accept -- \
+  --root "$HOME/.infimount-rc10-final-pilot" \
+  --accept-quality
+```
+
+That command changes the three task `passed` fields and `overallPassed` only
+after the explicit acceptance flag, writes `pilot-evidence.json`, and runs the
+real evidence validator without `--allow-synthetic`.
+
+If an interrupted run leaves the isolated pilot root behind, preserve any
+diagnostic evidence first. Then restart from a fresh isolated state with:
+
+```bash
+pnpm pilot:rc10:real -- --reset
+```
+
 ## Source-selection digest
 
 Each pilot records a before/after SHA-256 for the exact selected source bytes. The evidence file stores only the aggregate digest, never the source paths.
