@@ -43,7 +43,8 @@ for command in \
   xvfb-run \
   dbus-run-session \
   gnome-keyring-daemon \
-  secret-tool
+  secret-tool \
+  timeout
 do
   require_command "$command"
 done
@@ -58,6 +59,11 @@ chmod 700 "$TMP_HOME"
 mkdir -p "$TMP_HOME/.config" "$TMP_HOME/.runtime"
 chmod 700 "$TMP_HOME/.runtime"
 
+echo "===== RELEASE PILOT: CHECK HARNESS SYNTAX ====="
+node --check "$ROOT_DIR/scripts/release-pilot-state.mjs"
+node --check "$ROOT_DIR/scripts/release-pilot-webdriver.mjs"
+
+echo
 echo "===== RELEASE PILOT: SEED ISOLATED HOME ====="
 HOME="$TMP_HOME" node "$ROOT_DIR/scripts/release-pilot-state.mjs" seed --home "$TMP_HOME"
 
@@ -117,22 +123,58 @@ xvfb-run -a dbus-run-session -- bash -c '
   export GDK_BACKEND=x11
 
   # AppState intentionally fails closed when native Secret Service is
-  # unavailable. Use a transient real Secret Service instead of weakening
-  # production startup behavior for CI.
-  printf "%s\n" "infimount-release-pilot" |
-    gnome-keyring-daemon --unlock --components=secrets >/dev/null
+  # unavailable. Reproduce a real headless login session rather than weakening
+  # production startup behavior. gnome-keyring-daemon --login consumes the
+  # login password but requires a subsequent --start to finish initialization.
+  KEYRING_CONTROL_DIR="$HOME/.keyring"
+  mkdir -p "$KEYRING_CONTROL_DIR"
+  chmod 700 "$KEYRING_CONTROL_DIR"
+
+  apply_keyring_env() {
+    while IFS= read -r line; do
+      case "$line" in
+        GNOME_KEYRING_CONTROL=*|GNOME_KEYRING_PID=*|SSH_AUTH_SOCK=*)
+          export "$line"
+          ;;
+      esac
+    done
+  }
+
+  KEYRING_LOGIN_ENV="$(
+    printf "%s" "infimount-release-pilot" |
+      timeout 10s gnome-keyring-daemon \
+        --daemonize \
+        --login \
+        --components=secrets \
+        --control-directory="$KEYRING_CONTROL_DIR"
+  )"
+  apply_keyring_env <<<"$KEYRING_LOGIN_ENV"
+
+  KEYRING_START_ENV="$(
+    timeout 10s gnome-keyring-daemon --start --components=secrets
+  )"
+  apply_keyring_env <<<"$KEYRING_START_ENV"
+
+  test -n "${GNOME_KEYRING_CONTROL:-}" || {
+    echo "Release pilot failed: gnome-keyring did not provide GNOME_KEYRING_CONTROL" >&2
+    exit 1
+  }
 
   # Prove Secret Service is actually usable before launching Infimount.
   printf "%s" "release-pilot-canary" |
-    secret-tool store --label="Infimount release pilot" \
+    timeout 10s secret-tool store --label="Infimount release pilot" \
       service infimount-release-pilot account canary
 
-  test "$(secret-tool lookup service infimount-release-pilot account canary)" = "release-pilot-canary" || {
+  CANARY="$(
+    timeout 10s secret-tool lookup service infimount-release-pilot account canary
+  )"
+  test "$CANARY" = "release-pilot-canary" || {
     echo "Release pilot failed: transient Secret Service canary round-trip failed" >&2
     exit 1
   }
 
-  secret-tool clear service infimount-release-pilot account canary >/dev/null
+  timeout 10s secret-tool clear \
+    service infimount-release-pilot account canary >/dev/null
 
   node "$6"
 ' bash \
@@ -155,4 +197,10 @@ echo "stdio_no_background_start=yes"
 echo "http_explicit_start_stop=yes"
 echo "ordinary_stdio_disabled_gate=yes"
 echo "guided_disabled_setup_returns_to_stdio=yes"
+echo "pagination_auto_continuation=yes"
+echo "stale_cursor_recovery=yes"
+echo "agent_task_publication_safety=yes"
+echo "agent_task_scoped_sidecar_independent_gate=yes"
+echo "agent_task_scoped_sidecar_tool_surface=yes"
+echo "agent_task_scoped_sidecar_confinement=yes"
 echo "========================================"
