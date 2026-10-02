@@ -129,17 +129,31 @@ test "$(dpkg-deb -f "$PACKAGE_DIR/Infimount-v0.8.1-rc.10-amd64.deb" Version)" = 
 RESTORE_ARMED=1
 restore_candidate() {
   code=$?
-  trap - ERR INT TERM
+  trap - EXIT ERR INT TERM
+
   if [[ "$RESTORE_ARMED" == "1" ]]; then
     installed="$(dpkg-query -W -f='${Version}' infimount 2>/dev/null || true)"
     if [[ "$installed" != "$CANDIDATE_VERSION" ]]; then
       echo "Restoring $CANDIDATE_VERSION after interrupted upgrade pilot..." >&2
-      sudo apt-get install -y --allow-downgrades         "$PACKAGE_DIR/Infimount-v0.8.1-rc.10-amd64.deb" >/dev/null || true
+      if ! sudo apt-get install -y --allow-downgrades         "$PACKAGE_DIR/Infimount-v0.8.1-rc.10-amd64.deb" >/dev/null
+      then
+        echo "CRITICAL: automatic rc.10 restoration failed." >&2
+        exit 90
+      fi
+      restored="$(dpkg-query -W -f='${Version}' infimount 2>/dev/null || true)"
+      if [[ "$restored" != "$CANDIDATE_VERSION" ]]; then
+        echo "CRITICAL: expected restored $CANDIDATE_VERSION, found '$restored'." >&2
+        exit 91
+      fi
+      echo "restored_candidate=$restored" >&2
     fi
   fi
+
   exit "$code"
 }
-trap restore_candidate ERR INT TERM
+trap restore_candidate EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo
 echo "===== INSTALL ACTUAL STABLE PACKAGE ====="
