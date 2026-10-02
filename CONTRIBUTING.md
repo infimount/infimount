@@ -32,9 +32,9 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 
 ### Prerequisites
 - **Rust 1.94+** (the repository's exact MSRV is declared in `Cargo.toml` and checked in CI)
-- **Node.js** ≥ 18
-- **pnpm** (package manager)
-- **Tauri dependencies** (see [Tauri Prerequisites](https://tauri.app/v1/guides/getting-started/prerequisites))
+- **Node.js 24** (matches `.nvmrc` and CI)
+- **pnpm 10** (package manager used by CI)
+- **Tauri 2 system dependencies** (see [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/))
 
 ### Install Dependencies
 ```bash
