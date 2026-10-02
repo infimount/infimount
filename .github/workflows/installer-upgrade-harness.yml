@@ -1,0 +1,49 @@
+name: Installer Upgrade Harness
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/installer-upgrade-harness.yml"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/post-release.yml"
+      - "scripts/smoke-linux-upgrade-install.sh"
+      - "scripts/check-zero-manual-release-gate.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  published-upgrade-regression:
+    name: Published v0.8.0 to rc.10 Upgrade
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Linux package-launch dependencies
+        run: bash scripts/ci-apt-install.sh xvfb gnome-keyring dbus-x11 libsecret-tools
+
+      - name: Download known-good rc.10 candidate package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p candidate
+          gh release download v0.8.1-rc.10 \
+            --repo infimount/infimount \
+            --pattern Infimount-amd64.deb \
+            --dir candidate
+
+      - name: Exercise real installer-over-install harness
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash scripts/smoke-linux-upgrade-install.sh \
+            candidate/Infimount-amd64.deb \
+            0.8.1-rc.10
