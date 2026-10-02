@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release consistency, stable-document promotion, and hermetic release rehearsal are version-agnostic instead of being tied to a previous release transition.
 - Hermetic release rehearsal now derives the next patch `rc.1` from a stable checkout and rehearses an already-versioned prerelease verbatim.
 - Real-world Agent Task pilots are treated as product-validation evidence for broader promotion and follow-on work, not as a manual product-test requirement in the automated release gate.
+- Public README, Pages, LLM index, security policy, backend/migration guides, and Agent Task docs now distinguish the v0.8.0 stable channel from the published v0.8.1-rc.12 validation candidate and reflect the native-secret-store security model.
+- Prerelease documentation now carries its deterministic release URL before tagging, Post Release Validation rejects stale unpublished markers, and stable-document promotion removes candidate-only public state.
 
 ### Security
 
