@@ -47,7 +47,7 @@ Required release preparation:
      - `TAURI_SIGNING_PRIVATE_KEY`
      - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
 4. Prepare public release identity:
-   - For a prerelease tag `vX.Y.Z-rc.N`, add the matching `docs/release-notes-X.Y.Z-rc.N.md` and update README, Pages, llms, and feature status copy to identify that exact candidate **without replacing the previous stable release**. Candidate public docs must keep stable install links on the stable channel and link the prerelease explicitly.
+   - For a prerelease tag `vX.Y.Z-rc.N`, add the matching `docs/release-notes-X.Y.Z-rc.N.md` with the deterministic future release URL `https://github.com/infimount/infimount/releases/tag/vX.Y.Z-rc.N`, then update README, Pages, llms, and feature status copy to identify that exact candidate **without replacing the previous stable release**. The URL is known before publication and must be committed before the immutable tag so Post Release Validation can verify the tagged documentation. Candidate public docs must keep stable install links on the stable channel and link the prerelease explicitly.
    - Before a stable tag, run `node scripts/prepare-stable-release-docs.mjs vX.Y.Z`, review and commit its README, CHANGELOG, Pages, llms, and feature release-state changes, then tag that prepared commit. Stable consistency validation rejects `not published yet` language.
    - Release jobs derive manifest versions from the exact tag before running consistency checks. SemVer `+build` metadata is rejected.
 5. Confirm no secrets or local artifacts are staged:
@@ -75,8 +75,8 @@ The rehearsal proves signing **integrity** only. It does not prove Apple notariz
 ```bash
 git checkout main
 git pull --ff-only
-git tag vX.Y.Z
-git push origin vX.Y.Z
+git tag -a vX.Y.Z -m "Infimount X.Y.Z"
+git push origin refs/tags/vX.Y.Z
 ```
 
 The `Release` workflow is triggered by `v*` tags and will:
