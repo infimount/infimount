@@ -42,6 +42,7 @@ Once published, use the `v0.8.1-rc.12` candidate for the resumed pilot.
 
 
 `v0.8.1-rc.11` was tagged at the intended validated main commit after the release-pilot and installer-upgrade automation landed. Its canonical Release workflow passed every deterministic Release Gate, and the macOS and Windows platform builds succeeded. The Linux build produced a valid candidate package and passed the normal Linux artifact smoke, but the new installer-over-install gate then failed before exercising the upgrade path because that artifact smoke had already installed the candidate package on the runner. The upgrade harness correctly refused to mutate an installation it did not create. Publication was skipped and no rc.11 GitHub Release was published. PR #123 fixes the release orchestration by running the previous-stable-to-candidate upgrade before the artifact smoke that installs the candidate, keeps the harness fail-closed, and adds a zero-manual policy assertion that preserves that ordering. rc.11 must not be presented as completed pilot evidence.
+
 Record:
 
 - prerelease version;
