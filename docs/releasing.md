@@ -47,7 +47,7 @@ Required release preparation:
      - `TAURI_SIGNING_PRIVATE_KEY`
      - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
 4. Prepare public release identity:
-   - For a prerelease tag `vX.Y.Z-rc.N`, add the matching `docs/release-notes-X.Y.Z-rc.N.md`; README, Pages, and llms continue to identify the previous stable release.
+   - For a prerelease tag `vX.Y.Z-rc.N`, add the matching `docs/release-notes-X.Y.Z-rc.N.md` and update README, Pages, llms, and feature status copy to identify that exact candidate **without replacing the previous stable release**. Candidate public docs must keep stable install links on the stable channel and link the prerelease explicitly.
    - Before a stable tag, run `node scripts/prepare-stable-release-docs.mjs vX.Y.Z`, review and commit its README, CHANGELOG, Pages, llms, and feature release-state changes, then tag that prepared commit. Stable consistency validation rejects `not published yet` language.
    - Release jobs derive manifest versions from the exact tag before running consistency checks. SemVer `+build` metadata is rejected.
 5. Confirm no secrets or local artifacts are staged:
@@ -121,7 +121,7 @@ The release workflow performs automated artifact presence, checksum, updater met
    - updater payload archive(s) and matching `.sig` files referenced by `latest.json`
    - `*.sha256` for every published payload
    - `SBOM.spdx.json` with an `infimount_mcp` component
-2. Confirm the generated release notes and stable/prerelease marker are correct.
+2. Confirm the generated release notes and stable/prerelease marker are correct. For a published prerelease, the release-notes file must contain the exact GitHub release URL rather than `Release: not published yet.`
 
 Manual checksum or install sanity checks are optional spot audits only; they are no longer required release tests because the workflow validates checksums, package structure, and Linux artifact launch/install smoke paths automatically.
 
@@ -144,7 +144,7 @@ The updater public key is embedded in `apps/desktop/src-tauri/tauri.conf.json`; 
 
 ## 5. Post-release checks
 
-The `Post Release Validation` workflow runs automatically after a successful `Release` workflow completes and validates the exact tag that workflow built. It also retains the `release: published` trigger for releases published outside the canonical release workflow and supports manual dispatch. The successful `Release` workflow trigger is required because events created with the repository `GITHUB_TOKEN` do not normally start another Actions workflow. The post-release workflow verifies tag-specific release links, release/docs consistency, re-downloaded assets and updater signatures, and stable-only Homebrew checksum resolution.
+The `Post Release Validation` workflow runs automatically after a successful `Release` workflow completes and validates the exact tag that workflow built. It also retains the `release: published` trigger for releases published outside the canonical release workflow and supports manual dispatch. The successful `Release` workflow trigger is required because events created with the repository `GITHUB_TOKEN` do not normally start another Actions workflow. The post-release workflow verifies tag-specific release links, release/docs consistency, the published release-note marker, re-downloaded assets and updater signatures, and stable-only Homebrew checksum resolution.
 
 For stable tags, `Sync Version After Release` uses the same successful `Release` workflow completion trigger to create the stable-identity sync PR. Prereleases skip both Homebrew work and stable-identity sync.
 
