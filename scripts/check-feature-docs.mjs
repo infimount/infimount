@@ -97,8 +97,8 @@ const agentTasks = read("docs/agent-tasks.md");
 if (/targeted for \*\*v0\.8\.1\*\*/i.test(agentTasks)) {
   fail("docs/agent-tasks.md must not describe Agent Tasks as merely targeted for v0.8.1 after a published candidate exists");
 }
-if (!/published.*v0\.8\.1-rc\./i.test(agentTasks)) {
-  fail("docs/agent-tasks.md should identify the published v0.8.1 release candidate");
+if (!/included[\s\S]*v0\.8\.1/i.test(agentTasks)) {
+  fail("docs/agent-tasks.md should identify Agent Tasks as included in the v0.8.1 release line");
 }
 if (agentTasks.includes("publish-receipt.json")) {
   fail("docs/agent-tasks.md must document unique publication receipts, not a mutable static receipt");
