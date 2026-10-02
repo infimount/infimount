@@ -5,6 +5,7 @@ import path from "node:path";
 
 const args = process.argv.slice(2);
 const allowSynthetic = args.includes("--allow-synthetic");
+const allowPendingQuality = args.includes("--allow-pending-quality");
 const evidencePath = args.find((arg) => !arg.startsWith("--"));
 
 const fail = (message) => {
@@ -13,7 +14,7 @@ const fail = (message) => {
 };
 
 if (!evidencePath) {
-  fail("usage: node scripts/check-agent-task-pilot-evidence.mjs <evidence.json> [--allow-synthetic]");
+  fail("usage: node scripts/check-agent-task-pilot-evidence.mjs <evidence.json> [--allow-synthetic] [--allow-pending-quality]");
 }
 
 let evidence;
@@ -227,7 +228,11 @@ for (const [index, task] of evidence.tasks.entries()) {
       fail(`${label}.uiEvidence[${evidenceIndex}] must be a safe relative reference`);
     }
   }
-  if (task.passed !== true) fail(`${label}.passed must be true for an accepted pilot bundle`);
+  if (allowPendingQuality) {
+    if (task.passed !== false) fail(`${label}.passed must remain false until explicit human quality acceptance`);
+  } else if (task.passed !== true) {
+    fail(`${label}.passed must be true for an accepted pilot bundle`);
+  }
 }
 
 for (const requiredClass of requiredClasses) {
@@ -254,12 +259,16 @@ for (const field of ["configurationRetained", "storageRegistryRetained", "worksp
   if (evidence.upgrade[field] !== true) fail(`upgrade.${field} must be true`);
 }
 
-if (evidence.overallPassed !== true) fail("overallPassed must be true for an accepted pilot bundle");
+if (allowPendingQuality) {
+  if (evidence.overallPassed !== false) fail("overallPassed must remain false until explicit human quality acceptance");
+} else if (evidence.overallPassed !== true) {
+  fail("overallPassed must be true for an accepted pilot bundle");
+}
 if (!Array.isArray(evidence.observations)) fail("observations must be an array");
 for (const [index, observation] of evidence.observations.entries()) {
   assertString(observation, `observations[${index}]`);
 }
 
 console.log(
-  `Agent Task pilot evidence passed for ${evidence.candidate.version} on ${evidence.candidate.platform}: ${[...seenClasses].sort().join(", ")}`,
+  `Agent Task pilot evidence ${allowPendingQuality ? "is deterministic-check complete and quality-pending" : "passed"} for ${evidence.candidate.version} on ${evidence.candidate.platform}: ${[...seenClasses].sort().join(", ")}`,
 );
