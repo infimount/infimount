@@ -51,7 +51,7 @@ try {
   writeVersionFiles(candidate);
   write(
     "README.md",
-    `# Fixture\n\n**Current stable release:** [v${stable}](https://github.com/infimount/infimount/releases/tag/v${stable})\n\n<!-- release-candidate:start -->\n**Validated release candidate:** [v${candidate}](https://github.com/infimount/infimount/releases/tag/v${candidate})\n\nCandidate fixture.\n<!-- release-candidate:end -->\n\nInstall with INFIMOUNT_VERSION=v${stable}.\n\n## Agent Tasks\n\nAgent Tasks are included in the published [v${candidate}](https://github.com/infimount/infimount/releases/tag/v${candidate}) prerelease. The current v${stable} stable release does not include this workflow.\n\nAgent Tasks in published v${candidate}: fixture. ${pilotSentence}\n\nRust 1.94+\n`,
+    `# Fixture\n\n**Current stable release:** [v${stable}](https://github.com/infimount/infimount/releases/tag/v${stable})\n\n<!-- release-candidate:start -->\n**Validated release candidate:** [v${candidate}](https://github.com/infimount/infimount/releases/tag/v${candidate})\n\nCandidate fixture.\n<!-- release-candidate:end -->\n\nInstall with INFIMOUNT_VERSION=v${stable}.\n\n## Agent Tasks\n\nAgent Tasks are included in the v${candidate} qualification candidate. The current v${stable} stable release does not include this workflow.\n\nAgent Tasks in v${candidate}: fixture. ${pilotSentence}\n\nRust 1.94+\n`,
   );
   write(
     "CHANGELOG.md",
@@ -59,16 +59,16 @@ try {
   );
   write(
     "docs/index.html",
-    `<!doctype html><meta name="fixture"><script type="application/ld+json">{"softwareVersion": "${stable}"}</script><p class="release-label">v${stable} stable · v${candidate} validated candidate</p><!-- release-candidate:start --><div>v${candidate} validated candidate</div><!-- release-candidate:end --><a>Download v${stable}</a><p class="kicker">Install v${stable}</p><a href="https://github.com/infimount/infimount/releases/tag/v${stable}">Open the v${stable} release</a>`,
+    `<!doctype html><meta name="fixture"><script type="application/ld+json">{"softwareVersion": "${stable}"}</script><p class="release-label">v${stable} stable · v${candidate} validated candidate</p><!-- release-candidate:start --><div>v${candidate} validated candidate</div><!-- release-candidate:end --><span>Agent Tasks in rc.1</span><p>In v${candidate}, Agent Tasks are bounded.</p><a>Download v${stable}</a><p class="kicker">Install v${stable}</p><a href="https://github.com/infimount/infimount/releases/tag/v${stable}">Open the v${stable} release</a>`,
   );
   write(
     "docs/llms.txt",
-    `# Fixture\n\n- Current stable release: v${stable}\n- Validated release candidate: v${candidate}\n- Candidate release: https://github.com/infimount/infimount/releases/tag/v${candidate}\n- Candidate status: fixture\n- Agent Tasks in published v${candidate}: fixture.\n`,
+    `# Fixture\n\n- Current stable release: v${stable}\n- Validated release candidate: v${candidate}\n- Candidate release: https://github.com/infimount/infimount/releases/tag/v${candidate}\n- Candidate status: fixture\n- Agent Tasks in v${candidate}: fixture.\n`,
   );
   write("docs/agent-workspaces.md", "# agent-workspaces.md\n");
   write(
     "docs/agent-tasks.md",
-    `# Agent Tasks\n\nThe complete implementation is included in the published **[v${candidate}](https://github.com/infimount/infimount/releases/tag/v${candidate})** prerelease. The current v${stable} stable release does not include this workflow.\n\n${pilotParagraph}\n`,
+    `# Agent Tasks\n\nThe complete implementation is included in the **[v${candidate}](https://github.com/infimount/infimount/releases/tag/v${candidate})** qualification candidate. The current v${stable} stable release does not include this workflow.\n\n${pilotParagraph}\n`,
   );
   for (const doc of ["recovery.md", "troubleshooting.md", "privacy.md", "migration-v0.8.md"]) {
     write(`docs/${doc}`, `# ${doc}\n`);
@@ -118,8 +118,12 @@ try {
   assert.match(index, /"softwareVersion": "1\.3\.0"/);
   assert.doesNotMatch(index, /validated candidate/);
   assert.doesNotMatch(index, /release-candidate:start/);
+  assert.doesNotMatch(index, /rc\.1/);
+  assert.match(index, /Agent Tasks in v1\.3\.0/);
+  assert.match(index, /In v1\.3\.0, Agent Tasks are bounded\./);
   assert.match(llms, /Current stable release: v1\.3\.0/);
   assert.doesNotMatch(llms, /Validated release candidate:/);
+  assert.doesNotMatch(llms, /v1\.3\.0-rc\.1/);
   assert.match(llms, /Agent Tasks in v1\.3\.0: fixture/);
   assert.doesNotMatch(llms, /targeted for v1\.3\.0/);
   assert.match(agentTasks, /The complete implementation is included in \*\*v1\.3\.0\*\*\./);
@@ -128,6 +132,7 @@ try {
   assert.doesNotMatch(agentTasks, /pilot evidence completed/i);
   assert.doesNotMatch(agentTasks, /targeted for/);
   assert.doesNotMatch(agentTasks, /current v1\.2\.3 stable release does not include/i);
+  assert.doesNotMatch(agentTasks, /v1\.3\.0-rc\.1/);
   assert.match(notes, /releases\/tag\/v1\.3\.0/);
   assert.doesNotMatch(notes, /not published yet/);
 } finally {
