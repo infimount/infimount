@@ -89,7 +89,7 @@ replaceRequired(
 );
 replaceOptional(
   "docs/index.html",
-  /\n\s*<!-- release-candidate:start -->[\s\S]*?<!-- release-candidate:end -->/,
+  /<!-- release-candidate:start -->[\s\S]*?<!-- release-candidate:end -->/,
   "",
 );
 for (const [pattern, replacement] of [
