@@ -337,7 +337,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install Linux dependencies
-        run: bash scripts/ci-apt-install.sh libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb rpm cpio unzip file
+        run: bash scripts/ci-apt-install.sh libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb gnome-keyring dbus-x11 libsecret-tools rpm cpio unzip file
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -448,6 +448,14 @@ jobs:
 
       - name: Smoke check Linux artifacts
         run: ./scripts/smoke-linux-release-artifacts.sh out/linux
+
+      - name: Exercise previous-stable to candidate Linux installer upgrade
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash scripts/smoke-linux-upgrade-install.sh \
+            out/linux/Infimount-amd64.deb \
+            "${GITHUB_REF#refs/tags/v}"
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v6

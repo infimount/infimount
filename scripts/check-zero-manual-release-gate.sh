@@ -83,6 +83,8 @@ for command in "${required_release_commands[@]}"; do
 done
 
 require_file_contains "$RELEASE_WORKFLOW" "smoke-linux-release-artifacts.sh"
+require_file_contains "$RELEASE_WORKFLOW" "smoke-linux-upgrade-install.sh"
+require_file_contains "$RELEASE_WORKFLOW" "previous-stable to candidate Linux installer upgrade"
 require_file_contains "$RELEASE_WORKFLOW" "check-release-assets.sh"
 require_file_contains "$RELEASE_WORKFLOW" "smoke-install-scripts.sh"
 require_file_contains "$RELEASE_WORKFLOW" "check-release-consistency.mjs"
@@ -122,6 +124,8 @@ require_file_contains "$POST_RELEASE_WORKFLOW" "check-feature-docs.mjs"
 require_file_contains "$POST_RELEASE_WORKFLOW" "check-homebrew-update.sh"
 require_file_contains "$POST_RELEASE_WORKFLOW" "homebrew-infimount/dispatches"
 require_file_contains "$POST_RELEASE_WORKFLOW" "Re-download and validate published assets"
+require_file_contains "$POST_RELEASE_WORKFLOW" "smoke-linux-upgrade-install.sh"
+require_file_contains "$POST_RELEASE_WORKFLOW" "published previous-stable to candidate Linux installer upgrade"
 require_file_contains "$POST_RELEASE_WORKFLOW" "!contains(steps.release.outputs.tag, '-')"
 
 require_file_contains "$SYNC_VERSION_WORKFLOW" "workflow_run:"

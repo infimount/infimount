@@ -37,6 +37,7 @@ jobs:
       - name: Deterministic release policy fixtures
         run: |
           node scripts/check-upgrade-fixtures.mjs
+          bash -n scripts/smoke-linux-upgrade-install.sh
           ./scripts/smoke-install-scripts.sh
           ./scripts/test-packaged-sidecar-checksum.sh
 
