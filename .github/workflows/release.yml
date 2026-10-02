@@ -1023,7 +1023,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Download platform build artifacts only
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: '*-artifacts'
           path: artifacts
@@ -1157,7 +1157,7 @@ jobs:
         run: ./scripts/smoke-install-scripts.sh release-assets
 
       - name: Attest release assets provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: release-assets/*
 
