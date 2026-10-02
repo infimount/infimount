@@ -33,7 +33,7 @@
 <!-- release-candidate:start -->
 **Validated release candidate:** [v0.8.1-rc.13](https://github.com/infimount/infimount/releases/tag/v0.8.1-rc.13)
 
-rc.13 is the final release-infrastructure qualification candidate for v0.8.1. Application/runtime behavior is unchanged from rc.13; rc.13 exists to exercise the current GitHub Actions release stack, final published-document checks, and stable-promotion fallback on a real immutable tag. The remaining product-validation step after publication is the real coding, document, and data-analysis usefulness pilot.
+rc.13 is the final release-infrastructure qualification candidate for v0.8.1. Application/runtime behavior is unchanged from rc.12; rc.13 exists to exercise the current GitHub Actions release stack, final published-document checks, and stable-promotion fallback on a real immutable tag. The remaining product-validation step after publication is the real coding, document, and data-analysis usefulness pilot.
 
 To test rc.13 without changing the stable `latest` channel:
 
