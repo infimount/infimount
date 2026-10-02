@@ -115,7 +115,7 @@ After tagging, the canonical Release passed:
 - publication;
 - published-release re-download validation.
 
-The automatic downstream `Post Release Validation` must then pass, including the published-package Linux installer-over-install check.
+The automatic downstream `Post Release Validation` also passed, including the published-package Linux installer-over-install check.
 
 Those checks are green. rc.12 is the active final real-pilot candidate.
 
