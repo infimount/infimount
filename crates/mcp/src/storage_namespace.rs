@@ -8,7 +8,8 @@ use sha2::{Digest, Sha256};
 use crate::errors::{err, err_with_details, McpErrorCode, McpResult};
 use crate::registry::StorageRecord;
 use infimount_core::registry::{
-    normalize_endpoint_authority, resolve_namespace_fields, ResolvedNamespaceFields,
+    expand_local_root_alias, normalize_endpoint_authority, resolve_namespace_fields,
+    ResolvedNamespaceFields,
 };
 use infimount_core::{secrets, SourceKind};
 
@@ -337,7 +338,8 @@ fn normalize_compare(value: &str) -> String {
 }
 
 fn canonical_local_root(raw: &str) -> McpResult<String> {
-    let trimmed = raw.trim();
+    let expanded = expand_local_root_alias(raw);
+    let trimmed = expanded.trim();
     if trimmed.is_empty() {
         return Err(err(
             McpErrorCode::ERR_INVALID_PATH,
@@ -685,6 +687,21 @@ mod tests {
         let relation = transfer_namespace_relation(&a, "foo", &b, "foo/child").unwrap();
         assert!(!relation.same_underlying_namespace);
         assert!(!transfer_has_namespace_conflict(&relation));
+    }
+
+    #[test]
+    fn local_legacy_tilde_root_matches_expanded_home_namespace() {
+        let expanded = expand_local_root_alias("~");
+        if expanded == "~" {
+            return;
+        }
+        let alias = storage("alias", "local", json!({ "root": "~" }));
+        let absolute = storage("absolute", "local", json!({ "root": expanded }));
+        assert_eq!(
+            storage_namespace_fingerprint(&alias).unwrap(),
+            storage_namespace_fingerprint(&absolute).unwrap()
+        );
+        validate_local_mcp_path(&alias, "").unwrap();
     }
 
     #[test]
