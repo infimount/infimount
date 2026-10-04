@@ -18,7 +18,7 @@ The pilot does not justify new feature breadth. A failed run should first identi
 
 ## Candidate prerequisite
 
-Use the published [`v0.8.1-rc.13`](https://github.com/infimount/infimount/releases/tag/v0.8.1-rc.13) for the final resumed pilot. rc.13 carries the same application/runtime behavior as rc.12. Its canonical Release and automatic Post Release Validation are green on the current release stack; the remaining evidence is the three real workload usefulness judgments described below.
+Use [`v0.8.1-rc.14`](https://github.com/infimount/infimount/releases/tag/v0.8.1-rc.14) for the final focused compatibility regression after it is published. The complete coding/document/data-analysis deterministic pilot was executed on rc.13 and produced valid quality-pending evidence, but that run exposed two integration defects before stable promotion: legacy `~` source roots failed Agent Task confinement even though browsing worked, and the first-class Codex launcher disabled the code-mode host router now required for MCP routing. rc.14 fixes exactly those two paths.
 
 `v0.8.1-rc.1` was published successfully, but its first real pilot attempt stopped during Agent Workspace setup before any Agent Task was executed. That run exposed a material Infimount workflow defect: workspace creation still carried agent-type/template and second-path concepts, and a shell-style Local Filesystem root could fail late during namespace binding. rc.2 fixed that product blocker. rc.1 must not be presented as completed pilot evidence.
 
@@ -45,7 +45,9 @@ Use the published [`v0.8.1-rc.13`](https://github.com/infimount/infimount/releas
 
 `v0.8.1-rc.12` was then published successfully from the qualified merge commit. Its canonical Release passed every deterministic gate, all three platform builds, the corrected pre-artifact Linux v0.8.0-to-rc.12 installer-over-install exercise, draft re-download validation, publication, and published-release re-download validation. Automatic Post Release Validation also passed and independently re-downloaded the public Linux package and repeated the v0.8.0-to-rc.12 upgrade with user configuration untouched and storage identity/exposure retained. rc.12 established the final application/runtime behavior, but subsequent documentation and GitHub Actions maintenance changed the exact release/promotion machinery, so stable promotion now requires one final infrastructure candidate.
 
-`v0.8.1-rc.13` carries no application/runtime behavior change from rc.12. Its canonical Release and automatic Post Release Validation passed on the current release stack. The run exercised `actions/download-artifact@v8`, `actions/attest-build-provenance@v4`, public artifact re-download, the published-release documentation guard, and the public v0.8.0-to-rc.13 Linux installer upgrade. rc.13 is therefore the active final candidate for the three real coding, document, and data-analysis usefulness judgments.
+`v0.8.1-rc.13` carries no application/runtime behavior change from rc.12. Its canonical Release and automatic Post Release Validation passed on the current release stack. The run exercised `actions/download-artifact@v8`, `actions/attest-build-provenance@v4`, public artifact re-download, the published-release documentation guard, and the public v0.8.0-to-rc.13 Linux installer upgrade. The real rc.13 pilot then completed all three deterministic workload validators, source-digest checks, publication-safety probes, and quality-pending evidence validation. It also exposed the two compatibility defects corrected by PR #130, so rc.13 remains valuable evidence but is not the final stable candidate.
+
+`v0.8.1-rc.14` contains the PR #130 compatibility fixes and no unrelated feature expansion. Stable promotion requires its canonical Release/Post Release Validation plus one focused real coding run that combines both changed paths: prepare from a legacy `~` Local Filesystem source and launch through the first-class current Codex handoff without manual `code_mode_host` overrides. That run must produce useful `review.md` and `patch.diff`, pass the coding validator, preserve source bytes/MCP exposure, and show that the task-scoped MCP boundary remains the only handoff-added write surface.
 
 Record:
 
@@ -55,23 +57,25 @@ Record:
 - previous installed stable version;
 - agent client name.
 
-The resumed pilot should start from an installed v0.8.0 environment and install v0.8.1-rc.13 over it. If the prerelease is not offered through the stable updater channel, installer-over-install is the correct candidate upgrade exercise. Do not claim that a prerelease installer proves stable-channel updater behavior.
+For the rc.14 focused real regression, install rc.14 over the current rc.13 pilot machine state. The canonical Release and Post Release Validation continue to own the independent v0.8.0-to-candidate installer-over-install proof. Do not claim that a prerelease installer proves stable-channel updater behavior.
 
-For the controlled task workspace in this pilot, continue to use an **explicit absolute host path**. This keeps the Agent Task workload evidence independent from the separate legacy-root regression below. Shell-variable notation such as `$HOME/...` remains invalid. rc.13 retains the rc.5 support for legacy `~` and `~/...` Local Filesystem roots by canonically normalizing them once before the first workspace namespace binding.
+For the rc.14 focused regression, intentionally use a Local Filesystem source storage whose configured root remains the legacy `~` form. Browsing and Agent Task preparation must resolve that alias consistently without requiring a manual root edit. Shell-variable notation such as `$HOME/...` remains invalid.
 
-## rc.5 through rc.13 focused regression checks
+## rc.5 through rc.14 focused regression checks
 
-Before the three workload pilots, verify the product corrections that caused rc.5 through rc.13 to exist.
+Before the three workload pilots, verify the product corrections that caused rc.5 through rc.14 to exist.
 
 ### Legacy Local Filesystem home alias
 
-Use a v0.8.0 Local Filesystem storage whose configured root is the legacy `~` form and that has no bound Agent Workspace. After upgrading to rc.13:
+Use a v0.8.0 Local Filesystem storage whose configured root is the legacy `~` form and that has no bound Agent Workspace. After upgrading to rc.14:
 
 1. confirm ordinary storage browsing still works;
 2. create one Agent Workspace on that storage through the normal UI;
 3. verify workspace creation succeeds without manually editing the storage first;
 4. verify the storage root is normalized to the concrete canonical home directory before namespace binding;
 5. verify existing storage contents remain available and no unrelated storage settings are changed.
+
+For rc.14, add the regression that rc.13 failed: keep a source storage configured as `~`, browse to the pilot coding source through that storage, prepare an Agent Task without editing the root, and verify preparation succeeds while the configured root remains `~`. Re-run the source digest afterward and require an exact match.
 
 Do this after the upgrade-retention snapshot is captured, because the one-time normalization is an intentional post-upgrade mutation.
 
@@ -109,7 +113,11 @@ Verify all of the following:
 - closing Add Storage, Agent Workspaces, or Advanced MCP only returns to onboarding when onboarding explicitly opened that dialog;
 - the client-adapter and Agent Access surfaces remain usable at the target desktop viewport without inaccessible controls below the fold.
 
-These checks validate the rc.5 through rc.13 guided-flow corrections. The rc.7 floating reminder behavior is intentionally superseded by storage-only completion and should not be treated as a retained product requirement. These checks do not replace the three real Agent Task workloads below.
+### rc.14 current Codex handoff regression
+
+Using the same focused coding task prepared from the legacy `~` source, launch through Infimount's first-class Codex handoff on the current Codex client. Do not add a manual `features.code_mode_host=true` override: rc.14 must supply the router requirement itself. Verify the task reaches Infimount MCP, produces `outputs/review.md` and `outputs/patch.diff`, and passes the coding workload validator. Inspect the launch/log evidence sufficiently to confirm code mode remains disabled and no shell/unified-exec/browser/computer-use/plugin/project-instruction surface was enabled by the fix.
+
+These checks validate the rc.5 through rc.14 guided-flow corrections. The rc.7 floating reminder behavior is intentionally superseded by storage-only completion and should not be treated as a retained product requirement. These checks do not replace the three real Agent Task workloads below.
 
 ### File-browser pagination and stale-cursor recovery
 
@@ -168,7 +176,7 @@ After all deterministic workload, safety, upgrade, source-integrity, publication
 - `synthetic=false`;
 - each of the three task `passed` fields remains `false`;
 - `overallPassed=false`;
-- all observed deterministic fields are filled from the real rc.13 run.
+- all observed deterministic fields are filled from the real candidate run.
 
 Validate that state without converting it into a pass:
 
@@ -272,7 +280,7 @@ Verify the real publication UI does not expose an overwrite mode. Record `safety
 
 ## Upgrade exercise
 
-Start from v0.8.0 with representative local state, then install v0.8.1-rc.13 over it.
+For the full canonical pilot, start from v0.8.0 with representative local state and install the candidate over it. For the rc.14 focused follow-up, the automated Release/Post Release workflows own that stable-upgrade proof, while the real local run may install rc.14 over the existing rc.13 pilot state.
 
 The evidence bundle requires all of the following:
 
@@ -310,7 +318,7 @@ Each of the three task records contains:
 
 A candidate/platform evidence bundle passes only when:
 
-- the rc.5 through rc.13 focused regression checks above pass without a material workflow or safety defect;
+- the rc.5 through rc.14 focused regression checks above pass without a material workflow or safety defect;
 - coding, document, and data-analysis pilots all pass;
 - all source before/after aggregate hashes match;
 - source MCP exposure is unchanged for every task;

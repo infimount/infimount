@@ -15,8 +15,9 @@ Infimount 0.8.1 adds review-first Agent Tasks and completes the v0.8 agent-acces
 - **Least privilege:** guided read-only access enables only read tools; guided writable workspaces add only the bounded write tools required by the flow.
 - **Clear transport semantics:** stdio is client-launched/on-demand, while HTTP exposes explicit local start/stop state. Guided access rejects broader tool surfaces or non-loopback HTTP and sends advanced configurations to Advanced MCP settings.
 - **Resilient browsing:** large directories auto-continue pagination and transparently recover when a revision-bound continuation cursor becomes stale.
-- **Legacy Local Filesystem compatibility:** legacy `~` and `~/...` roots normalize once to a canonical absolute path before first Agent Workspace binding.
+- **Legacy Local Filesystem compatibility:** legacy `~` and `~/...` roots use the same canonical home-alias handling across browsing, workspace identity, MCP confinement, and Agent Task preparation; shell-variable forms such as `$HOME/...` remain invalid.
 - **Scoped task MCP:** the dedicated Agent Task sidecar remains independently scoped to the prepared task/workspace and does not depend on enabling general Agent Access.
+- **Current Codex compatibility:** the first-class handoff enables the Codex code-mode host router required for MCP routing while keeping code mode itself, shell/unified execution, hooks, browser/computer use, plugins, project instructions, and other ambient execution surfaces disabled.
 
 ## Security and safety
 
