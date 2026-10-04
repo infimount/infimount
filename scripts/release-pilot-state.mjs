@@ -375,12 +375,27 @@ function assertPagination(home) {
   console.log(`pagination_fixture_count=${PAGINATION_COUNT}`);
 }
 
+function restoreLegacyHomeAliasForAgentTask(home) {
+  const files = configurationFiles(home);
+  const storages = readJson(files.storages);
+  assert(Array.isArray(storages) && storages.length === 1, "storage registry count must remain 1");
+  const storage = storages[0];
+  const canonicalHome = fs.realpathSync(home);
+  assert(storage.config?.root === canonicalHome, "pilot storage must be canonical before restoring legacy alias");
+  storage.config.root = "~";
+  storage.revision = Number(storage.revision ?? 0) + 1;
+  storage.updated_at = new Date().toISOString();
+  writeJson(files.storages, storages);
+  console.log("legacy_home_alias_restored_for_agent_task=yes");
+}
+
 function assertAgentTaskPublication(home) {
   const files = configurationFiles(home);
   const storages = readJson(files.storages);
   const workspaceDoc = readJson(files.workspaces);
   assert(Array.isArray(storages) && storages.length === 1, "Agent Task pilot storage registry changed");
   assert(storages[0].mcp_exposed === true, "Agent Task flow changed source storage MCP exposure");
+  assert(storages[0].config?.root === "~", "Agent Task flow unexpectedly rewrote the legacy source root");
 
   const source = path.join(home, AGENT_TASK_SOURCE_FILE);
   assert(fs.readFileSync(source, "utf8") === AGENT_TASK_SOURCE_CONTENT, "Agent Task source bytes changed");
@@ -480,6 +495,9 @@ switch (command) {
   case "assert-pagination":
     assertPagination(home);
     break;
+  case "restore-legacy-home-alias":
+    restoreLegacyHomeAliasForAgentTask(home);
+    break;
   case "assert-agent-task-publication":
     assertAgentTaskPublication(home);
     break;
@@ -487,5 +505,5 @@ switch (command) {
     summary(home);
     break;
   default:
-    fail("usage: release-pilot-state.mjs <seed|assert-storage-only|assert-read-only-agent-access|assert-read-write-agent-access|assert-http-stopped|assert-guided-reenable|assert-pagination|assert-agent-task-publication|summary> --home <path>");
+    fail("usage: release-pilot-state.mjs <seed|assert-storage-only|assert-read-only-agent-access|assert-read-write-agent-access|assert-http-stopped|assert-guided-reenable|assert-pagination|restore-legacy-home-alias|assert-agent-task-publication|summary> --home <path>");
 }
