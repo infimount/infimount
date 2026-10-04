@@ -231,7 +231,7 @@ fn validate_source(source: &Source) -> Result<()> {
 }
 
 fn validate_local_root(root: &str) -> Result<()> {
-    let expanded = expand_tilde_home(root);
+    let expanded = expand_local_root_alias(root);
     let normalized = expanded.trim();
 
     if normalized.is_empty() {
@@ -619,7 +619,7 @@ fn build_local_operator(source: &Source) -> Result<Operator> {
         ));
     }
 
-    let expanded = expand_tilde_home(root);
+    let expanded = expand_local_root_alias(root);
     let builder = Fs::default().root(&expanded);
     let op = Operator::new(builder).map_err(CoreError::Storage)?;
     Ok(op)
@@ -684,7 +684,10 @@ fn build_sftp_operator(_source: &Source) -> Result<Operator> {
     ))
 }
 
-fn expand_tilde_home(path: &str) -> String {
+/// Expand the legacy Local Filesystem `~` / `~/...` root forms using the
+/// current user home directory. This is the single alias-normalization helper
+/// shared by operator construction and namespace/confinement resolution.
+pub fn expand_local_root_alias(path: &str) -> String {
     let trimmed = path.trim();
     if trimmed == "~" {
         return home_dir().unwrap_or_else(|| trimmed.to_string());
@@ -1558,10 +1561,10 @@ mod tests {
     }
 
     #[test]
-    fn expand_tilde_home_expands_simple_prefix() {
+    fn expand_local_root_alias_expands_simple_prefix() {
         std::env::set_var("HOME", "/home/testuser");
-        assert_eq!(expand_tilde_home("~/Downloads"), "/home/testuser/Downloads");
-        assert_eq!(expand_tilde_home("~"), "/home/testuser");
+        assert_eq!(expand_local_root_alias("~/Downloads"), "/home/testuser/Downloads");
+        assert_eq!(expand_local_root_alias("~"), "/home/testuser");
     }
 
     #[tokio::test]
