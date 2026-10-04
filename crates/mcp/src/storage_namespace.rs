@@ -54,7 +54,7 @@ pub fn storage_namespace_descriptor(
     storage: &StorageRecord,
 ) -> McpResult<StorageNamespaceDescriptor> {
     let (kind, fields) = resolve_fields(storage)?;
-    let public_config = public_config_for_fingerprint(storage)?;
+    let public_config = public_config_for_fingerprint(storage, &kind)?;
     let canonical_config = canonical_json(&public_config);
     let config_bytes = serde_json::to_vec(&canonical_config).map_err(|_| {
         err(
@@ -389,15 +389,32 @@ fn normalize_root_prefix(root: &str) -> String {
 }
 
 /// The public config used for identity: the full non-secret config with every
-/// secret-classified scalar stripped. Conservative by design: a harmless public
-/// config edit may change the fingerprint, but a namespace change can never be missed.
-fn public_config_for_fingerprint(storage: &StorageRecord) -> McpResult<serde_json::Value> {
+/// secret-classified scalar stripped. Namespace fields already represented in the
+/// descriptor must not be hashed again in a representation-dependent form.
+///
+/// In particular, Local Filesystem `root`, `rootPath`, and `path` are aliases
+/// for the canonical descriptor root. Removing those redundant keys makes legacy
+/// `~` roots, absolute roots, and equivalent config-key aliases share one stable
+/// namespace fingerprint while retaining every other public config field.
+fn public_config_for_fingerprint(
+    storage: &StorageRecord,
+    kind: &SourceKind,
+) -> McpResult<serde_json::Value> {
     let mut config = storage.config.clone();
     let schema_names = secrets::discover_secret_field_names();
     secrets::strip_secret_fields(&mut config, &schema_names);
-    // Secret stripping can leave empty containers behind (nested-array secrets).
-    // They carry no identity and must not make a secret-only edit look like a
-    // namespace change.
+
+    if matches!(kind, SourceKind::Local) {
+        if let Some(object) = config.as_object_mut() {
+            object.remove("root");
+            object.remove("rootPath");
+            object.remove("path");
+        }
+    }
+
+    // Secret stripping and namespace-field removal can leave empty containers
+    // behind. They carry no identity and must not make an equivalent namespace
+    // look different.
     secrets::prune_empty_containers(&mut config);
     Ok(config)
 }
@@ -696,11 +713,18 @@ mod tests {
             return;
         }
         let alias = storage("alias", "local", json!({ "root": "~" }));
-        let absolute = storage("absolute", "local", json!({ "root": expanded }));
+        let absolute = storage("absolute", "local", json!({ "root": expanded.clone() }));
+        let root_path_alias =
+            storage("root-path-alias", "local", json!({ "rootPath": expanded.clone() }));
+        let path_alias = storage("path-alias", "local", json!({ "path": expanded }));
+        let expected = storage_namespace_fingerprint(&absolute).unwrap();
+
+        assert_eq!(storage_namespace_fingerprint(&alias).unwrap(), expected);
         assert_eq!(
-            storage_namespace_fingerprint(&alias).unwrap(),
-            storage_namespace_fingerprint(&absolute).unwrap()
+            storage_namespace_fingerprint(&root_path_alias).unwrap(),
+            expected
         );
+        assert_eq!(storage_namespace_fingerprint(&path_alias).unwrap(), expected);
         validate_local_mcp_path(&alias, "").unwrap();
     }
 
