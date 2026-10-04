@@ -8,7 +8,8 @@ use sha2::{Digest, Sha256};
 use crate::errors::{err, err_with_details, McpErrorCode, McpResult};
 use crate::registry::StorageRecord;
 use infimount_core::registry::{
-    normalize_endpoint_authority, resolve_namespace_fields, ResolvedNamespaceFields,
+    expand_local_root_alias, normalize_endpoint_authority, resolve_namespace_fields,
+    ResolvedNamespaceFields,
 };
 use infimount_core::{secrets, SourceKind};
 
@@ -53,7 +54,7 @@ pub fn storage_namespace_descriptor(
     storage: &StorageRecord,
 ) -> McpResult<StorageNamespaceDescriptor> {
     let (kind, fields) = resolve_fields(storage)?;
-    let public_config = public_config_for_fingerprint(storage)?;
+    let public_config = public_config_for_fingerprint(storage, &kind)?;
     let canonical_config = canonical_json(&public_config);
     let config_bytes = serde_json::to_vec(&canonical_config).map_err(|_| {
         err(
@@ -337,7 +338,8 @@ fn normalize_compare(value: &str) -> String {
 }
 
 fn canonical_local_root(raw: &str) -> McpResult<String> {
-    let trimmed = raw.trim();
+    let expanded = expand_local_root_alias(raw);
+    let trimmed = expanded.trim();
     if trimmed.is_empty() {
         return Err(err(
             McpErrorCode::ERR_INVALID_PATH,
@@ -387,15 +389,35 @@ fn normalize_root_prefix(root: &str) -> String {
 }
 
 /// The public config used for identity: the full non-secret config with every
-/// secret-classified scalar stripped. Conservative by design: a harmless public
-/// config edit may change the fingerprint, but a namespace change can never be missed.
-fn public_config_for_fingerprint(storage: &StorageRecord) -> McpResult<serde_json::Value> {
+/// secret-classified scalar stripped. Conservative by design: existing canonical
+/// configurations retain their exact fingerprint representation.
+///
+/// Local Filesystem legacy home aliases are the one compatibility normalization
+/// applied here. Expand a `~` root value in place while preserving both the config
+/// key and every other public field. This makes a legacy `{"root":"~"}` record
+/// fingerprint-identical to the same record after its one-time expansion to an
+/// absolute home path, without changing fingerprints for already-canonical
+/// absolute-root workspaces.
+fn public_config_for_fingerprint(
+    storage: &StorageRecord,
+    kind: &SourceKind,
+) -> McpResult<serde_json::Value> {
     let mut config = storage.config.clone();
     let schema_names = secrets::discover_secret_field_names();
     secrets::strip_secret_fields(&mut config, &schema_names);
-    // Secret stripping can leave empty containers behind (nested-array secrets).
-    // They carry no identity and must not make a secret-only edit look like a
-    // namespace change.
+
+    if matches!(kind, SourceKind::Local) {
+        if let Some(object) = config.as_object_mut() {
+            for field in ["root", "rootPath", "path"] {
+                if let Some(serde_json::Value::String(value)) = object.get_mut(field) {
+                    *value = expand_local_root_alias(value);
+                }
+            }
+        }
+    }
+
+    // Secret stripping can leave empty containers behind. They carry no identity
+    // and must not make a secret-only edit look like a namespace change.
     secrets::prune_empty_containers(&mut config);
     Ok(config)
 }
@@ -685,6 +707,56 @@ mod tests {
         let relation = transfer_namespace_relation(&a, "foo", &b, "foo/child").unwrap();
         assert!(!relation.same_underlying_namespace);
         assert!(!transfer_has_namespace_conflict(&relation));
+    }
+
+    #[test]
+    fn local_legacy_tilde_root_matches_same_config_after_expansion() {
+        let expanded = expand_local_root_alias("~");
+        if expanded == "~" {
+            return;
+        }
+
+        for field in ["root", "rootPath", "path"] {
+            let config = |value: String| {
+                let mut object = serde_json::Map::new();
+                object.insert(field.to_string(), serde_json::Value::String(value));
+                serde_json::Value::Object(object)
+            };
+            let alias = storage("alias", "local", config("~".to_string()));
+            let absolute = storage("absolute", "local", config(expanded.clone()));
+            assert_eq!(
+                storage_namespace_fingerprint(&alias).unwrap(),
+                storage_namespace_fingerprint(&absolute).unwrap(),
+                "legacy alias fingerprint changed for {field}"
+            );
+        }
+
+        let alias = storage("alias", "local", json!({ "root": "~" }));
+        validate_local_mcp_path(&alias, "").unwrap();
+    }
+
+    #[test]
+    fn local_absolute_root_fingerprint_keeps_existing_public_config_shape() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().to_string_lossy().to_string();
+        let storage = storage(
+            "absolute",
+            "local",
+            json!({ "root": root, "label": "kept-in-public-config" }),
+        );
+        let descriptor = storage_namespace_descriptor(&storage).unwrap();
+
+        let mut expected_config = storage.config.clone();
+        let schema_names = secrets::discover_secret_field_names();
+        secrets::strip_secret_fields(&mut expected_config, &schema_names);
+        secrets::prune_empty_containers(&mut expected_config);
+        let expected_bytes = serde_json::to_vec(&canonical_json(&expected_config)).unwrap();
+
+        assert_eq!(
+            descriptor.canonical_public_config_sha256,
+            sha256_hex(&expected_bytes),
+            "absolute-root public config fingerprint representation changed"
+        );
     }
 
     #[test]

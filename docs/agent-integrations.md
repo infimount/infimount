@@ -137,6 +137,8 @@ For Codex-style CLIs and editor agents, use the client's MCP configuration mecha
 - stdio: `/verified/absolute/bundled/mcp serve --transport stdio`
 - local HTTP: `http://127.0.0.1:7331/mcp`
 
+The first-class Agent Task Codex handoff keeps Codex's code-mode host router enabled because current Codex versions route MCP tools through that host even when code mode itself is disabled. Infimount still launches the task in a neutral read-only sandbox with shell/unified execution, hooks, browser/computer use, plugins, project instructions, and other ambient tool surfaces disabled; the task-unique Infimount MCP server remains the only handoff-added file-write surface.
+
 If the client does not support MCP directly, use a small adapter or extension that calls Infimount MCP tools and does not bypass Infimount policy.
 
 ## Pi extension starter

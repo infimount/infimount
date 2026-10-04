@@ -611,6 +611,20 @@ mod tests {
     }
 
     #[test]
+    fn legacy_tilde_source_root_passes_agent_task_local_confinement() {
+        let expanded = infimount_core::registry::expand_local_root_alias("~");
+        if expanded == "~" {
+            return;
+        }
+        let storage = StorageRecord::new(
+            "legacy-home".to_string(),
+            "local".to_string(),
+            serde_json::json!({ "root": "~" }),
+        );
+        validate_local_path(&storage, "infimount-agent-task-probe").unwrap();
+    }
+
+    #[test]
     fn task_relative_path_cannot_escape_staging_root() {
         assert_eq!(
             relative_to_root(

@@ -439,7 +439,10 @@ fn codex_arguments(
         "features.unified_exec=false",
         "features.shell_snapshot=false",
         "features.code_mode=false",
-        "features.code_mode_host=false",
+        // Current Codex tool routing requires the code-mode host process even when
+        // code mode itself is disabled. Keep the host router enabled while all
+        // ambient execution/tool surfaces below remain disabled.
+        "features.code_mode_host=true",
         "features.exec_permission_approvals=false",
         "features.request_permissions_tool=false",
         "features.hooks=false",
@@ -739,8 +742,11 @@ mod tests {
         assert!(joined.contains("skills.bundled.enabled=false"));
         assert!(joined.contains("features.shell_tool=false"));
         assert!(joined.contains("features.unified_exec=false"));
-        assert!(joined.contains("features.code_mode_host=false"));
+        assert!(joined.contains("features.code_mode=false"));
+        assert!(joined.contains("features.code_mode_host=true"));
         assert!(joined.contains("features.hooks=false"));
+        assert!(joined.contains("features.exec_permission_approvals=false"));
+        assert!(joined.contains("features.request_permissions_tool=false"));
         assert!(joined.contains("features.multi_agent=false"));
         assert!(joined.contains("features.browser_use=false"));
         assert!(joined.contains("features.computer_use=false"));
