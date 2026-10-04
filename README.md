@@ -31,20 +31,20 @@
 **Current stable release:** [v0.8.0](https://github.com/infimount/infimount/releases/tag/v0.8.0)
 
 <!-- release-candidate:start -->
-**Validated release candidate:** [v0.8.1-rc.13](https://github.com/infimount/infimount/releases/tag/v0.8.1-rc.13)
+**Validated release candidate:** [v0.8.1-rc.14](https://github.com/infimount/infimount/releases/tag/v0.8.1-rc.14)
 
-rc.13 is the published and fully automated-validated final candidate for v0.8.1. Application/runtime behavior is unchanged from rc.12. Its canonical Release and automatic Post Release Validation passed on the current GitHub Actions stack, including artifact download v8, provenance v4, public asset re-download, and the published v0.8.0-to-rc.13 Linux installer upgrade. The remaining promotion evidence is the real coding, document, and data-analysis usefulness pilot.
+rc.14 is the final compatibility-fix candidate for v0.8.1. It keeps the rc.13 release/supply-chain behavior and fixes the two real-pilot findings: Agent Task preparation now accepts legacy Local Filesystem `~` roots through the same canonicalization used by browsing, and the first-class Codex handoff enables only the current client's MCP-routing host while keeping code mode and ambient execution surfaces disabled. After publication, stable promotion requires focused real regressions for those two changed paths plus the pending human usefulness judgment on the already-completed three-workload pilot.
 
-To test rc.13 without changing the stable `latest` channel:
+To test rc.14 without changing the stable `latest` channel:
 
 ```bash
-curl -fsSL https://github.com/infimount/infimount/releases/download/v0.8.1-rc.13/install.sh | INFIMOUNT_VERSION=v0.8.1-rc.13 sh
+curl -fsSL https://github.com/infimount/infimount/releases/download/v0.8.1-rc.14/install.sh | INFIMOUNT_VERSION=v0.8.1-rc.14 sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-$env:INFIMOUNT_VERSION='v0.8.1-rc.13'; irm https://github.com/infimount/infimount/releases/download/v0.8.1-rc.13/install.ps1 | iex
+$env:INFIMOUNT_VERSION='v0.8.1-rc.14'; irm https://github.com/infimount/infimount/releases/download/v0.8.1-rc.14/install.ps1 | iex
 ```
 <!-- release-candidate:end -->
 
@@ -100,7 +100,7 @@ Install scripts verify selected downloads against `SHA256SUMS.txt`. Pin this sta
 - **Work like a desktop file manager:** grid and list views, rich previews, drag-and-drop upload, bookmarks, recents, keyboard navigation, global search stop, dual-pane transfer workflows, conflict handling, and transfer queue.
 - **Validate before you trust a backend:** reachability checks report grouped capabilities, sanitized fix hints, and MCP readiness notes.
 - **Control MCP access explicitly:** new storages are not exposed to MCP by default. Enable selected storages, tool lists, path policies, read-only mode, confirmations, and local audit logs.
-- **Prepare bounded agent work:** Agent Tasks are included in the published v0.8.1-rc.13 candidate. They copy only selected files into a local Agent Workspace, hand the task to Codex through the existing MCP boundary, review outputs, and publish explicitly approved unchanged files with create-only writes.
+- **Prepare bounded agent work:** Agent Tasks are included in the v0.8.1-rc.14 qualification candidate. They copy only selected files into a local Agent Workspace, hand the task to Codex through the existing MCP boundary, review outputs, and publish explicitly approved unchanged files with create-only writes.
 - **Stay backend-agnostic:** file operations route through Apache OpenDAL so capabilities are detected and documented per backend.
 
 ## Workbench
@@ -126,7 +126,7 @@ Agent Workspaces define a safer storage-scoped MCP boundary for agents and Agent
 
 ## Agent Tasks
 
-Agent Tasks are included in the published v0.8.1-rc.13 candidate. The current v0.8.0 stable release does not include this workflow. Automated release, upgrade, publication-safety, and scoped-MCP checks are green; real coding, document, and data-analysis usefulness remains the final product-validation pilot before stable promotion.
+Agent Tasks are included in the v0.8.1-rc.14 qualification candidate. The current v0.8.0 stable release does not include this workflow. Automated release, upgrade, publication-safety, and scoped-MCP checks are green; real coding, document, and data-analysis usefulness remains the final product-validation pilot before stable promotion.
 
 - Prepare only the files selected in the File Browser into a bounded `tasks/<uuid>/inputs/` snapshot. Preparation never moves or mutates the source and never grants new MCP access to it.
 - Use an explicitly read-write Local Filesystem Agent Workspace for task outputs. Read-write workspace creation is a separate desktop opt-in.
@@ -276,7 +276,7 @@ Outputs:
 - [x] Keyboard navigation in virtualized file grid and table views
 - [x] OAuth-backed Google Drive and OneDrive with guided local loopback connect, plus SFTP remote-file browsing through OpenDAL
 - [x] Capability-aware storage validation summaries with fix hints and MCP readiness notes
-- [x] Agent Tasks in published v0.8.1-rc.13: bounded preparation, Codex handoff, output review, create-only approved publication, and automated release-safety coverage; real three-workload usefulness evidence remains the final product-validation phase before stable promotion
+- [x] Agent Tasks in v0.8.1-rc.14: bounded preparation, Codex handoff, output review, create-only approved publication, and automated release-safety coverage; real three-workload usefulness evidence remains the final product-validation phase before stable promotion
 - [ ] Additional large-directory polish
 
 ### Future Plans
