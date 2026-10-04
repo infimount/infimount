@@ -817,7 +817,12 @@ async function agentTaskPublicationSession(driver) {
   }
   const sourceDigestBefore = sha256Bytes(sourceBefore);
   const storageRegistryPath = path.join(HOME_DIR, ".infimount", "storages.json");
+  const storageRegistryBefore = JSON.parse(fs.readFileSync(storageRegistryPath, "utf8"));
+  if (storageRegistryBefore?.[0]?.config?.root !== "~") {
+    fail("Agent Task regression requires the source storage to retain the legacy ~ root");
+  }
   const storageRegistryDigestBefore = sha256Bytes(fs.readFileSync(storageRegistryPath));
+  console.log("agent_task_legacy_home_source=yes");
 
   await driver.createSession();
   try {
@@ -999,6 +1004,10 @@ async function main() {
     await storageOnlySession(driver);
     await readOnlyAgentAccessSession(driver);
     await readWriteAndHttpSession(driver);
+    // Reproduce the real rc.13 pilot finding: browsing/operator construction accepts
+    // the legacy home alias, so Agent Task preparation must accept the same storage
+    // without requiring a manual root edit.
+    runState("restore-legacy-home-alias");
     await agentTaskPublicationSession(driver);
     await guidedReenableSession(driver);
     runState("summary");
