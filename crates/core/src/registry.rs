@@ -1563,7 +1563,10 @@ mod tests {
     #[test]
     fn expand_local_root_alias_expands_simple_prefix() {
         std::env::set_var("HOME", "/home/testuser");
-        assert_eq!(expand_local_root_alias("~/Downloads"), "/home/testuser/Downloads");
+        assert_eq!(
+            expand_local_root_alias("~/Downloads"),
+            "/home/testuser/Downloads"
+        );
         assert_eq!(expand_local_root_alias("~"), "/home/testuser");
     }
 
