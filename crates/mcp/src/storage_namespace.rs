@@ -389,13 +389,15 @@ fn normalize_root_prefix(root: &str) -> String {
 }
 
 /// The public config used for identity: the full non-secret config with every
-/// secret-classified scalar stripped. Namespace fields already represented in the
-/// descriptor must not be hashed again in a representation-dependent form.
+/// secret-classified scalar stripped. Conservative by design: existing canonical
+/// configurations retain their exact fingerprint representation.
 ///
-/// In particular, Local Filesystem `root`, `rootPath`, and `path` are aliases
-/// for the canonical descriptor root. Removing those redundant keys makes legacy
-/// `~` roots, absolute roots, and equivalent config-key aliases share one stable
-/// namespace fingerprint while retaining every other public config field.
+/// Local Filesystem legacy home aliases are the one compatibility normalization
+/// applied here. Expand a `~` root value in place while preserving both the config
+/// key and every other public field. This makes a legacy `{"root":"~"}` record
+/// fingerprint-identical to the same record after its one-time expansion to an
+/// absolute home path, without changing fingerprints for already-canonical
+/// absolute-root workspaces.
 fn public_config_for_fingerprint(
     storage: &StorageRecord,
     kind: &SourceKind,
@@ -406,15 +408,16 @@ fn public_config_for_fingerprint(
 
     if matches!(kind, SourceKind::Local) {
         if let Some(object) = config.as_object_mut() {
-            object.remove("root");
-            object.remove("rootPath");
-            object.remove("path");
+            for field in ["root", "rootPath", "path"] {
+                if let Some(serde_json::Value::String(value)) = object.get_mut(field) {
+                    *value = expand_local_root_alias(value);
+                }
+            }
         }
     }
 
-    // Secret stripping and namespace-field removal can leave empty containers
-    // behind. They carry no identity and must not make an equivalent namespace
-    // look different.
+    // Secret stripping can leave empty containers behind. They carry no identity
+    // and must not make a secret-only edit look like a namespace change.
     secrets::prune_empty_containers(&mut config);
     Ok(config)
 }
@@ -707,25 +710,52 @@ mod tests {
     }
 
     #[test]
-    fn local_legacy_tilde_root_matches_expanded_home_namespace() {
+    fn local_legacy_tilde_root_matches_same_config_after_expansion() {
         let expanded = expand_local_root_alias("~");
         if expanded == "~" {
             return;
         }
-        let alias = storage("alias", "local", json!({ "root": "~" }));
-        let absolute = storage("absolute", "local", json!({ "root": expanded.clone() }));
-        let root_path_alias =
-            storage("root-path-alias", "local", json!({ "rootPath": expanded.clone() }));
-        let path_alias = storage("path-alias", "local", json!({ "path": expanded }));
-        let expected = storage_namespace_fingerprint(&absolute).unwrap();
 
-        assert_eq!(storage_namespace_fingerprint(&alias).unwrap(), expected);
-        assert_eq!(
-            storage_namespace_fingerprint(&root_path_alias).unwrap(),
-            expected
-        );
-        assert_eq!(storage_namespace_fingerprint(&path_alias).unwrap(), expected);
+        for field in ["root", "rootPath", "path"] {
+            let alias = storage("alias", "local", json!({ field: "~" }));
+            let absolute = storage(
+                "absolute",
+                "local",
+                json!({ field: expanded.clone() }),
+            );
+            assert_eq!(
+                storage_namespace_fingerprint(&alias).unwrap(),
+                storage_namespace_fingerprint(&absolute).unwrap(),
+                "legacy alias fingerprint changed for {field}"
+            );
+        }
+
+        let alias = storage("alias", "local", json!({ "root": "~" }));
         validate_local_mcp_path(&alias, "").unwrap();
+    }
+
+    #[test]
+    fn local_absolute_root_fingerprint_keeps_existing_public_config_shape() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().to_string_lossy().to_string();
+        let storage = storage(
+            "absolute",
+            "local",
+            json!({ "root": root, "label": "kept-in-public-config" }),
+        );
+        let descriptor = storage_namespace_descriptor(&storage).unwrap();
+
+        let mut expected_config = storage.config.clone();
+        let schema_names = secrets::discover_secret_field_names();
+        secrets::strip_secret_fields(&mut expected_config, &schema_names);
+        secrets::prune_empty_containers(&mut expected_config);
+        let expected_bytes = serde_json::to_vec(&canonical_json(&expected_config)).unwrap();
+
+        assert_eq!(
+            descriptor.canonical_public_config_sha256,
+            sha256_hex(&expected_bytes),
+            "absolute-root public config fingerprint representation changed"
+        );
     }
 
     #[test]
