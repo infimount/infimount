@@ -717,12 +717,13 @@ mod tests {
         }
 
         for field in ["root", "rootPath", "path"] {
-            let alias = storage("alias", "local", json!({ field: "~" }));
-            let absolute = storage(
-                "absolute",
-                "local",
-                json!({ field: expanded.clone() }),
-            );
+            let config = |value: String| {
+                let mut object = serde_json::Map::new();
+                object.insert(field.to_string(), serde_json::Value::String(value));
+                serde_json::Value::Object(object)
+            };
+            let alias = storage("alias", "local", config("~".to_string()));
+            let absolute = storage("absolute", "local", config(expanded.clone()));
             assert_eq!(
                 storage_namespace_fingerprint(&alias).unwrap(),
                 storage_namespace_fingerprint(&absolute).unwrap(),
