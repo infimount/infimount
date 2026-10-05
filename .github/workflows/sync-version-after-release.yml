@@ -53,7 +53,6 @@ jobs:
             exit 1
           fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "GITHUB_REF_NAME=${TAG}" >> "$GITHUB_ENV"
 
       - name: Install Node.js
         uses: actions/setup-node@v6
@@ -61,7 +60,7 @@ jobs:
           node-version: 24
 
       - name: Sync versions from tag
-        run: node scripts/sync-release-version.mjs
+        run: node scripts/sync-release-version.mjs "${{ steps.resolve_tag.outputs.tag }}"
 
       - name: Promote public documentation to stable identity
         run: |
