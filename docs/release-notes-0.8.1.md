@@ -1,8 +1,6 @@
 # Infimount 0.8.1: Agent Tasks and Safer Agent Workflows
 
-> v0.8.1 is not published yet.
-
-Release: not published yet.
+Release: https://github.com/infimount/infimount/releases/tag/v0.8.1
 
 Infimount 0.8.1 adds review-first Agent Tasks and completes the v0.8 agent-access model with stronger least-privilege defaults, safer workspace binding, resilient file browsing, and release/package validation that exercises the real v0.8.0 upgrade path.
 
