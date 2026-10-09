@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <strong>Safe storage access for AI agents.</strong><br/>
-  Browse local folders, object storage, and WebDAV from one native app. Control which storages and paths MCP agents can access — with confirmations, audit, and local-first security.
+  <strong>Governed data access for AI agents.</strong><br/>
+  One surface across local and cloud storage. Prepare only the data an agent needs, keep its work scoped, and review exactly what may be written back.
 </p>
 
 <p align="center">
@@ -82,9 +82,18 @@ Install scripts verify selected downloads against `SHA256SUMS.txt`. Pin this sta
 - **Browse storage in one place:** local files, S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, Google Cloud Storage, Google Drive, Microsoft OneDrive, WebDAV, and SFTP.
 - **Work like a desktop file manager:** grid and list views, rich previews, drag-and-drop upload, bookmarks, recents, keyboard navigation, global search stop, dual-pane transfer workflows, conflict handling, and transfer queue.
 - **Validate before you trust a backend:** reachability checks report grouped capabilities, sanitized fix hints, and MCP readiness notes.
-- **Control MCP access explicitly:** new storages are not exposed to MCP by default. Enable selected storages, tool lists, path policies, read-only mode, confirmations, and local audit logs.
-- **Prepare bounded agent work:** Agent Tasks are included in v0.8.1. They copy only selected files into a local Agent Workspace, hand the task to Codex through the existing MCP boundary, review outputs, and publish explicitly approved unchanged files with create-only writes.
-- **Stay backend-agnostic:** file operations route through Apache OpenDAL so capabilities are detected and documented per backend.
+- **Control agent access explicitly:** new storages are not exposed to MCP by default. Enable selected storages, tool lists, path policies, read-only mode, confirmations, and local audit logs.
+- **Govern agent data ingress:** Agent Tasks copy only explicitly selected source files into a bounded local workspace without mutating the source or broadening its MCP exposure.
+- **Govern agent data egress:** generated outputs remain inside the task workspace until the user reviews their bytes and hashes, selects what may leave, approves an exact destination plan, and publishes with create-only writes.
+- **Stay backend-agnostic:** storage I/O routes through Apache OpenDAL so the authorization and publication model remains independent of provider-specific SDK paths.
+
+## Product direction
+
+Infimount is evolving from a unified storage browser with MCP controls into a **governed data plane between systems of record and autonomous agent environments**. The file browser remains an important human control surface, but the durable product boundary is the flow around agent work:
+
+`select → snapshot/hash → scoped workspace → agent → review → approved publication → receipt`
+
+Infimount does **not** aim to become a built-in model runtime, generic MCP gateway, semantic/RAG platform, or replacement for provider-native MCP servers. It should integrate with those systems while owning cross-storage data scope, provenance, review, and write-back safety.
 
 ## Workbench
 
@@ -109,7 +118,7 @@ Agent Workspaces define a safer storage-scoped MCP boundary for agents and Agent
 
 ## Agent Tasks
 
-Agent Tasks are included in v0.8.1. Automated release, upgrade, publication-safety, and scoped-MCP checks are green; real coding, document, and data-analysis usefulness remains the final product-validation pilot before stable promotion.
+Agent Tasks are included in stable v0.8.1. Before stable promotion, the release completed real coding, document, and data-analysis pilot validation plus the focused rc.14 compatibility regression for legacy `~` source preparation and the current Codex MCP handoff.
 
 - Prepare only the files selected in the File Browser into a bounded `tasks/<uuid>/inputs/` snapshot. Preparation never moves or mutates the source and never grants new MCP access to it.
 - Use an explicitly read-write Local Filesystem Agent Workspace for task outputs. Read-write workspace creation is a separate desktop opt-in.
@@ -249,24 +258,35 @@ Outputs:
 
 ## 🎯 Roadmap
 
-### Current Focus
+### Shipped foundation
 
-- [x] Local, S3/S3-compatible, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob, GCS, Google Drive, Microsoft OneDrive, WebDAV, and SFTP browsing
-- [x] Grid and list views with file preview, drag-and-drop upload, bookmarks, recents, and transfer queue
-- [x] Dual-pane copy/move and compare/update workflows
-- [x] MCP support for local AI assistants with explicit storage exposure, tool controls, path policy, confirmations, sessions, and audit
-- [x] Version-aware MCP tools where supported by the backend
-- [x] Keyboard navigation in virtualized file grid and table views
-- [x] OAuth-backed Google Drive and OneDrive with guided local loopback connect, plus SFTP remote-file browsing through OpenDAL
-- [x] Capability-aware storage validation summaries with fix hints and MCP readiness notes
-- [x] Agent Tasks in v0.8.1: bounded preparation, Codex handoff, output review, create-only approved publication, and automated release-safety coverage; real three-workload usefulness evidence remains the final product-validation phase before stable promotion
-- [ ] Additional large-directory polish
+- [x] Cross-storage browsing for local files, major object stores, Google Drive, OneDrive, WebDAV, and SFTP
+- [x] Native file-manager workflows, previews, transfer queue, dual-pane copy/move, bookmarks, and recents
+- [x] Explicit MCP storage exposure, path policy, tool controls, sessions, confirmations, and local audit
+- [x] Native secret storage, recovery, diagnostics, OAuth-backed Drive/OneDrive, and packaged sidecar
+- [x] Agent Tasks in v0.8.1: bounded source preparation, task-scoped MCP, Codex handoff, reviewed outputs, create-only publication, destination verification, and receipts
+- [x] Real coding, document, and data-analysis pilot evidence plus the final rc.14 compatibility regression
 
-### Future Plans
+### v0.8.2 active feature train
 
-- [ ] CLI companion (`infimount-cli`)
-- [ ] Mobile app (iOS/Android)
-- [ ] Hosted and managed deployment options
+- [ ] Make the Agent Task contract agent-neutral; Codex becomes one adapter rather than the product model
+- [ ] Add first-class adapters for additional agent clients, prioritizing Claude Code, Gemini CLI, OpenCode/Pi, and other MCP-capable clients
+- [ ] Add a headless CLI/API for prepare, inspect, review, approve, publish, and evidence workflows without bypassing desktop policy
+- [ ] Add MCP Apps-compatible review/publish UI where agent hosts support interactive MCP resources
+- [ ] Add sandbox-provider adapters so isolated runtimes can receive bounded task data while Infimount retains ingress/egress control
+- [ ] Strengthen portable policy, agent identity, provenance, audit, and observability contracts
+- [ ] Continue large-directory, storage-capability, and platform reliability work where it supports the governed-data-plane workflow
+
+**Versioning:** v0.8.2 is the active feature line. No v0.9 release is planned for roughly the next year; the product will continue to deepen the v0.8 architecture rather than using a version jump as a roadmap milestone.
+
+### Explicit non-priorities
+
+- Mobile apps
+- A built-in AI/model runtime
+- A generic MCP gateway or marketplace
+- A semantic/vector/RAG platform
+- Provider-specific replacements for Google, Box, Dropbox, or other native MCP servers
+- A hosted multi-user control plane before the local/headless data-plane contract is proven
 
 ---
 
