@@ -192,10 +192,12 @@ The product loop is implemented on `main` through six completed slices:
 5. **Output review**: bounded discovery, preview, byte size, and SHA-256 review of `outputs/`.
 6. **Safe publication**: mandatory preview, staleness token, create-only writes, fail/rename conflict handling, destination verification, and unique receipts.
 
-The remaining product-validation phase builds on the rc.13 real pilot, which completed coding, document, and data-analysis deterministic validation and quality-pending evidence before exposing two compatibility defects. The rc.14 promotion check is therefore focused on the changed paths: Agent Task preparation from a legacy `~` Local Filesystem source and first-class Codex handoff on the current client without manual router overrides. A focused coding task must pass the existing workload validator and preserve the scoped MCP/sandbox boundary. Human usefulness evidence informs stable promotion but is not a manual product-test requirement in the automated release gate.
+The v0.8.1 stable release completed the real coding, document, and data-analysis pilot flow and the final focused rc.14 compatibility regression. The focused regression verified Agent Task preparation from a legacy `~` Local Filesystem source and first-class Codex handoff on the current client without a manual router override, while preserving source digests, MCP exposure, and the scoped sandbox/tool boundary.
 
-Use the [Agent Tasks v0.8.1 pilot protocol](agent-tasks-pilot.md) to collect privacy-safe, candidate-bound evidence and validate it without conflating synthetic fixtures with real pilot completion.
+The [Agent Tasks v0.8.1 pilot protocol](agent-tasks-pilot.md) is retained as historical validation methodology and evidence guidance. It is no longer a pending stable-promotion requirement.
 
 ## Integration direction
 
-Agent Tasks work with existing MCP clients. The desktop remains the storage control plane, and client-specific handoff reuses the same MCP server and policy rather than implementing separate storage access paths. Codex is the first first-class task handoff. Pi is a lightweight follow-on candidate, while OpenCode can continue using its existing direct MCP integration until pilot evidence justifies additional packaging.
+Agent Tasks work with existing MCP clients. The desktop remains the storage control plane, and client-specific handoff must reuse the same task-scoped MCP and policy boundary rather than creating separate storage-access paths.
+
+Codex is the first first-class handoff shipped in v0.8.1. In v0.8.2, the task contract becomes agent-neutral: Codex, Claude Code, Gemini CLI, OpenCode/Pi, and future sandbox/runtime adapters should consume the same prepared task, capability boundary, output contract, and publication rules. Client adapters may change launch mechanics, but they must not change storage authorization semantics.
