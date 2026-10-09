@@ -62,7 +62,8 @@ for (const phrase of [
   "review",
   "publish",
   "create-only",
-  "product-validation phase",
+  "governed data plane",
+  "v0.8.2 active feature train",
 ]) {
   if (!readme.toLowerCase().includes(phrase.toLowerCase())) {
     fail(`README.md should mention ${phrase}`);
@@ -106,6 +107,9 @@ if (agentTasks.includes("publish-receipt.json")) {
 if (/remaining v\d+\.\d+\.\d+ gate is \*\*pilot evidence\*\*/i.test(agentTasks)) {
   fail("docs/agent-tasks.md must keep pilot evidence separate from the automated release gate");
 }
+if (/remaining product-validation step|before stable promotion/i.test(agentTasks)) {
+  fail("docs/agent-tasks.md must not describe completed v0.8.1 qualification as pending");
+}
 for (const phrase of [
   "v0.8.1",
   "publish-receipt-<publication-id>.json",
@@ -114,8 +118,9 @@ for (const phrase of [
   "rename",
   "no overwrite mode",
   "cleanup-required",
-  "product-validation phase",
-  "not a manual product-test requirement in the automated release gate",
+  "stable v0.8.1",
+  "completed the real coding, document, and data-analysis pilot flow",
+  "agent-neutral",
   "agent-tasks-pilot.md",
 ]) {
   if (!agentTasks.toLowerCase().includes(phrase.toLowerCase())) {
