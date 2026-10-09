@@ -1,6 +1,6 @@
 # Agent Tasks
 
-Agent Tasks are Infimount's bounded workflow for agent work on existing files. The complete implementation is included in **v0.8.1**. Automated release, upgrade, scoped-MCP, stale-review, conflict, destination-verification, and publication-receipt checks are green; the remaining product-validation step is real coding, document, and data-analysis usefulness.
+Agent Tasks are Infimount's bounded workflow for agent work on existing files. The complete implementation is included in **stable v0.8.1**. Automated release, upgrade, scoped-MCP, stale-review, conflict, destination-verification, and publication-receipt checks are green, and real coding, document, and data-analysis pilot validation was completed before stable promotion.
 
 The design composes existing Infimount storage, Agent Workspace, MCP policy, client-integration, transfer, confirmation, and audit primitives. It does not introduce an agent runtime, semantic index, synchronization engine, hosted backend, or second authorization system.
 
