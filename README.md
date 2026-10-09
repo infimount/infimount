@@ -118,7 +118,7 @@ Agent Workspaces define a safer storage-scoped MCP boundary for agents and Agent
 
 ## Agent Tasks
 
-Agent Tasks are included in stable v0.8.1. Before stable promotion, the release completed real coding, document, and data-analysis pilot validation plus the focused rc.14 compatibility regression for legacy `~` source preparation and the current Codex MCP handoff.
+Agent Tasks are included in stable v0.8.1. Stable qualification included real coding, document, and data-analysis pilot validation plus the focused rc.14 compatibility regression for legacy `~` source preparation and the current Codex MCP handoff.
 
 - Prepare only the files selected in the File Browser into a bounded `tasks/<uuid>/inputs/` snapshot. Preparation never moves or mutates the source and never grants new MCP access to it.
 - Use an explicitly read-write Local Filesystem Agent Workspace for task outputs. Read-write workspace creation is a separate desktop opt-in.
