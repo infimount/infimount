@@ -4,80 +4,143 @@
 
 product
 
-## Users
+## Product thesis
 
-Infimount is for people who work across more than one storage system and need a single, calm place to browse, preview, move, and expose files safely.
+Infimount is a **local-first governed data plane for AI agents**.
 
-Primary users:
+It connects heterogeneous systems of record to agent environments without making the agent environment itself the source of authority. Infimount decides which data may enter a task boundary, preserves source provenance, keeps agent work scoped, and controls exactly which reviewed bytes may be written back.
 
-- Desktop users who move between local folders, S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob Storage, Google Cloud Storage, Google Drive, Microsoft OneDrive, WebDAV, and SFTP. FTP records may remain from older versions, but FTP operations are disabled in v0.8 because of the documented upstream security issue.
-- Developers and technical operators who want one storage browser instead of a separate tool for every backend.
-- AI workflow users who expose selected storage sources or workspace-scoped folders to MCP clients such as local coding agents, LM Studio, or editor integrations.
-- Operators who may run the MCP server in a local or controlled environment and need clear auth, scoping, and observability behavior.
+The desktop storage browser remains a first-class human control surface. It is no longer the whole product thesis.
 
-The user is usually in a task, not exploring a marketing site. They are scanning file lists, checking file details, moving data, validating storage config, or deciding exactly what an MCP client can access.
+## Primary users
 
-## Product Purpose
+- Developers and technical operators running coding or knowledge agents against files distributed across local storage, object stores, cloud drives, WebDAV, and SFTP.
+- Data owners who need agents to work on a bounded subset of real files without granting broad direct access to the source system.
+- Desktop users who still need one calm place to browse, preview, validate, move, and manage files across heterogeneous storage.
+- Security-conscious operators who need explicit MCP exposure, path policy, read-only controls, approvals, audit, provenance, and local credential handling.
+- Teams integrating external agent runtimes or sandboxes that need a provider-neutral ingress/egress layer for storage data.
 
-Infimount exists to make storage feel like one local file-browser experience, even when the backend is local disk, object storage, WebDAV, or SFTP.
+FTP records may remain from older versions, but FTP operations remain disabled in v0.8 while the documented upstream security issue is unresolved.
+
+## Product purpose
+
+Infimount should make this workflow safe and understandable:
+
+```text
+systems of record
+      ↓
+explicit selection
+      ↓
+snapshot + hashes + provenance
+      ↓
+bounded agent workspace
+      ↓
+agent/runtime/sandbox
+      ↓
+reviewed outputs
+      ↓
+exact approved publication plan
+      ↓
+verified create-only write-back + receipt
+      ↓
+systems of record
+```
 
 The product should help users:
 
-- Add and validate storage backends without memorizing backend-specific tooling.
-- Browse files in grid and list views with predictable navigation.
-- Preview files and inspect metadata without leaving the app.
-- Move and copy files between supported storages where possible, including dual-pane compare/update and transfer queue workflows.
-- Expose a controlled virtual filesystem or workspace-scoped storage root to MCP clients.
-- Prepare bounded Agent Tasks from explicitly selected source files, review generated outputs, and publish only explicitly approved unchanged files with create-only writes.
-- Keep storage registries and MCP settings local, with credential material in the operating system's native secret store.
+- Add and validate storage backends without memorizing provider-specific tooling.
+- Browse and inspect files with predictable desktop workflows.
+- Define explicit agent-access boundaries instead of implicitly exposing whole storage accounts.
+- Prepare bounded task data without mutating source bytes or broadening source MCP exposure.
+- Let external agents work autonomously inside an approved boundary rather than prompting on every low-level file operation.
+- Review outputs and provenance before anything leaves the task workspace.
+- Publish only explicitly approved bytes to explicitly approved destinations.
+- Preserve local-first configuration, native secret storage, auditability, and backend-agnostic OpenDAL I/O.
 
-Success means the app feels trustworthy, native, and quiet. A user should understand what is exposed, what is read-only, what is local, and what action is currently running without needing to study the implementation.
+Success means a user can answer four questions at any moment:
 
-## Brand Personality
+1. What source data did the agent receive?
+2. What authority did the agent have while working?
+3. What output bytes are being proposed?
+4. What exactly will be written back, where, and under whose approval?
+
+## Strategic boundaries
+
+Infimount should **not** become:
+
+- a built-in LLM or agent runtime;
+- a generic MCP gateway, proxy, or marketplace;
+- a semantic/vector/RAG ingestion platform;
+- a replacement for provider-native MCP servers;
+- a provider-specific storage SDK layer outside the OpenDAL-first architecture;
+- a cloud collaboration suite before the local/headless policy contract is mature.
+
+Those systems are integration targets. Infimount's differentiated responsibility is governed data ingress and egress across heterogeneous storage.
+
+## v0.8.2 direction
+
+v0.8.2 is the active feature train.
+
+Primary directions:
+
+1. **Agent-neutral Agent Tasks.** Codex remains supported but becomes one adapter behind a stable task/handoff contract.
+2. **Additional agent adapters.** Prioritize Claude Code, Gemini CLI, OpenCode/Pi, and compatible MCP clients based on real integration quality.
+3. **Headless control surface.** Add CLI/API access for task preparation, inspection, review, publication, and evidence without bypassing the same policies used by the desktop.
+4. **Interactive review in agent hosts.** Use MCP Apps-compatible UI where available for output review and publication approval.
+5. **Sandbox interoperability.** Integrate isolated agent runtimes rather than building an Infimount runtime; Infimount owns the bounded data room and safe write-back contract.
+6. **Portable trust metadata.** Strengthen agent identity, policy, provenance, receipts, audit, and observability so task evidence survives across clients and runtimes.
+
+No v0.9 release is planned for roughly the next year. The objective is to deepen and prove the v0.8 architecture, not to use version numbers as product milestones.
+
+## Brand personality
 
 Minimal, native, careful.
 
-Infimount should feel like a serious desktop utility, closer to the Ubuntu file manager than to a SaaS dashboard. The tone is direct and practical. The product does not need to look flashy to feel premium. It earns trust through clarity, restraint, and consistent behavior.
+Infimount should feel like a serious desktop utility and trustworthy infrastructure boundary, not a glossy AI dashboard. The tone is direct and practical. The product earns trust through clarity, restraint, inspectable state, and predictable behavior.
 
 The brand should communicate:
 
 - Local-first control.
-- Storage unification without lock-in.
-- Safe agent access through explicit MCP controls.
-- Cross-platform utility that still feels native on each OS.
+- One surface across heterogeneous storage.
+- Explicit agent data boundaries.
+- Review-before-write-back.
+- Backend and agent neutrality.
+- Cross-platform utility without infrastructure lock-in.
 
 ## Anti-references
 
-Infimount should not look like:
+Infimount should not look or behave like:
 
-- A glossy SaaS landing page inside the desktop app.
-- A purple or blue gradient AI tool.
-- A card-heavy marketing dashboard.
-- A highly saturated icon playground.
-- A dark cyber terminal unless the user explicitly chooses dark mode.
+- A card-heavy SaaS marketing dashboard inside the desktop app.
+- A generic purple/blue-gradient AI wrapper.
+- A chat application pretending to be a storage control plane.
 - A settings product that hides dangerous actions behind vague labels.
-- A cloud console clone with dense, intimidating enterprise chrome.
+- A cloud console clone with dense enterprise chrome.
+- An agent runtime that silently acquires broader filesystem authority.
+- A workflow that asks for approval on every low-level operation instead of establishing a clear bounded workspace.
 
 Avoid decorative complexity. Avoid invented controls when a standard desktop pattern works better. Avoid color as decoration. Avoid animation that does not explain state.
 
-## Design Principles
+## Design principles
 
-1. **Native first.** The desktop app should feel like a native file explorer: stable side navigation, clear file lists, quiet toolbar controls, and familiar modal behavior.
-2. **Local-first is visible.** Storage config and credentials staying local is a product promise. Security-sensitive surfaces should say what is local, what is exposed, and what requires restart or confirmation.
-3. **Restraint builds trust.** Most screens should use neutral greys, white surfaces, subtle borders, and small accent moments. Orange is an accent, not a theme.
-4. **Show state before style.** Loading, selected, focused, read-only, running, stopped, exposed, disabled, and error states must be visible and consistent.
-5. **Agent access is explicit.** MCP tools and storages should never feel magically exposed. The UI should make exposure, auth, bind address, and tool-level permissions obvious.
+1. **Boundaries before intelligence.** Define what data and authority an agent receives before optimizing what the agent can do.
+2. **Native first.** The desktop app should remain a calm, familiar storage control surface.
+3. **Local-first is visible.** State what remains local, what is exposed, and what crosses a process or network boundary.
+4. **Approve boundaries, not chatter.** Prefer scoped autonomy inside a prepared task and one explicit publication decision over repeated low-level permission prompts.
+5. **Show state before style.** Loading, selected, focused, read-only, running, stopped, exposed, disabled, reviewed, approved, stale, and failed states must be visible.
+6. **Agent access is explicit.** MCP exposure, transport, storage scope, path policy, and tool authority must never be implicit.
+7. **Write-back is a separate trust boundary.** Agent completion never implies permission to publish.
 
-## Accessibility & Inclusion
+## Accessibility & inclusion
 
 Target WCAG AA for the desktop app and landing page.
 
 Requirements:
 
-- Keyboard navigation must be visible and usable across sidebars, dialogs, menus, and file lists.
+- Keyboard navigation must be visible and usable across sidebars, dialogs, menus, file lists, and review/publication flows.
 - Focus states must not be removed without an equivalent visible replacement.
 - Text contrast should meet WCAG AA for body text and controls.
 - Destructive actions should use explicit confirmation dialogs with clear labels.
 - Icon-only buttons require accessible labels or titles.
-- Motion should be functional and subtle. Respect reduced-motion settings where animation becomes more than a quick state transition.
-- Color must not be the only indicator of status. Pair status color with labels, icons, or structure.
+- Motion should be functional and subtle and respect reduced-motion settings.
+- Color must not be the only indicator of status.

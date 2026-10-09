@@ -7,7 +7,7 @@
 | 0.8.x   | ✅ |
 | < 0.8   | ❌ |
 
-The current stable release is [v0.8.0](https://github.com/infimount/infimount/releases/tag/v0.8.0). The published [v0.8.1-rc.12](https://github.com/infimount/infimount/releases/tag/v0.8.1-rc.12) prerelease is the active validation candidate, not the stable channel.
+The current stable release is [v0.8.1](https://github.com/infimount/infimount/releases/tag/v0.8.1). Stable packages, updater metadata, checksums, SBOM/provenance, Homebrew metadata, and post-release validation are published from that release line.
 
 ## Security Model
 
