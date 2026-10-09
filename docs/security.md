@@ -204,7 +204,7 @@ Directory transfers that create a previously absent destination are transactiona
 Before every policy-authorized local MCP operation, Infimount rejects existing
 symlink and Windows reparse-point components beneath the configured storage
 root. This prevents persistent project links from redirecting an agent outside
-the approved namespace. The current RC threat model assumes another trusted
+the approved namespace. The current local threat model assumes another trusted
 local process does not replace path components during the brief operation
 window; handle-relative, race-free confinement remains planned hardening.
 
