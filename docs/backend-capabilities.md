@@ -3,7 +3,7 @@
 Infimount uses OpenDAL capabilities at runtime. A backend being listed here does not mean every account, bucket, container, or server has every feature enabled.
 Use the desktop **Validate** action to check the effective capabilities for a configured storage. Validation is a desktop control-plane operation and is not exposed through public MCP. It reports grouped browse, mutation, sharing/versioning, and metadata capabilities, plus sanitized fix hints and MCP readiness notes.
 
-This matrix tracks the latest stable release and the current `main` branch. The current stable release is v0.8.0; the published v0.8.1-rc.12 prerelease is the active validation candidate and uses the same documented backend capability boundary.
+This matrix tracks the latest stable release and the current `main` branch. The current stable release is v0.8.1. Active v0.8.2 development continues to use the same OpenDAL-first capability boundary unless a documented change explicitly updates this matrix.
 
 ## OpenDAL-First Storage Policy
 
