@@ -1,9 +1,9 @@
 # Infimount
 
-Infimount is a local-first desktop app for browsing and managing local files,
-Amazon S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob Storage,
-Google Cloud Storage, Google Drive, Microsoft OneDrive, WebDAV, and SFTP from one native interface. Infimount can expose
-selected storages through MCP for local AI assistants and agent workflows.
+Infimount is a local-first governed data plane for AI agents, with a native desktop storage browser as its human control surface.
+It connects local files, Amazon S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob Storage,
+Google Cloud Storage, Google Drive, Microsoft OneDrive, WebDAV, and SFTP. Infimount can expose explicitly scoped storage through
+MCP, prepare bounded task data for agents, and require reviewed create-only publication before generated outputs return to systems of record.
 
 ## Useful Links
 
@@ -43,6 +43,8 @@ selected storages through MCP for local AI assistants and agent workflows.
 - Safe Agent Operations in v0.6.0 added guided MCP access presets, active session visibility, non-loopback HTTP bearer-token enforcement, resource/tool gating, and scenario coverage for session and policy denial.
 - v0.8.0 adds native secret storage, encrypted recovery, policy-scoped Agent Workspaces, bundled-sidecar activation checks, and local privacy/diagnostics controls.
 - Agent Tasks in v0.8.1: selected storage files are prepared as bounded copies in an explicitly read-write local Agent Workspace, including legacy Local Filesystem ~ roots through canonical alias handling, then handed to Codex through the task-scoped MCP boundary. Current Codex MCP routing uses the code-mode host router while code mode, shell/unified execution, hooks, browser/computer use, plugins, and project instructions remain disabled. Publication remains create-only with fail-or-rename conflict handling and no overwrite mode.
+- v0.8.1 stable completed real coding, document, and data-analysis pilot validation plus the final rc.14 compatibility regression.
+- v0.8.2 is the active feature train: agent-neutral task adapters, headless CLI/API workflows, MCP Apps-compatible review surfaces, sandbox interoperability, and stronger portable identity/policy/provenance/audit contracts. v0.9 is intentionally deferred for roughly the next year.
 - v0.7.1 added SFTP and FTP remote-file backends, split-pane UX fixes, safer transfer/delete/upload feedback, MCP filesystem deduplication through core operations, and stronger mutation-flow regression tests.
 - v0.7.0 added OSS/COS/OBS backend support, capability-aware validation with sanitized fix hints and MCP readiness notes, a global search stop control, safer MCP exposure defaults for new/imported storages, and clearer install docs.
 - Backend expansion is OpenDAL-first, including native B2, OSS, COS, OBS, S3 default ACLs, OAuth-backed Google Drive/Microsoft OneDrive with guided local loopback PKCE connect, WebDAV compatibility mode, SFTP remote-file browsing, and capability-gated user metadata writes.
