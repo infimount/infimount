@@ -1,0 +1,399 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infimount.github.io/infimount/schemas/agent-task-execution-v1.schema.json",
+  "title": "Infimount private Agent Task execution record v1",
+  "description": "Design-time contract for trusted private execution evidence. Authoritative runtime validation is delivered in Phase A2.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "executionId",
+    "taskId",
+    "workspaceId",
+    "adapterKind",
+    "adapterVersion",
+    "executableSha256",
+    "runtimeKind",
+    "runtimeProvider",
+    "startedAt",
+    "finishedAt",
+    "status",
+    "taskScopeDigest",
+    "enabledTaskTools",
+    "isolationProfile",
+    "promptSha256",
+    "outputFileCount",
+    "outputTotalBytes",
+    "outputAggregateSha256",
+    "errorCode",
+    "providerExecutionId"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "executionId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "taskId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "workspaceId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "adapterKind": {
+      "type": "string",
+      "enum": [
+        "codex",
+        "claude_code",
+        "opencode",
+        "gemini_cli",
+        "pi",
+        "openai_sandbox",
+        "daytona",
+        "modal"
+      ]
+    },
+    "adapterVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+    },
+    "executableSha256": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      ]
+    },
+    "runtimeKind": {
+      "type": "string",
+      "enum": [
+        "local_client",
+        "remote_sandbox"
+      ]
+    },
+    "runtimeProvider": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "enum": [
+            "openai",
+            "daytona",
+            "modal"
+          ]
+        }
+      ]
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 48
+    },
+    "finishedAt": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 48
+        }
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "prepared",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "taskScopeDigest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "enabledTaskTools": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 6,
+      "items": {
+        "type": "string",
+        "enum": [
+          "list_dir",
+          "stat_path",
+          "read_file",
+          "search_paths",
+          "write_file",
+          "mkdir"
+        ]
+      }
+    },
+    "isolationProfile": {
+      "type": "string",
+      "enum": [
+        "mcp_only_readonly_host",
+        "remote_bundle_isolated"
+      ]
+    },
+    "promptSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "outputFileCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000
+    },
+    "outputTotalBytes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2147483648
+    },
+    "outputAggregateSha256": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      ]
+    },
+    "errorCode": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^ERR_[A-Z0-9_]{1,60}$",
+          "maxLength": 64
+        }
+      ]
+    },
+    "providerExecutionId": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "runtimeKind": {
+            "const": "local_client"
+          }
+        },
+        "required": [
+          "runtimeKind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "adapterKind": {
+            "enum": [
+              "codex",
+              "claude_code",
+              "opencode",
+              "gemini_cli",
+              "pi"
+            ]
+          },
+          "runtimeProvider": {
+            "type": "null"
+          },
+          "executableSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "isolationProfile": {
+            "const": "mcp_only_readonly_host"
+          },
+          "providerExecutionId": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runtimeKind": {
+            "const": "remote_sandbox"
+          }
+        },
+        "required": [
+          "runtimeKind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "adapterKind": {
+            "enum": [
+              "openai_sandbox",
+              "daytona",
+              "modal"
+            ]
+          },
+          "runtimeProvider": {
+            "type": "string",
+            "enum": [
+              "openai",
+              "daytona",
+              "modal"
+            ]
+          },
+          "executableSha256": {
+            "type": "null"
+          },
+          "isolationProfile": {
+            "const": "remote_bundle_isolated"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "prepared",
+              "running"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "finishedAt": {
+            "type": "null"
+          },
+          "errorCode": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "succeeded"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "finishedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 48
+          },
+          "errorCode": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "failed",
+              "cancelled"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "finishedAt": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 48
+          },
+          "errorCode": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outputFileCount": {
+            "const": 0
+          }
+        },
+        "required": [
+          "outputFileCount"
+        ]
+      },
+      "then": {
+        "properties": {
+          "outputTotalBytes": {
+            "const": 0
+          },
+          "outputAggregateSha256": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outputFileCount": {
+            "minimum": 1
+          }
+        },
+        "required": [
+          "outputFileCount"
+        ]
+      },
+      "then": {
+        "properties": {
+          "outputAggregateSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    }
+  ]
+}
