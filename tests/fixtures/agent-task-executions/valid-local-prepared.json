@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "executionId": "33333333-3333-4333-8333-333333333333",
+  "taskId": "11111111-1111-4111-8111-111111111111",
+  "workspaceId": "22222222-2222-4222-8222-222222222222",
+  "adapterKind": "codex",
+  "adapterVersion": "0.155.1",
+  "executableSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "runtimeKind": "local_client",
+  "runtimeProvider": null,
+  "startedAt": "2026-10-16T10:15:00Z",
+  "finishedAt": null,
+  "status": "prepared",
+  "taskScopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "enabledTaskTools": [
+    "list_dir",
+    "stat_path",
+    "read_file",
+    "search_paths",
+    "write_file",
+    "mkdir"
+  ],
+  "isolationProfile": "mcp_only_readonly_host",
+  "promptSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "outputFileCount": 0,
+  "outputTotalBytes": 0,
+  "outputAggregateSha256": null,
+  "errorCode": null,
+  "providerExecutionId": null
+}
