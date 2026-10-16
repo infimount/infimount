@@ -279,6 +279,8 @@ Outputs:
 
 **Versioning:** v0.8.2 is the active feature line. No v0.9 release is planned for roughly the next year; the product will continue to deepen the v0.8 architecture rather than using a version jump as a roadmap milestone.
 
+Implementation plan: [v0.8.2 Governed Agent Data Plane](docs/roadmaps/v0.8.2-governed-agent-data-plane.md).
+
 ### Explicit non-priorities
 
 - Mobile apps
