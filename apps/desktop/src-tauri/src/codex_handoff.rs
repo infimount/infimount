@@ -806,4 +806,50 @@ mod tests {
         assert!(body.contains("trap cleanup EXIT HUP INT TERM"));
         assert!(!body.contains("exec \"${SHELL:-/bin/sh}\" -lic"));
     }
+
+    #[test]
+    fn codex_handoff_matches_v081_exact_golden_launch_profile() {
+        // Snapshot the *entire* v0.8.1 command, not just selected safety flags.
+        // A1's generic adapter extraction must preserve this contract. Intentional
+        // changes require a reviewed fixture update and a real packaged regression.
+        let args = codex_arguments(
+            Path::new("/opt/Infimount/mcp"),
+            Path::new("/tmp/neutral"),
+            "do the task",
+            &test_scope(),
+        )
+        .unwrap();
+
+        let expected: Vec<String> = serde_json::from_str(include_str!(
+            "../tests/fixtures/codex-handoff-v0.8.1-golden.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            args, expected,
+            "Codex v0.8.1 launch profile changed; review sandbox and MCP authority"
+        );
+
+        let configs = args
+            .windows(2)
+            .filter(|pair| pair[0] == "-c")
+            .map(|pair| pair[1].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(configs.len(), 47, "unexpected number of Codex -c overrides");
+        assert_eq!(
+            configs
+                .iter()
+                .filter(|entry| {
+                    entry.starts_with("mcp_servers.") && entry.ends_with(".required=true")
+                })
+                .count(),
+            1,
+            "exactly one task MCP server must be required"
+        );
+        assert!(
+            configs
+                .iter()
+                .all(|entry| !entry.contains("/home/") && !entry.contains("C:")),
+            "Codex launch config must never leak fixture host workspace paths"
+        );
+    }
 }
