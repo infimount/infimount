@@ -806,6 +806,7 @@ mod tests {
         assert!(body.contains("trap cleanup EXIT HUP INT TERM"));
         assert!(!body.contains("exec \"${SHELL:-/bin/sh}\" -lic"));
     }
+
     #[test]
     fn codex_handoff_matches_v081_exact_golden_launch_profile() {
         // Snapshot the *entire* v0.8.1 command, not just selected safety flags.
@@ -837,15 +838,18 @@ mod tests {
         assert_eq!(
             configs
                 .iter()
-                .filter(|entry| entry.starts_with("mcp_servers.") && entry.ends_with(".required=true"))
+                .filter(|entry| {
+                    entry.starts_with("mcp_servers.") && entry.ends_with(".required=true")
+                })
                 .count(),
             1,
             "exactly one task MCP server must be required"
         );
         assert!(
-            configs.iter().all(|entry| !entry.contains("/home/") && !entry.contains("C:\\\\")),
+            configs
+                .iter()
+                .all(|entry| !entry.contains("/home/") && !entry.contains("C:")),
             "Codex launch config must never leak fixture host workspace paths"
         );
     }
-
 }
