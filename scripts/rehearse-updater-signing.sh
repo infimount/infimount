@@ -42,7 +42,11 @@ pub="$(cat "$pub_file")"
 [[ "$pub" != *PRIVATE* ]] || { echo 'updater rehearsal: public key output looked private' >&2; exit 1; }
 rm -f "$generate_log"
 for platform in "${payloads[@]}"; do
-  file="$OUT/payloads/Infimount-${platform}.tar.gz"
+  extension="tar.gz"
+  if [[ "$platform" == "windows-x86_64" ]]; then
+    extension="msi"
+  fi
+  file="$OUT/payloads/Infimount-${platform}.${extension}"
   printf 'Infimount rehearsal %s\n' "$platform" > "$file"
   env -u TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PATH="$key" TAURI_SIGNING_PRIVATE_KEY_PASSWORD=rehearsal \
     pnpm --dir "$ROOT_DIR/apps/desktop" tauri signer sign "$file" >/dev/null
@@ -55,7 +59,8 @@ import json, pathlib, sys
 out=pathlib.Path(sys.argv[1]); pub=sys.argv[2]
 platforms={}
 for p in ('linux-x86_64','darwin-x86_64','windows-x86_64'):
- f=out/'payloads'/f'Infimount-{p}.tar.gz'; platforms[p]={'url':f'http://127.0.0.1:0/v0.8.0-rc.1/{f.name}','signature':(f.with_name(f.name+'.sig')).read_text().strip()}
+ ext='msi' if p.startswith('windows-') else 'tar.gz'
+ f=out/'payloads'/f'Infimount-{p}.{ext}'; platforms[p]={'url':f'http://127.0.0.1:0/v0.8.0-rc.1/{f.name}','signature':(f.with_name(f.name+'.sig')).read_text().strip()}
 (out/'latest.json').write_text(json.dumps({'version':'0.8.0-rc.1','platforms':platforms},indent=2)+'\n')
 (out/'signing/public.key').write_text(pub)
 PY
