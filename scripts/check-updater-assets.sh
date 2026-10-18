@@ -19,6 +19,8 @@ jq -e --arg version "$EXPECTED_VERSION" --arg tag "v$EXPECTED_VERSION" '
   ([.platforms | keys[] | startswith("linux-")] | any) and
   ([.platforms | keys[] | startswith("darwin-")] | any) and
   ([.platforms | keys[] | startswith("windows-")] | any) and
+  ([.platforms | to_entries[] | select(.key | startswith("windows-")) |
+    .value.url | (endswith(".msi") or endswith(".exe"))] | all) and
   ([.platforms[] |
     (.signature | type == "string" and length > 0) and
     (.url | type == "string" and startswith("https://github.com/infimount/infimount/releases/download/" + $tag + "/")) and
