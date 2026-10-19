@@ -142,6 +142,20 @@ signtool verify /pa /all /v Infimount-setup.exe
 
 The updater public key is embedded in `apps/desktop/src-tauri/tauri.conf.json`; updater signatures are produced only from the corresponding protected private key. Platform sidecar copies are used only to produce and validate the SBOM and are not published as standalone downloads. Installed sidecars live inside each platform's application resources (for example, `Infimount.app/Contents/MacOS/mcp` on macOS and the Infimount installation directory on Windows/Linux), not on the user's `PATH`.
 
+### Tauri v2 updater: no legacy ZIP bundles
+
+Infimount intentionally disables `tauri-plugin-updater`'s default legacy `zip` feature and explicitly retains `rustls-tls`. This removes the vulnerable ZIP 4 dependency implicated in RUSTSEC-2026-0367, -0368, and -0369 without weakening updater signature verification or HTTPS. The upstream updater v2.10.1 Windows path accepts a direct signed MSI or NSIS EXE; only the legacy compressed-bundle handler uses ZIP extraction.
+
+The release contract is:
+
+- `bundle.createUpdaterArtifacts` remains `true` (Tauri v2 format), not `v1Compatible`.
+- Windows entries in `latest.json` must reference a signed direct `.msi` or `.exe` payload, never `.zip`.
+- Linux v2 uses direct signed AppImage or other supported native package types; macOS retains its signed app archive handling.
+- `scripts/check-updater-no-legacy-zip.sh` fails if the deprecated ZIP dependency or default feature returns; `scripts/check-updater-assets.sh` enforces Windows URLs in the signed release metadata.
+- Windows updater compilation must pass on the pinned Rust MSRV, and the full Release/Post Release Validation gates must still verify updater signatures and installation/upgrade behavior before publication.
+
+This intentionally stops accepting **legacy Tauri v1 ZIP updater packages** in the desktop updater. It does not disable the Windows MSI/NSIS installer, HTTPS requests, or cryptographic updater signatures. Do not re-enable ZIP merely to support historical archives; escalate any legacy-user migration requirement as a separate reviewed security design.
+
 ## 5. Post-release checks
 
 The `Post Release Validation` workflow runs automatically after a successful `Release` workflow completes and validates the exact tag that workflow built. It also retains the `release: published` trigger for releases published outside the canonical release workflow and supports manual dispatch. The successful `Release` workflow trigger is required because events created with the repository `GITHUB_TOKEN` do not normally start another Actions workflow. The post-release workflow verifies tag-specific release links, release/docs consistency, the published release-note marker, re-downloaded assets and updater signatures, and stable-only Homebrew checksum resolution.

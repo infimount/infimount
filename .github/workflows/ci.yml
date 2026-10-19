@@ -85,6 +85,33 @@ jobs:
       - name: Check workspace with exact MSRV
         run: cargo +1.94.0 check --workspace --all-targets --locked
 
+
+  updater-windows-v2:
+    name: Windows v2 Updater (ZIP-free)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust 1.94.0
+        uses: dtolnay/rust-toolchain@1.94.0
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-updater-v2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Prepare verified Windows MCP sidecar
+        run: node scripts/prepare-mcp-sidecar.mjs
+
+      - name: Compile Windows desktop with v2 updater and no legacy ZIP
+        run: cargo +1.94.0 check -p infimount --target x86_64-pc-windows-msvc --locked
+
   check-rust:
     name: Rust Core & Tauri
     runs-on: ubuntu-latest

@@ -12,7 +12,8 @@ python3 - "$OUT/latest.json" "$OUT" "$VERSION" <<'PY'
 import json,pathlib,sys
 out=pathlib.Path(sys.argv[2]); version=sys.argv[3]; p={}
 for platform in ('linux-x86_64','darwin-x86_64','windows-x86_64'):
- f=out/f'Infimount-{platform}.tar.gz'; p[platform]={'url':f'https://github.com/infimount/infimount/releases/download/v{version}/{f.name}','signature':(out/f'{f.name}.sig').read_text().strip()}
+ ext='msi' if platform.startswith('windows-') else 'tar.gz'
+ f=out/f'Infimount-{platform}.{ext}'; p[platform]={'url':f'https://github.com/infimount/infimount/releases/download/v{version}/{f.name}','signature':(out/f'{f.name}.sig').read_text().strip()}
 pathlib.Path(sys.argv[1]).write_text(json.dumps({'version':version,'platforms':p},indent=2)+'\n')
 PY
 bash "$ROOT_DIR/scripts/rehearse-sbom.sh" "$OUT" "$VERSION"
