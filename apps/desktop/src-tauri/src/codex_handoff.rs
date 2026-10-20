@@ -47,13 +47,9 @@ pub async fn launch_agent_task_in_codex(
 ) -> Result<AgentTaskCodexHandoffOutput, CoreError> {
     // The trusted common preflight preserves the complete v0.8.1 scope, policy,
     // source immutability and digest checks. Codex is only the execution adapter.
-    let prepared = prepare_agent_task_handoff(
-        &state,
-        "Codex",
-        &request.workspace_id,
-        &request.task_id,
-    )
-    .await?;
+    let prepared =
+        prepare_agent_task_handoff(&state, "Codex", &request.workspace_id, &request.task_id)
+            .await?;
 
     let sidecar = crate::activation_probe::verified_sidecar_path().map_err(|_| {
         CoreError::Config("The verified Infimount MCP sidecar is unavailable".into())
@@ -362,8 +358,10 @@ fn launch_codex_terminal(_args: &[String], neutral_cwd: &Path) -> Result<(), Cor
 #[cfg(test)]
 mod tests {
     use super::*;
-    use infimount_core::agent_tasks::{AgentTaskInput, AgentTaskManifest, AGENT_TASK_SCHEMA_VERSION};
     use crate::agent_task_handoff::expected_prepared_input_paths;
+    use infimount_core::agent_tasks::{
+        AgentTaskInput, AgentTaskManifest, AGENT_TASK_SCHEMA_VERSION,
+    };
 
     fn test_scope() -> infimount_mcp::AgentTaskScope {
         infimount_mcp::AgentTaskScope::new(
