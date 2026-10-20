@@ -695,10 +695,10 @@ mod tests {
     fn no_unknown_missing_duplicate_or_sensitive_fields() {
         let original = prepared();
         let mut value = serde_json::to_value(&original).unwrap();
-        value.as_object_mut().unwrap().insert(
-            "sourceHostPath".into(),
-            serde_json::json!("/private/path"),
-        );
+        value
+            .as_object_mut()
+            .unwrap()
+            .insert("sourceHostPath".into(), serde_json::json!("/private/path"));
         assert!(AgentTaskExecutionRecord::parse(&serde_json::to_vec(&value).unwrap()).is_err());
         value.as_object_mut().unwrap().remove("sourceHostPath");
 
@@ -834,7 +834,7 @@ mod tests {
         aborted.finished_at = Some("2026-10-16T10:18:00Z".into());
         aborted.error_code = Some("ERR_USER_CANCELLED".into());
         store.transition(&original, &aborted).unwrap();
-        assert!(store.transition(&aborted, &running(&aborted)).is_err());
+        assert!(store.transition(&aborted, &running(&original)).is_err());
 
         let mut invalid_reason = original.clone();
         invalid_reason.status = ExecutionStatus::Failed;
