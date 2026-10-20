@@ -148,7 +148,7 @@ fn invalid<T>(reason: &str) -> Result<T> {
 
 fn valid_id(id: &str) -> bool {
     Uuid::parse_str(id).is_ok_and(|parsed| {
-        parsed.to_string() == id && parsed.get_version_num() >= 1 && parsed.get_version_num() <= 8
+        parsed.to_string() == id && (1..=8).contains(&parsed.get_version_num())
     })
 }
 
@@ -577,7 +577,7 @@ fn is_reparse_point(_meta: &fs::Metadata) -> bool {
 
 fn open_restricted_file(path: &Path) -> Result<File> {
     let mut options = OpenOptions::new();
-    options.read(true).write(true).create(true);
+    options.read(true).write(true).create(true).truncate(false);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
