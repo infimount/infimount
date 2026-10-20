@@ -162,10 +162,12 @@ fn validate_argv(args: &[String], server: &str) -> Result<(), CoreError> {
     let tools = TOOLS.iter().map(|t| format!("mcp__{server}__{t}")).collect::<Vec<_>>();
     let allowed = args.iter().position(|a| a == "--allowedTools")
         .ok_or_else(|| invalid("Claude Code MCP allowlist missing"))?;
-    if args.get(allowed + 1..allowed + 1 + tools.len()) != Some(tools.as_slice())
-        || args.get(allowed + 1 + tools.len()).map(String::as_str) != Some("--print")
+    let print_at = allowed + 1 + tools.len();
+    if args.get(allowed + 1..print_at) != Some(tools.as_slice())
+        || args.get(print_at).map(String::as_str) != Some("--print")
+        || args.len() != print_at + 2
     {
-        return Err(invalid("Claude Code MCP allowlist differs from task scope"));
+        return Err(invalid("Claude Code MCP allowlist or argument tail differs from task scope"));
     }
     if !matches!(args.last(), Some(prompt) if !prompt.is_empty()) {
         return Err(invalid("Claude Code prompt was dropped"));
@@ -239,6 +241,11 @@ mod tests {
 
         let mut args = good_args();
         args.push("mcp__other__delete_path".into());
+        assert!(validate_argv(&args, &name).is_err());
+
+        let mut args = good_args();
+        let pos = args.iter().position(|arg| arg == "--allowedTools").unwrap();
+        args.insert(pos + 1, "mcp__other__read_file".into());
         assert!(validate_argv(&args, &name).is_err());
     }
 
