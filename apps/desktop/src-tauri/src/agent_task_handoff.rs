@@ -9,7 +9,6 @@ use infimount_core::agent_tasks::{
 };
 use infimount_core::workspaces::workspace_schema_supported;
 use infimount_core::{CoreError, SourceKind};
-use infimount_mcp::registry::StorageRecord;
 use infimount_mcp::AgentTaskScope;
 use uuid::Uuid;
 
