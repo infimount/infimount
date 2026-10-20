@@ -46,6 +46,20 @@ export interface PrepareAgentTaskOutput {
   workspaceMcpExposed: boolean;
 }
 
+export type AgentTaskAdapterKind = "codex" | "claude_code" | "opencode" | "gemini_cli" | "pi";
+export type AgentTaskAdapterStatus = "ready" | "not_installed" | "unsupported_client" | "not_implemented";
+
+export interface AgentTaskAdapterCapability {
+  client: AgentTaskAdapterKind;
+  displayName: string;
+  status: AgentTaskAdapterStatus;
+  enabled: boolean;
+  version: string | null;
+  sha256Prefix: string | null;
+  isolationProfile: "mcp_only_readonly_host";
+  message: string;
+}
+
 export interface AgentTaskCodexHandoffOutput {
   client: "codex";
   workspaceId: string;
@@ -186,6 +200,15 @@ export function prepareAgentTask(
   request: AgentTaskPreparationRequest,
 ): Promise<PrepareAgentTaskOutput> {
   return invokeTask<PrepareAgentTaskOutput>("prepare_agent_task", request);
+}
+
+export async function listAgentTaskAdapters(): Promise<AgentTaskAdapterCapability[]> {
+  try {
+    return await tauriInvoke<AgentTaskAdapterCapability[]>("list_agent_task_adapters");
+  } catch (error) {
+    const safe = sanitizeTaskError(error);
+    throw new TauriApiError(safe.message, safe.code);
+  }
 }
 
 export function launchAgentTaskInCodex(

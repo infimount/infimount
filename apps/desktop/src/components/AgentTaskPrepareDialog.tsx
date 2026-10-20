@@ -22,6 +22,8 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import {
   launchAgentTaskInCodex,
+  listAgentTaskAdapters,
+  type AgentTaskAdapterCapability,
   prepareAgentTask,
   preflightAgentTask,
   type AgentTaskPreflightOutput,
@@ -147,6 +149,9 @@ export function AgentTaskPrepareDialog({
   const [codexLaunching, setCodexLaunching] = useState(false);
   const [codexLaunched, setCodexLaunched] = useState(false);
   const [codexLaunchError, setCodexLaunchError] = useState<string | null>(null);
+  const [adapters, setAdapters] = useState<AgentTaskAdapterCapability[]>([]);
+  const [adapterLoading, setAdapterLoading] = useState(false);
+  const [adapterError, setAdapterError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
@@ -189,6 +194,39 @@ export function AgentTaskPrepareDialog({
       })
       .finally(() => setLoadingWorkspaces(false));
   }, [open, prepared, selectedPaths]);
+
+  // Selecting task data remains separate from choosing an execution target.
+  // Probe only after a prepared task exists; do not treat an MCP client
+  // integration snippet as a verified first-class handoff.
+  useEffect(() => {
+    if (!open || !prepared) {
+      setAdapters([]);
+      setAdapterError(null);
+      setAdapterLoading(false);
+      return;
+    }
+    let active = true;
+    setAdapterLoading(true);
+    setAdapterError(null);
+    void listAgentTaskAdapters()
+      .then((value) => {
+        if (active) setAdapters(value);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setAdapters([]);
+        setAdapterError(
+          error instanceof Error ? error.message : "Agent adapters could not be verified.",
+        );
+      })
+      .finally(() => {
+        if (active) setAdapterLoading(false);
+      });
+    return () => { active = false; };
+  }, [open, prepared]);
+
+  const codexAdapter = adapters.find((adapter) => adapter.client === "codex");
+  const codexReady = !adapterLoading && !adapterError && codexAdapter?.enabled === true;
 
   const request = useMemo<AgentTaskPreparationRequest | null>(() => {
     if (!workspaceId || !title.trim() || !objective.trim() || selectedPaths.length === 0) {
@@ -259,7 +297,7 @@ export function AgentTaskPrepareDialog({
   };
 
   const launchCodex = async () => {
-    if (!prepared || codexLaunching || !prepared.workspaceMcpExposed) return;
+    if (!prepared || codexLaunching || !prepared.workspaceMcpExposed || !codexReady) return;
     setCodexLaunching(true);
     setCodexLaunchError(null);
     try {
@@ -320,6 +358,43 @@ export function AgentTaskPrepareDialog({
                 <span>The source storage already has independent MCP exposure. The Codex handoff does not add that access; existing source policy remains authoritative.</span>
               </div>
             ) : null}
+            <div className="rounded-lg border p-3 text-sm" data-testid="agent-task-adapter-status">
+              <div className="mb-2 font-medium">Execution target</div>
+              {adapterLoading ? (
+                <p className="text-xs text-muted-foreground">Checking installed agent adapters…</p>
+              ) : adapterError ? (
+                <p role="alert" className="text-xs text-destructive">{adapterError}</p>
+              ) : adapters.length > 0 ? (
+                <div className="space-y-2">
+                  <Select value="codex" disabled={!codexReady}>
+                    <SelectTrigger aria-label="Agent Task execution target">
+                      <SelectValue placeholder="Select an agent" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {adapters.map((adapter) => (
+                        <SelectItem
+                          key={adapter.client}
+                          value={adapter.client}
+                          disabled={!adapter.enabled}
+                        >
+                          {adapter.displayName}{adapter.enabled ? "" : " (not enabled)"}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {codexAdapter?.version
+                      ? `${codexAdapter.version} · verified executable · ${codexAdapter.isolationProfile.split("_").join(" ")}`
+                      : codexAdapter?.message ?? "No verified Codex installation was found."}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Other clients require their own isolated handoff adapters; general MCP configuration does not enable them.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">No verified agent adapter is available.</p>
+              )}
+            </div>
             {codexLaunched ? (
               <p className="text-sm text-green-700 dark:text-green-300" data-testid="agent-task-codex-launched">
                 Codex handoff opened. This dialog can be closed while Codex works.
@@ -455,7 +530,7 @@ export function AgentTaskPrepareDialog({
           {prepared ? (
             <Button
               onClick={() => void launchCodex()}
-              disabled={!prepared.workspaceMcpExposed || codexLaunching}
+              disabled={!prepared.workspaceMcpExposed || codexLaunching || !codexReady}
             >
               {codexLaunching ? "Opening Codex…" : "Open in Codex"}
             </Button>

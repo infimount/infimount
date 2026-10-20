@@ -5,6 +5,7 @@ import { AgentTaskPrepareDialog } from "./AgentTaskPrepareDialog";
 import { listStorages, listWorkspaces } from "@/lib/api";
 import {
   launchAgentTaskInCodex,
+  listAgentTaskAdapters,
   prepareAgentTask,
   preflightAgentTask,
   type AgentTaskPreflightOutput,
@@ -21,6 +22,7 @@ vi.mock("@/lib/api", async () => {
 
 vi.mock("@/lib/agentTasks", () => ({
   launchAgentTaskInCodex: vi.fn(),
+  listAgentTaskAdapters: vi.fn(),
   preflightAgentTask: vi.fn(),
   prepareAgentTask: vi.fn(),
   reviewAgentTaskOutputs: vi.fn(),
@@ -126,6 +128,28 @@ describe("AgentTaskPrepareDialog", () => {
       sourceMcpExposed: true,
       workspaceMcpExposed: true,
     });
+    vi.mocked(listAgentTaskAdapters).mockResolvedValue([
+      {
+        client: "codex",
+        displayName: "Codex",
+        status: "ready",
+        enabled: true,
+        version: "codex-cli 0.155.1",
+        sha256Prefix: "a".repeat(12),
+        isolationProfile: "mcp_only_readonly_host",
+        message: "Task-scoped MCP",
+      },
+      {
+        client: "claude_code",
+        displayName: "Claude Code",
+        status: "not_implemented",
+        enabled: false,
+        version: null,
+        sha256Prefix: null,
+        isolationProfile: "mcp_only_readonly_host",
+        message: "Not implemented",
+      },
+    ]);
     vi.mocked(launchAgentTaskInCodex).mockResolvedValue({
       client: "codex",
       workspaceId: "workspace-1",
@@ -247,6 +271,48 @@ describe("AgentTaskPrepareDialog", () => {
     expect(screen.queryByText(/0 selected items/)).not.toBeInTheDocument();
   });
 
+
+  it("shows only verified first-class adapters and disables future clients", async () => {
+    renderDialog();
+    await screen.findByText(/Agent Scratch/);
+    fireEvent.change(screen.getByLabelText("What should the agent do?"), {
+      target: { value: "Analyze files." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Review scope" }));
+    await screen.findByTestId("agent-task-preflight");
+    fireEvent.click(screen.getByRole("button", { name: "Prepare task" }));
+    expect(await screen.findByTestId("agent-task-prepared")).toBeInTheDocument();
+    expect(await screen.findByText(/verified executable/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open in Codex" })).toBeEnabled();
+  });
+
+  it("disables Codex handoff if executable verification fails", async () => {
+    vi.mocked(listAgentTaskAdapters).mockResolvedValueOnce([
+      {
+        client: "codex",
+        displayName: "Codex",
+        status: "not_installed",
+        enabled: false,
+        version: null,
+        sha256Prefix: null,
+        isolationProfile: "mcp_only_readonly_host",
+        message: "Codex executable is not verified",
+      },
+    ]);
+    renderDialog();
+    await screen.findByText(/Agent Scratch/);
+    fireEvent.change(screen.getByLabelText("What should the agent do?"), {
+      target: { value: "Analyze files." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Review scope" }));
+    await screen.findByTestId("agent-task-preflight");
+    fireEvent.click(screen.getByRole("button", { name: "Prepare task" }));
+    expect(await screen.findByTestId("agent-task-prepared")).toBeInTheDocument();
+    await screen.findByText(/Codex executable is not verified/);
+    expect(screen.getByRole("button", { name: "Open in Codex" })).toBeDisabled();
+    expect(launchAgentTaskInCodex).not.toHaveBeenCalled();
+  });
+
   it("hands the committed task to Codex by workspace and task id", async () => {
     renderDialog();
     await screen.findByText(/Agent Scratch/);
@@ -257,6 +323,7 @@ describe("AgentTaskPrepareDialog", () => {
     await screen.findByTestId("agent-task-preflight");
     fireEvent.click(screen.getByRole("button", { name: "Prepare task" }));
     await screen.findByTestId("agent-task-prepared");
+    expect(await screen.findByText(/verified executable/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Open in Codex" }));
 
