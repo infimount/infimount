@@ -535,7 +535,6 @@ pub fn validate_local_mcp_path_for_operation(
     Ok(())
 }
 
-
 fn deny_private_execution_path(
     storage_root: &Path,
     backend_relative: &str,
@@ -1000,7 +999,10 @@ mod local_confinement_regression_tests {
         let protected = storage_root.join(".infimount/agent-task-executions");
         for (root, relative) in [
             (storage_root, ".infimount/agent-task-executions"),
-            (storage_root, ".infimount/agent-task-executions/abc/task.json"),
+            (
+                storage_root,
+                ".infimount/agent-task-executions/abc/task.json",
+            ),
             (protected.as_path(), ""),
         ] {
             let err = deny_private_execution_path(root, relative, &protected, false).unwrap_err();
@@ -1013,25 +1015,17 @@ mod local_confinement_regression_tests {
             false,
         )
         .unwrap();
-        deny_private_execution_path(storage_root, ".infimount/settings.json", &protected, false).unwrap();
+        deny_private_execution_path(storage_root, ".infimount/settings.json", &protected, false)
+            .unwrap();
         deny_private_execution_path(storage_root, "project/readme.md", &protected, false).unwrap();
         // Reading the parent remains possible, but an agent cannot delete or
         // move a parent directory containing protected evidence.
-        deny_private_execution_path(
-            storage_root,
-            ".infimount",
-            &protected,
-            false,
-        )
-        .unwrap();
+        deny_private_execution_path(storage_root, ".infimount", &protected, false).unwrap();
         assert_eq!(
             deny_private_execution_path(storage_root, ".infimount", &protected, true)
                 .unwrap_err()
                 .code,
             McpErrorCode::ERR_MCP_POLICY_DENIED
         );
-
     }
-
-
 }
