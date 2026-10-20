@@ -5,6 +5,7 @@
 
 mod activation_probe;
 mod app_settings;
+mod agent_task_handoff;
 mod client_integrations;
 mod codex_handoff;
 mod commands;
