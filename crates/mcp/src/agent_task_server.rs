@@ -302,9 +302,7 @@ impl AgentTaskMcpServer {
             if !enabled_tools.contains(required) {
                 return Err(err(
                     McpErrorCode::ERR_MCP_POLICY_DENIED,
-                    format!(
-                        "Agent Task handoff requires the {required} MCP tool to be enabled"
-                    ),
+                    format!("Agent Task handoff requires the {required} MCP tool to be enabled"),
                 ));
             }
         }
