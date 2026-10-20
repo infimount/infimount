@@ -1,5 +1,6 @@
 pub mod agent_task_io;
 pub mod agent_tasks;
+pub mod agent_task_executions;
 pub mod atomic_file;
 pub mod backup;
 pub mod config;
