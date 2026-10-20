@@ -41,6 +41,8 @@ pub struct AppState {
     pub pending_oauth: PendingOAuthStore,
     pub workspaces: WorkspaceRegistry,
     /// Private execution evidence; never included in agent-facing MCP context.
+    /// A2 provisions this field; later adapter lifecycle work connects it to runs.
+    #[allow(dead_code)]
     pub execution_records: ExecutionRecordStore,
     pub product_events: ProductEventStore,
     pub operator_cache: OperatorCache,
