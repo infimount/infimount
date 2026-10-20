@@ -325,8 +325,11 @@ pub(crate) fn create_neutral_handoff_directory(client_name: &str) -> Result<Path
         client_name.to_ascii_lowercase(),
         Uuid::new_v4()
     ));
-    fs::create_dir(&path)
-        .map_err(|_| CoreError::Config(format!("failed to create the {client_name} handoff directory")))?;
+    fs::create_dir(&path).map_err(|_| {
+        CoreError::Config(format!(
+            "failed to create the {client_name} handoff directory"
+        ))
+    })?;
 
     #[cfg(unix)]
     {
@@ -338,7 +341,9 @@ pub(crate) fn create_neutral_handoff_directory(client_name: &str) -> Result<Path
         });
         if permissions_result.is_err() {
             cleanup_neutral_directory(&path);
-            return Err(CoreError::Config(format!("failed to secure the {client_name} handoff directory")));
+            return Err(CoreError::Config(format!(
+                "failed to secure the {client_name} handoff directory"
+            )));
         }
     }
 
@@ -349,12 +354,15 @@ pub(crate) fn cleanup_neutral_directory(path: &Path) {
     let _ = fs::remove_dir_all(path);
 }
 
-pub(crate) fn agent_task_prompt(workspace_name: &str, task_path: &str, outputs_path: &str) -> String {
+pub(crate) fn agent_task_prompt(
+    workspace_name: &str,
+    task_path: &str,
+    outputs_path: &str,
+) -> String {
     format!(
         "Complete the prepared Infimount Agent Task using only the required task-scoped Infimount MCP server for task file access. Work only in Agent Workspace {workspace_name:?} at MCP path {task_path:?}. Read TASK.md through Infimount and treat inputs/ plus task metadata as immutable. Infimount enforces writes only under {outputs_path:?}; use write_file (with create_parents when needed) for deliverables. Stop when the deliverables are ready for review in Infimount. Do not publish outputs. Do not search for or use host filesystem paths to bypass the task boundary."
     )
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -362,7 +370,14 @@ mod tests {
 
     #[test]
     fn rejects_unsafe_client_directory_labels() {
-        for label in ["", "../codex", "claude/code", "codex\\\\escape", "a b", "a.b"] {
+        for label in [
+            "",
+            "../codex",
+            "claude/code",
+            "codex\\\\escape",
+            "a b",
+            "a.b",
+        ] {
             assert!(create_neutral_handoff_directory(label).is_err(), "{label}");
         }
     }
