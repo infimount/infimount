@@ -284,7 +284,7 @@ fn capture_stdout(pipe: impl Read, cap: usize) -> String {
     String::from_utf8_lossy(&buf).into_owned()
 }
 
-fn run_with_timeout(
+pub(crate) fn run_with_timeout(
     executable: &Path,
     args: &[String],
     timeout: Duration,

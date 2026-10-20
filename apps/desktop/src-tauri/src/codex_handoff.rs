@@ -6,6 +6,7 @@ use infimount_core::CoreError;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use crate::agent_adapters::{require_codex, AgentLaunchPlan, ExecutableIdentity};
 use crate::agent_task_handoff::{
     agent_task_prompt as codex_task_prompt, cleanup_neutral_directory,
     create_neutral_handoff_directory, prepare_agent_task_handoff,
@@ -59,15 +60,26 @@ pub async fn launch_agent_task_in_codex(
         &prepared.mcp_task_path,
         &prepared.mcp_outputs_path,
     );
+    // Detection and executable hashing run outside the async UI thread.
+    // Only the registry's verified Codex adapter is authorized to launch.
+    let identity = tokio::task::spawn_blocking(require_codex)
+        .await
+        .map_err(|_| CoreError::Config("Agent Task adapter detection failed".into()))??;
     let neutral_cwd = create_neutral_handoff_directory("Codex")?;
-    let args = match codex_arguments(&sidecar, &neutral_cwd, &prompt, &prepared.scope) {
-        Ok(args) => args,
+    let plan = match codex_arguments(&sidecar, &neutral_cwd, &prompt, &prepared.scope)
+        .and_then(|args| AgentLaunchPlan::codex(identity, args))
+    {
+        Ok(plan) => plan,
         Err(error) => {
             cleanup_neutral_directory(&neutral_cwd);
             return Err(error);
         }
     };
-    launch_codex_terminal(&args, &neutral_cwd)?;
+    if let Err(error) = plan.revalidate() {
+        cleanup_neutral_directory(&neutral_cwd);
+        return Err(error);
+    }
+    launch_codex_terminal(&plan.args, &neutral_cwd, &plan.executable)?;
 
     Ok(AgentTaskCodexHandoffOutput {
         client: CODEX_CLIENT_NAME,
@@ -213,23 +225,37 @@ fn shell_quote(value: &str) -> String {
 }
 
 #[cfg(unix)]
-fn render_posix_codex_command(args: &[String]) -> String {
+fn render_posix_codex_command(args: &[String], identity: &ExecutableIdentity) -> String {
     let rendered_args = args
         .iter()
         .map(|value| shell_quote(value))
         .collect::<Vec<_>>()
         .join(" ");
+    let path = shell_quote(&identity.executable.to_string_lossy());
+    let expected = shell_quote(&identity.sha256);
+    // Bound the actual executable in the spawned login shell to the digest
+    // rechecked by Rust before terminal creation. The CLI remains the only
+    // host executable; the model still has only task-scoped MCP file tools.
     format!(
-        "codex_bin=$(command -v codex 2>/dev/null || true); if [ -z \"$codex_bin\" ] || [ ! -f \"$codex_bin\" ] || [ ! -x \"$codex_bin\" ]; then printf '%s\\n' 'Codex CLI executable was not found in your login shell. Install or configure Codex, then retry from Infimount.'; \"${{SHELL:-/bin/sh}}\" -l; exit 127; fi; \"$codex_bin\" {rendered_args}"
+        "codex_bin={path}; if [ ! -f \"$codex_bin\" ] || [ ! -x \"$codex_bin\" ]; then printf '%s\\n' 'Verified Codex CLI is unavailable; inspect Agent Task adapters.'; exit 127; fi; \
+         if command -v sha256sum >/dev/null 2>&1; then actual=$(sha256sum \"$codex_bin\" | awk '{{print $1}}'); \
+         elif command -v shasum >/dev/null 2>&1; then actual=$(shasum -a 256 \"$codex_bin\" | awk '{{print $1}}'); \
+         else printf '%s\\n' 'A SHA-256 verification tool is required for Codex handoff.'; exit 127; fi; \
+         if [ \"$actual\" != {expected} ]; then printf '%s\\n' 'Codex executable changed after capability check; handoff cancelled.'; exit 126; fi; \
+         \"$codex_bin\" {rendered_args}"
     )
 }
 
 #[cfg(unix)]
-fn write_posix_launcher(args: &[String], neutral_cwd: &Path) -> Result<PathBuf, CoreError> {
+fn write_posix_launcher(
+    args: &[String],
+    neutral_cwd: &Path,
+    identity: &ExecutableIdentity,
+) -> Result<PathBuf, CoreError> {
     use std::os::unix::fs::PermissionsExt;
 
     let script = neutral_cwd.join("launch.command");
-    let command = render_posix_codex_command(args);
+    let command = render_posix_codex_command(args, identity);
     let cleanup_dir = shell_quote(&neutral_cwd.to_string_lossy());
     let body = format!(
         "#!/bin/sh\nscript_path=$0\nrm -f -- \"$script_path\"\ncleanup() {{ rm -rf -- {cleanup_dir} 2>/dev/null || true; }}\ntrap cleanup EXIT HUP INT TERM\n\"${{SHELL:-/bin/sh}}\" -lic {}\nstatus=$?\ntrap - EXIT HUP INT TERM\ncleanup\nexit $status\n",
@@ -255,8 +281,12 @@ fn write_posix_launcher(args: &[String], neutral_cwd: &Path) -> Result<PathBuf, 
 }
 
 #[cfg(target_os = "linux")]
-fn launch_codex_terminal(args: &[String], neutral_cwd: &Path) -> Result<(), CoreError> {
-    let script = match write_posix_launcher(args, neutral_cwd) {
+fn launch_codex_terminal(
+    args: &[String],
+    neutral_cwd: &Path,
+    identity: &ExecutableIdentity,
+) -> Result<(), CoreError> {
+    let script = match write_posix_launcher(args, neutral_cwd, identity) {
         Ok(script) => script,
         Err(error) => {
             cleanup_neutral_directory(neutral_cwd);
@@ -285,8 +315,12 @@ fn launch_codex_terminal(args: &[String], neutral_cwd: &Path) -> Result<(), Core
 }
 
 #[cfg(target_os = "macos")]
-fn launch_codex_terminal(args: &[String], neutral_cwd: &Path) -> Result<(), CoreError> {
-    let script = match write_posix_launcher(args, neutral_cwd) {
+fn launch_codex_terminal(
+    args: &[String],
+    neutral_cwd: &Path,
+    identity: &ExecutableIdentity,
+) -> Result<(), CoreError> {
+    let script = match write_posix_launcher(args, neutral_cwd, identity) {
         Ok(script) => script,
         Err(error) => {
             cleanup_neutral_directory(neutral_cwd);
@@ -309,7 +343,11 @@ fn launch_codex_terminal(args: &[String], neutral_cwd: &Path) -> Result<(), Core
 }
 
 #[cfg(target_os = "windows")]
-fn launch_codex_terminal(args: &[String], neutral_cwd: &Path) -> Result<(), CoreError> {
+fn launch_codex_terminal(
+    args: &[String],
+    neutral_cwd: &Path,
+    identity: &ExecutableIdentity,
+) -> Result<(), CoreError> {
     use std::os::windows::process::CommandExt;
 
     const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
@@ -320,8 +358,13 @@ fn launch_codex_terminal(args: &[String], neutral_cwd: &Path) -> Result<(), Core
         .collect::<Vec<_>>()
         .join(", ");
     let neutral = format!("'{}'", neutral_cwd.to_string_lossy().replace('\'', "''"));
+    let expected_path = format!(
+        "'{}'",
+        identity.executable.to_string_lossy().replace('\'', "''")
+    );
+    let expected_digest = format!("'{}'", identity.sha256);
     let body = format!(
-        "$handoffDir = {neutral}\r\n$scriptPath = $PSCommandPath\r\ntry {{\r\n  Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue\r\n  $codex = Get-Command codex -ErrorAction SilentlyContinue\r\n  if (-not $codex -or $codex.CommandType -notin @('Application', 'ExternalScript')) {{ Write-Host 'Codex CLI executable was not found. Install or configure Codex, then retry from Infimount.'; return }}\r\n  $codexArgs = @({rendered_args})\r\n  & $codex.Source @codexArgs\r\n}} finally {{\r\n  Remove-Item -LiteralPath $handoffDir -Recurse -Force -ErrorAction SilentlyContinue\r\n}}\r\n"
+        "$handoffDir = {neutral}\r\n$scriptPath = $PSCommandPath\r\n$expectedPath = {expected_path}\r\n$expectedDigest = {expected_digest}\r\ntry {{\r\n  Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue\r\n  if (-not (Test-Path -LiteralPath $expectedPath -PathType Leaf)) {{ Write-Host 'Verified Codex executable is no longer available; handoff cancelled.'; return }}\r\n  $actualDigest = (Get-FileHash -LiteralPath $expectedPath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()\r\n  if ($actualDigest -ne $expectedDigest) {{ Write-Host 'Codex executable changed after capability check; handoff cancelled.'; return }}\r\n  $codexArgs = @({rendered_args})\r\n  & $expectedPath @codexArgs\r\n}} finally {{\r\n  Remove-Item -LiteralPath $handoffDir -Recurse -Force -ErrorAction SilentlyContinue\r\n}}\r\n"
     );
     let mut bytes = vec![0xEF, 0xBB, 0xBF];
     bytes.extend_from_slice(body.as_bytes());
@@ -348,7 +391,11 @@ fn launch_codex_terminal(args: &[String], neutral_cwd: &Path) -> Result<(), Core
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-fn launch_codex_terminal(_args: &[String], neutral_cwd: &Path) -> Result<(), CoreError> {
+fn launch_codex_terminal(
+    _args: &[String],
+    neutral_cwd: &Path,
+    _identity: &ExecutableIdentity,
+) -> Result<(), CoreError> {
     cleanup_neutral_directory(neutral_cwd);
     Err(CoreError::Config(
         "Codex handoff is not supported on this operating system".into(),
@@ -358,6 +405,14 @@ fn launch_codex_terminal(_args: &[String], neutral_cwd: &Path) -> Result<(), Cor
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_executable_identity() -> ExecutableIdentity {
+        ExecutableIdentity {
+            executable: PathBuf::from("/opt/Infimount/verified-codex"),
+            sha256: "a".repeat(64),
+            reported_version: "codex-cli 0.155.1".into(),
+        }
+    }
     use crate::agent_task_handoff::expected_prepared_input_paths;
     use infimount_core::agent_tasks::{
         AgentTaskInput, AgentTaskManifest, AGENT_TASK_SCHEMA_VERSION,
@@ -499,13 +554,19 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn posix_launcher_quotes_every_codex_argument_and_keeps_cleanup_owner() {
-        let rendered = render_posix_codex_command(&[
-            "exec".into(),
-            "-C".into(),
-            "/tmp/a path".into(),
-            "prompt with ' quote".into(),
-        ]);
+        let identity = test_executable_identity();
+        let rendered = render_posix_codex_command(
+            &[
+                "exec".into(),
+                "-C".into(),
+                "/tmp/a path".into(),
+                "prompt with ' quote".into(),
+            ],
+            &identity,
+        );
         assert!(rendered.contains("\"$codex_bin\""));
+        assert!(rendered.contains("Codex executable changed after capability check"));
+        assert!(rendered.contains(&identity.sha256));
         assert!(rendered.contains("'/tmp/a path'"));
         assert!(rendered.contains("'prompt with '\"'\"' quote'"));
         assert!(!rendered.contains("exec codex"));
@@ -513,7 +574,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let handoff = temp.path().join("handoff");
         fs::create_dir(&handoff).unwrap();
-        let launcher = write_posix_launcher(&["prompt".into()], &handoff).unwrap();
+        let launcher = write_posix_launcher(&["prompt".into()], &handoff, &identity).unwrap();
         let body = fs::read_to_string(launcher).unwrap();
         assert!(body.contains("trap cleanup EXIT HUP INT TERM"));
         assert!(!body.contains("exec \"${SHELL:-/bin/sh}\" -lic"));

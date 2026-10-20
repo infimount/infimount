@@ -4,6 +4,7 @@
 )]
 
 mod activation_probe;
+mod agent_adapters;
 mod agent_task_handoff;
 mod app_settings;
 mod client_integrations;
@@ -167,6 +168,7 @@ fn main() {
             commands::review_agent_task_outputs,
             commands::preview_agent_task_publication,
             commands::publish_agent_task_outputs,
+            agent_adapters::list_agent_task_adapters,
             codex_handoff::launch_agent_task_in_codex,
             commands::save_wizard_state,
             commands::set_telemetry_consent,
