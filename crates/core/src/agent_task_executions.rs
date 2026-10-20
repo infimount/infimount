@@ -141,23 +141,26 @@ const REQUIRED_FIELDS: [&str; 21] = [
 ];
 
 fn invalid<T>(reason: &str) -> Result<T> {
-    Err(CoreError::Config(format!("invalid Agent Task execution evidence: {reason}")))
+    Err(CoreError::Config(format!(
+        "invalid Agent Task execution evidence: {reason}"
+    )))
 }
 
 fn valid_id(id: &str) -> bool {
-    Uuid::parse_str(id)
-        .is_ok_and(|parsed| parsed.to_string() == id && parsed.get_version_num() >= 1
-            && parsed.get_version_num() <= 8)
+    Uuid::parse_str(id).is_ok_and(|parsed| {
+        parsed.to_string() == id && parsed.get_version_num() >= 1 && parsed.get_version_num() <= 8
+    })
 }
 
 fn valid_sha(value: &str) -> bool {
     value.len() == 64
-        && value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 fn valid_timestamp(value: &str) -> bool {
-    value.len() <= 48
-        && DateTime::parse_from_rfc3339(value).is_ok()
+    value.len() <= 48 && DateTime::parse_from_rfc3339(value).is_ok()
 }
 
 impl AgentTaskExecutionRecord {
@@ -165,7 +168,10 @@ impl AgentTaskExecutionRecord {
         if self.schema_version != EXECUTION_SCHEMA_VERSION {
             return invalid("unsupported schema version");
         }
-        if !valid_id(&self.execution_id) || !valid_id(&self.task_id) || !valid_id(&self.workspace_id) {
+        if !valid_id(&self.execution_id)
+            || !valid_id(&self.task_id)
+            || !valid_id(&self.workspace_id)
+        {
             return invalid("IDs must be canonical lowercase RFC 4122 UUIDs");
         }
         if self.adapter_version.is_empty()
@@ -175,7 +181,10 @@ impl AgentTaskExecutionRecord {
             return invalid("invalid adapter version");
         }
         if !valid_timestamp(&self.started_at)
-            || self.finished_at.as_deref().is_some_and(|s| !valid_timestamp(s))
+            || self
+                .finished_at
+                .as_deref()
+                .is_some_and(|s| !valid_timestamp(s))
         {
             return invalid("timestamps must be bounded RFC3339 values");
         }
@@ -190,8 +199,14 @@ impl AgentTaskExecutionRecord {
         }
         if !valid_sha(&self.task_scope_digest)
             || !valid_sha(&self.prompt_sha256)
-            || self.executable_sha256.as_deref().is_some_and(|s| !valid_sha(s))
-            || self.output_aggregate_sha256.as_deref().is_some_and(|s| !valid_sha(s))
+            || self
+                .executable_sha256
+                .as_deref()
+                .is_some_and(|s| !valid_sha(s))
+            || self
+                .output_aggregate_sha256
+                .as_deref()
+                .is_some_and(|s| !valid_sha(s))
         {
             return invalid("hashes must be 64 lowercase hex characters");
         }
@@ -199,7 +214,11 @@ impl AgentTaskExecutionRecord {
             return invalid("too many enabled task tools");
         }
         let mut tools = HashSet::new();
-        if self.enabled_task_tools.iter().any(|tool| !tools.insert(*tool)) {
+        if self
+            .enabled_task_tools
+            .iter()
+            .any(|tool| !tools.insert(*tool))
+        {
             return invalid("duplicate enabled task tool");
         }
         if self.output_file_count > MAX_EXECUTION_FILES
@@ -218,7 +237,9 @@ impl AgentTaskExecutionRecord {
             if error.len() > 64
                 || !error.starts_with("ERR_")
                 || error.len() < 5
-                || !error[4..].bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+                || !error[4..]
+                    .bytes()
+                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
             {
                 return invalid("unsafe error code");
             }
@@ -226,9 +247,9 @@ impl AgentTaskExecutionRecord {
         if let Some(provider_id) = &self.provider_execution_id {
             if provider_id.is_empty()
                 || provider_id.len() > 128
-                || !provider_id.bytes().all(|b| {
-                    b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-')
-                })
+                || !provider_id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-'))
             {
                 return invalid("unsafe provider execution id");
             }
@@ -237,8 +258,11 @@ impl AgentTaskExecutionRecord {
             RuntimeKind::LocalClient => {
                 if !matches!(
                     self.adapter_kind,
-                    AdapterKind::Codex | AdapterKind::ClaudeCode | AdapterKind::Opencode
-                        | AdapterKind::GeminiCli | AdapterKind::Pi
+                    AdapterKind::Codex
+                        | AdapterKind::ClaudeCode
+                        | AdapterKind::Opencode
+                        | AdapterKind::GeminiCli
+                        | AdapterKind::Pi
                 ) || self.runtime_provider.is_some()
                     || self.executable_sha256.is_none()
                     || self.provider_execution_id.is_some()
@@ -264,7 +288,8 @@ impl AgentTaskExecutionRecord {
         }
         match self.status {
             ExecutionStatus::Prepared | ExecutionStatus::Running => {
-                if self.finished_at.is_some() || self.error_code.is_some()
+                if self.finished_at.is_some()
+                    || self.error_code.is_some()
                     || self.output_file_count != 0
                 {
                     return invalid("unfinished execution has final state or outputs");
@@ -292,11 +317,13 @@ impl AgentTaskExecutionRecord {
         }
         let record: Self = serde_json::from_slice(bytes)?;
         let value: serde_json::Value = serde_json::from_slice(bytes)?;
-        let object = value.as_object().ok_or_else(|| {
-            CoreError::Config("execution evidence must be a JSON object".into())
-        })?;
+        let object = value
+            .as_object()
+            .ok_or_else(|| CoreError::Config("execution evidence must be a JSON object".into()))?;
         if object.len() != REQUIRED_FIELDS.len()
-            || REQUIRED_FIELDS.iter().any(|field| !object.contains_key(*field))
+            || REQUIRED_FIELDS
+                .iter()
+                .any(|field| !object.contains_key(*field))
         {
             return invalid("all 21 schema fields must be present");
         }
@@ -371,7 +398,9 @@ pub struct ExecutionRecordStore {
 
 impl ExecutionRecordStore {
     pub fn new(config_dir: &Path) -> Self {
-        Self { root: private_execution_root(config_dir) }
+        Self {
+            root: private_execution_root(config_dir),
+        }
     }
 
     pub fn root(&self) -> &Path {
@@ -382,7 +411,11 @@ impl ExecutionRecordStore {
         if !valid_id(workspace) || !valid_id(task) || !valid_id(execution) {
             return invalid("invalid execution record path identifier");
         }
-        Ok(self.root.join(workspace).join(task).join(format!("{execution}.json")))
+        Ok(self
+            .root
+            .join(workspace)
+            .join(task)
+            .join(format!("{execution}.json")))
     }
 
     fn ensure_layout(&self) -> Result<()> {
@@ -408,8 +441,9 @@ impl ExecutionRecordStore {
         loop {
             match file.try_lock_exclusive() {
                 Ok(()) => return Ok(file),
-                Err(error) if error.kind() == ErrorKind::WouldBlock
-                    && Instant::now() < deadline => {
+                Err(error)
+                    if error.kind() == ErrorKind::WouldBlock && Instant::now() < deadline =>
+                {
                     thread::sleep(Duration::from_millis(25));
                 }
                 Err(error) if error.kind() == ErrorKind::WouldBlock => {
@@ -425,13 +459,12 @@ impl ExecutionRecordStore {
         if record.status != ExecutionStatus::Prepared {
             return invalid("new executions must begin in prepared state");
         }
-        let path = self.checked_record_path(
-            &record.workspace_id, &record.task_id, &record.execution_id
-        )?;
+        let path =
+            self.checked_record_path(&record.workspace_id, &record.task_id, &record.execution_id)?;
         let _lock = self.lock()?;
-        let parent = path.parent().ok_or_else(|| {
-            CoreError::Config("execution record has no parent".into())
-        })?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| CoreError::Config("execution record has no parent".into()))?;
         atomic_file::create_dir_all(parent)?;
         ensure_real_directory(parent)?;
         let bytes = serialize_bounded(record)?;
@@ -441,10 +474,16 @@ impl ExecutionRecordStore {
         atomic_create_no_replace(&path, &bytes)
     }
 
-    pub fn read(&self, workspace: &str, task: &str, execution: &str) -> Result<AgentTaskExecutionRecord> {
+    pub fn read(
+        &self,
+        workspace: &str,
+        task: &str,
+        execution: &str,
+    ) -> Result<AgentTaskExecutionRecord> {
         let path = self.checked_record_path(workspace, task, execution)?;
         let record = read_bounded(&path)?;
-        if record.workspace_id != workspace || record.task_id != task
+        if record.workspace_id != workspace
+            || record.task_id != task
             || record.execution_id != execution
         {
             return invalid("execution record is stored under mismatched identifiers");
@@ -461,12 +500,18 @@ impl ExecutionRecordStore {
     ) -> Result<()> {
         expected.validate_transition(next)?;
         let _lock = self.lock()?;
-        let on_disk = self.read(&expected.workspace_id, &expected.task_id, &expected.execution_id)?;
+        let on_disk = self.read(
+            &expected.workspace_id,
+            &expected.task_id,
+            &expected.execution_id,
+        )?;
         if on_disk != *expected {
             return invalid("stale execution evidence revision; reload and retry");
         }
         let path = self.checked_record_path(
-            &expected.workspace_id, &expected.task_id, &expected.execution_id
+            &expected.workspace_id,
+            &expected.task_id,
+            &expected.execution_id,
         )?;
         reject_link_or_nonfile(&path, false)?;
         let bytes = serialize_bounded(next)?;
@@ -493,7 +538,11 @@ fn ensure_real_directory(path: &Path) -> Result<()> {
 
 fn reject_link_or_nonfile(path: &Path, allow_missing: bool) -> Result<()> {
     match fs::symlink_metadata(path) {
-        Ok(meta) if meta.is_file() && !meta.file_type().is_symlink() && !is_reparse_point(&meta) => Ok(()),
+        Ok(meta)
+            if meta.is_file() && !meta.file_type().is_symlink() && !is_reparse_point(&meta) =>
+        {
+            Ok(())
+        }
         Ok(_) => invalid("execution evidence path must be a regular file"),
         Err(error) if allow_missing && error.kind() == ErrorKind::NotFound => Ok(()),
         Err(error) => Err(CoreError::Io(error)),
@@ -532,9 +581,9 @@ fn read_bounded(path: &Path) -> Result<AgentTaskExecutionRecord> {
 /// Atomically expose a complete file only if its name is still unused.
 /// The temporary file and final record share a filesystem.
 fn atomic_create_no_replace(path: &Path, bytes: &[u8]) -> Result<()> {
-    let parent = path.parent().ok_or_else(|| {
-        CoreError::Config("execution record has no parent".into())
-    })?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| CoreError::Config("execution record has no parent".into()))?;
     let temp = parent.join(format!(".execution-{}.tmp", Uuid::new_v4()));
     let mut options = OpenOptions::new();
     options.create_new(true).write(true);
@@ -564,7 +613,6 @@ fn atomic_create_no_replace(path: &Path, bytes: &[u8]) -> Result<()> {
     }
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -613,8 +661,17 @@ mod tests {
             let bytes = serialize_bounded(&record).unwrap();
             assert_eq!(AgentTaskExecutionRecord::parse(&bytes).unwrap(), record);
         }
-        for name in ["source_path", "ambient_tool", "terminal", "remote_executable", "output"] {
-            assert!(AgentTaskExecutionRecord::parse(fixture(name).as_bytes()).is_err(), "{name}");
+        for name in [
+            "source_path",
+            "ambient_tool",
+            "terminal",
+            "remote_executable",
+            "output",
+        ] {
+            assert!(
+                AgentTaskExecutionRecord::parse(fixture(name).as_bytes()).is_err(),
+                "{name}"
+            );
         }
     }
 
@@ -622,13 +679,14 @@ mod tests {
     fn no_unknown_missing_duplicate_or_sensitive_fields() {
         let original = prepared();
         let mut value = serde_json::to_value(&original).unwrap();
-        let map = value.as_object_mut().unwrap();
-
-        map.insert("sourceHostPath".into(), serde_json::json!("/private/path"));
+        value.as_object_mut().unwrap().insert(
+            "sourceHostPath".into(),
+            serde_json::json!("/private/path"),
+        );
         assert!(AgentTaskExecutionRecord::parse(&serde_json::to_vec(&value).unwrap()).is_err());
-        map.remove("sourceHostPath");
+        value.as_object_mut().unwrap().remove("sourceHostPath");
 
-        map.remove("runtimeProvider");
+        value.as_object_mut().unwrap().remove("runtimeProvider");
         assert!(AgentTaskExecutionRecord::parse(&serde_json::to_vec(&value).unwrap()).is_err());
 
         let bytes = fixture("prepared").replace(
@@ -638,7 +696,9 @@ mod tests {
         assert_ne!(bytes, fixture("prepared"));
         assert!(AgentTaskExecutionRecord::parse(bytes.as_bytes()).is_err());
 
-        assert!(AgentTaskExecutionRecord::parse(&vec![b' '; MAX_RECORD_BYTES as usize + 1]).is_err());
+        assert!(
+            AgentTaskExecutionRecord::parse(&vec![b' '; MAX_RECORD_BYTES as usize + 1]).is_err()
+        );
     }
 
     #[test]
@@ -681,23 +741,41 @@ mod tests {
         let initial = prepared();
         store.create(&initial).unwrap();
         assert_eq!(
-            store.read(&initial.workspace_id, &initial.task_id, &initial.execution_id).unwrap(),
+            store
+                .read(
+                    &initial.workspace_id,
+                    &initial.task_id,
+                    &initial.execution_id
+                )
+                .unwrap(),
             initial
         );
         assert!(store.create(&initial).is_err());
 
         let started = running(&initial);
         store.transition(&initial, &started).unwrap();
-        assert!(store.transition(&initial, &started).is_err(), "stale transition rejected");
+        assert!(
+            store.transition(&initial, &started).is_err(),
+            "stale transition rejected"
+        );
         assert!(store.transition(&started, &initial).is_err(), "no rollback");
 
         let completed = finished(&started);
         store.transition(&started, &completed).unwrap();
         assert_eq!(
-            store.read(&initial.workspace_id, &initial.task_id, &initial.execution_id).unwrap(),
+            store
+                .read(
+                    &initial.workspace_id,
+                    &initial.task_id,
+                    &initial.execution_id
+                )
+                .unwrap(),
             completed
         );
-        assert!(store.transition(&completed, &completed).is_err(), "terminal is immutable");
+        assert!(
+            store.transition(&completed, &completed).is_err(),
+            "terminal is immutable"
+        );
         assert!(store.create(&initial).is_err(), "cannot reuse existing ID");
     }
 
@@ -766,8 +844,15 @@ mod tests {
             }));
         }
         barrier.wait();
-        let success_count = threads.into_iter().filter(|t| t.join().unwrap()).count();
-        assert_eq!(success_count, 1, "exactly one writer may advance a stale record");
+        let success_count = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .filter(|succeeded| *succeeded)
+            .count();
+        assert_eq!(
+            success_count, 1,
+            "exactly one writer may advance a stale record"
+        );
     }
 
     #[test]
@@ -776,15 +861,25 @@ mod tests {
         let store = ExecutionRecordStore::new(dir.path());
         let initial = prepared();
         store.create(&initial).unwrap();
-        let path = store.checked_record_path(
-            &initial.workspace_id, &initial.task_id, &initial.execution_id
-        ).unwrap();
+        let path = store
+            .checked_record_path(
+                &initial.workspace_id,
+                &initial.task_id,
+                &initial.execution_id,
+            )
+            .unwrap();
         assert!(path.starts_with(private_execution_root(dir.path())));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
-            assert_eq!(fs::metadata(store.root()).unwrap().permissions().mode() & 0o777, 0o700);
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(
+                fs::metadata(store.root()).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
         }
     }
 
@@ -797,15 +892,25 @@ mod tests {
         let store = ExecutionRecordStore::new(dir.path());
         let initial = prepared();
         store.create(&initial).unwrap();
-        let path = store.checked_record_path(
-            &initial.workspace_id, &initial.task_id, &initial.execution_id
-        ).unwrap();
+        let path = store
+            .checked_record_path(
+                &initial.workspace_id,
+                &initial.task_id,
+                &initial.execution_id,
+            )
+            .unwrap();
         let other = dir.path().join("outside");
         fs::write(&other, b"private").unwrap();
         fs::remove_file(&path).unwrap();
         symlink(&other, &path).unwrap();
 
-        assert!(store.read(&initial.workspace_id, &initial.task_id, &initial.execution_id).is_err());
+        assert!(store
+            .read(
+                &initial.workspace_id,
+                &initial.task_id,
+                &initial.execution_id
+            )
+            .is_err());
         assert!(store.transition(&initial, &running(&initial)).is_err());
         assert_eq!(fs::read(&other).unwrap(), b"private");
     }
