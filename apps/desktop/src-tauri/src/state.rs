@@ -1,5 +1,6 @@
 use base64::Engine;
 use chrono::{DateTime, Utc};
+use infimount_core::agent_task_executions::ExecutionRecordStore;
 use infimount_core::runtime::OperatorCache;
 use infimount_core::workspaces::WorkspaceRegistry;
 use infimount_core::{
@@ -39,6 +40,8 @@ pub struct AppState {
     pub secret_store: Arc<dyn SecretStore>,
     pub pending_oauth: PendingOAuthStore,
     pub workspaces: WorkspaceRegistry,
+    /// Private execution evidence; never included in agent-facing MCP context.
+    pub execution_records: ExecutionRecordStore,
     pub product_events: ProductEventStore,
     pub operator_cache: OperatorCache,
     http_runtime: Mutex<Option<McpHttpServerHandle>>,
@@ -343,6 +346,7 @@ impl AppState {
             secret_store,
             pending_oauth: PendingOAuthStore::new(),
             workspaces,
+            execution_records: ExecutionRecordStore::new(&config_dir),
             product_events: ProductEventStore::new(None),
             operator_cache: OperatorCache::new(),
             http_runtime: Mutex::new(None),
@@ -401,6 +405,9 @@ impl AppState {
             secret_store: store,
             pending_oauth: PendingOAuthStore::new(),
             workspaces: WorkspaceRegistry::new(&infimount_mcp::registry::default_config_dir()),
+            execution_records: ExecutionRecordStore::new(
+                &infimount_mcp::registry::default_config_dir(),
+            ),
             product_events: ProductEventStore::new(None),
             operator_cache: OperatorCache::new(),
             http_runtime: Mutex::new(None),
@@ -484,6 +491,7 @@ impl AppState {
             secret_store,
             pending_oauth: PendingOAuthStore::new(),
             workspaces: WorkspaceRegistry::new(config_dir),
+            execution_records: ExecutionRecordStore::new(config_dir),
             product_events: ProductEventStore::new(Some(config_dir.join("events.jsonl"))),
             operator_cache: OperatorCache::new(),
             http_runtime: Mutex::new(None),
@@ -1563,6 +1571,7 @@ mod tests {
             secret_store,
             pending_oauth: PendingOAuthStore::new(),
             workspaces: WorkspaceRegistry::new(dir.path()),
+            execution_records: ExecutionRecordStore::new(dir.path()),
             product_events: ProductEventStore::new(Some(dir.path().join("events.jsonl"))),
             operator_cache: OperatorCache::new(),
             http_runtime: Mutex::new(None),
