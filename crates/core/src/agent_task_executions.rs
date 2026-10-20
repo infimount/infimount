@@ -174,9 +174,12 @@ impl AgentTaskExecutionRecord {
         {
             return invalid("IDs must be canonical lowercase RFC 4122 UUIDs");
         }
-        if self.adapter_version.is_empty()
+        if self.adapter_version.trim().is_empty()
             || self.adapter_version.len() > 128
-            || self.adapter_version.chars().any(char::is_control)
+            || !self.adapter_version.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric()
+                    || matches!(byte, b' ' | b'.' | b'_' | b'+' | b'(' | b')' | b'-')
+            })
         {
             return invalid("invalid adapter version");
         }
@@ -429,6 +432,12 @@ impl ExecutionRecordStore {
         }
         atomic_file::create_dir_all(&self.root)?;
         ensure_real_directory(&self.root)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            // Tighten old/misconfigured directory modes before storing evidence.
+            fs::set_permissions(&self.root, fs::Permissions::from_mode(0o700))?;
+        }
         Ok(())
     }
 
@@ -541,6 +550,13 @@ fn reject_link_or_nonfile(path: &Path, allow_missing: bool) -> Result<()> {
         Ok(meta)
             if meta.is_file() && !meta.file_type().is_symlink() && !is_reparse_point(&meta) =>
         {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if meta.permissions().mode() & 0o077 != 0 {
+                    return invalid("execution evidence file permissions are too broad");
+                }
+            }
             Ok(())
         }
         Ok(_) => invalid("execution evidence path must be a regular file"),
@@ -723,6 +739,9 @@ mod tests {
 
         let mut bad = original.clone();
         bad.adapter_version = "x\nsecret".into();
+        assert!(bad.validate().is_err());
+
+        bad.adapter_version = "/home/user/token.txt".into();
         assert!(bad.validate().is_err());
 
         let mut bad = original.clone();
