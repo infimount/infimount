@@ -147,9 +147,8 @@ fn invalid<T>(reason: &str) -> Result<T> {
 }
 
 fn valid_id(id: &str) -> bool {
-    Uuid::parse_str(id).is_ok_and(|parsed| {
-        parsed.to_string() == id && (1..=8).contains(&parsed.get_version_num())
-    })
+    Uuid::parse_str(id)
+        .is_ok_and(|parsed| parsed.to_string() == id && (1..=8).contains(&parsed.get_version_num()))
 }
 
 fn valid_sha(value: &str) -> bool {
