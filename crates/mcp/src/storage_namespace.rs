@@ -487,6 +487,14 @@ pub fn validate_local_mcp_path(storage: &StorageRecord, backend_path: &str) -> M
     let mut current = PathBuf::from(fields.root);
     reject_link_component(&current)?;
     let normalized = normalize_operation_path(backend_path)?;
+    // This private registry lives under Infimount's config directory, which
+    // may be inside a user's broad Local Filesystem MCP storage. Deny its
+    // subtree before the caller can stat/read/write/list it, even if a manual
+    // MCP policy otherwise grants access to the parent root.
+    let protected = infimount_core::agent_task_executions::private_execution_root(
+        &crate::registry::default_config_dir(),
+    );
+    deny_private_execution_path(&current, &normalized, &protected)?;
     for segment in normalized.split('/').filter(|segment| !segment.is_empty()) {
         current.push(segment);
         match std::fs::symlink_metadata(&current) {
@@ -507,6 +515,35 @@ pub fn validate_local_mcp_path(storage: &StorageRecord, backend_path: &str) -> M
                 ))
             }
         }
+    }
+    Ok(())
+}
+
+
+fn deny_private_execution_path(
+    storage_root: &Path,
+    backend_relative: &str,
+    protected_root: &Path,
+) -> McpResult<()> {
+    let candidate = storage_root.join(backend_relative);
+    #[cfg(windows)]
+    let is_inside = {
+        // Windows paths normally compare case-insensitively; Path::starts_with
+        // alone would not protect an alias differing only in case.
+        let normalize = |p: &Path| p.to_string_lossy().replace('\\', "/").to_ascii_lowercase();
+        let candidate = normalize(&candidate);
+        let protected = normalize(protected_root);
+        let protected = protected.trim_end_matches('/');
+        candidate == protected || candidate.starts_with(&format!("{protected}/"))
+    };
+    #[cfg(not(windows))]
+    let is_inside = candidate.starts_with(protected_root);
+
+    if is_inside {
+        return Err(err(
+            McpErrorCode::ERR_MCP_POLICY_DENIED,
+            "Infimount private execution evidence is not available through MCP",
+        ));
     }
     Ok(())
 }
@@ -928,4 +965,28 @@ mod local_confinement_regression_tests {
         let storage = local_storage(root.path());
         validate_local_mcp_path(&storage, "workspace/new.txt").expect("normal path");
     }
+    #[test]
+    fn private_execution_evidence_is_hidden_from_broad_local_mcp_roots() {
+        let root = tempfile::tempdir().unwrap();
+        let storage_root = root.path();
+        let protected = storage_root.join(".infimount/agent-task-executions");
+        for (root, relative) in [
+            (storage_root, ".infimount/agent-task-executions"),
+            (storage_root, ".infimount/agent-task-executions/abc/task.json"),
+            (protected.as_path(), ""),
+        ] {
+            let err = deny_private_execution_path(root, relative, &protected).unwrap_err();
+            assert_eq!(err.code, McpErrorCode::ERR_MCP_POLICY_DENIED);
+        }
+        deny_private_execution_path(
+            storage_root,
+            ".infimount/agent-task-executions-other/readme",
+            &protected,
+        )
+        .unwrap();
+        deny_private_execution_path(storage_root, ".infimount/settings.json", &protected).unwrap();
+        deny_private_execution_path(storage_root, "project/readme.md", &protected).unwrap();
+    }
+
+
 }
