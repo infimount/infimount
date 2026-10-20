@@ -564,3 +564,249 @@ fn atomic_create_no_replace(path: &Path, bytes: &[u8]) -> Result<()> {
     }
     Ok(())
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Barrier};
+
+    fn fixture(name: &str) -> &'static str {
+        match name {
+            "prepared" => include_str!("../../../tests/fixtures/agent-task-executions/valid-local-prepared.json"),
+            "succeeded" => include_str!("../../../tests/fixtures/agent-task-executions/valid-local-succeeded.json"),
+            "remote" => include_str!("../../../tests/fixtures/agent-task-executions/valid-remote-prepared.json"),
+            "source_path" => include_str!("../../../tests/fixtures/agent-task-executions/invalid-sensitive-source-path.json"),
+            "ambient_tool" => include_str!("../../../tests/fixtures/agent-task-executions/invalid-ambient-tool.json"),
+            "terminal" => include_str!("../../../tests/fixtures/agent-task-executions/invalid-terminal-state.json"),
+            "remote_executable" => include_str!("../../../tests/fixtures/agent-task-executions/invalid-remote-local-executable.json"),
+            "output" => include_str!("../../../tests/fixtures/agent-task-executions/invalid-output-inconsistent.json"),
+            _ => unreachable!(),
+        }
+    }
+
+    fn prepared() -> AgentTaskExecutionRecord {
+        AgentTaskExecutionRecord::parse(fixture("prepared").as_bytes()).unwrap()
+    }
+
+    fn running(record: &AgentTaskExecutionRecord) -> AgentTaskExecutionRecord {
+        let mut next = record.clone();
+        next.status = ExecutionStatus::Running;
+        next
+    }
+
+    fn finished(record: &AgentTaskExecutionRecord) -> AgentTaskExecutionRecord {
+        let mut next = record.clone();
+        next.status = ExecutionStatus::Succeeded;
+        next.finished_at = Some("2026-10-16T10:18:00Z".into());
+        next.output_file_count = 2;
+        next.output_total_bytes = 2371;
+        next.output_aggregate_sha256 = Some("d".repeat(64));
+        next
+    }
+
+    #[test]
+    fn schema_v1_fixtures_match_runtime_validator() {
+        for name in ["prepared", "succeeded", "remote"] {
+            let record = AgentTaskExecutionRecord::parse(fixture(name).as_bytes()).unwrap();
+            record.validate().unwrap();
+            let bytes = serialize_bounded(&record).unwrap();
+            assert_eq!(AgentTaskExecutionRecord::parse(&bytes).unwrap(), record);
+        }
+        for name in ["source_path", "ambient_tool", "terminal", "remote_executable", "output"] {
+            assert!(AgentTaskExecutionRecord::parse(fixture(name).as_bytes()).is_err(), "{name}");
+        }
+    }
+
+    #[test]
+    fn no_unknown_missing_duplicate_or_sensitive_fields() {
+        let original = prepared();
+        let mut value = serde_json::to_value(&original).unwrap();
+        let map = value.as_object_mut().unwrap();
+
+        map.insert("sourceHostPath".into(), serde_json::json!("/private/path"));
+        assert!(AgentTaskExecutionRecord::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+        map.remove("sourceHostPath");
+
+        map.remove("runtimeProvider");
+        assert!(AgentTaskExecutionRecord::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+
+        let bytes = fixture("prepared").replace(
+            r#""schemaVersion": 1,"#,
+            r#""schemaVersion": 1, "schemaVersion": 1,"#,
+        );
+        assert_ne!(bytes, fixture("prepared"));
+        assert!(AgentTaskExecutionRecord::parse(bytes.as_bytes()).is_err());
+
+        assert!(AgentTaskExecutionRecord::parse(&vec![b' '; MAX_RECORD_BYTES as usize + 1]).is_err());
+    }
+
+    #[test]
+    fn rejects_noncanonical_uuid_hash_tool_and_identity_inconsistency() {
+        let original = prepared();
+
+        let mut bad = original.clone();
+        bad.execution_id = "../outside".into();
+        assert!(bad.validate().is_err());
+
+        let mut bad = original.clone();
+        bad.task_scope_digest = "A".repeat(64);
+        assert!(bad.validate().is_err());
+
+        let mut bad = original.clone();
+        bad.enabled_task_tools.push(TaskTool::ReadFile);
+        assert!(bad.validate().is_err());
+
+        let mut bad = original.clone();
+        bad.adapter_kind = AdapterKind::OpenaiSandbox;
+        assert!(bad.validate().is_err());
+
+        let mut bad = original.clone();
+        bad.adapter_version = "x\nsecret".into();
+        assert!(bad.validate().is_err());
+
+        let mut bad = original.clone();
+        bad.provider_execution_id = Some("leak/path".into());
+        assert!(bad.validate().is_err());
+
+        let mut bad = original.clone();
+        bad.output_file_count = 1;
+        assert!(bad.validate().is_err());
+    }
+
+    #[test]
+    fn atomic_create_transitions_and_terminal_immutability() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ExecutionRecordStore::new(dir.path());
+        let initial = prepared();
+        store.create(&initial).unwrap();
+        assert_eq!(
+            store.read(&initial.workspace_id, &initial.task_id, &initial.execution_id).unwrap(),
+            initial
+        );
+        assert!(store.create(&initial).is_err());
+
+        let started = running(&initial);
+        store.transition(&initial, &started).unwrap();
+        assert!(store.transition(&initial, &started).is_err(), "stale transition rejected");
+        assert!(store.transition(&started, &initial).is_err(), "no rollback");
+
+        let completed = finished(&started);
+        store.transition(&started, &completed).unwrap();
+        assert_eq!(
+            store.read(&initial.workspace_id, &initial.task_id, &initial.execution_id).unwrap(),
+            completed
+        );
+        assert!(store.transition(&completed, &completed).is_err(), "terminal is immutable");
+        assert!(store.create(&initial).is_err(), "cannot reuse existing ID");
+    }
+
+    #[test]
+    fn rejects_attempts_to_change_execution_authority() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ExecutionRecordStore::new(dir.path());
+        let original = prepared();
+        store.create(&original).unwrap();
+
+        let mut next = running(&original);
+        next.enabled_task_tools.clear();
+        assert!(store.transition(&original, &next).is_err());
+
+        next = running(&original);
+        next.task_scope_digest = "c".repeat(64);
+        assert!(store.transition(&original, &next).is_err());
+
+        next = running(&original);
+        next.adapter_version = "unverified-new-binary".into();
+        assert!(store.transition(&original, &next).is_err());
+
+        next = running(&original);
+        next.finished_at = Some("2026-10-16T10:18:00Z".into());
+        assert!(store.transition(&original, &next).is_err());
+    }
+
+    #[test]
+    fn cancel_and_failure_require_safe_reason_and_never_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ExecutionRecordStore::new(dir.path());
+        let original = prepared();
+        store.create(&original).unwrap();
+
+        let mut aborted = original.clone();
+        aborted.status = ExecutionStatus::Cancelled;
+        aborted.finished_at = Some("2026-10-16T10:18:00Z".into());
+        aborted.error_code = Some("ERR_USER_CANCELLED".into());
+        store.transition(&original, &aborted).unwrap();
+        assert!(store.transition(&aborted, &running(&aborted)).is_err());
+
+        let mut invalid_reason = original.clone();
+        invalid_reason.status = ExecutionStatus::Failed;
+        invalid_reason.finished_at = Some("2026-10-16T10:18:00Z".into());
+        invalid_reason.error_code = Some("ERR_PATH_/home/user".into());
+        assert!(invalid_reason.validate().is_err());
+    }
+
+    #[test]
+    fn independent_stores_can_only_commit_one_concurrent_transition() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = ExecutionRecordStore::new(dir.path());
+        let second = ExecutionRecordStore::new(dir.path());
+        let current = Arc::new(prepared());
+        first.create(&current).unwrap();
+        let barrier = Arc::new(Barrier::new(3));
+
+        let mut threads = Vec::new();
+        for store in [first, second] {
+            let initial = current.clone();
+            let barrier = barrier.clone();
+            threads.push(thread::spawn(move || {
+                let next = running(&initial);
+                barrier.wait();
+                store.transition(&initial, &next).is_ok()
+            }));
+        }
+        barrier.wait();
+        let success_count = threads.into_iter().filter(|t| t.join().unwrap()).count();
+        assert_eq!(success_count, 1, "exactly one writer may advance a stale record");
+    }
+
+    #[test]
+    fn private_record_files_have_restricted_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ExecutionRecordStore::new(dir.path());
+        let initial = prepared();
+        store.create(&initial).unwrap();
+        let path = store.checked_record_path(
+            &initial.workspace_id, &initial.task_id, &initial.execution_id
+        ).unwrap();
+        assert!(path.starts_with(private_execution_root(dir.path())));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(fs::metadata(store.root()).unwrap().permissions().mode() & 0o777, 0o700);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_record_symlink_is_not_followed() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = ExecutionRecordStore::new(dir.path());
+        let initial = prepared();
+        store.create(&initial).unwrap();
+        let path = store.checked_record_path(
+            &initial.workspace_id, &initial.task_id, &initial.execution_id
+        ).unwrap();
+        let other = dir.path().join("outside");
+        fs::write(&other, b"private").unwrap();
+        fs::remove_file(&path).unwrap();
+        symlink(&other, &path).unwrap();
+
+        assert!(store.read(&initial.workspace_id, &initial.task_id, &initial.execution_id).is_err());
+        assert!(store.transition(&initial, &running(&initial)).is_err());
+        assert_eq!(fs::read(&other).unwrap(), b"private");
+    }
+}
