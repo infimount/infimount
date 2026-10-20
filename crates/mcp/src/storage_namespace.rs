@@ -479,6 +479,17 @@ pub fn stable_drive_identity(storage: &StorageRecord) -> Option<String> {
 /// protects against persistent project links escaping a configured root.
 /// A fully handle-relative local backend can replace this guard later.
 pub fn validate_local_mcp_path(storage: &StorageRecord, backend_path: &str) -> McpResult<()> {
+    validate_local_mcp_path_for_operation(storage, backend_path, None)
+}
+
+/// Apply the same private-state guard to every MCP operation. Destructive
+/// operations must also reject an ancestor directory (for example a move or
+/// recursive delete of the entire Infimount config directory).
+pub fn validate_local_mcp_path_for_operation(
+    storage: &StorageRecord,
+    backend_path: &str,
+    operation: Option<crate::policy::McpOperation>,
+) -> McpResult<()> {
     let (kind, fields) = resolve_fields(storage)?;
     if !matches!(kind, SourceKind::Local) {
         return Ok(());
@@ -487,6 +498,19 @@ pub fn validate_local_mcp_path(storage: &StorageRecord, backend_path: &str) -> M
     let mut current = PathBuf::from(fields.root);
     reject_link_component(&current)?;
     let normalized = normalize_operation_path(backend_path)?;
+    // This private registry lives under Infimount's config directory, which
+    // may be inside a user's broad Local Filesystem MCP storage. Deny its
+    // subtree before the caller can stat/read/write/list it, even if a manual
+    // MCP policy otherwise grants access to the parent root.
+    let protected = infimount_core::agent_task_executions::private_execution_root(
+        &crate::registry::default_config_dir(),
+    );
+    deny_private_execution_path(
+        &current,
+        &normalized,
+        &protected,
+        operation.is_some_and(|operation| operation.is_write_like()),
+    )?;
     for segment in normalized.split('/').filter(|segment| !segment.is_empty()) {
         current.push(segment);
         match std::fs::symlink_metadata(&current) {
@@ -507,6 +531,46 @@ pub fn validate_local_mcp_path(storage: &StorageRecord, backend_path: &str) -> M
                 ))
             }
         }
+    }
+    Ok(())
+}
+
+fn deny_private_execution_path(
+    storage_root: &Path,
+    backend_relative: &str,
+    protected_root: &Path,
+    destructive: bool,
+) -> McpResult<()> {
+    let candidate = storage_root.join(backend_relative);
+    #[cfg(windows)]
+    let is_inside = {
+        // Windows paths normally compare case-insensitively; Path::starts_with
+        // alone would not protect an alias differing only in case.
+        let normalize = |p: &Path| p.to_string_lossy().replace('\\', "/").to_ascii_lowercase();
+        let candidate = normalize(&candidate);
+        let protected = normalize(protected_root);
+        let protected = protected.trim_end_matches('/');
+        candidate == protected || candidate.starts_with(&format!("{protected}/"))
+    };
+    #[cfg(not(windows))]
+    let is_inside = candidate.starts_with(protected_root);
+
+    #[cfg(windows)]
+    let is_ancestor = {
+        let normalize = |p: &Path| p.to_string_lossy().replace('\\', "/").to_ascii_lowercase();
+        let candidate = normalize(&candidate);
+        let protected = normalize(protected_root);
+        let candidate = candidate.trim_end_matches('/');
+        protected.starts_with(&format!("{candidate}/"))
+    };
+    #[cfg(not(windows))]
+    let is_ancestor = protected_root.starts_with(&candidate) && candidate != protected_root;
+
+    if is_inside || (destructive && is_ancestor) {
+        return Err(err(
+            McpErrorCode::ERR_MCP_POLICY_DENIED,
+            "Infimount private execution evidence is not available through MCP",
+        ));
     }
     Ok(())
 }
@@ -927,5 +991,41 @@ mod local_confinement_regression_tests {
         std::fs::create_dir_all(root.path().join("workspace")).expect("workspace");
         let storage = local_storage(root.path());
         validate_local_mcp_path(&storage, "workspace/new.txt").expect("normal path");
+    }
+    #[test]
+    fn private_execution_evidence_is_hidden_from_broad_local_mcp_roots() {
+        let root = tempfile::tempdir().unwrap();
+        let storage_root = root.path();
+        let protected = storage_root.join(".infimount/agent-task-executions");
+        for (root, relative) in [
+            (storage_root, ".infimount/agent-task-executions"),
+            (
+                storage_root,
+                ".infimount/agent-task-executions/abc/task.json",
+            ),
+            (protected.as_path(), ""),
+        ] {
+            let err = deny_private_execution_path(root, relative, &protected, false).unwrap_err();
+            assert_eq!(err.code, McpErrorCode::ERR_MCP_POLICY_DENIED);
+        }
+        deny_private_execution_path(
+            storage_root,
+            ".infimount/agent-task-executions-other/readme",
+            &protected,
+            false,
+        )
+        .unwrap();
+        deny_private_execution_path(storage_root, ".infimount/settings.json", &protected, false)
+            .unwrap();
+        deny_private_execution_path(storage_root, "project/readme.md", &protected, false).unwrap();
+        // Reading the parent remains possible, but an agent cannot delete or
+        // move a parent directory containing protected evidence.
+        deny_private_execution_path(storage_root, ".infimount", &protected, false).unwrap();
+        assert_eq!(
+            deny_private_execution_path(storage_root, ".infimount", &protected, true)
+                .unwrap_err()
+                .code,
+            McpErrorCode::ERR_MCP_POLICY_DENIED
+        );
     }
 }

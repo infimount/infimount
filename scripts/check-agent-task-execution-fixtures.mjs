@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Contract-fixture checks for the deliberately small JSON Schema keyword
 // subset in docs/schemas/agent-task-execution-v1.schema.json.
-// This is not a general JSON Schema engine. Authoritative runtime and
-// cross-process state-transition validation must be implemented in Phase A2.
+// This is not a general JSON Schema engine. Authoritative validation
+// and cross-process transitions live in crates/core/src/agent_task_executions.rs.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
