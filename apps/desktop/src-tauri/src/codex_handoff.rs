@@ -1,22 +1,17 @@
-use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use infimount_core::agent_task_io::hash_agent_task_file;
-use infimount_core::agent_tasks::{
-    agent_task_root, validate_agent_task_manifest, AgentTaskManifest, AGENT_TASK_BRIEF_FILE,
-    AGENT_TASK_INPUTS_DIR, AGENT_TASK_MANIFEST_FILE, AGENT_TASK_OUTPUTS_DIR,
-};
-use infimount_core::workspaces::workspace_schema_supported;
-use infimount_core::{CoreError, SourceKind};
+use infimount_core::CoreError;
 use serde::{Deserialize, Serialize};
 use tauri::State;
-use uuid::Uuid;
 
+use crate::agent_task_handoff::{
+    agent_task_prompt as codex_task_prompt, cleanup_neutral_directory,
+    create_neutral_handoff_directory, prepare_agent_task_handoff,
+};
 use crate::state::AppState;
 
-const MAX_AGENT_TASK_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
 const CODEX_CLIENT_NAME: &str = "codex";
 const CODEX_AGENT_TASK_TOOLS: &[&str] = &[
     "list_dir",
@@ -50,163 +45,26 @@ pub async fn launch_agent_task_in_codex(
     state: State<'_, AppState>,
     request: AgentTaskCodexHandoffRequest,
 ) -> Result<AgentTaskCodexHandoffOutput, CoreError> {
-    state.require_operational().map_err(|_| {
-        CoreError::Config("Agent Task handoff is unavailable while Infimount is degraded".into())
-    })?;
-
-    Uuid::parse_str(&request.task_id)
-        .map_err(|_| CoreError::Config("Agent Task handoff requires a valid task id".into()))?;
-    Uuid::parse_str(&request.workspace_id).map_err(|_| {
-        CoreError::Config("Agent Task handoff requires a valid workspace id".into())
-    })?;
-
-    let workspace = state
-        .workspaces
-        .find_by_id(&request.workspace_id)?
-        .ok_or_else(|| CoreError::Config("Agent Task workspace was not found".into()))?;
-    if !workspace_schema_supported(&workspace) {
-        return Err(CoreError::Config(
-            "Agent Task workspace uses an unsupported schema".into(),
-        ));
-    }
-    if workspace.access_profile != "read_write" {
-        return Err(CoreError::Config(
-            "Codex handoff requires a read-write Agent Workspace".into(),
-        ));
-    }
-    let policy_rule_id = workspace.policy_rule_id.clone().ok_or_else(|| {
-        CoreError::Config(
-            "Codex handoff requires the Agent Workspace MCP policy to be applied".into(),
-        )
-    })?;
-
-    let storage = state
-        .find_storage_by_id(&workspace.storage_id)
-        .map_err(|_| {
-            CoreError::Config("Agent Task workspace storage could not be validated".into())
-        })?;
-    if !storage.enabled || storage.read_only {
-        return Err(CoreError::Config(
-            "Codex handoff requires an enabled writable workspace storage".into(),
-        ));
-    }
-    if !storage.mcp_exposed {
-        return Err(CoreError::Config(
-            "Codex handoff requires the Agent Workspace storage to be exposed to MCP".into(),
-        ));
-    }
-    let kind = storage
-        .backend
-        .parse::<SourceKind>()
-        .map_err(|_| CoreError::Config("Agent Task workspace backend is unsupported".into()))?;
-    if !matches!(kind, SourceKind::Local) {
-        return Err(CoreError::Config(
-            "Codex handoff currently requires a Local Filesystem Agent Workspace".into(),
-        ));
-    }
-
-    let namespace = infimount_mcp::storage_namespace::storage_namespace_fingerprint(&storage)
-        .map_err(|_| CoreError::Config("failed to verify Agent Task workspace identity".into()))?;
-    if namespace != workspace.storage_namespace_fingerprint {
-        return Err(CoreError::Config(
-            "Agent Task workspace storage identity changed; recreate the workspace".into(),
-        ));
-    }
-
-    let task_root = agent_task_root(&request.task_id)?;
-    let workspace_task_path = join_path(&workspace.root_path, &task_root);
-    let outputs_path = join_path(&workspace_task_path, AGENT_TASK_OUTPUTS_DIR);
-    let scope = infimount_mcp::AgentTaskScope::new(
-        request.task_id.clone(),
-        storage.id.clone(),
-        storage.name.clone(),
-        workspace.id.clone(),
-        policy_rule_id,
-        namespace,
-        workspace.root_path.clone(),
-        workspace_task_path.clone(),
-        outputs_path.clone(),
+    // The trusted common preflight preserves the complete v0.8.1 scope, policy,
+    // source immutability and digest checks. Codex is only the execution adapter.
+    let prepared = prepare_agent_task_handoff(
+        &state,
+        "Codex",
+        &request.workspace_id,
+        &request.task_id,
     )
-    .map_err(|_| {
-        CoreError::Config("Agent Workspace MCP policy does not match this prepared task".into())
-    })?;
-    scope
-        .validate_current_binding(&state.registry)
-        .map_err(|_| {
-            CoreError::Config(
-                "Agent Workspace MCP policy no longer grants this workspace read-write access"
-                    .into(),
-            )
-        })?;
-
-    validate_local_path(&storage, &workspace.root_path)?;
-    validate_local_path(&storage, &workspace_task_path)?;
-
-    let op = state.operator_for_storage_id(&storage.id)?;
-    require_directory(&op, &workspace_task_path, "Agent Task package").await?;
-
-    let manifest_path = join_path(&workspace_task_path, AGENT_TASK_MANIFEST_FILE);
-    let brief_path = join_path(&workspace_task_path, AGENT_TASK_BRIEF_FILE);
-    for path in [&manifest_path, &brief_path, &outputs_path] {
-        validate_local_path(&storage, path)?;
-    }
-    require_file(&op, &brief_path, "Agent Task brief").await?;
-    require_directory(&op, &outputs_path, "Agent Task outputs directory").await?;
-
-    let manifest_metadata = op.stat(&manifest_path).await?;
-    if !manifest_metadata.is_file() {
-        return Err(CoreError::Config(
-            "Agent Task manifest is missing or is not a file".into(),
-        ));
-    }
-    if manifest_metadata.content_length() > MAX_AGENT_TASK_MANIFEST_BYTES {
-        return Err(CoreError::Config(
-            "Agent Task manifest is unexpectedly large".into(),
-        ));
-    }
-    let manifest_bytes = op.read(&manifest_path).await?.to_vec();
-    if manifest_bytes.len() as u64 > MAX_AGENT_TASK_MANIFEST_BYTES {
-        return Err(CoreError::Config(
-            "Agent Task manifest is unexpectedly large".into(),
-        ));
-    }
-    let manifest: AgentTaskManifest = serde_json::from_slice(&manifest_bytes)?;
-    validate_agent_task_manifest(&manifest)?;
-    if manifest.task_id != request.task_id
-        || manifest.workspace_id != request.workspace_id
-        || manifest.task_root != task_root
-    {
-        return Err(CoreError::Config(
-            "Agent Task manifest does not match the requested workspace task".into(),
-        ));
-    }
-
-    verify_prepared_inputs(&op, &storage, &workspace_task_path, &manifest).await?;
-
-    // Re-run confinement and policy binding immediately before handing the task to an
-    // external client. Codex never receives the workspace's host filesystem path.
-    validate_local_path(&storage, &workspace_task_path)?;
-    scope
-        .validate_current_binding(&state.registry)
-        .map_err(|_| {
-            CoreError::Config(
-                "Agent Workspace MCP policy changed before Codex handoff; review it and retry"
-                    .into(),
-            )
-        })?;
+    .await?;
 
     let sidecar = crate::activation_probe::verified_sidecar_path().map_err(|_| {
         CoreError::Config("The verified Infimount MCP sidecar is unavailable".into())
     })?;
-    let mcp_task_path = format!("/{}/{}", storage.name, scope.task_prefix.trim_matches('/'));
-    let mcp_outputs_path = format!(
-        "/{}/{}",
-        storage.name,
-        scope.outputs_prefix.trim_matches('/')
+    let prompt = codex_task_prompt(
+        &prepared.workspace_name,
+        &prepared.mcp_task_path,
+        &prepared.mcp_outputs_path,
     );
-    let prompt = codex_task_prompt(&workspace.name, &mcp_task_path, &mcp_outputs_path);
-    let neutral_cwd = create_neutral_handoff_directory()?;
-    let args = match codex_arguments(&sidecar, &neutral_cwd, &prompt, &scope) {
+    let neutral_cwd = create_neutral_handoff_directory("Codex")?;
+    let args = match codex_arguments(&sidecar, &neutral_cwd, &prompt, &prepared.scope) {
         Ok(args) => args,
         Err(error) => {
             cleanup_neutral_directory(&neutral_cwd);
@@ -217,157 +75,12 @@ pub async fn launch_agent_task_in_codex(
 
     Ok(AgentTaskCodexHandoffOutput {
         client: CODEX_CLIENT_NAME,
-        workspace_id: workspace.id.clone(),
-        workspace_name: workspace.name.clone(),
+        workspace_id: request.workspace_id,
+        workspace_name: prepared.workspace_name,
         task_id: request.task_id,
-        task_root,
+        task_root: prepared.task_root,
         launched: true,
     })
-}
-
-async fn verify_prepared_inputs(
-    op: &opendal::Operator,
-    storage: &infimount_mcp::registry::StorageRecord,
-    workspace_task_path: &str,
-    manifest: &AgentTaskManifest,
-) -> Result<(), CoreError> {
-    let inputs_root = join_path(workspace_task_path, AGENT_TASK_INPUTS_DIR);
-    validate_local_path(storage, &inputs_root)?;
-    require_directory(op, &inputs_root, "Agent Task inputs directory").await?;
-
-    let entries = infimount_core::operations::list_entries_recursive(op, &inputs_root)
-        .await
-        .map_err(|_| {
-            CoreError::Config("Agent Task prepared input set could not be verified".into())
-        })?;
-    if entries.len() >= infimount_core::models::MAX_RECURSIVE_ITEMS as usize {
-        return Err(CoreError::Config(
-            "Agent Task prepared input set is too large to verify without truncation".into(),
-        ));
-    }
-    let actual_files = entries
-        .iter()
-        .filter(|entry| !entry.is_dir)
-        .map(|entry| entry.path.trim_matches('/').to_string())
-        .collect::<HashSet<_>>();
-    let expected_files = expected_prepared_input_paths(workspace_task_path, manifest);
-
-    if actual_files != expected_files {
-        return Err(CoreError::Config(
-            "Agent Task prepared input set changed after preparation".into(),
-        ));
-    }
-
-    let mut inputs = manifest.inputs.iter().collect::<Vec<_>>();
-    inputs.sort_by(|left, right| left.task_path.cmp(&right.task_path));
-    for input in inputs {
-        let path = join_path(workspace_task_path, &input.task_path);
-        validate_local_path(storage, &path)?;
-        let digest = hash_agent_task_file(op, &path).await.map_err(|_| {
-            CoreError::Config("Agent Task prepared input bytes could not be verified".into())
-        })?;
-        if digest.byte_size != input.byte_size || digest.sha256 != input.sha256 {
-            return Err(CoreError::Config(
-                "Agent Task prepared input bytes changed after preparation".into(),
-            ));
-        }
-    }
-
-    Ok(())
-}
-
-fn expected_prepared_input_paths(
-    workspace_task_path: &str,
-    manifest: &AgentTaskManifest,
-) -> HashSet<String> {
-    manifest
-        .inputs
-        .iter()
-        .map(|input| {
-            join_path(workspace_task_path, &input.task_path)
-                .trim_matches('/')
-                .to_string()
-        })
-        .collect()
-}
-
-async fn require_directory(
-    op: &opendal::Operator,
-    path: &str,
-    label: &str,
-) -> Result<(), CoreError> {
-    let metadata = op
-        .stat(path)
-        .await
-        .map_err(|_| CoreError::Config(format!("{label} could not be read")))?;
-    if !metadata.is_dir() {
-        return Err(CoreError::Config(format!("{label} is not a directory")));
-    }
-    Ok(())
-}
-
-async fn require_file(op: &opendal::Operator, path: &str, label: &str) -> Result<(), CoreError> {
-    let metadata = op
-        .stat(path)
-        .await
-        .map_err(|_| CoreError::Config(format!("{label} could not be read")))?;
-    if !metadata.is_file() {
-        return Err(CoreError::Config(format!("{label} is not a file")));
-    }
-    Ok(())
-}
-
-fn validate_local_path(
-    storage: &infimount_mcp::registry::StorageRecord,
-    path: &str,
-) -> Result<(), CoreError> {
-    infimount_mcp::storage_namespace::validate_local_mcp_path(storage, path)
-        .map_err(|_| CoreError::Config("Agent Task local path confinement check failed".into()))
-}
-
-fn join_path(root: &str, relative: &str) -> String {
-    let root = root.trim().trim_matches('/');
-    let relative = relative.trim().trim_matches('/');
-    match (root.is_empty(), relative.is_empty()) {
-        (true, true) => String::new(),
-        (true, false) => relative.to_string(),
-        (false, true) => root.to_string(),
-        (false, false) => format!("{root}/{relative}"),
-    }
-}
-
-fn create_neutral_handoff_directory() -> Result<PathBuf, CoreError> {
-    let path = std::env::temp_dir().join(format!("infimount-codex-{}", Uuid::new_v4()));
-    fs::create_dir(&path)
-        .map_err(|_| CoreError::Config("failed to create the Codex handoff directory".into()))?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let permissions_result = fs::metadata(&path).and_then(|metadata| {
-            let mut permissions = metadata.permissions();
-            permissions.set_mode(0o700);
-            fs::set_permissions(&path, permissions)
-        });
-        if permissions_result.is_err() {
-            cleanup_neutral_directory(&path);
-            return Err(CoreError::Config(
-                "failed to secure the Codex handoff directory".into(),
-            ));
-        }
-    }
-
-    Ok(path)
-}
-
-fn cleanup_neutral_directory(path: &Path) {
-    let _ = fs::remove_dir_all(path);
-}
-
-fn codex_task_prompt(workspace_name: &str, task_path: &str, outputs_path: &str) -> String {
-    format!(
-        "Complete the prepared Infimount Agent Task using only the required task-scoped Infimount MCP server for task file access. Work only in Agent Workspace {workspace_name:?} at MCP path {task_path:?}. Read TASK.md through Infimount and treat inputs/ plus task metadata as immutable. Infimount enforces writes only under {outputs_path:?}; use write_file (with create_parents when needed) for deliverables. Stop when the deliverables are ready for review in Infimount. Do not publish outputs. Do not search for or use host filesystem paths to bypass the task boundary."
-    )
 }
 
 fn codex_server_name(task_id: &str) -> String {
@@ -649,7 +362,8 @@ fn launch_codex_terminal(_args: &[String], neutral_cwd: &Path) -> Result<(), Cor
 #[cfg(test)]
 mod tests {
     use super::*;
-    use infimount_core::agent_tasks::{AgentTaskInput, AGENT_TASK_SCHEMA_VERSION};
+    use infimount_core::agent_tasks::{AgentTaskInput, AgentTaskManifest, AGENT_TASK_SCHEMA_VERSION};
+    use crate::agent_task_handoff::expected_prepared_input_paths;
 
     fn test_scope() -> infimount_mcp::AgentTaskScope {
         infimount_mcp::AgentTaskScope::new(
