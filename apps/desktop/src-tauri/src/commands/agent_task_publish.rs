@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 
 use infimount_control::publication::{
-    normalize_destination_dir, validate_output_task_path, validate_publication_request,
+    normalize_destination_dir, validate_publication_request,
     validate_sha256, MAX_AGENT_TASK_DESTINATION_PATH_BYTES,
 };
 pub use infimount_control::publication::{
-    AgentTaskPublicationRequest, AgentTaskPublishConflictPolicy, ReviewedAgentTaskOutput,
+    AgentTaskPublicationRequest, AgentTaskPublishConflictPolicy,
 };
 use infimount_core::agent_task_io::{
     hash_agent_task_file, publish_reviewed_agent_task_file, AgentTaskFileDigest,
@@ -825,6 +825,7 @@ fn sha256_json(value: &impl Serialize) -> Result<String, CoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use infimount_control::publication::validate_output_task_path;
 
     #[test]
     fn destination_paths_reject_traversal_and_windows_separators() {
