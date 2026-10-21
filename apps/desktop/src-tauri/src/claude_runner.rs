@@ -272,6 +272,20 @@ mod tests {
     use crate::agent_adapters::ExecutableIdentity;
     use sha2::{Digest, Sha256};
 
+    fn private_tempdir() -> tempfile::TempDir {
+        let temp = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(
+                temp.path(),
+                fs::Permissions::from_mode(0o700),
+            )
+            .unwrap();
+        }
+        temp
+    }
+
     #[cfg(unix)]
     fn mock_cli(dir: &Path, body: &str) -> ExecutableIdentity {
         use std::os::unix::fs::PermissionsExt;
@@ -290,14 +304,14 @@ mod tests {
     #[test]
     fn rejects_non_private_or_relative_cwd() {
         assert!(verified_cwd(Path::new("relative/path")).is_err());
-        let dir = tempfile::tempdir().unwrap();
+        let dir = private_tempdir();
         assert!(verified_cwd(dir.path()).is_ok());
     }
 
     #[cfg(unix)]
     #[test]
     fn captures_success_without_leaking_output_or_parent_environment() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         let identity = mock_cli(
             temp.path(),
             "if [ -n \"$INFIMOUNT_SECRET_MARKER\" ]; then exit 4; fi\nprintf '%s' '{\"is_error\":false,\"result\":\"ok\"}'",
@@ -327,7 +341,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn refuses_executable_substitution_before_spawn() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         let identity = mock_cli(temp.path(), "printf '%s' '{\"is_error\":false}'");
         fs::write(&identity.executable, b"changed").unwrap();
         assert!(execute_verified_claude(
@@ -343,7 +357,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn timeout_terminates_owned_process_group() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         let identity = mock_cli(temp.path(), "sleep 10");
         let start = Instant::now();
         let outcome = execute_verified_claude(
@@ -361,7 +375,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn cancellation_is_reported_without_launch() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         let identity = mock_cli(temp.path(), "exit 0");
         let cancelled = AtomicBool::new(true);
         let outcome = execute_verified_claude(
@@ -379,7 +393,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn invalid_json_or_cli_error_does_not_claim_success() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         for output in ["not-json", r#"{"is_error":true}"#] {
             let identity = mock_cli(temp.path(), &format!("printf '%s' '{output}'"));
             let outcome = execute_verified_claude(
