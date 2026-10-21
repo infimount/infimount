@@ -1,6 +1,6 @@
 # Claude Code Agent Task adapter: A4 security contract
 
-Status: **experimental, not enabled in the desktop**, pending real packaged qualification. The module `claude_handoff.rs` builds a deny-first, scoped MCP-only launch argument vector, but A4 does not yet spawn Claude Code, transmit task data, grant publication authority, or record a successful execution.
+Status: **experimental, not enabled in the desktop**, pending real packaged qualification. `claude_handoff.rs` builds the deny-first MCP-only launch vector. The private `claude_runner.rs` and `claude_execution.rs` now contain a supervised invocation and A2 evidence path, but these are not registered as Tauri commands or exposed to users, and no real authenticated Claude execution has been validated yet.
 
 ## Supported CLI envelope
 
@@ -25,6 +25,20 @@ Allowed MCP tools: `list_dir`, `stat_path`, `read_file`, `search_paths`, `write_
 
 The test contract rejects unrecognized/version-incompatible clients, relative sidecar paths, unbounded task prompts, additional MCP servers or tools, and missing/altered confinement flags.
 
+## Supervised executor implementation (not user-enabled)
+
+The internal A4 runner is now wired to the accepted launch contract:
+
+- Canonicalize, SHA-256 hash, and version-probe the configured Claude executable; revalidate the exact bytes immediately before launching.
+- Use a private neutral current directory and start the CLI directly, not through an arbitrary shell.
+- Remove inherited environment variables, retaining only the small login/runtime set for an existing local Claude authentication. Raw `ANTHROPIC_API_KEY` and other cloud tokens are **not** forwarded by this implementation.
+- Constrain execution to at most 12 minutes, terminate the dedicated Unix process group on cancellation, timeout, or exit, and cap captured stdout/stderr. Raw model responses and raw errors are never put into execution evidence.
+- Require a zero process exit code **and** a valid bounded Claude JSON result with `is_error=false`. An exit code alone is not evidence of successful agent work.
+- Verify task output paths, bytes and hashes through OpenDAL. Reuse the A2 private store with distinct prepared/running/terminal records and safe error codes. A completed CLI that produced no verified outputs is recorded as failed, not succeeded.
+- Refuse rerunning into a task that already has output files. Output review and create-only publication remain separate human controls.
+- Windows execution is **not supported in this runner** yet; it fails closed until a job-object containment implementation is qualified. Linux/macOS still need a packaged real-client pilot before a user-facing control is added.
+
+The runner functions are compiled and unit-tested but are currently unreachable from an application command. They are a preparatory integration, not a declaration of supported Claude Code execution.
 ## Qualification required before enabling
 
 1. Build from a verified and canonicalized Claude Code executable and revalidate its digest before launch, as with the A3 Codex adapter.
