@@ -255,9 +255,6 @@ mod tests {
             temp.path(),
             "if [ -n \"$INFIMOUNT_SECRET_MARKER\" ]; then exit 4; fi\nprintf '%s' '{\"is_error\":false,\"result\":\"ok\"}'",
         );
-        // Parent environment contains a sensitive marker; scoped_environment
-        // must never inherit it in the child.
-        std::env::set_var("INFIMOUNT_SECRET_MARKER", "not-for-claude");
         let outcome = execute_verified_claude(
             &identity,
             &[],
@@ -265,9 +262,18 @@ mod tests {
             &AtomicBool::new(false),
             Duration::from_secs(5),
         ).unwrap();
-        std::env::remove_var("INFIMOUNT_SECRET_MARKER");
         assert_eq!(outcome.result, ClaudeOutcome::Succeeded);
         assert_eq!(outcome.exit_code, Some(0));
+    }
+
+    #[test]
+    fn inherited_agent_secrets_are_not_in_scoped_process_environment() {
+        let mut command = Command::new("test-command");
+        command.env("INFIMOUNT_SECRET_MARKER", "must-never-cross-boundary");
+        scoped_environment(&mut command);
+        assert!(!command.get_envs().any(|(key, value)| {
+            key == "INFIMOUNT_SECRET_MARKER" && value.is_some()
+        }));
     }
 
     #[cfg(unix)]
