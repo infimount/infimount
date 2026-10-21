@@ -79,8 +79,12 @@ fn new_record(
         status: ExecutionStatus::Prepared,
         task_scope_digest: scope_digest(scope)?,
         enabled_task_tools: vec![
-            TaskTool::ListDir, TaskTool::StatPath, TaskTool::ReadFile,
-            TaskTool::SearchPaths, TaskTool::WriteFile, TaskTool::Mkdir,
+            TaskTool::ListDir,
+            TaskTool::StatPath,
+            TaskTool::ReadFile,
+            TaskTool::SearchPaths,
+            TaskTool::WriteFile,
+            TaskTool::Mkdir,
         ],
         isolation_profile: IsolationProfile::McpOnlyReadonlyHost,
         prompt_sha256: sha256(prompt.as_bytes()),
@@ -104,17 +108,16 @@ struct OutputProof {
 /// Enumerates bounded outputs using the same OpenDAL and host-path safety
 /// checks as the desktop review. The evidence is a snapshot, not approval to
 /// publish. A later independent user review must rehash the files again.
-async fn output_proof(
-    state: &AppState,
-    scope: &AgentTaskScope,
-) -> Result<OutputProof, CoreError> {
+async fn output_proof(state: &AppState, scope: &AgentTaskScope) -> Result<OutputProof, CoreError> {
     scope
         .validate_current_binding(&state.registry)
         .map_err(|_| CoreError::Config("Agent Task MCP scope changed during execution".into()))?;
     let op = state.operator_for_storage_id(&scope.storage_id)?;
     let mut entries = operations::list_entries_recursive(&op, &scope.outputs_prefix).await?;
     if entries.len() >= infimount_core::models::MAX_RECURSIVE_ITEMS as usize {
-        return Err(CoreError::Config("Agent Task output set is truncated".into()));
+        return Err(CoreError::Config(
+            "Agent Task output set is truncated".into(),
+        ));
     }
     entries.sort_by(|a, b| a.path.cmp(&b.path));
     let storage = state.find_storage_by_id(&scope.storage_id).map_err(|_| {
@@ -132,18 +135,28 @@ async fn output_proof(
         if entry.is_dir {
             continue;
         }
-        if !entry.path.starts_with(&format!("{}/", scope.outputs_prefix.trim_end_matches('/'))) {
-            return Err(CoreError::Config("Agent Task output escaped the task scope".into()));
+        if !entry
+            .path
+            .starts_with(&format!("{}/", scope.outputs_prefix.trim_end_matches('/')))
+        {
+            return Err(CoreError::Config(
+                "Agent Task output escaped the task scope".into(),
+            ));
         }
         count += 1;
         if count > MAX_OUTPUT_FILES {
-            return Err(CoreError::Config("Agent Task generated too many output files".into()));
+            return Err(CoreError::Config(
+                "Agent Task generated too many output files".into(),
+            ));
         }
         let digest = hash_agent_task_file(&op, &entry.path).await?;
-        total = total.checked_add(digest.byte_size)
+        total = total
+            .checked_add(digest.byte_size)
             .ok_or_else(|| CoreError::Config("Agent Task output byte count overflowed".into()))?;
         if total > MAX_OUTPUT_BYTES {
-            return Err(CoreError::Config("Agent Task generated outputs exceed the byte limit".into()));
+            return Err(CoreError::Config(
+                "Agent Task generated outputs exceed the byte limit".into(),
+            ));
         }
         combined.update(entry.path.as_bytes());
         combined.update([0_u8]);
@@ -175,8 +188,8 @@ fn terminal_record(
         record.output_total_bytes = proof.bytes;
         record.output_aggregate_sha256.clone_from(&proof.sha256);
     }
-    let successful_with_outputs = outcome == ClaudeOutcome::Succeeded
-        && proof.is_some_and(|p| p.count > 0);
+    let successful_with_outputs =
+        outcome == ClaudeOutcome::Succeeded && proof.is_some_and(|p| p.count > 0);
     record.status = if successful_with_outputs {
         ExecutionStatus::Succeeded
     } else if outcome == ClaudeOutcome::Cancelled {
@@ -191,7 +204,12 @@ fn terminal_record(
     } else if outcome == ClaudeOutcome::Succeeded {
         Some("ERR_CLAUDE_NO_OUTPUT".into())
     } else {
-        Some(outcome.code().unwrap_or("ERR_CLAUDE_EXECUTION_FAILED").into())
+        Some(
+            outcome
+                .code()
+                .unwrap_or("ERR_CLAUDE_EXECUTION_FAILED")
+                .into(),
+        )
     };
     record
 }
@@ -252,7 +270,8 @@ pub(crate) async fn execute_claude_task(
     let cwd = neutral.0.clone();
     let attempt = tauri::async_runtime::spawn_blocking(move || {
         execute_verified_claude(&identity, &args, &cwd, &cancellation, RUN_TIMEOUT)
-    }).await;
+    })
+    .await;
     let outcome = match attempt {
         Ok(Ok(report)) => report.result,
         _ => ClaudeOutcome::Failed,
@@ -281,7 +300,8 @@ mod tests {
             "agent/research".into(),
             "agent/research/tasks/81f08176-86e4-40ec-a9a4-a219c4c9b454".into(),
             "agent/research/tasks/81f08176-86e4-40ec-a9a4-a219c4c9b454/outputs".into(),
-        ).unwrap()
+        )
+        .unwrap()
     }
 
     #[test]
@@ -292,7 +312,8 @@ mod tests {
             "2.1.259 (Claude Code)",
             &"a".repeat(64),
             "Use task-only MCP",
-        ).unwrap();
+        )
+        .unwrap();
         let serialized = serde_json::to_string(&r).unwrap();
         assert_eq!(r.status, ExecutionStatus::Prepared);
         assert_eq!(r.enabled_task_tools.len(), 6);
@@ -311,8 +332,15 @@ mod tests {
         assert_eq!(finished.error_code.as_deref(), Some("ERR_CLAUDE_NO_OUTPUT"));
         let unverified = terminal_record(&r, ClaudeOutcome::Succeeded, None, true);
         assert_eq!(unverified.status, ExecutionStatus::Failed);
-        assert_eq!(unverified.error_code.as_deref(), Some("ERR_CLAUDE_OUTPUT_UNVERIFIED"));
-        let proof = OutputProof { count: 1, bytes: 4, sha256: Some("c".repeat(64)) };
+        assert_eq!(
+            unverified.error_code.as_deref(),
+            Some("ERR_CLAUDE_OUTPUT_UNVERIFIED")
+        );
+        let proof = OutputProof {
+            count: 1,
+            bytes: 4,
+            sha256: Some("c".repeat(64)),
+        };
         let finished = terminal_record(&r, ClaudeOutcome::Succeeded, Some(&proof), false);
         assert_eq!(finished.status, ExecutionStatus::Succeeded);
         assert_eq!(finished.output_file_count, 1);
@@ -323,7 +351,11 @@ mod tests {
     fn cancelled_or_timedout_process_never_sets_success() {
         let mut r = new_record(&test_scope(), "2.1.259", &"b".repeat(64), "task").unwrap();
         r.status = ExecutionStatus::Running;
-        for outcome in [ClaudeOutcome::Cancelled, ClaudeOutcome::TimedOut, ClaudeOutcome::Failed] {
+        for outcome in [
+            ClaudeOutcome::Cancelled,
+            ClaudeOutcome::TimedOut,
+            ClaudeOutcome::Failed,
+        ] {
             let terminal = terminal_record(&r, outcome, None, false);
             assert_ne!(terminal.status, ExecutionStatus::Succeeded);
             assert!(terminal.error_code.is_some());
