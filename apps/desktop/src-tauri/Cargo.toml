@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+[features]
+# Experimental, operator-invoked Claude Code qualification only.
+# Never enable in published stable build profiles without a reviewed pilot.
+claude-pilot = []
+
 [dependencies]
 tauri = { version = "2.11.1", features = ["macos-private-api", "tray-icon"] }
 chrono = { version = "0.4", features = ["clock"] }
