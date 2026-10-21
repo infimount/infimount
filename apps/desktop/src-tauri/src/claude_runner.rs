@@ -61,7 +61,9 @@ fn capture<R: Read>(mut stream: R, limit: usize) -> std::io::Result<BoundedCaptu
             break;
         }
         let remaining = limit.saturating_sub(result.content.len());
-        result.content.extend_from_slice(&block[..size.min(remaining)]);
+        result
+            .content
+            .extend_from_slice(&block[..size.min(remaining)]);
         result.exceeded |= size > remaining;
     }
     Ok(result)
@@ -86,13 +88,17 @@ pub(crate) fn detect_claude_at(path: &Path) -> Result<ExecutableIdentity, CoreEr
     let canonical = fs::canonicalize(path)
         .map_err(|_| CoreError::Config("Claude Code executable is unavailable".into()))?;
     if !canonical.is_absolute() {
-        return Err(CoreError::Config("Claude Code executable must be absolute".into()));
+        return Err(CoreError::Config(
+            "Claude Code executable must be absolute".into(),
+        ));
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         if fs::metadata(&canonical)?.permissions().mode() & 0o111 == 0 {
-            return Err(CoreError::Config("Claude Code executable is not executable".into()));
+            return Err(CoreError::Config(
+                "Claude Code executable is not executable".into(),
+            ));
         }
     }
     let sha256 = executable_digest(&canonical)?;
@@ -104,25 +110,35 @@ pub(crate) fn detect_claude_at(path: &Path) -> Result<ExecutableIdentity, CoreEr
     }
     let reported_version = output.trim().to_string();
     crate::claude_handoff::require_qualified_flags(&reported_version)?;
-    let identity = ExecutableIdentity { executable: canonical, sha256, reported_version };
+    let identity = ExecutableIdentity {
+        executable: canonical,
+        sha256,
+        reported_version,
+    };
     verify_executable_identity(&identity)?;
     Ok(identity)
 }
 
 fn verified_cwd(path: &Path) -> Result<(), CoreError> {
     if !path.is_absolute() {
-        return Err(CoreError::Config("Claude neutral working directory must be absolute".into()));
+        return Err(CoreError::Config(
+            "Claude neutral working directory must be absolute".into(),
+        ));
     }
     let metadata = fs::symlink_metadata(path)
         .map_err(|_| CoreError::Config("Claude neutral working directory is missing".into()))?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Err(CoreError::Config("Claude neutral working directory is not an ordinary directory".into()));
+        return Err(CoreError::Config(
+            "Claude neutral working directory is not an ordinary directory".into(),
+        ));
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         if metadata.permissions().mode() & 0o077 != 0 {
-            return Err(CoreError::Config("Claude neutral working directory must be private".into()));
+            return Err(CoreError::Config(
+                "Claude neutral working directory must be private".into(),
+            ));
         }
     }
     Ok(())
@@ -155,10 +171,15 @@ pub(crate) fn execute_verified_claude(
     verify_executable_identity(identity)?;
     verified_cwd(cwd)?;
     if max_runtime.is_zero() || max_runtime > MAX_RUNTIME {
-        return Err(CoreError::Config("Claude execution runtime limit is invalid".into()));
+        return Err(CoreError::Config(
+            "Claude execution runtime limit is invalid".into(),
+        ));
     }
     if cancelled.load(Ordering::SeqCst) {
-        return Ok(SupervisedOutcome { result: ClaudeOutcome::Cancelled, exit_code: None });
+        return Ok(SupervisedOutcome {
+            result: ClaudeOutcome::Cancelled,
+            exit_code: None,
+        });
     }
     #[cfg(not(unix))]
     {
@@ -181,10 +202,17 @@ pub(crate) fn execute_verified_claude(
             .process_group(0);
         scoped_environment(&mut command);
         verify_executable_identity(identity)?;
-        let mut child = command.spawn()
-            .map_err(|_| CoreError::Config("verified Claude executable could not be launched".into()))?;
-        let stdout = child.stdout.take().ok_or_else(|| CoreError::Config("Claude output pipe is unavailable".into()))?;
-        let stderr = child.stderr.take().ok_or_else(|| CoreError::Config("Claude error pipe is unavailable".into()))?;
+        let mut child = command.spawn().map_err(|_| {
+            CoreError::Config("verified Claude executable could not be launched".into())
+        })?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| CoreError::Config("Claude output pipe is unavailable".into()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| CoreError::Config("Claude error pipe is unavailable".into()))?;
         let out_thread = thread::spawn(move || capture(stdout, STDOUT_LIMIT));
         let err_thread = thread::spawn(move || capture(stderr, STDERR_LIMIT));
 
@@ -192,8 +220,12 @@ pub(crate) fn execute_verified_claude(
         let (code, reason) = loop {
             match child.try_wait() {
                 Ok(Some(status)) => break (status.code(), None),
-                Ok(None) if cancelled.load(Ordering::SeqCst) => break (None, Some(ClaudeOutcome::Cancelled)),
-                Ok(None) if start.elapsed() >= max_runtime => break (None, Some(ClaudeOutcome::TimedOut)),
+                Ok(None) if cancelled.load(Ordering::SeqCst) => {
+                    break (None, Some(ClaudeOutcome::Cancelled))
+                }
+                Ok(None) if start.elapsed() >= max_runtime => {
+                    break (None, Some(ClaudeOutcome::TimedOut))
+                }
                 Ok(None) => thread::sleep(Duration::from_millis(25)),
                 Err(_) => break (None, Some(ClaudeOutcome::Failed)),
             }
@@ -201,8 +233,16 @@ pub(crate) fn execute_verified_claude(
         // A CLI child may have spawned descendants keeping pipes open. Kill
         // the dedicated group before joining capture threads on every exit.
         terminate_owned_group(&mut child);
-        let stdout = out_thread.join().ok().and_then(Result::ok).unwrap_or_default();
-        let stderr = err_thread.join().ok().and_then(Result::ok).unwrap_or_default();
+        let stdout = out_thread
+            .join()
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or_default();
+        let stderr = err_thread
+            .join()
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or_default();
         let _ = stderr; // Diagnostics are never persisted or reflected to the UI.
         let result = if let Some(reason) = reason {
             reason
@@ -219,7 +259,10 @@ pub(crate) fn execute_verified_claude(
                 ClaudeOutcome::Failed
             }
         };
-        Ok(SupervisedOutcome { result, exit_code: code })
+        Ok(SupervisedOutcome {
+            result,
+            exit_code: code,
+        })
     }
 }
 
@@ -237,7 +280,11 @@ mod tests {
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
         let canonical = fs::canonicalize(executable).unwrap();
         let sha256 = format!("{:x}", Sha256::digest(fs::read(&canonical).unwrap()));
-        ExecutableIdentity { executable: canonical, sha256, reported_version: "2.1.259 (Claude Code)".into() }
+        ExecutableIdentity {
+            executable: canonical,
+            sha256,
+            reported_version: "2.1.259 (Claude Code)".into(),
+        }
     }
 
     #[test]
@@ -261,7 +308,8 @@ mod tests {
             temp.path(),
             &AtomicBool::new(false),
             Duration::from_secs(5),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(outcome.result, ClaudeOutcome::Succeeded);
         assert_eq!(outcome.exit_code, Some(0));
     }
@@ -271,9 +319,9 @@ mod tests {
         let mut command = Command::new("test-command");
         command.env("INFIMOUNT_SECRET_MARKER", "must-never-cross-boundary");
         scoped_environment(&mut command);
-        assert!(!command.get_envs().any(|(key, value)| {
-            key == "INFIMOUNT_SECRET_MARKER" && value.is_some()
-        }));
+        assert!(!command
+            .get_envs()
+            .any(|(key, value)| { key == "INFIMOUNT_SECRET_MARKER" && value.is_some() }));
     }
 
     #[cfg(unix)]
@@ -283,8 +331,13 @@ mod tests {
         let identity = mock_cli(temp.path(), "printf '%s' '{\"is_error\":false}'");
         fs::write(&identity.executable, b"changed").unwrap();
         assert!(execute_verified_claude(
-            &identity, &[], temp.path(), &AtomicBool::new(false), Duration::from_secs(3)
-        ).is_err());
+            &identity,
+            &[],
+            temp.path(),
+            &AtomicBool::new(false),
+            Duration::from_secs(3)
+        )
+        .is_err());
     }
 
     #[cfg(unix)]
@@ -299,7 +352,8 @@ mod tests {
             temp.path(),
             &AtomicBool::new(false),
             Duration::from_millis(250),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(outcome.result, ClaudeOutcome::TimedOut);
         assert!(start.elapsed() < Duration::from_secs(4));
     }
@@ -316,7 +370,8 @@ mod tests {
             temp.path(),
             &cancelled,
             Duration::from_secs(3),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(outcome.result, ClaudeOutcome::Cancelled);
         assert_eq!(outcome.exit_code, None);
     }
@@ -333,7 +388,8 @@ mod tests {
                 temp.path(),
                 &AtomicBool::new(false),
                 Duration::from_secs(3),
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(outcome.result, ClaudeOutcome::Failed);
         }
     }
