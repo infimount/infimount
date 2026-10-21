@@ -203,7 +203,10 @@ mod tests {
 
     #[test]
     fn path_boundaries_match_legacy_desktop_contract() {
-        assert_eq!(normalize_destination_dir("/exports/reports/").unwrap(), "exports/reports");
+        assert_eq!(
+            normalize_destination_dir("/exports/reports/").unwrap(),
+            "exports/reports"
+        );
         assert!(normalize_destination_dir("reports//inner").is_err());
         assert!(normalize_destination_dir("..").is_err());
         assert!(validate_output_task_path("outputs/report.md").is_ok());
