@@ -116,9 +116,14 @@ pub async fn run_claude_pilot(
     #[cfg(all(feature = "claude-pilot", unix))]
     {
         if !request.confirm_external_inference {
-            return Err("Explicit approval is required before sharing prepared task data with Claude".into());
+            return Err(
+                "Explicit approval is required before sharing prepared task data with Claude"
+                    .into(),
+            );
         }
-        state.require_operational().map_err(|_| "Infimount is in restricted recovery mode".to_string())?;
+        state
+            .require_operational()
+            .map_err(|_| "Infimount is in restricted recovery mode".to_string())?;
         if !valid_pilot_uuid(&request.workspace_id) || !valid_pilot_uuid(&request.task_id) {
             return Err("Claude pilot requires valid task/workspace identifiers".into());
         }
@@ -141,15 +146,15 @@ pub async fn run_claude_pilot(
         )
         .await
         .map_err(|_| {
-            "Claude pilot could not complete. Check task scope and private execution evidence".to_string()
+            "Claude pilot could not complete. Check task scope and private execution evidence"
+                .to_string()
         })?;
         // Return only safe A2 evidence metadata, not raw CLI output, file paths,
         // prompts, credentials, source text, or publication authority.
-        let record = state.execution_records.read(
-            &request.workspace_id,
-            &request.task_id,
-            &execution_id,
-        ).map_err(|_| "Claude pilot evidence could not be verified".to_string())?;
+        let record = state
+            .execution_records
+            .read(&request.workspace_id, &request.task_id, &execution_id)
+            .map_err(|_| "Claude pilot evidence could not be verified".to_string())?;
         Ok(ClaudePilotOutput {
             execution_id,
             status: record.status,
@@ -200,11 +205,19 @@ mod tests {
     #[cfg(all(feature = "claude-pilot", unix))]
     #[test]
     fn pilot_lease_prevents_duplicate_runs_and_supports_cancellation() {
-        let key = (uuid::Uuid::new_v4().to_string(), uuid::Uuid::new_v4().to_string());
+        let key = (
+            uuid::Uuid::new_v4().to_string(),
+            uuid::Uuid::new_v4().to_string(),
+        );
         let (lease, token) = reserve_pilot(key.clone()).unwrap();
         assert!(reserve_pilot(key.clone()).is_err());
         assert!(!token.load(Ordering::SeqCst));
-        running_pilots().lock().unwrap().get(&key).unwrap().store(true, Ordering::SeqCst);
+        running_pilots()
+            .lock()
+            .unwrap()
+            .get(&key)
+            .unwrap()
+            .store(true, Ordering::SeqCst);
         assert!(token.load(Ordering::SeqCst));
         drop(lease);
         assert!(reserve_pilot(key).is_ok());
