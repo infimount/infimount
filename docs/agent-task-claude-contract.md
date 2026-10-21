@@ -38,7 +38,62 @@ The internal A4 runner is now wired to the accepted launch contract:
 - Refuse rerunning into a task that already has output files. Output review and create-only publication remain separate human controls.
 - Windows execution is **not supported in this runner** yet; it fails closed until a job-object containment implementation is qualified. Linux/macOS still need a packaged real-client pilot before a user-facing control is added.
 
-The runner functions are compiled and unit-tested but are currently unreachable from an application command. They are a preparatory integration, not a declaration of supported Claude Code execution.
+The runner functions are compiled and unit-tested. An optional `claude-pilot` feature now exposes a deliberately consent-gated operator test path on Unix; ordinary builds still reject all Claude execution requests. This is not a declaration of supported Claude Code execution.
+## Opt-in operator qualification build (A4 pilot)
+
+A dedicated Cargo feature, `claude-pilot`, exposes an **experimental** prepared-task
+panel only in an explicitly compiled Unix development/pilot build. It is
+**disabled in normal builds** and is not part of a stable release. The standard
+agent adapter list continues to describe Claude Code as not enabled.
+
+Run only against synthetic, nonsensitive inputs, and use a separate test
+account where practical.
+
+1. Verify Claude Code is installed, authenticated, and at least version
+   `2.1.259`. Find its resolved executable path (for example,
+   `readlink -f "$(command -v claude)"` on Linux). Infimount hashes and
+   validates the binary and its version before launching.
+2. Install dependencies and prepare the bundled MCP sidecar as described in
+   the developer setup. Run the desktop from the project root with
+   `pnpm --dir apps/desktop tauri dev --features claude-pilot`.
+   For packaged qualification use `pnpm --dir apps/desktop tauri build
+   --features claude-pilot` in an isolated internal environment. **Never
+   publish these opt-in pilot packages to the stable release channel.**
+3. Prepare a fresh bounded Agent Task from synthetic files in the desktop UI.
+   Use a Local Filesystem Agent Workspace with scoped MCP access enabled.
+   Confirm the source files are not newly exposed to MCP by the operation.
+4. Under the prepared task, open **Experimental Claude Code qualification**.
+   Enter the absolute CLI executable path and explicitly acknowledge that
+   task contents may be sent to the configured Claude inference provider.
+   Without both requirements the Run action remains disabled.
+5. Execute a small coding or document task; optionally test **Stop pilot**
+   against a longer synthetic task. Closing the prepared-task dialog is
+   intentionally blocked while its pilot is running.
+6. After execution, verify its returned execution ID, terminal status,
+   and file counts against the private A2 evidence at
+   `<Infimount config>/agent-task-executions/<workspace-id>/<task-id>/`.
+   Review outputs in the existing separate review panel; publication still
+   requires its own explicit, create-only approval.
+7. Perform separate adversarial runs on **fresh tasks** asking for an
+   unselected source path, host Bash/Read/Edit, an unrelated MCP server,
+   or write-back without review. None may gain authority. Record only
+   privacy-safe pass/fail evidence, never private task bytes, bearer tokens,
+   or full CLI logs.
+
+The pilot executor inherits only a restricted set of runtime/login variables.
+It does not forward arbitrary `ANTHROPIC_API_KEY`, cloud credentials, or
+unrelated environment secrets. Users depending on environment-only API
+authentication may need a separate, explicitly reviewed authentication design.
+Do not relax environment isolation merely to make the pilot succeed.
+
+**This opt-in feature is a test entrypoint, not qualification evidence.**
+A working CLI version string, a successful synthetic task, or the compiled
+pilot feature alone does not establish production safety. Before enabling
+Claude Code as a default adapter, retain independent packaged Linux/macOS
+qualification and implemented Windows job-object containment, verify actual
+effective tool exposure, and confirm complete coding/document/data-analysis
+coverage plus source immutability and independently reviewed publication.
+
 ## Qualification required before enabling
 
 1. Build from a verified and canonicalized Claude Code executable and revalidate its digest before launch, as with the A3 Codex adapter.
