@@ -164,6 +164,7 @@ fn terminal_record(
     running: &AgentTaskExecutionRecord,
     outcome: ClaudeOutcome,
     proof: Option<&OutputProof>,
+    proof_failed: bool,
 ) -> AgentTaskExecutionRecord {
     let mut record = running.clone();
     record.finished_at = Some(Utc::now().to_rfc3339());
@@ -183,6 +184,8 @@ fn terminal_record(
     };
     record.error_code = if successful_with_outputs {
         None
+    } else if proof_failed {
+        Some("ERR_CLAUDE_OUTPUT_UNVERIFIED".into())
     } else if outcome == ClaudeOutcome::Succeeded {
         Some("ERR_CLAUDE_NO_OUTPUT".into())
     } else {
@@ -252,8 +255,10 @@ pub(crate) async fn execute_claude_task(
         Ok(Ok(report)) => report.result,
         _ => ClaudeOutcome::Failed,
     };
-    let proof = output_proof(state, &prepared.scope).await.ok();
-    let completed = terminal_record(&running, outcome, proof.as_ref());
+    let scanned = output_proof(state, &prepared.scope).await;
+    let proof_failed = scanned.is_err();
+    let proof = scanned.ok();
+    let completed = terminal_record(&running, outcome, proof.as_ref(), proof_failed);
     // Failing to persist the terminal record never becomes a claimed success.
     store.transition(&running, &completed)?;
     Ok(initial.execution_id)
@@ -299,11 +304,14 @@ mod tests {
     fn successful_cli_exit_without_reviewable_outputs_is_not_success() {
         let mut r = new_record(&test_scope(), "2.1.259", &"b".repeat(64), "task").unwrap();
         r.status = ExecutionStatus::Running;
-        let finished = terminal_record(&r, ClaudeOutcome::Succeeded, None);
+        let finished = terminal_record(&r, ClaudeOutcome::Succeeded, None, false);
         assert_eq!(finished.status, ExecutionStatus::Failed);
         assert_eq!(finished.error_code.as_deref(), Some("ERR_CLAUDE_NO_OUTPUT"));
+        let unverified = terminal_record(&r, ClaudeOutcome::Succeeded, None, true);
+        assert_eq!(unverified.status, ExecutionStatus::Failed);
+        assert_eq!(unverified.error_code.as_deref(), Some("ERR_CLAUDE_OUTPUT_UNVERIFIED"));
         let proof = OutputProof { count: 1, bytes: 4, sha256: Some("c".repeat(64)) };
-        let finished = terminal_record(&r, ClaudeOutcome::Succeeded, Some(&proof));
+        let finished = terminal_record(&r, ClaudeOutcome::Succeeded, Some(&proof), false);
         assert_eq!(finished.status, ExecutionStatus::Succeeded);
         assert_eq!(finished.output_file_count, 1);
         finished.validate().unwrap();
@@ -314,7 +322,7 @@ mod tests {
         let mut r = new_record(&test_scope(), "2.1.259", &"b".repeat(64), "task").unwrap();
         r.status = ExecutionStatus::Running;
         for outcome in [ClaudeOutcome::Cancelled, ClaudeOutcome::TimedOut, ClaudeOutcome::Failed] {
-            let terminal = terminal_record(&r, outcome, None);
+            let terminal = terminal_record(&r, outcome, None, false);
             assert_ne!(terminal.status, ExecutionStatus::Succeeded);
             assert!(terminal.error_code.is_some());
             terminal.validate().unwrap();
