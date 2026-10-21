@@ -1,7 +1,6 @@
 //! Supervised process execution for an eventual Claude Code Agent Task adapter.
 //! This module is not exposed through Tauri until real packaged-client
 //! qualification proves the CLI's MCP and restriction semantics.
-use std::ffi::OsString;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
@@ -12,7 +11,8 @@ use std::time::{Duration, Instant};
 
 use infimount_core::CoreError;
 
-use crate::agent_adapters::{verify_executable_identity, ExecutableIdentity};
+use crate::agent_adapters::{executable_digest, verify_executable_identity, ExecutableIdentity};
+use crate::client_integrations::run_with_timeout;
 
 const MAX_RUNTIME: Duration = Duration::from_secs(12 * 60);
 const STDOUT_LIMIT: usize = 64 * 1024;
@@ -78,6 +78,35 @@ fn scoped_environment(command: &mut Command) {
     }
     command.env("TERM", "dumb");
     command.env("NO_COLOR", "1");
+}
+
+/// Read-only client probe. The version must be compatible with the documented
+/// fail-closed CLI flags, and the binary digest is revalidated before execution.
+pub(crate) fn detect_claude_at(path: &Path) -> Result<ExecutableIdentity, CoreError> {
+    let canonical = fs::canonicalize(path)
+        .map_err(|_| CoreError::Config("Claude Code executable is unavailable".into()))?;
+    if !canonical.is_absolute() {
+        return Err(CoreError::Config("Claude Code executable must be absolute".into()));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if fs::metadata(&canonical)?.permissions().mode() & 0o111 == 0 {
+            return Err(CoreError::Config("Claude Code executable is not executable".into()));
+        }
+    }
+    let sha256 = executable_digest(&canonical)?;
+    let args = vec!["--version".to_owned()];
+    let (status, output, _, timed_out) =
+        run_with_timeout(&canonical, &args, Duration::from_secs(3), 4096);
+    if timed_out || !status.is_some_and(|s| s.success()) {
+        return Err(CoreError::Config("Claude Code version probe failed".into()));
+    }
+    let reported_version = output.trim().to_string();
+    crate::claude_handoff::require_qualified_flags(&reported_version)?;
+    let identity = ExecutableIdentity { executable: canonical, sha256, reported_version };
+    verify_executable_identity(&identity)?;
+    Ok(identity)
 }
 
 fn verified_cwd(path: &Path) -> Result<(), CoreError> {
