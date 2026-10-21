@@ -20,6 +20,26 @@ export interface AgentTaskListRequest {
   workspaceId: string;
 }
 
+export interface ClaudePilotBuildInfo {
+  enabled: boolean;
+  platformSupported: boolean;
+  requiresExplicitConsent: boolean;
+  note: string;
+}
+
+export interface RunClaudePilotRequest extends AgentTaskIdentityRequest {
+  executablePath: string;
+  confirmExternalInference: boolean;
+}
+
+export interface ClaudePilotOutput {
+  executionId: string;
+  status: "prepared" | "running" | "succeeded" | "failed" | "cancelled";
+  fileCount: number;
+  totalBytes: number;
+  errorCode: string | null;
+}
+
 export type AgentTaskCodexHandoffRequest = AgentTaskIdentityRequest;
 export type AgentTaskOutputReviewRequest = AgentTaskIdentityRequest;
 
@@ -180,7 +200,8 @@ async function invokeTask<T>(
     | AgentTaskIdentityRequest
     | AgentTaskListRequest
     | AgentTaskPublicationRequest
-    | ApplyAgentTaskPublicationRequest,
+    | ApplyAgentTaskPublicationRequest
+    | RunClaudePilotRequest,
 ): Promise<T> {
   try {
     return await tauriInvoke<T>(command, { request });
@@ -208,6 +229,31 @@ export async function listAgentTaskAdapters(): Promise<AgentTaskAdapterCapabilit
   } catch (error) {
     const safe = sanitizeTaskError(error);
     throw new TauriApiError(safe.message, safe.code);
+  }
+}
+
+export async function claudePilotBuildInfo(): Promise<ClaudePilotBuildInfo> {
+  try {
+    return await tauriInvoke<ClaudePilotBuildInfo>("claude_pilot_build_info");
+  } catch {
+    return {
+      enabled: false,
+      platformSupported: false,
+      requiresExplicitConsent: true,
+      note: "Claude Code pilot is unavailable",
+    };
+  }
+}
+
+export function runClaudePilot(request: RunClaudePilotRequest): Promise<ClaudePilotOutput> {
+  return invokeTask<ClaudePilotOutput>("run_claude_pilot", request);
+}
+
+export async function cancelClaudePilot(request: AgentTaskIdentityRequest): Promise<boolean> {
+  try {
+    return await tauriInvoke<boolean>("cancel_claude_pilot", { request });
+  } catch {
+    return false;
   }
 }
 
