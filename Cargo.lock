@@ -2611,12 +2611,13 @@ dependencies = [
 
 [[package]]
 name = "infimount"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
  "dirs",
  "fs2",
+ "infimount_control",
  "infimount_core",
  "infimount_mcp",
  "libc",
@@ -2639,8 +2640,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "infimount_control"
+version = "0.8.1"
+dependencies = [
+ "infimount_core",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "infimount_core"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "age",
  "age-core",
@@ -2666,7 +2677,7 @@ dependencies = [
 
 [[package]]
 name = "infimount_mcp"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "axum",
  "base64 0.22.1",
