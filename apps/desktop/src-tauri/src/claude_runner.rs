@@ -353,12 +353,22 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn timeout_terminates_owned_process_group() {
+        // Use the installed shell instead of executing a script from the test
+        // temp directory. LLVM coverage runners may deny or intermittently
+        // fail execution of files created there, which tests the mount rather
+        // than the process-group timeout/cancellation contract.
         let temp = private_tempdir();
-        let identity = mock_cli(temp.path(), "sleep 10");
+        let executable = fs::canonicalize("/bin/sh").unwrap();
+        let identity = ExecutableIdentity {
+            sha256: format!("{:x}", Sha256::digest(fs::read(&executable).unwrap())),
+            executable,
+            reported_version: "test-shell".into(),
+        };
+        let args = ["-c".to_string(), "sleep 10".to_string()];
         let start = Instant::now();
         let outcome = execute_verified_claude(
             &identity,
-            &[],
+            &args,
             temp.path(),
             &AtomicBool::new(false),
             Duration::from_millis(250),

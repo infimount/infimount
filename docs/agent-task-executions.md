@@ -38,6 +38,19 @@ prepared -> running -> succeeded
         \--------------> cancelled
 ```
 
+Creation now also holds a cross-process **single-active-execution gate per task**:
+under the same mutation lock, it validates all previous records for that task
+and rejects any new attempt while another execution remains in `prepared` or
+`running` state. This applies even when the new attempt has a different UUID.
+Malformed, unexpected, or interrupted historical evidence blocks a new attempt
+rather than allowing an ambiguous concurrent run. Terminal attempts can be
+followed by a new execution only when the caller separately proves there are
+no existing reviewable outputs.
+
+A stranded active record after a crash deliberately blocks new execution
+until a reviewed recovery flow has confirmed the owned process has terminated.
+Do not silently expire a lease: the old agent might still be writing outputs.
+
 Each transition compares the caller's complete previously-read record with the
 current record while holding a cross-process lock. Terminal states have no
 outgoing transitions. A different instance cannot silently advance a stale
@@ -83,6 +96,10 @@ remain unchanged.
 - Rust unit tests validate all A0 accepted and rejected JSON fixtures.
 - Unknown/missing/duplicate fields and secret/path fields are rejected.
 - Duplicate execution IDs cannot overwrite existing evidence.
+- Two concurrent attempts with different IDs for the same task yield exactly one
+  successful reservation; the other is rejected even across process instances.
+- Corrupted prior records and interrupted temporary records prevent an
+  ambiguous new execution.
 - Concurrent writers and stale records fail rather than silently changing state.
 - Execution identity, scope digest, and enabled tools remain immutable.
 - Terminal states cannot reopen.
