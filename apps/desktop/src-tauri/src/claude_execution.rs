@@ -342,7 +342,12 @@ mod tests {
         let finished = terminal_record(&r, ClaudeOutcome::Succeeded, None, None);
         assert_eq!(finished.status, ExecutionStatus::Failed);
         assert_eq!(finished.error_code.as_deref(), Some("ERR_CLAUDE_NO_OUTPUT"));
-        let unverified = terminal_record(&r, ClaudeOutcome::Succeeded, None, Some("ERR_CLAUDE_OUTPUT_UNVERIFIED"));
+        let unverified = terminal_record(
+            &r,
+            ClaudeOutcome::Succeeded,
+            None,
+            Some("ERR_CLAUDE_OUTPUT_UNVERIFIED"),
+        );
         assert_eq!(unverified.status, ExecutionStatus::Failed);
         assert_eq!(
             unverified.error_code.as_deref(),
