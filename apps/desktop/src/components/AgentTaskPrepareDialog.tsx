@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Bot, CheckCircle2, FileStack, ShieldAlert } from "lucide-react";
 
 import { AgentTaskOutputReview } from "./AgentTaskOutputReview";
+import { ClaudePilotPanel } from "./ClaudePilotPanel";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -147,6 +148,7 @@ export function AgentTaskPrepareDialog({
   const [requestError, setRequestError] = useState<string | null>(null);
   const [prepared, setPrepared] = useState<PrepareAgentTaskOutput | null>(null);
   const [codexLaunching, setCodexLaunching] = useState(false);
+  const [claudePilotRunning, setClaudePilotRunning] = useState(false);
   const [codexLaunched, setCodexLaunched] = useState(false);
   const [codexLaunchError, setCodexLaunchError] = useState<string | null>(null);
   const [adapters, setAdapters] = useState<AgentTaskAdapterCapability[]>([]);
@@ -156,6 +158,7 @@ export function AgentTaskPrepareDialog({
   useEffect(() => {
     if (!open) {
       if (prepared) setPrepared(null);
+      setClaudePilotRunning(false);
       setCodexLaunching(false);
       setCodexLaunched(false);
       setCodexLaunchError(null);
@@ -175,6 +178,7 @@ export function AgentTaskPrepareDialog({
     setCodexLaunching(false);
     setCodexLaunched(false);
     setCodexLaunchError(null);
+    setClaudePilotRunning(false);
     setWorkspaceLoadError(false);
     setLoadingWorkspaces(true);
     void Promise.all([listWorkspaces(), listStorages()])
@@ -315,7 +319,13 @@ export function AgentTaskPrepareDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && claudePilotRunning) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="sm:max-w-[680px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -403,6 +413,12 @@ export function AgentTaskPrepareDialog({
             {codexLaunchError ? (
               <p role="alert" className="text-sm text-destructive">{codexLaunchError}</p>
             ) : null}
+            <ClaudePilotPanel
+              workspaceId={prepared.workspaceId}
+              taskId={prepared.taskId}
+              workspaceMcpExposed={prepared.workspaceMcpExposed}
+              onRunningChange={setClaudePilotRunning}
+            />
             <AgentTaskOutputReview workspaceId={prepared.workspaceId} taskId={prepared.taskId} />
           </div>
         ) : (
@@ -524,13 +540,13 @@ export function AgentTaskPrepareDialog({
         )}
 
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={prepareRunning || codexLaunching}>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={prepareRunning || codexLaunching || claudePilotRunning}>
             {prepared ? "Close" : "Cancel"}
           </Button>
           {prepared ? (
             <Button
               onClick={() => void launchCodex()}
-              disabled={!prepared.workspaceMcpExposed || codexLaunching || !codexReady}
+              disabled={!prepared.workspaceMcpExposed || codexLaunching || claudePilotRunning || !codexReady}
             >
               {codexLaunching ? "Opening Codex…" : "Open in Codex"}
             </Button>

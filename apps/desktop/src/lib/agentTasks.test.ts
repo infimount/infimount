@@ -4,6 +4,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { TauriApiError } from "./api";
 import {
   launchAgentTaskInCodex,
+  claudePilotBuildInfo,
+  runClaudePilot,
+  cancelClaudePilot,
   listAgentTasks,
   prepareAgentTask,
   preflightAgentTask,
@@ -142,6 +145,62 @@ describe("Agent Task desktop API", () => {
     const handoff = { workspaceId: "workspace-1", taskId: "task-1" };
     await expect(launchAgentTaskInCodex(handoff)).resolves.toEqual(handoffResult);
     expect(invokeMock).toHaveBeenCalledWith("launch_agent_task_in_codex", { request: handoff });
+  });
+
+  it("reports opt-in pilot availability and safely defaults to disabled on transport error", async () => {
+    const available = {
+      enabled: true,
+      platformSupported: true,
+      requiresExplicitConsent: true,
+      note: "Operator pilot only",
+    };
+    invokeMock.mockResolvedValueOnce(available);
+    await expect(claudePilotBuildInfo()).resolves.toEqual(available);
+    expect(invokeMock).toHaveBeenCalledWith("claude_pilot_build_info");
+
+    invokeMock.mockRejectedValueOnce(new Error("transport unavailable"));
+    await expect(claudePilotBuildInfo()).resolves.toEqual({
+      enabled: false,
+      platformSupported: false,
+      requiresExplicitConsent: true,
+      note: "Claude Code pilot is unavailable",
+    });
+  });
+
+  it("passes the exact consented task and executable to the opt-in pilot", async () => {
+    const pilot = {
+      workspaceId: "workspace-1",
+      taskId: "task-1",
+      executablePath: "/opt/claude",
+      confirmExternalInference: true,
+    };
+    const result = {
+      executionId: "f384f3ce-2837-46d2-8b86-2e6e48e93689",
+      status: "succeeded",
+      fileCount: 1,
+      totalBytes: 12,
+      errorCode: null,
+    };
+    invokeMock.mockResolvedValueOnce(result);
+    await expect(runClaudePilot(pilot)).resolves.toEqual(result);
+    expect(invokeMock).toHaveBeenCalledWith("run_claude_pilot", { request: pilot });
+
+    invokeMock.mockRejectedValueOnce(new Error("Bearer secret at https://example.invalid"));
+    const failure = await runClaudePilot(pilot).catch((value: unknown) => value);
+    expect(failure).toMatchObject({
+      code: "UNKNOWN",
+      message: "Agent Task request failed.",
+    });
+  });
+
+  it("uses task identity only for cancel and fails closed when unavailable", async () => {
+    const key = { workspaceId: "workspace-1", taskId: "task-1" };
+    invokeMock.mockResolvedValueOnce(true);
+    await expect(cancelClaudePilot(key)).resolves.toBe(true);
+    expect(invokeMock).toHaveBeenCalledWith("cancel_claude_pilot", { request: key });
+
+    invokeMock.mockRejectedValueOnce(new Error("unavailable"));
+    await expect(cancelClaudePilot(key)).resolves.toBe(false);
   });
 
   it("lists committed tasks by workspace identity only", async () => {

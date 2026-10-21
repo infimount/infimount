@@ -10,6 +10,7 @@ mod app_settings;
 // A4 contract spike: tested but not launchable until a packaged Claude pilot.
 #[allow(dead_code)]
 mod claude_handoff;
+mod claude_pilot;
 // Supervised runner/evidence path stays internal until real packaged-client qualification.
 #[allow(dead_code)]
 mod claude_execution;
@@ -177,6 +178,9 @@ fn main() {
             commands::preview_agent_task_publication,
             commands::publish_agent_task_outputs,
             agent_adapters::list_agent_task_adapters,
+            claude_pilot::claude_pilot_build_info,
+            claude_pilot::run_claude_pilot,
+            claude_pilot::cancel_claude_pilot,
             codex_handoff::launch_agent_task_in_codex,
             commands::save_wizard_state,
             commands::set_telemetry_consent,

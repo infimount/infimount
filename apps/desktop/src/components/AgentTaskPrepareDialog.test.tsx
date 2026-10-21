@@ -5,6 +5,7 @@ import { AgentTaskPrepareDialog } from "./AgentTaskPrepareDialog";
 import { listStorages, listWorkspaces } from "@/lib/api";
 import {
   launchAgentTaskInCodex,
+  claudePilotBuildInfo,
   listAgentTaskAdapters,
   prepareAgentTask,
   preflightAgentTask,
@@ -22,6 +23,9 @@ vi.mock("@/lib/api", async () => {
 
 vi.mock("@/lib/agentTasks", () => ({
   launchAgentTaskInCodex: vi.fn(),
+  claudePilotBuildInfo: vi.fn(),
+  runClaudePilot: vi.fn(),
+  cancelClaudePilot: vi.fn(),
   listAgentTaskAdapters: vi.fn(),
   preflightAgentTask: vi.fn(),
   prepareAgentTask: vi.fn(),
@@ -112,6 +116,12 @@ function renderDialog() {
 describe("AgentTaskPrepareDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(claudePilotBuildInfo).mockResolvedValue({
+      enabled: false,
+      platformSupported: true,
+      requiresExplicitConsent: true,
+      note: "Pilot not available in normal builds",
+    });
     vi.mocked(listStorages).mockResolvedValue([
       localStorageRecord as never,
       remoteStorageRecord as never,

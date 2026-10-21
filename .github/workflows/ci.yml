@@ -85,6 +85,9 @@ jobs:
       - name: Check workspace with exact MSRV
         run: cargo +1.94.0 check --workspace --all-targets --locked
 
+      - name: Check opt-in Claude qualification feature (not release enabled)
+        run: cargo +1.94.0 check -p infimount --all-targets --features claude-pilot --locked
+
 
   updater-windows-v2:
     name: Windows v2 Updater (ZIP-free)
@@ -143,6 +146,9 @@ jobs:
 
       - name: Run tests
         run: cargo test --workspace
+
+      - name: Test opt-in Claude qualification controls
+        run: cargo test -p infimount --features claude-pilot claude_pilot::tests
 
       - name: Check Core
         run: cargo check -p infimount_core
