@@ -117,7 +117,9 @@ async fn output_proof(
         return Err(CoreError::Config("Agent Task output set is truncated".into()));
     }
     entries.sort_by(|a, b| a.path.cmp(&b.path));
-    let storage = state.find_storage_by_id(&scope.storage_id)?;
+    let storage = state.find_storage_by_id(&scope.storage_id).map_err(|_| {
+        CoreError::Config("Agent Task storage could not be validated after execution".into())
+    })?;
     let mut count = 0usize;
     let mut total = 0u64;
     let mut combined = Sha256::new();
