@@ -110,7 +110,13 @@ pub async fn run_claude_pilot(
 ) -> Result<ClaudePilotOutput, String> {
     #[cfg(not(all(feature = "claude-pilot", unix)))]
     {
-        let _ = (state, request);
+        let _ = (
+            state,
+            request.workspace_id,
+            request.task_id,
+            request.executable_path,
+            request.confirm_external_inference,
+        );
         Err("Claude Code execution is disabled outside the opt-in Unix pilot build".into())
     }
     #[cfg(all(feature = "claude-pilot", unix))]
@@ -169,7 +175,7 @@ pub async fn run_claude_pilot(
 pub fn cancel_claude_pilot(request: CancelClaudePilotRequest) -> Result<bool, String> {
     #[cfg(not(all(feature = "claude-pilot", unix)))]
     {
-        let _ = request;
+        let _ = (request.workspace_id, request.task_id);
         Err("Claude Code pilot cancellation is unavailable in this build".into())
     }
     #[cfg(all(feature = "claude-pilot", unix))]
