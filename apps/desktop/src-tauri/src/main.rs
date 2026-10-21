@@ -10,6 +10,11 @@ mod app_settings;
 // A4 contract spike: tested but not launchable until a packaged Claude pilot.
 #[allow(dead_code)]
 mod claude_handoff;
+// Supervised runner/evidence path stays internal until real packaged-client qualification.
+#[allow(dead_code)]
+mod claude_execution;
+#[allow(dead_code)]
+mod claude_runner;
 mod client_integrations;
 mod codex_handoff;
 mod commands;

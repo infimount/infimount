@@ -70,7 +70,7 @@ fn parse_claude_version(value: &str) -> Result<(u64, u64, u64), CoreError> {
     ))
 }
 
-fn require_qualified_flags(version: &str) -> Result<(), CoreError> {
+pub(crate) fn require_qualified_flags(version: &str) -> Result<(), CoreError> {
     if parse_claude_version(version)? < MIN_CLAUDE_VERSION {
         return Err(invalid(
             "Claude Code lacks required unattended restriction flags",

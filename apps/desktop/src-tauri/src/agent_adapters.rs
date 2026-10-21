@@ -149,7 +149,7 @@ fn probe_error(message: &'static str) -> CoreError {
     CoreError::Config(message.to_string())
 }
 
-fn executable_digest(executable: &Path) -> Result<String, CoreError> {
+pub(crate) fn executable_digest(executable: &Path) -> Result<String, CoreError> {
     let metadata = fs::metadata(executable)
         .map_err(|_| probe_error("Agent Task client executable is unavailable"))?;
     if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_EXECUTABLE_BYTES {
