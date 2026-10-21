@@ -500,14 +500,14 @@ impl ExecutionRecordStore {
         for entry in fs::read_dir(directory)? {
             let entry = entry?;
             let name = entry.file_name();
-            let name = name.to_str().ok_or_else(|| {
-                CoreError::Config("invalid execution evidence filename".into())
-            })?;
+            let name = name
+                .to_str()
+                .ok_or_else(|| CoreError::Config("invalid execution evidence filename".into()))?;
             // Temporary records left by an interrupted transaction are
             // ambiguous: fail closed rather than guess that they are harmless.
-            let id = name.strip_suffix(".json").ok_or_else(|| {
-                CoreError::Config("unrecognized execution evidence file".into())
-            })?;
+            let id = name
+                .strip_suffix(".json")
+                .ok_or_else(|| CoreError::Config("unrecognized execution evidence file".into()))?;
             if !valid_id(id) {
                 return invalid("noncanonical execution evidence filename");
             }
