@@ -475,11 +475,61 @@ impl ExecutionRecordStore {
             .ok_or_else(|| CoreError::Config("execution record has no parent".into()))?;
         atomic_file::create_dir_all(parent)?;
         ensure_real_directory(parent)?;
+        // A different execution ID must not bypass task-level isolation.
+        // Hold the same cross-process lock used by transition() while reading
+        // existing records and publishing the new prepared attempt.
+        self.ensure_single_active_attempt(parent, record)?;
         let bytes = serialize_bounded(record)?;
         // Create through a fully-written temporary file and a no-replace hard link.
         // Unlike an existence check followed by rename, this never overwrites an
         // existing record when another process has already created the same ID.
         atomic_create_no_replace(&path, &bytes)
+    }
+
+    /// This check is always called under the global execution mutation lock.
+    /// An active attempt's prepared/running record reserves the entire task.
+    /// A terminal attempt may be retried only when the caller independently
+    /// verifies that the task output directory is empty.
+    fn ensure_single_active_attempt(
+        &self,
+        directory: &Path,
+        incoming: &AgentTaskExecutionRecord,
+    ) -> Result<()> {
+        const MAX_TASK_ATTEMPTS: usize = 1_000;
+        let mut scanned = 0usize;
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_str().ok_or_else(|| {
+                CoreError::Config("invalid execution evidence filename".into())
+            })?;
+            // Temporary records left by an interrupted transaction are
+            // ambiguous: fail closed rather than guess that they are harmless.
+            let id = name.strip_suffix(".json").ok_or_else(|| {
+                CoreError::Config("unrecognized execution evidence file".into())
+            })?;
+            if !valid_id(id) {
+                return invalid("noncanonical execution evidence filename");
+            }
+            scanned += 1;
+            if scanned > MAX_TASK_ATTEMPTS {
+                return invalid("execution history requires explicit maintenance");
+            }
+            let previous = read_bounded(&entry.path())?;
+            if previous.execution_id != id
+                || previous.workspace_id != incoming.workspace_id
+                || previous.task_id != incoming.task_id
+            {
+                return invalid("execution history identity mismatch");
+            }
+            if matches!(
+                previous.status,
+                ExecutionStatus::Prepared | ExecutionStatus::Running
+            ) {
+                return invalid("Agent Task already has an active execution");
+            }
+        }
+        Ok(())
     }
 
     pub fn read(
@@ -795,6 +845,92 @@ mod tests {
             "terminal is immutable"
         );
         assert!(store.create(&initial).is_err(), "cannot reuse existing ID");
+    }
+
+    #[test]
+    fn two_attempts_for_same_task_cannot_run_simultaneously() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ExecutionRecordStore::new(dir.path());
+        let first = prepared();
+        let mut second = first.clone();
+        second.execution_id = generate_execution_id();
+
+        store.create(&first).unwrap();
+        let error = store.create(&second).unwrap_err();
+        assert!(error.to_string().contains("active execution"));
+
+        let started = running(&first);
+        store.transition(&first, &started).unwrap();
+        assert!(store.create(&second).is_err());
+
+        let mut cancelled = started.clone();
+        cancelled.status = ExecutionStatus::Cancelled;
+        cancelled.finished_at = Some("2026-10-16T10:18:00Z".into());
+        cancelled.error_code = Some("ERR_USER_CANCELLED".into());
+        store.transition(&started, &cancelled).unwrap();
+        store.create(&second).unwrap();
+    }
+
+    #[test]
+    fn concurrent_distinct_execution_ids_use_one_task_lease() {
+        let dir = tempfile::tempdir().unwrap();
+        let barrier = Arc::new(Barrier::new(3));
+        let mut threads = Vec::new();
+
+        for _ in 0..2 {
+            let store = ExecutionRecordStore::new(dir.path());
+            let barrier = barrier.clone();
+            threads.push(thread::spawn(move || {
+                let mut record = prepared();
+                record.execution_id = generate_execution_id();
+                barrier.wait();
+                store.create(&record).is_ok()
+            }));
+        }
+
+        barrier.wait();
+        let successes = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .filter(|ok| *ok)
+            .count();
+        assert_eq!(successes, 1);
+    }
+
+    #[test]
+    fn corrupt_or_unrecognized_prior_evidence_blocks_new_execution() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ExecutionRecordStore::new(dir.path());
+        let original = prepared();
+        store.create(&original).unwrap();
+
+        let mut terminal = original.clone();
+        terminal.status = ExecutionStatus::Failed;
+        terminal.finished_at = Some("2026-10-16T10:18:00Z".into());
+        terminal.error_code = Some("ERR_TEST_FAILED".into());
+        store.transition(&original, &terminal).unwrap();
+
+        let task_dir = store
+            .checked_record_path(
+                &original.workspace_id,
+                &original.task_id,
+                &original.execution_id,
+            )
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        let extra = task_dir.join(".execution-recovery.tmp");
+        fs::write(&extra, b"uncommitted evidence").unwrap();
+
+        let mut retry = original.clone();
+        retry.execution_id = generate_execution_id();
+        assert!(store.create(&retry).is_err());
+
+        fs::remove_file(extra).unwrap();
+        let path = task_dir.join(format!("{}.json", original.execution_id));
+        fs::write(path, b"{}").unwrap();
+        assert!(store.create(&retry).is_err());
     }
 
     #[test]
