@@ -12,9 +12,9 @@ mod app_settings;
 mod claude_handoff;
 // Supervised runner/evidence path stays internal until real packaged-client qualification.
 #[allow(dead_code)]
-mod claude_runner;
-#[allow(dead_code)]
 mod claude_execution;
+#[allow(dead_code)]
+mod claude_runner;
 mod client_integrations;
 mod codex_handoff;
 mod commands;
