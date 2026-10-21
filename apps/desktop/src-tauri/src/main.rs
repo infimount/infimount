@@ -7,6 +7,9 @@ mod activation_probe;
 mod agent_adapters;
 mod agent_task_handoff;
 mod app_settings;
+// A4 contract spike: tested but not launchable until a packaged Claude pilot.
+#[allow(dead_code)]
+mod claude_handoff;
 mod client_integrations;
 mod codex_handoff;
 mod commands;
