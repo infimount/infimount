@@ -75,9 +75,7 @@ jobs:
           key: msrv-1.94.0
 
       - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+        run: bash scripts/ci-apt-install.sh libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Prepare bundled sidecar and checksum resource
         run: node scripts/prepare-mcp-sidecar.mjs
@@ -131,9 +129,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+        run: bash scripts/ci-apt-install.sh libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Prepare bundled sidecar and checksum resource
         run: node scripts/prepare-mcp-sidecar.mjs
