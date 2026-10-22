@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
 use infimount_control::publication::{
-    normalize_destination_dir, validate_publication_request,
-    validate_sha256, MAX_AGENT_TASK_DESTINATION_PATH_BYTES,
+    normalize_destination_dir, validate_publication_request, validate_sha256,
+    MAX_AGENT_TASK_DESTINATION_PATH_BYTES,
 };
 pub use infimount_control::publication::{
     AgentTaskPublicationRequest, AgentTaskPublishConflictPolicy,
