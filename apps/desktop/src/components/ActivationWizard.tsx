@@ -273,6 +273,8 @@ export function ActivationWizard({
     }
   };
 
+  const preferStorageBrowser =
+    storagesCount > 0 && (currentStep === "welcome" || currentStep === "storage");
   const StepIcon = STEP_ICONS[currentStep];
 
   return (
@@ -390,7 +392,7 @@ export function ActivationWizard({
           <div className="flex gap-2">
             <Button
               type="button"
-              variant="ghost"
+              variant={preferStorageBrowser ? "default" : "ghost"}
               onClick={() => void onBrowseStorageOnly()}
             >
               Browse storage only
@@ -404,7 +406,12 @@ export function ActivationWizard({
                 {finishRunning ? "Verifying again…" : "Finish"}
               </Button>
             ) : (
-              <Button type="button" onClick={goNext} disabled={!canGoNext}>
+              <Button
+                type="button"
+                variant={preferStorageBrowser ? "outline" : "default"}
+                onClick={goNext}
+                disabled={!canGoNext}
+              >
                 Continue
                 <ChevronRight className="ml-1 h-4 w-4" />
               </Button>

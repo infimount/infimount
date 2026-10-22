@@ -6,63 +6,81 @@ product
 
 ## Product thesis
 
-Infimount is a **local-first governed data plane for AI agents**.
+Infimount is **one surface for every storage**: a local-first, cross-platform
+file browser and storage workbench for local files, object stores, cloud drives,
+and remote file services.
 
-It connects heterogeneous systems of record to agent environments without making the agent environment itself the source of authority. Infimount decides which data may enter a task boundary, preserves source provenance, keeps agent work scoped, and controls exactly which reviewed bytes may be written back.
+Its primary job is to make everyday file operations predictable across
+heterogeneous backends: connect, browse, preview, search, upload, download,
+organize, compare, and transfer. The desktop file browser is the product's
+primary experience and must remain useful without enabling AI features.
 
-The desktop storage browser remains a first-class human control surface. It is no longer the whole product thesis.
+**Agent Access and Agent Tasks are optional extensions.** For users who choose
+them, Infimount provides a governed data plane: explicit source selection,
+least-privilege MCP access, isolated tasks, review and create-only publication.
+Agents consume the storage workbench's capabilities. Storage browsing does not
+depend on any agent, MCP connection, headless service or hosted backend.
 
 ## Primary users
 
-- Developers and technical operators running coding or knowledge agents against files distributed across local storage, object stores, cloud drives, WebDAV, and SFTP.
-- Data owners who need agents to work on a bounded subset of real files without granting broad direct access to the source system.
-- Desktop users who still need one calm place to browse, preview, validate, move, and manage files across heterogeneous storage.
-- Security-conscious operators who need explicit MCP exposure, path policy, read-only controls, approvals, audit, provenance, and local credential handling.
-- Teams integrating external agent runtimes or sandboxes that need a provider-neutral ingress/egress layer for storage data.
+- People who manage files across local disks, buckets, cloud drives, WebDAV,
+  and SFTP, including non-developers who never enable Agent Access.
+- Developers and technical operators transferring, inspecting and comparing
+  source artifacts across storage systems.
+- Teams and operators needing backend-neutral file operations with clear
+  capabilities, progress, conflict choices and reliable recovery.
+- Developers using AI agents who voluntarily opt into scoped data ingress,
+  execution evidence and reviewed write-back.
 
-FTP records may remain from older versions, but FTP operations remain disabled in v0.8 while the documented upstream security issue is unresolved.
+FTP records may remain from older versions, but FTP operations remain disabled
+in v0.8 while the documented upstream security issue is unresolved.
 
 ## Product purpose
 
-Infimount should make this workflow safe and understandable:
+**Default storage workflow:**
 
 ```text
-systems of record
-      ↓
-explicit selection
-      ↓
-snapshot + hashes + provenance
-      ↓
-bounded agent workspace
-      ↓
-agent/runtime/sandbox
-      ↓
-reviewed outputs
-      ↓
-exact approved publication plan
-      ↓
-verified create-only write-back + receipt
-      ↓
-systems of record
+connect + validate storage
+         |
+         v
+browse / preview / search
+         |
+         v
+upload / download / organize / copy / move / compare
+         |
+         v
+visible progress + conflict resolution + recovery
 ```
 
-The product should help users:
+**Optional agent workflow:**
 
-- Add and validate storage backends without memorizing provider-specific tooling.
-- Browse and inspect files with predictable desktop workflows.
-- Define explicit agent-access boundaries instead of implicitly exposing whole storage accounts.
-- Prepare bounded task data without mutating source bytes or broadening source MCP exposure.
-- Let external agents work autonomously inside an approved boundary rather than prompting on every low-level file operation.
-- Review outputs and provenance before anything leaves the task workspace.
-- Publish only explicitly approved bytes to explicitly approved destinations.
-- Preserve local-first configuration, native secret storage, auditability, and backend-agnostic OpenDAL I/O.
+```text
+explicitly selected source files
+         |
+         v
+bounded snapshot + provenance
+         |
+         v
+scoped agent execution
+         |
+         v
+output review + explicit approval
+         |
+         v
+verified create-only publication + receipt
+```
 
-Success means a user can answer four questions at any moment:
+The file browser must preserve grid and list views, folder navigation and
+pagination, previews, bookmarks and recents, keyboard access, opt-in search,
+drag-and-drop upload, downloads, create/rename/delete, cross-storage transfers,
+dual-pane workflows, visible progress, retry/cancel and safe conflict handling.
+Backend differences must be capability-gated instead of hidden.
 
-1. What source data did the agent receive?
-2. What authority did the agent have while working?
-3. What output bytes are being proposed?
-4. What exactly will be written back, where, and under whose approval?
+Success for a **storage-only** user means installing the app, adding storage,
+browsing and completing ordinary file operations without configuring MCP.
+Success for an **agent** user additionally means answering what data was
+shared, which tools were allowed, which outputs were reviewed, and where
+approved bytes will be published.
 
 ## Strategic boundaries
 
@@ -75,22 +93,48 @@ Infimount should **not** become:
 - a provider-specific storage SDK layer outside the OpenDAL-first architecture;
 - a cloud collaboration suite before the local/headless policy contract is mature.
 
-Those systems are integration targets. Infimount's differentiated responsibility is governed data ingress and egress across heterogeneous storage.
+Those systems are integration targets. Infimount's core value is a dependable cross-storage file browser; optional agent workflows add governed ingress and egress without replacing that browser.
+
+## Product scope and decision gate
+
+Brainstorming, competitor research and a feature request are **not approval
+to implement**. A new major product track (for example distributed shared
+workspaces, hosted services, sync, collaborative editing or a new runtime)
+requires an explicit recorded decision before engineering starts:
+
+1. Identify the user problem and why existing browser/Git/provider tooling is
+   insufficient.
+2. Compare alternatives, dependencies, maintenance cost and security impact.
+3. Show how the original file-browser experience stays first-class, including
+   any UI complexity added to storage-only users.
+4. Define a bounded scope, acceptance criteria and automated regression gates.
+5. Record approval in a product decision/ADR or linked issue. Only then schedule
+   implementation PRs.
+
+Exploratory ideas can be documented but must remain uncommitted to the roadmap
+until approved. Refactors in an already-approved capability track must still
+preserve browser behavior.
 
 ## v0.8.2 direction
 
-v0.8.2 is the active feature train.
+v0.8.2 is the active feature train. Its **non-negotiable release baseline**
+is the storage workbench: ordinary browsing and mutations, storage-only
+onboarding, transfers, previews and supported backend behavior continue to
+work before new agent functionality can be released.
 
-Primary directions:
+Approved optional agent directions remain:
 
-1. **Agent-neutral Agent Tasks.** Codex remains supported but becomes one adapter behind a stable task/handoff contract.
-2. **Additional agent adapters.** Prioritize Claude Code, Gemini CLI, OpenCode/Pi, and compatible MCP clients based on real integration quality.
-3. **Headless control surface.** Add CLI/API access for task preparation, inspection, review, publication, and evidence without bypassing the same policies used by the desktop.
-4. **Interactive review in agent hosts.** Use MCP Apps-compatible UI where available for output review and publication approval.
-5. **Sandbox interoperability.** Integrate isolated agent runtimes rather than building an Infimount runtime; Infimount owns the bounded data room and safe write-back contract.
-6. **Portable trust metadata.** Strengthen agent identity, policy, provenance, receipts, audit, and observability so task evidence survives across clients and runtimes.
+1. **Agent-neutral Agent Tasks.** Codex remains supported behind a stable handoff contract.
+2. **Additional local adapters.** Claude Code, Gemini CLI, OpenCode/Pi only after qualification.
+3. **Trusted headless control.** Reuse desktop authorization, locks and review rules for CLI/API.
+4. **Interactive agent-host review.** MCP Apps-compatible surfaces where safely supported.
+5. **Sandbox interoperability.** Use outside runtimes rather than building one.
+6. **Portable trust evidence.** Preserve identity, policy, provenance, receipt and audit semantics.
 
-No v0.9 release is planned for roughly the next year. The objective is to deepen and prove the v0.8 architecture, not to use version numbers as product milestones.
+Browser regressions block release. Experimental agent work must never silently
+enable agent access or require a workspace to use the file browser.
+
+No v0.9 release is planned for roughly the next year.
 
 ## Brand personality
 
@@ -102,7 +146,8 @@ The brand should communicate:
 
 - Local-first control.
 - One surface across heterogeneous storage.
-- Explicit agent data boundaries.
+- Familiar cross-storage file workflows.
+- Optional, explicit agent data boundaries.
 - Review-before-write-back.
 - Backend and agent neutrality.
 - Cross-platform utility without infrastructure lock-in.
@@ -123,13 +168,14 @@ Avoid decorative complexity. Avoid invented controls when a standard desktop pat
 
 ## Design principles
 
-1. **Boundaries before intelligence.** Define what data and authority an agent receives before optimizing what the agent can do.
-2. **Native first.** The desktop app should remain a calm, familiar storage control surface.
-3. **Local-first is visible.** State what remains local, what is exposed, and what crosses a process or network boundary.
-4. **Approve boundaries, not chatter.** Prefer scoped autonomy inside a prepared task and one explicit publication decision over repeated low-level permission prompts.
-5. **Show state before style.** Loading, selected, focused, read-only, running, stopped, exposed, disabled, reviewed, approved, stale, and failed states must be visible.
-6. **Agent access is explicit.** MCP exposure, transport, storage scope, path policy, and tool authority must never be implicit.
-7. **Write-back is a separate trust boundary.** Agent completion never implies permission to publish.
+1. **Browser first.** Browsing and ordinary file operations must work with Agent Access disabled; product and release quality begin there.
+2. **Boundaries before intelligence.** Define what data and authority an agent receives before optimizing agent capabilities.
+3. **Native first.** The desktop app should remain a calm, familiar storage workbench.
+4. **Local-first is visible.** State what remains local, what is exposed, and what crosses a process or network boundary.
+5. **Approve boundaries, not chatter.** Prefer scoped autonomy inside a prepared task and one explicit publication decision over repeated low-level permission prompts.
+6. **Show state before style.** Loading, selected, focused, read-only, running, stopped, exposed, disabled, reviewed, approved, stale, and failed states must be visible.
+7. **Agent access is explicit.** MCP exposure, transport, storage scope, path policy, and tool authority must never be implicit.
+8. **Write-back is a separate trust boundary.** Agent completion never implies permission to publish.
 
 ## Accessibility & inclusion
 

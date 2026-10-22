@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <strong>Governed data access for AI agents.</strong><br/>
-  One surface across local and cloud storage. Prepare only the data an agent needs, keep its work scoped, and review exactly what may be written back.
+  <strong>One surface for every storage.</strong><br/>
+  Browse, preview, search, organize, and transfer local and cloud files from one desktop workbench. Agent Access and reviewed Agent Tasks are optional.
 </p>
 
 <p align="center">
@@ -89,11 +89,13 @@ Install scripts verify selected downloads against `SHA256SUMS.txt`. Pin this sta
 
 ## Product direction
 
-Infimount is evolving from a unified storage browser with MCP controls into a **governed data plane between systems of record and autonomous agent environments**. The file browser remains an important human control surface, but the durable product boundary is the flow around agent work:
+Infimount remains a **local-first universal storage browser and workbench**. Connecting a storage, browsing, previewing, searching, uploading, downloading, and transferring files work independently of any agent. This is the default experience and a permanent release requirement.
 
-`select → snapshot/hash → scoped workspace → agent → review → approved publication → receipt`
+For users who explicitly choose AI workflows, Infimount additionally provides a **governed data plane**: `select → snapshot/hash → scoped task → agent → review → approved publication → receipt`. MCP access is disabled for new storages unless enabled deliberately. Agents are optional, never a prerequisite for normal file operations.
 
-Infimount does **not** aim to become a built-in model runtime, generic MCP gateway, semantic/RAG platform, or replacement for provider-native MCP servers. It should integrate with those systems while owning cross-storage data scope, provenance, review, and write-back safety.
+The [product charter](PRODUCT.md) defines the browser-first compatibility baseline and requires an explicit product decision before introducing any major new feature track. v0.8.2 continues the approved agent-control improvements without replacing the workbench.
+
+Infimount does **not** aim to become a built-in model runtime, generic MCP gateway, semantic/RAG platform, or replacement for provider-native MCP servers.
 
 ## Workbench
 
