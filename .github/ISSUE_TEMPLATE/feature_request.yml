@@ -1,5 +1,5 @@
 name: Feature request
-description: Suggest an improvement for Infimount
+description: Suggest or brainstorm an improvement (not authorization to implement)
 title: "feat: "
 labels: ["enhancement"]
 body:
@@ -23,6 +23,16 @@ body:
     id: alternatives
     attributes:
       label: Alternatives considered
+
+  - type: textarea
+    id: browser_impact
+    attributes:
+      label: Impact on the storage browser
+      description: Describe any changes to storage-only onboarding, browse/preview/search, transfer UX, or regression coverage. Write "none" if not applicable.
+
+  - type: markdown
+    attributes:
+      value: "Ideas remain exploratory until a separate explicit product decision approves implementation. See PRODUCT.md for the decision gate."
 
   - type: textarea
     id: additional

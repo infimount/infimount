@@ -1,9 +1,10 @@
 # Infimount
 
-Infimount is a local-first governed data plane for AI agents, with a native desktop storage browser as its human control surface.
+Infimount is a local-first desktop file browser and storage workbench: one surface for every storage.
 It connects local files, Amazon S3/S3-compatible storage, Backblaze B2, Aliyun OSS, Tencent COS, Huawei OBS, Azure Blob Storage,
-Google Cloud Storage, Google Drive, Microsoft OneDrive, WebDAV, and SFTP. Infimount can expose explicitly scoped storage through
-MCP, prepare bounded task data for agents, and require reviewed create-only publication before generated outputs return to systems of record.
+Google Cloud Storage, Google Drive, Microsoft OneDrive, WebDAV, and SFTP. Browsing, previews, search, uploads, downloads, and transfers
+do not require Agent Access. Optional governed data plane capabilities can expose explicitly scoped MCP storage, prepare bounded
+task inputs and require reviewed create-only publication for generated outputs.
 
 ## Useful Links
 
