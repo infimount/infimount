@@ -28,12 +28,9 @@ pub async fn verify_reviewed_output_digest(
         ));
     }
 
-    let metadata = workspace_op
-        .stat(confined_source_path)
-        .await
-        .map_err(|_| {
-            CoreError::Config("A reviewed Agent Task output is no longer available".into())
-        })?;
+    let metadata = workspace_op.stat(confined_source_path).await.map_err(|_| {
+        CoreError::Config("A reviewed Agent Task output is no longer available".into())
+    })?;
     if !metadata.is_file() || metadata.content_length() != reviewed.byte_size {
         return Err(CoreError::Config(
             "Agent Task output changed since it was reviewed".into(),
@@ -106,13 +103,11 @@ mod tests {
         op.create_dir("tasks/task-a/outputs/directory/")
             .await
             .unwrap();
-        assert!(verify_reviewed_output_digest(
-            &op,
-            "tasks/task-a/outputs/directory/",
-            &selection
-        )
-        .await
-        .is_err());
+        assert!(
+            verify_reviewed_output_digest(&op, "tasks/task-a/outputs/directory/", &selection)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -124,9 +119,11 @@ mod tests {
         op.write(wrong_path, "reviewed").await.unwrap();
         let digest = hash_agent_task_file(&op, reviewed_path).await.unwrap();
 
-        assert!(verify_reviewed_output_digest(&op, wrong_path, &reviewed(&digest))
-            .await
-            .is_err());
+        assert!(
+            verify_reviewed_output_digest(&op, wrong_path, &reviewed(&digest))
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
