@@ -1,40 +1,6 @@
-import { useState } from "react";
 import { expect, test } from "@playwright/experimental-ct-react";
 
-import { ActivationWizard } from "@/components/ActivationWizard";
-
-function StorageOnlyHarness({ storagesCount = 1 }: { storagesCount?: number }) {
-  const [browserReady, setBrowserReady] = useState(false);
-
-  return (
-    <>
-      <div data-testid="storage-only-state">
-        {browserReady ? "File browser ready" : "Onboarding"}
-      </div>
-      <ActivationWizard
-        open={!browserReady}
-        onOpenChange={() => undefined}
-        onAddStorage={() => undefined}
-        onCreateDemo={async () => undefined}
-        onOpenWorkspaces={() => undefined}
-        onOpenMcpSettings={() => undefined}
-        onPrepareAgentAccess={async () => {
-          throw new Error("Agent setup is not part of storage-only onboarding");
-        }}
-        onComplete={async () => {
-          throw new Error("Agent activation is not part of storage-only onboarding");
-        }}
-        onBrowseStorageOnly={async () => setBrowserReady(true)}
-        onSaveState={async () => undefined}
-        storagesCount={storagesCount}
-        workspaces={[]}
-        agentAccessReady={false}
-        initialStep="welcome"
-        initialCompletedSteps={[]}
-      />
-    </>
-  );
-}
+import { StorageOnlyOnboardingHarness } from "@/test/StorageOnlyOnboardingHarness";
 
 async function failAllBackendInvocations(page: Parameters<Parameters<typeof test>[1]>[0]["page"]) {
   await page.addInitScript(() => {
@@ -56,7 +22,7 @@ test("opens a configured file browser without MCP setup or any backend calls", a
   page,
 }) => {
   await failAllBackendInvocations(page);
-  await mount(<StorageOnlyHarness />);
+  await mount(<StorageOnlyOnboardingHarness />);
 
   const browse = page.getByRole("button", { name: "Browse storage only" });
   await expect(browse).toBeVisible();
@@ -72,7 +38,7 @@ test("new users are guided to add storage before optional agent steps", async ({
   page,
 }) => {
   await failAllBackendInvocations(page);
-  await mount(<StorageOnlyHarness storagesCount={0} />);
+  await mount(<StorageOnlyOnboardingHarness storagesCount={0} />);
 
   const proceed = page.getByRole("button", { name: "Continue" });
   await expect(proceed).toHaveClass(/bg-primary/);
