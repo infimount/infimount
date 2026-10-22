@@ -74,7 +74,7 @@ for (const [id, expectedPath] of protectedReleaseFlows) {
   }
   // Existence alone is insufficient: the file must contain executable tests.
   const testSource = readFileSync(path.join(rootDir, expectedPath), "utf8");
-  if (!/\\btest\\s*\\(/.test(testSource)) {
+  if (!/\btest\s*\(/.test(testSource)) {
     fail(`protected flow ${id} must contain a Playwright test() call`);
   }
 }
