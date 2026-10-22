@@ -2644,8 +2644,10 @@ name = "infimount_control"
 version = "0.8.1"
 dependencies = [
  "infimount_core",
+ "opendal",
  "serde",
  "serde_json",
+ "tokio",
  "uuid",
 ]
 
