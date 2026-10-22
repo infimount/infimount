@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/control",
   "crates/core",
   "crates/mcp",
   "apps/desktop/src-tauri",

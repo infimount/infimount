@@ -1,5 +1,12 @@
 use std::collections::HashSet;
 
+use infimount_control::publication::{
+    normalize_destination_dir, validate_publication_request, validate_sha256,
+    MAX_AGENT_TASK_DESTINATION_PATH_BYTES,
+};
+pub use infimount_control::publication::{
+    AgentTaskPublicationRequest, AgentTaskPublishConflictPolicy,
+};
 use infimount_core::agent_task_io::{
     hash_agent_task_file, publish_reviewed_agent_task_file, AgentTaskFileDigest,
 };
@@ -20,37 +27,8 @@ use crate::state::AppState;
 
 const AGENT_TASK_PUBLICATION_SCHEMA_VERSION: u32 = 1;
 const MAX_AGENT_TASK_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
-const MAX_AGENT_TASK_PUBLISH_FILES: usize = 100;
 const MAX_AGENT_TASK_PUBLISH_BYTES: u64 = 2 * 1024 * 1024 * 1024;
-const MAX_AGENT_TASK_DESTINATION_PATH_BYTES: usize = 4 * 1024;
 const AGENT_TASK_PUBLISH_RECEIPT_PREFIX: &str = "publish-receipt-";
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ReviewedAgentTaskOutput {
-    pub task_path: String,
-    pub byte_size: u64,
-    pub sha256: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentTaskPublishConflictPolicy {
-    Fail,
-    Rename,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct AgentTaskPublicationRequest {
-    pub workspace_id: String,
-    pub task_id: String,
-    pub outputs: Vec<ReviewedAgentTaskOutput>,
-    pub destination_storage_id: String,
-    #[serde(default)]
-    pub destination_dir: String,
-    pub conflict_policy: AgentTaskPublishConflictPolicy,
-}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -423,44 +401,6 @@ async fn build_publication_plan(
     })
 }
 
-fn validate_publication_request(
-    request: &AgentTaskPublicationRequest,
-) -> Result<Vec<ReviewedAgentTaskOutput>, CoreError> {
-    Uuid::parse_str(&request.workspace_id).map_err(|_| {
-        CoreError::Config("Agent Task publication requires a valid workspace id".into())
-    })?;
-    Uuid::parse_str(&request.task_id)
-        .map_err(|_| CoreError::Config("Agent Task publication requires a valid task id".into()))?;
-    if request.destination_storage_id.trim().is_empty() {
-        return Err(CoreError::Config(
-            "Agent Task publication destination storage is required".into(),
-        ));
-    }
-    if request.outputs.is_empty() || request.outputs.len() > MAX_AGENT_TASK_PUBLISH_FILES {
-        return Err(CoreError::Config(format!(
-            "Agent Task publication must select between 1 and {MAX_AGENT_TASK_PUBLISH_FILES} outputs"
-        )));
-    }
-    normalize_destination_dir(&request.destination_dir)?;
-
-    let mut outputs = request.outputs.clone();
-    outputs.sort_by(|left, right| left.task_path.cmp(&right.task_path));
-    let mut seen = HashSet::with_capacity(outputs.len());
-    let mut seen_portable = HashSet::with_capacity(outputs.len());
-    for output in &outputs {
-        validate_output_task_path(&output.task_path)?;
-        validate_sha256(&output.sha256)?;
-        if !seen.insert(output.task_path.clone())
-            || !seen_portable.insert(output.task_path.to_lowercase())
-        {
-            return Err(CoreError::Config(
-                "Agent Task publication contains duplicate or case-colliding output paths".into(),
-            ));
-        }
-    }
-    Ok(outputs)
-}
-
 fn load_publication_context(
     state: &AppState,
     request: &AgentTaskPublicationRequest,
@@ -786,56 +726,6 @@ async fn require_directory(
     Ok(())
 }
 
-fn normalize_destination_dir(path: &str) -> Result<String, CoreError> {
-    let normalized = path.trim().trim_matches('/');
-    if normalized.len() > MAX_AGENT_TASK_DESTINATION_PATH_BYTES || normalized.contains('\\') {
-        return Err(CoreError::Config(
-            "publication destination must be a bounded forward-slash path".into(),
-        ));
-    }
-    if normalized.chars().any(|ch| ch == '\0' || ch.is_control())
-        || (!normalized.is_empty()
-            && normalized
-                .split('/')
-                .any(|segment| segment.is_empty() || segment == "." || segment == ".."))
-    {
-        return Err(CoreError::Config(
-            "publication destination contains an invalid path segment".into(),
-        ));
-    }
-    Ok(normalized.to_string())
-}
-
-fn validate_output_task_path(path: &str) -> Result<(), CoreError> {
-    if path.len() > MAX_AGENT_TASK_DESTINATION_PATH_BYTES
-        || !path.starts_with("outputs/")
-        || path.len() <= "outputs/".len()
-        || path.contains('\\')
-        || path.chars().any(|ch| ch == '\0' || ch.is_control())
-        || path
-            .split('/')
-            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
-    {
-        return Err(CoreError::Config(
-            "Agent Task publication path must be a safe child of outputs/".into(),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_sha256(value: &str) -> Result<(), CoreError> {
-    if value.len() != 64
-        || !value
-            .chars()
-            .all(|ch| ch.is_ascii_digit() || matches!(ch, 'a'..='f'))
-    {
-        return Err(CoreError::Config(
-            "Agent Task publication requires lowercase SHA-256 fingerprints".into(),
-        ));
-    }
-    Ok(())
-}
-
 fn validate_preview_token(value: &str) -> Result<(), CoreError> {
     validate_sha256(value)
         .map_err(|_| CoreError::Config("invalid publication preview token".into()))
@@ -935,6 +825,7 @@ fn sha256_json(value: &impl Serialize) -> Result<String, CoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use infimount_control::publication::validate_output_task_path;
 
     #[test]
     fn destination_paths_reject_traversal_and_windows_separators() {
