@@ -7,7 +7,10 @@ rust-version.workspace = true
 [dependencies]
 infimount_core = { path = "../core" }
 serde = { version = "1.0", features = ["derive"] }
+opendal = "0.58.1"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+opendal = { version = "0.58.1", features = ["services-memory"] }
 serde_json = "1.0"
+tokio = { version = "1.50.0", features = ["macros", "rt-multi-thread"] }
