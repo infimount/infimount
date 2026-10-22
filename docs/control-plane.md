@@ -1,6 +1,6 @@
 # v0.8.2 B1: shared trusted control plane
 
-Status: **B1 foundation — publication request contract migrated**. This is
+Status: **B1 foundation — publication contract and read-only evidence verification extracted**. This is
 not a declaration that the full headless service or CLI/API has shipped.
 
 ## Design rule
@@ -28,6 +28,21 @@ through this crate.
 - Added tests for path escapes, duplicate portable paths, missing output
   selection, stable JSON field names and rejection of unknown authority fields.
 
+## B1.2: shared read-only reviewed-output evidence
+
+`infimount_control::publication_evidence::verify_reviewed_output_digest`
+now performs the same existence, file type, byte-size, and exact SHA-256
+comparison formerly in the Tauri publication planner. Desktop calls the shared
+verifier after it constructs a task-relative source path and applies the
+existing storage namespace/local confinement check. Rust memory-operator tests
+cover exact bytes, missing paths, size changes, same-size changes, directories,
+invalid output paths, and malformed SHA-256.
+
+This helper **does not** enumerate arbitrary storage, authorize publication,
+lock remote writers, or apply a write. A caller must bind the workspace, task,
+storage identity and source path before using it. The authoritative publish
+path still re-verifies bytes under the original mutation lock sequence.
+
 ## Trust and behavioral compatibility
 
 The **same** Tauri handlers still own `preview_agent_task_publication` and
@@ -42,10 +57,10 @@ v0.8.1 104-argument Codex fixture and the A4 opt-in Claude pilot are unchanged.
 
 ## Next B1 slices
 
-1. Extract shared reviewed-output enumeration and hash evidence without
-   changing Tauri semantics; prove exact desktop parity with fixtures.
-2. Share the destination plan/fingerprint and receipt contracts, keeping
-   mutation locks and authorization authoritative.
+1. Extract shared output enumeration and complete reviewed-output evidence
+   lists, preserving exact desktop parity and existing byte caps.
+2. Share destination plan/fingerprint and receipt contracts, keeping mutation
+   locks and authorization authoritative.
 3. Move the end-to-end trusted prepare/review/apply service into
    `infimount_control`. Tauri becomes a thin wrapper.
 4. Only after parity tests, build the B2 CLI against the shared services.
