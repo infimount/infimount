@@ -8,6 +8,13 @@ pub use infimount_control::publication::{
     AgentTaskPublicationRequest, AgentTaskPublishConflictPolicy,
 };
 use infimount_control::publication_evidence::verify_reviewed_output_digest;
+use infimount_control::publication_plan::{
+    publication_preview_fingerprint, AgentTaskPublicationFingerprint, AgentTaskPublishReceipt,
+    AGENT_TASK_PUBLICATION_SCHEMA_VERSION,
+};
+pub use infimount_control::publication_plan::{
+    AgentTaskPublicationPlanFile, AgentTaskPublishAction,
+};
 use infimount_core::agent_task_io::{
     hash_agent_task_file, publish_reviewed_agent_task_file, AgentTaskFileDigest,
 };
@@ -26,7 +33,6 @@ use uuid::Uuid;
 
 use crate::state::AppState;
 
-const AGENT_TASK_PUBLICATION_SCHEMA_VERSION: u32 = 1;
 const MAX_AGENT_TASK_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_AGENT_TASK_PUBLISH_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const AGENT_TASK_PUBLISH_RECEIPT_PREFIX: &str = "publish-receipt-";
@@ -36,24 +42,6 @@ const AGENT_TASK_PUBLISH_RECEIPT_PREFIX: &str = "publish-receipt-";
 pub struct ApplyAgentTaskPublicationRequest {
     pub publication: AgentTaskPublicationRequest,
     pub preview_token: String,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentTaskPublishAction {
-    Create,
-    Rename,
-    Conflict,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentTaskPublicationPlanFile {
-    pub task_path: String,
-    pub byte_size: u64,
-    pub sha256: String,
-    pub destination_path: String,
-    pub action: AgentTaskPublishAction,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -88,35 +76,6 @@ pub struct AgentTaskPublicationOutput {
     pub destination_storage_name: String,
     pub receipt_path: String,
     pub files: Vec<AgentTaskPublicationPlanFile>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentTaskPublishReceipt {
-    schema_version: u32,
-    publication_id: String,
-    task_id: String,
-    workspace_id: String,
-    published_at: String,
-    destination_storage_id: String,
-    destination_storage_name: String,
-    destination_dir: String,
-    conflict_policy: AgentTaskPublishConflictPolicy,
-    files: Vec<AgentTaskPublicationPlanFile>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentTaskPublicationFingerprint<'a> {
-    schema_version: u32,
-    workspace_id: &'a str,
-    task_id: &'a str,
-    workspace_namespace: &'a str,
-    destination_storage_id: &'a str,
-    destination_namespace: &'a str,
-    destination_dir: &'a str,
-    conflict_policy: &'a AgentTaskPublishConflictPolicy,
-    files: &'a [AgentTaskPublicationPlanFile],
 }
 
 struct PublicationContext {
@@ -377,7 +336,7 @@ async fn build_publication_plan(
         conflict_policy: &request.conflict_policy,
         files: &files,
     };
-    let preview_token = sha256_json(&fingerprint)?;
+    let preview_token = publication_preview_fingerprint(&fingerprint)?;
 
     Ok(PublicationPlan {
         context,
@@ -806,11 +765,6 @@ fn relative_to_root(root: &str, path: &str) -> Result<String, CoreError> {
         .ok_or_else(|| CoreError::Config("publication receipt escaped the workspace".into()))
 }
 
-fn sha256_json(value: &impl Serialize) -> Result<String, CoreError> {
-    let bytes = serde_json::to_vec(value)?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -968,13 +922,16 @@ mod tests {
             conflict_policy: &AgentTaskPublishConflictPolicy::Fail,
             files: &files,
         };
-        let token = sha256_json(&fingerprint).unwrap();
+        let token = publication_preview_fingerprint(&fingerprint).unwrap();
         let mut changed = files.clone();
         changed[0].sha256 = "b".repeat(64);
         let changed_fingerprint = AgentTaskPublicationFingerprint {
             files: &changed,
             ..fingerprint
         };
-        assert_ne!(token, sha256_json(&changed_fingerprint).unwrap());
+        assert_ne!(
+            token,
+            publication_preview_fingerprint(&changed_fingerprint).unwrap()
+        );
     }
 }
