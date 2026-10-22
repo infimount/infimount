@@ -1,7 +1,7 @@
 # v0.8.2 B1: shared trusted control plane
 
-Status: **B1 foundation — publication contract and read-only evidence verification extracted**. This is
-not a declaration that the full headless service or CLI/API has shipped.
+Status: **B1 foundation — publication contract and read-only evidence
+verification extracted**. This is not a declaration that the full headless\nservice or CLI/API has shipped.
 
 ## Design rule
 
