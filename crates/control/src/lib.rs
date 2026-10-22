@@ -4,3 +4,4 @@
 //! the single trusted apply implementation; the data contract must be reused
 //! by every future control surface.
 pub mod publication;
+pub mod publication_evidence;
