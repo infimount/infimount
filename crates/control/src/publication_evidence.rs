@@ -19,6 +19,14 @@ pub async fn verify_reviewed_output_digest(
 ) -> Result<AgentTaskFileDigest, CoreError> {
     validate_output_task_path(&reviewed.task_path)?;
     validate_sha256(&reviewed.sha256)?;
+    // Never verify bytes from a different file as though they matched the
+    // reviewed relative output. Namespace confinement remains the caller's job.
+    let suffix = format!("/{}", reviewed.task_path);
+    if confined_source_path != reviewed.task_path && !confined_source_path.ends_with(&suffix) {
+        return Err(CoreError::Config(
+            "reviewed output path does not match the confined source path".into(),
+        ));
+    }
 
     let metadata = workspace_op
         .stat(confined_source_path)
@@ -105,6 +113,20 @@ mod tests {
         )
         .await
         .is_err());
+    }
+
+    #[tokio::test]
+    async fn identical_bytes_at_a_different_path_do_not_match_the_reviewed_selection() {
+        let op = memory_operator();
+        let reviewed_path = "tasks/task-a/outputs/report.md";
+        let wrong_path = "tasks/task-a/outputs/another.md";
+        op.write(reviewed_path, "reviewed").await.unwrap();
+        op.write(wrong_path, "reviewed").await.unwrap();
+        let digest = hash_agent_task_file(&op, reviewed_path).await.unwrap();
+
+        assert!(verify_reviewed_output_digest(&op, wrong_path, &reviewed(&digest))
+            .await
+            .is_err());
     }
 
     #[tokio::test]
