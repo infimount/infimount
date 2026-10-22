@@ -54,4 +54,29 @@ for (const [index, flow] of manifest.requiredFlows.entries()) {
   }
 }
 
+// These are release invariants, not a mutable checklist: removing an item
+// from the JSON manifest must never silently remove its release requirement.
+const protectedReleaseFlows = new Map([
+  ["storage-only-onboarding", "apps/desktop/playwright/storage-only-onboarding.spec.tsx"],
+  ["file-browser-core-flows", "apps/desktop/playwright/file-browser-flow.spec.tsx"],
+  ["file-browser-preview-download", "apps/desktop/playwright/file-browser-preview.spec.tsx"],
+  ["upload-progress-conflicts", "apps/desktop/playwright/upload-flow.spec.tsx"],
+  ["delete-progress", "apps/desktop/playwright/delete-progress.spec.tsx"],
+  ["transfer-queue-visible-actions", "apps/desktop/playwright/transfer-queue.spec.tsx"],
+  ["split-pane-native-browsing", "apps/desktop/playwright/split-pane.spec.tsx"],
+  ["agent-task-reviewed-publication", "apps/desktop/playwright/agent-task-publication.spec.tsx"],
+]);
+
+for (const [id, expectedPath] of protectedReleaseFlows) {
+  const flow = manifest.requiredFlows.find((entry) => entry.id === id);
+  if (!flow || flow.path !== expectedPath) {
+    fail(`protected flow ${id} must point to ${expectedPath}`);
+  }
+  // Existence alone is insufficient: the file must contain executable tests.
+  const testSource = readFileSync(path.join(rootDir, expectedPath), "utf8");
+  if (!/\\btest\\s*\\(/.test(testSource)) {
+    fail(`protected flow ${id} must contain a Playwright test() call`);
+  }
+}
+
 console.log(`Product coverage manifest check passed (${manifest.requiredFlows.length} required flows).`);

@@ -47,6 +47,23 @@ if (!webpage.includes("S3/S3-compatible")) {
 }
 
 const readme = read("README.md");
+const product = read("PRODUCT.md");
+const thesis = product.split("## Product thesis")[1]?.split("## Primary users")[0] ?? "";
+if (!thesis.includes("file browser") || !thesis.includes("optional extensions")) {
+  fail("PRODUCT.md must keep the file browser primary and agents optional");
+}
+if (!product.includes("## Product scope and decision gate")) {
+  fail("PRODUCT.md must require explicit decisions before new feature tracks");
+}
+if (!readme.includes("<strong>One surface for every storage.</strong>")) {
+  fail("README.md must lead with the storage browser rather than AI agents");
+}
+if (!webpage.includes('<h1 id="hero-title">One surface for <span>every storage.</span></h1>')) {
+  fail("landing page must lead with the universal storage browser");
+}
+if (!webpage.includes("Browsing works on its own.")) {
+  fail("landing page must make agent access optional");
+}
 for (const section of ["## Workbench", "## Agent Workspaces", "## Agent Tasks"]) {
   if (!readme.includes(section)) fail(`README.md is missing ${section}`);
 }

@@ -3,6 +3,11 @@
   "description": "Required high-risk product behavior coverage files. This manifest prevents critical visible-action tests from disappearing; it does not claim complete coverage.",
   "requiredFlows": [
     {
+      "id": "storage-only-onboarding",
+      "path": "apps/desktop/playwright/storage-only-onboarding.spec.tsx",
+      "reason": "A user must finish storage-only onboarding without configuring MCP or an agent; browser-first CTA priority is covered."
+    },
+    {
       "id": "delete-progress",
       "path": "apps/desktop/playwright/delete-progress.spec.tsx",
       "reason": "Destructive delete actions must show visible progress."

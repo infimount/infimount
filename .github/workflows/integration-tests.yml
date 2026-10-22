@@ -73,6 +73,10 @@ jobs:
         working-directory: .
         run: pnpm install --frozen-lockfile
 
+      - name: Verify protected browser and agent regression flows
+        working-directory: .
+        run: node scripts/check-product-coverage-manifest.mjs
+
       - name: Install Playwright browser
         run: pnpm exec playwright install --with-deps chromium
 

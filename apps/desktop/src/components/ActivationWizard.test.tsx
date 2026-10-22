@@ -185,6 +185,48 @@ describe("ActivationWizard guided setup", () => {
     await waitFor(() => expect(onBrowseStorageOnly).toHaveBeenCalled());
   });
 
+  it("prioritizes storage-only browsing without preparing or probing agent access", async () => {
+    const onBrowseStorageOnly = vi.fn(async () => undefined);
+    const onPrepareAgentAccess = vi.fn(async () => undefined);
+    renderWizard({
+      initialStep: "welcome",
+      initialCompletedSteps: [],
+      storagesCount: 1,
+      workspaces: [],
+      mcpStatus: undefined,
+      onBrowseStorageOnly,
+      onPrepareAgentAccess,
+    });
+
+    const browse = screen.getByRole("button", { name: "Browse storage only" });
+    expect(browse).toHaveClass("bg-primary");
+    expect(screen.getByRole("button", { name: /Continue/ })).toHaveClass("border-input");
+
+    fireEvent.click(browse);
+    await waitFor(() => expect(onBrowseStorageOnly).toHaveBeenCalled());
+    expect(onPrepareAgentAccess).not.toHaveBeenCalled();
+    expect(runActivationProbe).not.toHaveBeenCalled();
+    expect(listMcpClientAdapters).not.toHaveBeenCalled();
+  });
+
+  it("keeps adding the first storage as the primary onboarding path", async () => {
+    renderWizard({
+      initialStep: "welcome",
+      initialCompletedSteps: [],
+      storagesCount: 0,
+      workspaces: [],
+    });
+
+    expect(screen.getByRole("button", { name: /Continue/ })).toHaveClass("bg-primary");
+    expect(screen.getByRole("button", { name: "Browse storage only" })).not.toHaveClass(
+      "bg-primary",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Continue/ }));
+    expect(await screen.findByText(/Adding one does not expose it to an agent/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Continue/ })).toBeDisabled();
+    expect(runActivationProbe).not.toHaveBeenCalled();
+  });
+
   it("handles empty storage setup without jumping directly to workspace setup", async () => {
     const onAddStorage = vi.fn();
     const onCreateDemo = vi.fn().mockRejectedValue(new Error("demo unavailable"));
