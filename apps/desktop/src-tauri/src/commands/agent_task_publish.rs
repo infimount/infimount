@@ -4,10 +4,10 @@ use infimount_control::publication::{
     normalize_destination_dir, validate_publication_request, validate_sha256,
     MAX_AGENT_TASK_DESTINATION_PATH_BYTES,
 };
-use infimount_control::publication_evidence::verify_reviewed_output_digest;
 pub use infimount_control::publication::{
     AgentTaskPublicationRequest, AgentTaskPublishConflictPolicy,
 };
+use infimount_control::publication_evidence::verify_reviewed_output_digest;
 use infimount_core::agent_task_io::{
     hash_agent_task_file, publish_reviewed_agent_task_file, AgentTaskFileDigest,
 };
@@ -312,12 +312,8 @@ async fn build_publication_plan(
     for reviewed in outputs {
         let source_path = join_path(&context.workspace_task_path, &reviewed.task_path);
         validate_local_path(&context.workspace_storage, &source_path)?;
-        let current = verify_reviewed_output_digest(
-            &context.workspace_op,
-            &source_path,
-            &reviewed,
-        )
-        .await?;
+        let current =
+            verify_reviewed_output_digest(&context.workspace_op, &source_path, &reviewed).await?;
         total_bytes = total_bytes.checked_add(current.byte_size).ok_or_else(|| {
             CoreError::Config("Agent Task publication byte count overflowed".into())
         })?;
