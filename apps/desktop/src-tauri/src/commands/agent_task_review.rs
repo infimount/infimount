@@ -1,13 +1,16 @@
 pub use infimount_control::review::{
     AgentTaskOutputReviewFile, AgentTaskOutputReviewOutput, AgentTaskOutputReviewRequest,
 };
+use infimount_control::review_evidence::{
+    checked_reviewed_output_bytes, list_review_output_entries,
+};
 use infimount_core::agent_task_io::hash_agent_task_file;
 use infimount_core::agent_tasks::{
     agent_task_root, validate_agent_task_manifest, AgentTaskManifest, AGENT_TASK_MANIFEST_FILE,
     AGENT_TASK_OUTPUTS_DIR,
 };
 use infimount_core::workspaces::workspace_schema_supported;
-use infimount_core::{operations, CoreError, SourceKind};
+use infimount_core::{CoreError, SourceKind};
 use infimount_mcp::registry::StorageRecord;
 use tauri::State;
 use uuid::Uuid;
@@ -15,8 +18,6 @@ use uuid::Uuid;
 use crate::state::AppState;
 
 const MAX_AGENT_TASK_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
-const MAX_AGENT_TASK_OUTPUT_REVIEW_FILES: usize = 1_000;
-const MAX_AGENT_TASK_OUTPUT_REVIEW_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_AGENT_TASK_OUTPUT_PREVIEW_BYTES: u64 = 64 * 1024;
 const MAX_AGENT_TASK_OUTPUT_PREVIEW_FILES: usize = 20;
 
@@ -46,35 +47,7 @@ pub async fn review_agent_task_outputs(
     validate_local_path(&context.storage, &outputs_path)?;
     require_directory(&context.op, &outputs_path, "Agent Task outputs directory").await?;
 
-    let entries = operations::list_entries_recursive(&context.op, &outputs_path)
-        .await
-        .map_err(|_| CoreError::Config("Agent Task outputs could not be enumerated".into()))?;
-    if entries.len() >= infimount_core::models::MAX_RECURSIVE_ITEMS as usize {
-        return Err(CoreError::Config(
-            "Agent Task outputs are too large to review without truncation".into(),
-        ));
-    }
-
-    let mut file_entries = entries
-        .into_iter()
-        .filter(|entry| !entry.is_dir)
-        .collect::<Vec<_>>();
-    file_entries.sort_by(|left, right| left.path.cmp(&right.path));
-    if file_entries.len() > MAX_AGENT_TASK_OUTPUT_REVIEW_FILES {
-        return Err(CoreError::Config(format!(
-            "Agent Task output review supports at most {MAX_AGENT_TASK_OUTPUT_REVIEW_FILES} files"
-        )));
-    }
-    let listed_bytes = file_entries.iter().try_fold(0_u64, |total, entry| {
-        total
-            .checked_add(entry.size)
-            .ok_or_else(|| CoreError::Config("Agent Task output byte count overflowed".into()))
-    })?;
-    if listed_bytes > MAX_AGENT_TASK_OUTPUT_REVIEW_BYTES {
-        return Err(CoreError::Config(
-            "Agent Task outputs exceed the 2 GiB review limit".into(),
-        ));
-    }
+    let file_entries = list_review_output_entries(&context.op, &outputs_path).await?;
 
     let mut files = Vec::with_capacity(file_entries.len());
     let mut total_bytes = 0_u64;
@@ -90,14 +63,7 @@ pub async fn review_agent_task_outputs(
         let digest = hash_agent_task_file(&context.op, &entry.path)
             .await
             .map_err(|_| CoreError::Config("Agent Task output bytes could not be hashed".into()))?;
-        total_bytes = total_bytes
-            .checked_add(digest.byte_size)
-            .ok_or_else(|| CoreError::Config("Agent Task output byte count overflowed".into()))?;
-        if total_bytes > MAX_AGENT_TASK_OUTPUT_REVIEW_BYTES {
-            return Err(CoreError::Config(
-                "Agent Task outputs changed beyond the 2 GiB review limit".into(),
-            ));
-        }
+        total_bytes = checked_reviewed_output_bytes(total_bytes, digest.byte_size)?;
 
         let (preview, preview_unavailable_reason) = if index < MAX_AGENT_TASK_OUTPUT_PREVIEW_FILES {
             output_preview(&context.op, &entry.path, &digest.sha256, digest.byte_size).await?
