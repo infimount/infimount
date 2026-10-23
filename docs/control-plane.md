@@ -1,7 +1,8 @@
 # v0.8.2 B1: shared trusted control plane
 
-Status: **B1 foundation — publication contract and read-only evidence
-verification extracted**. This is not a declaration that the full headless\nservice or CLI/API has shipped.
+Status: **B1 foundation — request, evidence, plan/fingerprint and receipt
+contracts extracted**. This is not a declaration that the full headless service
+or CLI/API has shipped.
 
 ## Design rule
 
@@ -43,6 +44,19 @@ lock remote writers, or apply a write. A caller must bind the workspace, task,
 storage identity and source path before using it. The authoritative publish
 path still re-verifies bytes under the original mutation lock sequence.
 
+## B1.3: shared publication plan, fingerprint and receipt contracts
+
+`infimount_control::publication_plan` now owns plan-file/action wire types,
+the staleness fingerprint shape and its exact JSON-byte SHA-256 calculation,
+and the publication receipt payload shape. The desktop still owns actual
+destination discovery, collision handling, locking, create-only writes,
+destination-byte verification and receipt persistence.
+
+A pinned test retains the existing preview-token digest for a known fixture,
+and receipt JSON tests preserve field names while excluding source storage
+identity and host paths. This is **wire compatibility, not authorization**.
+A valid preview token on its own never approves publication.
+
 ## Trust and behavioral compatibility
 
 The **same** Tauri handlers still own `preview_agent_task_publication` and
@@ -57,10 +71,10 @@ v0.8.1 104-argument Codex fixture and the A4 opt-in Claude pilot are unchanged.
 
 ## Next B1 slices
 
-1. Extract shared output enumeration and complete reviewed-output evidence
-   lists, preserving exact desktop parity and existing byte caps.
-2. Share destination plan/fingerprint and receipt contracts, keeping mutation
-   locks and authorization authoritative.
+1. Extract shared output enumeration and bounded reviewed-output evidence lists,
+   preserving exact desktop parity and existing byte caps.
+2. Extract actual destination plan building and its configuration/workspace
+   guard into the single trusted control service, without changing locks.
 3. Move the end-to-end trusted prepare/review/apply service into
    `infimount_control`. Tauri becomes a thin wrapper.
 4. Only after parity tests, build the B2 CLI against the shared services.

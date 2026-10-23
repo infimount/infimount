@@ -1363,14 +1363,17 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn client_cli_output_is_capped_at_eight_kibibytes() {
-        let dir = tempdir().unwrap();
-        let script = write_executable_script(
-            dir.path(),
-            "fake-cli",
-            "head -c 200000 /dev/zero | tr '\\0' 'x'; head -c 200000 /dev/zero | tr '\\0' 'y' >&2",
+        // CI coverage runners may mount temp directories noexec. Use the
+        // installed shell for output-bound checks, not a temp executable.
+        let shell = Path::new("/bin/sh");
+        assert!(shell.is_file());
+        let script = concat!(
+            "head -c 200000 /dev/zero | tr '\\0' 'x'; ",
+            "head -c 200000 /dev/zero | tr '\\0' 'y' >&2"
         );
+        let args = ["-c".to_string(), script.to_string()];
         let (status, stdout, stderr, timed_out) =
-            run_with_timeout(&script, &[], Duration::from_secs(10), MAX_CAPTURED_OUTPUT);
+            run_with_timeout(shell, &args, Duration::from_secs(10), MAX_CAPTURED_OUTPUT);
         assert!(!timed_out);
         assert!(status.is_some() && status.unwrap().success());
         assert!(stdout.len() <= MAX_CAPTURED_OUTPUT);
