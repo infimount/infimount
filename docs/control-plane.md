@@ -1,8 +1,8 @@
 # v0.8.2 B1: shared trusted control plane
 
-Status: **B1 foundation — request, evidence, plan/fingerprint and receipt
-contracts extracted**. This is not a declaration that the full headless service
-or CLI/API has shipped.
+Status: **B1 foundation — publication, review, evidence, fingerprint and
+receipt wire contracts extracted**. The full headless service and CLI/API
+have not shipped.
 
 ## Design rule
 
@@ -56,6 +56,19 @@ A pinned test retains the existing preview-token digest for a known fixture,
 and receipt JSON tests preserve field names while excluding source storage
 identity and host paths. This is **wire compatibility, not authorization**.
 A valid preview token on its own never approves publication.
+
+## B1.4: shared read-only review wire contract
+
+The `infimount_control::review` module contains the unchanged desktop
+review request, review file and review response schemas. Tauri re-exports the
+types so the command and frontend JSON remain compatible. Tests pin the legacy
+camelCase shape, explicit preview-unavailable reasons and the absence of any
+publication authority fields. Unknown review request fields are rejected.
+
+The desktop still owns workspace binding, manifest checks, local path
+confinement, bounded recursive output enumeration, exact SHA-256 hashing
+and preview re-verification. This slice introduces no new review endpoint,
+agent tool, approval or publication behavior.
 
 ## Trust and behavioral compatibility
 
