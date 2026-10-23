@@ -1,3 +1,6 @@
+pub use infimount_control::review::{
+    AgentTaskOutputReviewFile, AgentTaskOutputReviewOutput, AgentTaskOutputReviewRequest,
+};
 use infimount_core::agent_task_io::hash_agent_task_file;
 use infimount_core::agent_tasks::{
     agent_task_root, validate_agent_task_manifest, AgentTaskManifest, AGENT_TASK_MANIFEST_FILE,
@@ -6,7 +9,6 @@ use infimount_core::agent_tasks::{
 use infimount_core::workspaces::workspace_schema_supported;
 use infimount_core::{operations, CoreError, SourceKind};
 use infimount_mcp::registry::StorageRecord;
-use serde::{Deserialize, Serialize};
 use tauri::State;
 use uuid::Uuid;
 
@@ -17,35 +19,6 @@ const MAX_AGENT_TASK_OUTPUT_REVIEW_FILES: usize = 1_000;
 const MAX_AGENT_TASK_OUTPUT_REVIEW_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_AGENT_TASK_OUTPUT_PREVIEW_BYTES: u64 = 64 * 1024;
 const MAX_AGENT_TASK_OUTPUT_PREVIEW_FILES: usize = 20;
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct AgentTaskOutputReviewRequest {
-    pub workspace_id: String,
-    pub task_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentTaskOutputReviewFile {
-    pub task_path: String,
-    pub byte_size: u64,
-    pub sha256: String,
-    pub preview: Option<String>,
-    pub preview_unavailable_reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentTaskOutputReviewOutput {
-    pub workspace_id: String,
-    pub workspace_name: String,
-    pub task_id: String,
-    pub task_root: String,
-    pub file_count: usize,
-    pub total_bytes: u64,
-    pub files: Vec<AgentTaskOutputReviewFile>,
-}
 
 struct ReviewContext {
     workspace: infimount_core::workspaces::WorkspaceRecord,
