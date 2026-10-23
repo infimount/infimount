@@ -70,6 +70,21 @@ confinement, bounded recursive output enumeration, exact SHA-256 hashing
 and preview re-verification. This slice introduces no new review endpoint,
 agent tool, approval or publication behavior.
 
+## B1.5: shared fail-closed output enumeration and byte caps
+
+`infimount_control::review_evidence` lists task output files using the
+existing OpenDAL recursive traversal. It rejects potentially truncated
+10,000-entry listings, limits review to 1,000 files and 2 GiB of listed
+bytes, sorts paths deterministically, and rechecks the 2 GiB cap against
+actual hashed bytes. Tests cover nested listings, directory filtering,
+truncation, file-count ceilings, size ceilings and integer overflow.
+
+The desktop still validates its bound task manifest, storage namespace,
+output directory, and every returned local path before hashing or previewing
+each file. The same 20-preview and 64 KiB per-preview limits remain in the
+desktop implementation. The helper is read-only evidence collection, not
+an approval, a publication token, or an agent-facing capability.
+
 ## Trust and behavioral compatibility
 
 The **same** Tauri handlers still own `preview_agent_task_publication` and
@@ -84,13 +99,11 @@ v0.8.1 104-argument Codex fixture and the A4 opt-in Claude pilot are unchanged.
 
 ## Next B1 slices
 
-1. Extract shared output enumeration and bounded reviewed-output evidence lists,
-   preserving exact desktop parity and existing byte caps.
-2. Extract actual destination plan building and its configuration/workspace
+1. Extract actual destination plan building and its configuration/workspace
    guard into the single trusted control service, without changing locks.
-3. Move the end-to-end trusted prepare/review/apply service into
+2. Move the end-to-end trusted prepare/review/apply service into
    `infimount_control`. Tauri becomes a thin wrapper.
-4. Only after parity tests, build the B2 CLI against the shared services.
+3. Only after parity tests, build the B2 CLI against the shared services.
    Headless publication must require explicit, server-controlled human
    approval or a narrowly scoped audited delegation; a `--yes` switch is
    not sufficient.
