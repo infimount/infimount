@@ -19,7 +19,10 @@ fn main() {
             HashMap::new(),
         ).unwrap();
         let armored = encrypt_backup(PASSPHRASE, &payload).unwrap();
-        std::fs::write(&args[2], armored).unwrap();
+        std::fs::write(&args[2], &armored).unwrap();
+        println!("AGE_V081_ARMOR_BEGIN");
+        print!("{armored}");
+        println!("AGE_V081_ARMOR_END");
         println!("Fixture created using age-based passphrase backup");
     } else if args[1] == "decrypt" {
         let armored = std::fs::read_to_string(&args[2]).unwrap();
