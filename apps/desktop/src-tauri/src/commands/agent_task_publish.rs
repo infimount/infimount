@@ -1,32 +1,21 @@
-use std::collections::HashSet;
-
-use infimount_control::publication::{
-    normalize_destination_dir, validate_publication_request, validate_sha256,
-    MAX_AGENT_TASK_DESTINATION_PATH_BYTES,
-};
+use infimount_control::publication::validate_sha256;
 pub use infimount_control::publication::{
     AgentTaskPublicationRequest, AgentTaskPublishConflictPolicy,
 };
-use infimount_control::publication_destination::{
-    choose_publication_destination, reserve_publication_destination_key,
+use infimount_control::publication_context::{validate_destination_path, validate_local_path};
+use infimount_control::publication_engine::{
+    build_publication_plan as shared_build_publication_plan, PublicationPlan,
 };
-use infimount_control::publication_evidence::verify_reviewed_output_digest;
+pub use infimount_control::publication_plan::AgentTaskPublicationPlanFile;
+#[cfg(test)]
+use infimount_control::publication_plan::AgentTaskPublishAction;
 use infimount_control::publication_plan::{
-    publication_preview_fingerprint, AgentTaskPublicationFingerprint, AgentTaskPublishReceipt,
-    AGENT_TASK_PUBLICATION_SCHEMA_VERSION,
-};
-pub use infimount_control::publication_plan::{
-    AgentTaskPublicationPlanFile, AgentTaskPublishAction,
+    AgentTaskPublishReceipt, AGENT_TASK_PUBLICATION_SCHEMA_VERSION,
 };
 use infimount_core::agent_task_io::{
     hash_agent_task_file, publish_reviewed_agent_task_file, AgentTaskFileDigest,
 };
-use infimount_core::agent_tasks::{
-    agent_task_root, validate_agent_task_manifest, AgentTaskManifest, AGENT_TASKS_DIR,
-    AGENT_TASK_MANIFEST_FILE,
-};
-use infimount_core::workspaces::workspace_schema_supported;
-use infimount_core::{CoreError, SourceKind};
+use infimount_core::CoreError;
 use infimount_mcp::registry::StorageRecord;
 use opendal::ErrorKind;
 use serde::{Deserialize, Serialize};
@@ -35,9 +24,13 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::state::AppState;
+#[cfg(test)]
+use infimount_control::publication::normalize_destination_dir;
+#[cfg(test)]
+use infimount_control::publication_plan::{
+    publication_preview_fingerprint, AgentTaskPublicationFingerprint,
+};
 
-const MAX_AGENT_TASK_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
-const MAX_AGENT_TASK_PUBLISH_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const AGENT_TASK_PUBLISH_RECEIPT_PREFIX: &str = "publish-receipt-";
 
 #[derive(Debug, Clone, Deserialize)]
@@ -79,29 +72,6 @@ pub struct AgentTaskPublicationOutput {
     pub destination_storage_name: String,
     pub receipt_path: String,
     pub files: Vec<AgentTaskPublicationPlanFile>,
-}
-
-struct PublicationContext {
-    workspace: infimount_core::workspaces::WorkspaceRecord,
-    workspace_storage: StorageRecord,
-    destination_storage: StorageRecord,
-    workspace_op: opendal::Operator,
-    destination_op: opendal::Operator,
-    workspace_namespace: String,
-    destination_namespace: String,
-    task_root: String,
-    workspace_task_path: String,
-    destination_dir: String,
-}
-
-struct PublicationPlan {
-    context: PublicationContext,
-    files: Vec<AgentTaskPublicationPlanFile>,
-    preview_token: String,
-    total_bytes: u64,
-    create_count: usize,
-    rename_count: usize,
-    conflict_count: usize,
 }
 
 #[tauri::command]
@@ -260,303 +230,17 @@ async fn build_publication_plan(
     state: &AppState,
     request: &AgentTaskPublicationRequest,
 ) -> Result<PublicationPlan, CoreError> {
-    let outputs = validate_publication_request(request)?;
-    let context = load_publication_context(state, request)?;
-    validate_task_manifest(&context, request).await?;
-
-    let mut files = Vec::with_capacity(outputs.len());
-    let mut total_bytes = 0u64;
-    let mut create_count = 0usize;
-    let mut rename_count = 0usize;
-    let mut conflict_count = 0usize;
-    let mut destination_keys = HashSet::with_capacity(outputs.len());
-
-    for reviewed in outputs {
-        let source_path = join_path(&context.workspace_task_path, &reviewed.task_path);
-        validate_local_path(&context.workspace_storage, &source_path)?;
-        let current =
-            verify_reviewed_output_digest(&context.workspace_op, &source_path, &reviewed).await?;
-        total_bytes = total_bytes.checked_add(current.byte_size).ok_or_else(|| {
-            CoreError::Config("Agent Task publication byte count overflowed".into())
-        })?;
-        if total_bytes > MAX_AGENT_TASK_PUBLISH_BYTES {
-            return Err(CoreError::Config(
-                "Agent Task publication exceeds the 2 GiB limit".into(),
-            ));
-        }
-
-        let relative_output = reviewed
-            .task_path
-            .strip_prefix("outputs/")
-            .ok_or_else(|| CoreError::Config("Agent Task publication path is invalid".into()))?;
-        let base_destination = join_path(&context.destination_dir, relative_output);
-        validate_destination_path(&context.destination_storage, &base_destination)?;
-        reject_task_destination_overlap(&context, &source_path, &base_destination)?;
-
-        let (destination_path, action) = choose_publication_destination(
-            &context.destination_op,
-            &base_destination,
-            &request.conflict_policy,
-        )
-        .await?;
-        validate_destination_path(&context.destination_storage, &destination_path)?;
-        reject_task_destination_overlap(&context, &source_path, &destination_path)?;
-        reserve_publication_destination_key(&mut destination_keys, &destination_path)?;
-
-        match action {
-            AgentTaskPublishAction::Create => create_count += 1,
-            AgentTaskPublishAction::Rename => rename_count += 1,
-            AgentTaskPublishAction::Conflict => conflict_count += 1,
-        }
-        files.push(AgentTaskPublicationPlanFile {
-            task_path: reviewed.task_path,
-            byte_size: reviewed.byte_size,
-            sha256: reviewed.sha256,
-            destination_path,
-            action,
-        });
-    }
-    files.sort_by(|left, right| left.task_path.cmp(&right.task_path));
-
-    let fingerprint = AgentTaskPublicationFingerprint {
-        schema_version: AGENT_TASK_PUBLICATION_SCHEMA_VERSION,
-        workspace_id: &request.workspace_id,
-        task_id: &request.task_id,
-        workspace_namespace: &context.workspace_namespace,
-        destination_storage_id: &context.destination_storage.id,
-        destination_namespace: &context.destination_namespace,
-        destination_dir: &context.destination_dir,
-        conflict_policy: &request.conflict_policy,
-        files: &files,
-    };
-    let preview_token = publication_preview_fingerprint(&fingerprint)?;
-
-    Ok(PublicationPlan {
-        context,
-        files,
-        preview_token,
-        total_bytes,
-        create_count,
-        rename_count,
-        conflict_count,
-    })
-}
-
-fn load_publication_context(
-    state: &AppState,
-    request: &AgentTaskPublicationRequest,
-) -> Result<PublicationContext, CoreError> {
-    let workspace = state
-        .workspaces
-        .find_by_id(&request.workspace_id)?
-        .ok_or_else(|| CoreError::Config("Agent Task workspace was not found".into()))?;
-    if !workspace_schema_supported(&workspace) {
-        return Err(CoreError::Config(
-            "Agent Task workspace uses an unsupported schema".into(),
-        ));
-    }
-    if workspace.access_profile != "read_write" {
-        return Err(CoreError::Config(
-            "Agent Task publication requires the task's read-write Agent Workspace".into(),
-        ));
-    }
-
-    let workspace_storage = state
-        .find_storage_by_id(&workspace.storage_id)
-        .map_err(|_| {
-            CoreError::Config("Agent Task workspace storage could not be validated".into())
-        })?;
-    if !workspace_storage.enabled || workspace_storage.read_only {
-        return Err(CoreError::Config(
-            "Agent Task workspace storage must remain enabled and writable for publication".into(),
-        ));
-    }
-    let workspace_kind = workspace_storage
-        .backend
-        .parse::<SourceKind>()
-        .map_err(|_| CoreError::Config("Agent Task workspace backend is unsupported".into()))?;
-    if !matches!(workspace_kind, SourceKind::Local) {
-        return Err(CoreError::Config(
-            "Agent Task publication currently requires a Local Filesystem task workspace".into(),
-        ));
-    }
-    let workspace_namespace =
-        infimount_mcp::storage_namespace::storage_namespace_fingerprint(&workspace_storage)
-            .map_err(|_| {
-                CoreError::Config("failed to verify Agent Task workspace identity".into())
-            })?;
-    if workspace_namespace != workspace.storage_namespace_fingerprint {
-        return Err(CoreError::Config(
-            "Agent Task workspace storage identity changed; recreate the workspace".into(),
-        ));
-    }
-
-    let destination_storage = state
-        .find_storage_by_id(&request.destination_storage_id)
-        .map_err(|_| {
-            CoreError::Config("publication destination storage could not be found".into())
-        })?;
-    if !destination_storage.enabled || destination_storage.read_only {
-        return Err(CoreError::Config(
-            "publication destination storage must be enabled and writable".into(),
-        ));
-    }
-    let destination_namespace =
-        infimount_mcp::storage_namespace::storage_namespace_fingerprint(&destination_storage)
-            .map_err(|_| {
-                CoreError::Config("failed to verify publication destination identity".into())
-            })?;
-
-    let workspace_op = state.operator_for_storage_id(&workspace_storage.id)?;
-    let workspace_caps = workspace_op.info().capability();
-    if !workspace_caps.stat
-        || !workspace_caps.read
-        || !workspace_caps.write
-        || !workspace_caps.write_with_if_not_exists
-    {
-        return Err(CoreError::Config(
-            "Agent Task workspace lacks required safe receipt capabilities for publication".into(),
-        ));
-    }
-    let destination_op = state.operator_for_storage_id(&destination_storage.id)?;
-    let destination_caps = destination_op.info().capability();
-    if !destination_caps.stat
-        || !destination_caps.read
-        || !destination_caps.write
-        || !destination_caps.write_with_if_not_exists
-    {
-        return Err(CoreError::Config(
-            "publication destination does not support safe create-only publication".into(),
-        ));
-    }
-
-    let task_root = agent_task_root(&request.task_id)?;
-    let workspace_task_path = join_path(&workspace.root_path, &task_root);
-    validate_local_path(&workspace_storage, &workspace.root_path)?;
-    validate_local_path(&workspace_storage, &workspace_task_path)?;
-    let destination_dir = normalize_destination_dir(&request.destination_dir)?;
-    validate_destination_path(&destination_storage, &destination_dir)?;
-
-    Ok(PublicationContext {
-        workspace,
-        workspace_storage,
-        destination_storage,
-        workspace_op,
-        destination_op,
-        workspace_namespace,
-        destination_namespace,
-        task_root,
-        workspace_task_path,
-        destination_dir,
-    })
-}
-
-async fn validate_task_manifest(
-    context: &PublicationContext,
-    request: &AgentTaskPublicationRequest,
-) -> Result<(), CoreError> {
-    require_directory(
-        &context.workspace_op,
-        &context.workspace_task_path,
-        "Agent Task package",
+    shared_build_publication_plan(
+        request,
+        |id| state.workspaces.find_by_id(id),
+        |id| {
+            state
+                .find_storage_by_id(id)
+                .map_err(crate::state::mcp_error_to_core_error)
+        },
+        |id| state.operator_for_storage_id(id),
     )
-    .await?;
-    let manifest_path = join_path(&context.workspace_task_path, AGENT_TASK_MANIFEST_FILE);
-    validate_local_path(&context.workspace_storage, &manifest_path)?;
-    let metadata = context
-        .workspace_op
-        .stat(&manifest_path)
-        .await
-        .map_err(|_| {
-            CoreError::Config("Agent Task manifest could not be read for publication".into())
-        })?;
-    if !metadata.is_file() || metadata.content_length() > MAX_AGENT_TASK_MANIFEST_BYTES {
-        return Err(CoreError::Config(
-            "Agent Task manifest is missing, invalid, or unexpectedly large".into(),
-        ));
-    }
-    let bytes = context.workspace_op.read(&manifest_path).await?.to_vec();
-    if bytes.len() as u64 > MAX_AGENT_TASK_MANIFEST_BYTES {
-        return Err(CoreError::Config(
-            "Agent Task manifest is unexpectedly large".into(),
-        ));
-    }
-    let manifest: AgentTaskManifest = serde_json::from_slice(&bytes)?;
-    validate_agent_task_manifest(&manifest)?;
-    if manifest.task_id != request.task_id
-        || manifest.workspace_id != request.workspace_id
-        || manifest.task_root != context.task_root
-    {
-        return Err(CoreError::Config(
-            "Agent Task manifest does not match the requested publication task".into(),
-        ));
-    }
-    Ok(())
-}
-
-fn reject_task_destination_overlap(
-    context: &PublicationContext,
-    source_path: &str,
-    destination_path: &str,
-) -> Result<(), CoreError> {
-    if (context.workspace_namespace == context.destination_namespace
-        && is_reserved_workspace_destination(&context.workspace.root_path, destination_path))
-        || destination_aliases_reserved_workspace_control_path(
-            &context.workspace_storage,
-            &context.workspace.root_path,
-            &context.destination_storage,
-            destination_path,
-        )?
-    {
-        return Err(CoreError::Config(
-            "Agent Task outputs cannot be published into reserved workspace control paths".into(),
-        ));
-    }
-    let relation = infimount_mcp::storage_namespace::transfer_namespace_relation(
-        &context.workspace_storage,
-        source_path,
-        &context.destination_storage,
-        destination_path,
-    )
-    .map_err(|error| CoreError::Config(error.to_string()))?;
-    if infimount_mcp::storage_namespace::transfer_has_namespace_conflict(&relation) {
-        return Err(CoreError::Config(
-            "publication destination overlaps the reviewed Agent Task output".into(),
-        ));
-    }
-    Ok(())
-}
-
-fn is_reserved_workspace_destination(workspace_root: &str, destination_path: &str) -> bool {
-    let tasks_root = join_path(workspace_root, AGENT_TASKS_DIR).to_lowercase();
-    let internal_root = join_path(workspace_root, ".infimount").to_lowercase();
-    let destination_path = destination_path.to_lowercase();
-    is_path_within(&tasks_root, &destination_path)
-        || is_path_within(&internal_root, &destination_path)
-}
-
-fn destination_aliases_reserved_workspace_control_path(
-    workspace_storage: &StorageRecord,
-    workspace_root: &str,
-    destination_storage: &StorageRecord,
-    destination_path: &str,
-) -> Result<bool, CoreError> {
-    for reserved_path in [
-        join_path(workspace_root, AGENT_TASKS_DIR),
-        join_path(workspace_root, ".infimount"),
-    ] {
-        let relation = infimount_mcp::storage_namespace::transfer_namespace_relation(
-            workspace_storage,
-            &reserved_path,
-            destination_storage,
-            destination_path,
-        )
-        .map_err(|error| CoreError::Config(error.to_string()))?;
-        if infimount_mcp::storage_namespace::transfer_has_namespace_conflict(&relation) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    .await
 }
 
 async fn ensure_publication_parent(
@@ -617,60 +301,9 @@ async fn write_publication_receipt(
     }
 }
 
-async fn require_directory(
-    op: &opendal::Operator,
-    path: &str,
-    label: &str,
-) -> Result<(), CoreError> {
-    let metadata = op
-        .stat(path)
-        .await
-        .map_err(|_| CoreError::Config(format!("{label} could not be read")))?;
-    if !metadata.is_dir() {
-        return Err(CoreError::Config(format!("{label} is not a directory")));
-    }
-    Ok(())
-}
-
 fn validate_preview_token(value: &str) -> Result<(), CoreError> {
     validate_sha256(value)
         .map_err(|_| CoreError::Config("invalid publication preview token".into()))
-}
-
-fn validate_local_path(storage: &StorageRecord, path: &str) -> Result<(), CoreError> {
-    infimount_mcp::storage_namespace::validate_local_mcp_path(storage, path)
-        .map_err(|_| CoreError::Config("Agent Task local path confinement check failed".into()))
-}
-
-fn validate_destination_path(storage: &StorageRecord, path: &str) -> Result<(), CoreError> {
-    let normalized = path.trim_matches('/');
-    if normalized.len() > MAX_AGENT_TASK_DESTINATION_PATH_BYTES
-        || normalized.contains('\\')
-        || normalized.chars().any(|ch| ch == '\0' || ch.is_control())
-        || (!normalized.is_empty()
-            && normalized
-                .split('/')
-                .any(|segment| segment.is_empty() || segment == "." || segment == ".."))
-    {
-        return Err(CoreError::Config(
-            "publication destination path is invalid or exceeds the path length limit".into(),
-        ));
-    }
-
-    let kind = storage
-        .backend
-        .parse::<SourceKind>()
-        .map_err(|_| CoreError::Config("publication destination backend is unsupported".into()))?;
-    if matches!(kind, SourceKind::Local) && !normalized.is_empty() {
-        validate_local_path(storage, normalized)?;
-    }
-    Ok(())
-}
-
-fn is_path_within(root: &str, path: &str) -> bool {
-    let root = root.trim_matches('/');
-    let path = path.trim_matches('/');
-    path == root || path.starts_with(&format!("{root}/"))
 }
 
 fn join_path(root: &str, relative: &str) -> String {
@@ -702,6 +335,9 @@ fn relative_to_root(root: &str, path: &str) -> Result<String, CoreError> {
 mod tests {
     use super::*;
     use infimount_control::publication::validate_output_task_path;
+    use infimount_control::publication_engine::{
+        destination_aliases_reserved_workspace_control_path, is_reserved_workspace_destination,
+    };
 
     #[test]
     fn destination_paths_reject_traversal_and_windows_separators() {
