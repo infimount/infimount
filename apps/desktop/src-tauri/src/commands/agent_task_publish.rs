@@ -26,6 +26,10 @@ use uuid::Uuid;
 use crate::state::AppState;
 #[cfg(test)]
 use infimount_control::publication::normalize_destination_dir;
+#[cfg(test)]
+use infimount_control::publication_plan::{
+    publication_preview_fingerprint, AgentTaskPublicationFingerprint,
+};
 
 const AGENT_TASK_PUBLISH_RECEIPT_PREFIX: &str = "publish-receipt-";
 

@@ -339,6 +339,7 @@ mod tests {
         let task_root = agent_task_root(TASK_ID).unwrap();
         let package_path = format!("workspaces/coding/{task_root}/");
         let outputs_path = format!("{package_path}outputs/");
+        op.create_dir(&package_path).await.unwrap();
         op.create_dir(&outputs_path).await.unwrap();
         let manifest = AgentTaskManifest {
             schema_version: AGENT_TASK_SCHEMA_VERSION,
