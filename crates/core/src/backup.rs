@@ -213,7 +213,10 @@ mod tests {
         assert!(restored.verify());
         assert_eq!(restored.schema_version(), 2);
         assert_eq!(restored.storages[0]["id"], "cross-release-test");
-        assert_eq!(restored.storages[0]["name"], "Infimount backup compatibility");
+        assert_eq!(
+            restored.storages[0]["name"],
+            "Infimount backup compatibility"
+        );
         assert_eq!(restored.storages[0]["backend"], "local");
         assert!(decrypt_backup("incorrect-test-passphrase", legacy).is_err());
     }
