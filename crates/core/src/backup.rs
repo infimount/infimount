@@ -203,6 +203,21 @@ mod tests {
         assert!(payload.verify());
     }
 
+    /// Regression fixture: created with the public v0.8.1 release's
+    /// age 0.12.1 scrypt implementation. Test-only sample, no real secrets.
+    #[test]
+    fn test_v081_age_scrypt_recovery_backup_remains_readable() {
+        let legacy = include_str!("../../../tests/fixtures/v0.8/age12-scrypt-recovery.age");
+        let restored = decrypt_backup("public-ci-interop-test-only-passphrase", legacy)
+            .expect("read previously released age 0.12 recovery backup");
+        assert!(restored.verify());
+        assert_eq!(restored.schema_version(), 2);
+        assert_eq!(restored.storages[0]["id"], "cross-release-test");
+        assert_eq!(restored.storages[0]["name"], "Infimount backup compatibility");
+        assert_eq!(restored.storages[0]["backend"], "local");
+        assert!(decrypt_backup("incorrect-test-passphrase", legacy).is_err());
+    }
+
     #[test]
     fn test_backup_round_trip() {
         let payload = sample_payload();
