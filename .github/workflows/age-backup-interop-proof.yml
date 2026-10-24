@@ -5,6 +5,7 @@ on:
     branches: ["main"]
     paths:
       - ".github/workflows/age-backup-interop-proof.yml"
+      - "scripts/age-backup-interop-fixture.rs"
       - "crates/core/Cargo.toml"
       - "Cargo.lock"
 
