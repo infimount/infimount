@@ -85,6 +85,22 @@ each file. The same 20-preview and 64 KiB per-preview limits remain in the
 desktop implementation. The helper is read-only evidence collection, not
 an approval, a publication token, or an agent-facing capability.
 
+## B1.6: shared read-only destination choice and collision planning
+
+`infimount_control::publication_destination` now owns the same OpenDAL
+existence checks, create/conflict/rename choice, bounded legacy " copy" suffix
+search and case-insensitive collision reservations used by the desktop planner.
+Memory-operator tests cover existing and missing objects, fail versus rename
+policies, exact suffixes, dotfiles, path-length failures and non-mutating
+read-only planning.
+
+**Not publication authority:** the desktop still resolves task/workspace
+identity, checks backend capabilities, validates storage namespaces and
+destination confinement, rejects reserved task paths, rehashes reviewed bytes,
+and replans under lifecycle/configuration/workspace locks immediately before
+create-only writes and receipt persistence. This does not create an MCP tool,
+headless apply path or new UI.
+
 ## Trust and behavioral compatibility
 
 The **same** Tauri handlers still own `preview_agent_task_publication` and
@@ -99,8 +115,8 @@ v0.8.1 104-argument Codex fixture and the A4 opt-in Claude pilot are unchanged.
 
 ## Next B1 slices
 
-1. Extract actual destination plan building and its configuration/workspace
-   guard into the single trusted control service, without changing locks.
+1. Move the destination context and configuration/workspace guards into the
+   single trusted control service, without changing lock ordering.
 2. Move the end-to-end trusted prepare/review/apply service into
    `infimount_control`. Tauri becomes a thin wrapper.
 3. Only after parity tests, build the B2 CLI against the shared services.

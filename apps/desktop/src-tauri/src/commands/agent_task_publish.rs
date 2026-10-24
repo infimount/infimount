@@ -7,6 +7,9 @@ use infimount_control::publication::{
 pub use infimount_control::publication::{
     AgentTaskPublicationRequest, AgentTaskPublishConflictPolicy,
 };
+use infimount_control::publication_destination::{
+    choose_publication_destination, reserve_publication_destination_key,
+};
 use infimount_control::publication_evidence::verify_reviewed_output_digest;
 use infimount_control::publication_plan::{
     publication_preview_fingerprint, AgentTaskPublicationFingerprint, AgentTaskPublishReceipt,
@@ -290,25 +293,15 @@ async fn build_publication_plan(
         validate_destination_path(&context.destination_storage, &base_destination)?;
         reject_task_destination_overlap(&context, &source_path, &base_destination)?;
 
-        let (destination_path, action) =
-            match path_exists(&context.destination_op, &base_destination).await? {
-                false => (base_destination, AgentTaskPublishAction::Create),
-                true if request.conflict_policy == AgentTaskPublishConflictPolicy::Fail => {
-                    (base_destination, AgentTaskPublishAction::Conflict)
-                }
-                true => (
-                    unique_destination_path(&context.destination_op, &base_destination).await?,
-                    AgentTaskPublishAction::Rename,
-                ),
-            };
+        let (destination_path, action) = choose_publication_destination(
+            &context.destination_op,
+            &base_destination,
+            &request.conflict_policy,
+        )
+        .await?;
         validate_destination_path(&context.destination_storage, &destination_path)?;
         reject_task_destination_overlap(&context, &source_path, &destination_path)?;
-        let destination_key = destination_path.to_lowercase();
-        if !destination_keys.insert(destination_key) {
-            return Err(CoreError::Config(
-                "Selected Agent Task outputs collide at the publication destination".into(),
-            ));
-        }
+        reserve_publication_destination_key(&mut destination_keys, &destination_path)?;
 
         match action {
             AgentTaskPublishAction::Create => create_count += 1,
@@ -566,33 +559,6 @@ fn destination_aliases_reserved_workspace_control_path(
     Ok(false)
 }
 
-async fn unique_destination_path(
-    op: &opendal::Operator,
-    base_path: &str,
-) -> Result<String, CoreError> {
-    let (parent, name) = split_parent(base_path)?;
-    let (stem, extension) = split_file_name(name);
-    for index in 1..=9_999u32 {
-        let suffix = if index == 1 {
-            " copy".to_string()
-        } else {
-            format!(" copy {index}")
-        };
-        let candidate = join_path(&parent, &format!("{stem}{suffix}{extension}"));
-        if candidate.len() > MAX_AGENT_TASK_DESTINATION_PATH_BYTES {
-            return Err(CoreError::Config(
-                "renamed publication destination exceeds the path length limit".into(),
-            ));
-        }
-        if !path_exists(op, &candidate).await? {
-            return Ok(candidate);
-        }
-    }
-    Err(CoreError::Config(
-        "could not choose a non-conflicting publication destination".into(),
-    ))
-}
-
 async fn ensure_publication_parent(
     op: &opendal::Operator,
     storage: &StorageRecord,
@@ -648,14 +614,6 @@ async fn write_publication_receipt(
             ))
         }
         Err(_) => Err(CoreError::TransferCleanupRequired),
-    }
-}
-
-async fn path_exists(op: &opendal::Operator, path: &str) -> Result<bool, CoreError> {
-    match op.stat(path).await {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error.into()),
     }
 }
 
@@ -723,31 +681,6 @@ fn join_path(root: &str, relative: &str) -> String {
         (true, false) => relative.to_string(),
         (false, true) => root.to_string(),
         (false, false) => format!("{root}/{relative}"),
-    }
-}
-
-fn split_parent(path: &str) -> Result<(String, &str), CoreError> {
-    let normalized = path.trim_matches('/');
-    if normalized.is_empty() {
-        return Err(CoreError::Config(
-            "publication destination file path is empty".into(),
-        ));
-    }
-    Ok(match normalized.rsplit_once('/') {
-        Some((parent, name)) => (parent.to_string(), name),
-        None => (String::new(), normalized),
-    })
-}
-
-fn split_file_name(name: &str) -> (String, String) {
-    if name.starts_with('.') {
-        return (name.to_string(), String::new());
-    }
-    match name.rsplit_once('.') {
-        Some((stem, extension)) if !stem.is_empty() && !extension.is_empty() => {
-            (stem.to_string(), format!(".{extension}"))
-        }
-        _ => (name.to_string(), String::new()),
     }
 }
 
