@@ -208,19 +208,14 @@ mod tests {
     /// moving the scrypt-only backup path back to age 0.11.5.
     #[test]
     fn age_012_scrypt_backup_fixture_remains_readable() {
-        let armored = include_str!(
-            "../../../tests/fixtures/v0.8/synthetic-age012-scrypt-backup.age"
-        );
-        let restored =
-            decrypt_backup("infimount-public-test-passphrase", armored).unwrap();
+        let armored =
+            include_str!("../../../tests/fixtures/v0.8/synthetic-age012-scrypt-backup.age");
+        let restored = decrypt_backup("infimount-public-test-passphrase", armored).unwrap();
         assert!(restored.verify());
         assert_eq!(restored.schema_version(), BACKUP_SCHEMA_VERSION);
         assert_eq!(restored.storages.len(), 1);
         assert_eq!(restored.storages[0]["id"], "compat-storage");
-        assert_eq!(
-            restored.storages[0]["name"],
-            "Synthetic v0.8.1 backup"
-        );
+        assert_eq!(restored.storages[0]["name"], "Synthetic v0.8.1 backup");
         assert!(matches!(
             decrypt_backup("wrong-public-test-passphrase", armored),
             Err(BackupError::Decryption(_))
