@@ -14,9 +14,7 @@ use infimount_core::CoreError;
 use infimount_mcp::registry::StorageRecord;
 use opendal::Operator;
 
-use crate::publication::{
-    validate_publication_request, AgentTaskPublicationRequest,
-};
+use crate::publication::{validate_publication_request, AgentTaskPublicationRequest};
 use crate::publication_context::{
     resolve_publication_context, validate_destination_path, validate_local_path, PublicationContext,
 };
@@ -59,12 +57,7 @@ where
     OpenStorage: FnMut(&str) -> Result<Operator, CoreError>,
 {
     let outputs = validate_publication_request(request)?;
-    let context = resolve_publication_context(
-        request,
-        find_workspace,
-        find_storage,
-        open_storage,
-    )?;
+    let context = resolve_publication_context(request, find_workspace, find_storage, open_storage)?;
     validate_task_manifest(&context, request).await?;
 
     let mut files = Vec::with_capacity(outputs.len());
@@ -298,8 +291,7 @@ mod tests {
     const TASK_ID: &str = "81f08176-86e4-40ec-a9a4-a219c4c9b454";
 
     fn storage(name: &str, id: &str, root: &str) -> StorageRecord {
-        let mut record =
-            StorageRecord::new(name.into(), "local".into(), json!({"root": root}));
+        let mut record = StorageRecord::new(name.into(), "local".into(), json!({"root": root}));
         record.id = id.into();
         record
     }
@@ -335,7 +327,9 @@ mod tests {
         let source = storage("Workspace", "source", &root);
         let destination = storage("Destination", "destination", &root);
         let workspace = workspace(&source);
-        let op = Operator::new(opendal::services::Memory::default()).unwrap();
+        // This task workspace is Local Filesystem; exercise actual filesystem
+        // directory semantics rather than Memory's synthetic directory entries.
+        let op = Operator::new(opendal::services::Fs::default().root(&root)).unwrap();
         let task_root = agent_task_root(TASK_ID).unwrap();
         let package_path = format!("workspaces/coding/{task_root}/");
         let outputs_path = format!("{package_path}outputs/");
@@ -414,14 +408,12 @@ mod tests {
         assert_eq!(first.conflict_count, 0);
         assert!(op.stat("exports/report.md").await.is_err());
 
-        let file_path =
-            format!("workspaces/coding/tasks/{TASK_ID}/outputs/report.md");
+        let file_path = format!("workspaces/coding/tasks/{TASK_ID}/outputs/report.md");
         op.write(&file_path, "world").await.unwrap();
         assert!(plan(&op, &workspace, &source, &destination, &request)
             .await
             .is_err());
-        request.outputs[0].sha256 =
-            hash_agent_task_file(&op, &file_path).await.unwrap().sha256;
+        request.outputs[0].sha256 = hash_agent_task_file(&op, &file_path).await.unwrap().sha256;
         let refreshed = plan(&op, &workspace, &source, &destination, &request)
             .await
             .unwrap();
@@ -443,7 +435,10 @@ mod tests {
             .unwrap();
         assert_eq!(renamed.rename_count, 1);
         assert_eq!(renamed.files[0].destination_path, "exports/report copy.md");
-        assert_eq!(op.read("exports/report.md").await.unwrap().to_vec(), b"sentinel");
+        assert_eq!(
+            op.read("exports/report.md").await.unwrap().to_vec(),
+            b"sentinel"
+        );
         assert!(op.stat("exports/report copy.md").await.is_err());
     }
 
@@ -455,8 +450,7 @@ mod tests {
             .await
             .is_err());
         request.destination_dir = "exports".into();
-        let manifest_path =
-            format!("workspaces/coding/tasks/{TASK_ID}/{AGENT_TASK_MANIFEST_FILE}");
+        let manifest_path = format!("workspaces/coding/tasks/{TASK_ID}/{AGENT_TASK_MANIFEST_FILE}");
         op.write(&manifest_path, b"{}".to_vec()).await.unwrap();
         assert!(plan(&op, &workspace, &source, &destination, &request)
             .await

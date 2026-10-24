@@ -6,11 +6,11 @@ use infimount_control::publication_context::{validate_destination_path, validate
 use infimount_control::publication_engine::{
     build_publication_plan as shared_build_publication_plan, PublicationPlan,
 };
-use infimount_control::publication_plan::{
-    AgentTaskPublishReceipt, AGENT_TASK_PUBLICATION_SCHEMA_VERSION,
-};
 pub use infimount_control::publication_plan::{
     AgentTaskPublicationPlanFile, AgentTaskPublishAction,
+};
+use infimount_control::publication_plan::{
+    AgentTaskPublishReceipt, AGENT_TASK_PUBLICATION_SCHEMA_VERSION,
 };
 use infimount_core::agent_task_io::{
     hash_agent_task_file, publish_reviewed_agent_task_file, AgentTaskFileDigest,

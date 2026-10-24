@@ -132,7 +132,7 @@ rename decisions, path collision prevention, exact size limits, sorting and
 the legacy JSON-byte preview fingerprint. The desktop only injects trusted
 registry/operator lookups and retains the existing Tauri response contract.
 
-Memory-operator tests verify that planning never creates a destination, a
+Filesystem-backed tests verify that planning never creates a destination, a
 same-size source modification invalidates review evidence, conflict policies
 and suffixes remain stable, and malformed manifests/reserved control paths
 fail closed. Existing alias-containment tests remain available to the desktop.
