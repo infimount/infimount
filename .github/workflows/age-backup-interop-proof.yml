@@ -1,0 +1,63 @@
+name: Age Backup Interop Proof (Temporary)
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/age-backup-interop-proof.yml"
+      - "crates/core/Cargo.toml"
+      - "Cargo.lock"
+
+permissions:
+  contents: read
+
+jobs:
+  cross-release-interop:
+    if: ${{ github.head_ref == 'fix/security-age-scrypt-compat-0387' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout v0.8.1 released encryption
+        uses: actions/checkout@v6
+        with:
+          ref: v0.8.1
+          path: released
+      - name: Checkout candidate age version
+        uses: actions/checkout@v6
+        with:
+          path: candidate
+      - name: Pin Rust MSRV
+        uses: dtolnay/rust-toolchain@1.94.0
+      - name: Write ephemeral fixture generator to both checkouts
+        run: |
+          for dir in released candidate; do
+            mkdir -p "$dir/crates/core/examples"
+            cp candidate/scripts/age-backup-interop-fixture.rs "$dir/crates/core/examples/age_backup_interop.rs"
+          done
+      - name: Encrypt sample recovery backup with shipped v0.8.1
+        run: >-
+          cargo +1.94.0 run --manifest-path released/Cargo.toml
+          -p infimount_core --example age_backup_interop --locked --
+          encrypt "$GITHUB_WORKSPACE/released-age12.age"
+      - name: Candidate must decrypt previously shipped recovery backup
+        run: >-
+          cargo +1.94.0 run --manifest-path candidate/Cargo.toml
+          -p infimount_core --example age_backup_interop --locked --
+          decrypt "$GITHUB_WORKSPACE/released-age12.age"
+      - name: Encrypt a recovery backup with candidate age version
+        run: >-
+          cargo +1.94.0 run --manifest-path candidate/Cargo.toml
+          -p infimount_core --example age_backup_interop --locked --
+          encrypt "$GITHUB_WORKSPACE/candidate-age11.age"
+      - name: Shipped v0.8.1 must decrypt newly generated backup
+        run: >-
+          cargo +1.94.0 run --manifest-path released/Cargo.toml
+          -p infimount_core --example age_backup_interop --locked --
+          decrypt "$GITHUB_WORKSPACE/candidate-age11.age"
+      - name: Candidate backup unit tests and fixed lock validation
+        run: |
+          cargo +1.94.0 test --manifest-path candidate/Cargo.toml -p infimount_core backup --locked
+          if grep -q '^name = "crypto-bigint"$' candidate/Cargo.lock; then
+            echo "Vulnerable crypto-bigint remains in the candidate dependency graph" >&2
+            exit 1
+          fi
