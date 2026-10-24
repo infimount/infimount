@@ -122,6 +122,27 @@ through re-resolution, replan, exact byte verification, create-only writes and
 receipt persistence. This resolver is not exposed as an agent-visible tool or
 an authorization bypass.
 
+## B1.8: shared trusted read-only publication planner
+
+`infimount_control::publication_engine` now owns the end-to-end read-only
+publication preview plan: validation of the selected reviewed outputs, trusted
+context resolution, bounded manifest reads, source hash re-verification,
+reserved workspace and canonical namespace overlap rejection, create/conflict/
+rename decisions, path collision prevention, exact size limits, sorting and
+the legacy JSON-byte preview fingerprint. The desktop only injects trusted
+registry/operator lookups and retains the existing Tauri response contract.
+
+Memory-operator tests verify that planning never creates a destination, a
+same-size source modification invalidates review evidence, conflict policies
+and suffixes remain stable, and malformed manifests/reserved control paths
+fail closed. Existing alias-containment tests remain available to the desktop.
+
+**No authority moved:** the desktop alone retains lifecycle/configuration/
+workspace mutation locks, the re-plan comparison during apply, create-only
+destination writes and integrity-checked publication receipts. The shared
+planner does not approve or apply a publication, expose new MCP tools or
+require agent setup for ordinary file browsing.
+
 ## Trust and behavioral compatibility
 
 The **same** Tauri handlers still own `preview_agent_task_publication` and
@@ -136,9 +157,9 @@ v0.8.1 104-argument Codex fixture and the A4 opt-in Claude pilot are unchanged.
 
 ## Next B1 slices
 
-1. Move the end-to-end trusted prepare/review/apply service into
-   `infimount_control` while preserving mutation-lock ownership and order.
-   Tauri becomes a thin wrapper.
+1. Move the trusted apply transaction into the shared control service
+   without weakening single-use approval, lock ownership, or cleanup policy.
+   Tauri should then become a thin wrapper.
 2. Only after parity tests, build the B2 CLI against the shared services.
    Headless publication must require explicit, server-controlled human
    approval or a narrowly scoped audited delegation; a `--yes` switch is
