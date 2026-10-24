@@ -6,9 +6,9 @@ use infimount_control::publication_context::{validate_destination_path, validate
 use infimount_control::publication_engine::{
     build_publication_plan as shared_build_publication_plan, PublicationPlan,
 };
-pub use infimount_control::publication_plan::{
-    AgentTaskPublicationPlanFile, AgentTaskPublishAction,
-};
+pub use infimount_control::publication_plan::AgentTaskPublicationPlanFile;
+#[cfg(test)]
+use infimount_control::publication_plan::AgentTaskPublishAction;
 use infimount_control::publication_plan::{
     AgentTaskPublishReceipt, AGENT_TASK_PUBLICATION_SCHEMA_VERSION,
 };
