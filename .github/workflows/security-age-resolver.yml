@@ -70,4 +70,8 @@ jobs:
           }
           RUST
           cd baseline
-          cargo +1.94.0 run -p infimount_core --bin security_age_fixture --locked --quiet
+          cargo +1.94.0 run -p infimount_core --bin security_age_fixture --quiet
+          if ! grep -A2 '^name = "age"' Cargo.lock | grep -q '^version = "0.12.1"'; then
+            echo "::error::Baseline fixture was not encrypted with age 0.12.1"
+            exit 1
+          fi
