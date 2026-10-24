@@ -101,6 +101,27 @@ and replans under lifecycle/configuration/workspace locks immediately before
 create-only writes and receipt persistence. This does not create an MCP tool,
 headless apply path or new UI.
 
+## B1.7: common publication context and trust binding
+
+`infimount_control::publication_context::resolve_publication_context` now
+performs the same sequential workspace schema/access checks, storage enabled/
+writable checks, Local Filesystem task-workspace restriction, canonical
+namespace fingerprint matching, destination identity checks, create-only
+operator capability guards and task/destination path confinement previously
+implemented in the desktop publication command. Trusted lookups are injected
+by the desktop's local registry and operator cache; the future local CLI/IPC
+must provide the same trusted bindings rather than reimplement these checks.
+A new shared `PublicationContext` carries the fully resolved identities
+and operator handles. Regression tests verify rejection of stale identities,
+unsupported workspace schemas, disabled destinations, malformed destination
+paths and valid local binding.
+
+**Locks and authority remain unchanged.** The desktop still takes lifecycle,
+configuration and workspace mutation locks in the same order and holds them
+through re-resolution, replan, exact byte verification, create-only writes and
+receipt persistence. This resolver is not exposed as an agent-visible tool or
+an authorization bypass.
+
 ## Trust and behavioral compatibility
 
 The **same** Tauri handlers still own `preview_agent_task_publication` and
@@ -115,11 +136,10 @@ v0.8.1 104-argument Codex fixture and the A4 opt-in Claude pilot are unchanged.
 
 ## Next B1 slices
 
-1. Move the destination context and configuration/workspace guards into the
-   single trusted control service, without changing lock ordering.
-2. Move the end-to-end trusted prepare/review/apply service into
-   `infimount_control`. Tauri becomes a thin wrapper.
-3. Only after parity tests, build the B2 CLI against the shared services.
+1. Move the end-to-end trusted prepare/review/apply service into
+   `infimount_control` while preserving mutation-lock ownership and order.
+   Tauri becomes a thin wrapper.
+2. Only after parity tests, build the B2 CLI against the shared services.
    Headless publication must require explicit, server-controlled human
    approval or a narrowly scoped audited delegation; a `--yes` switch is
    not sufficient.
