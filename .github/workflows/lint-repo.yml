@@ -18,6 +18,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint-rustfmt:
+    name: Rust Formatting (fast)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install pinned Rust formatter
+        uses: dtolnay/rust-toolchain@1.94.0
+        with:
+          components: rustfmt
+      - name: Verify Rust formatting without compiling
+        run: cargo +1.94.0 fmt --all -- --check
+
   lint-workflows:
     name: GitHub Actions Lint
     runs-on: ubuntu-latest
