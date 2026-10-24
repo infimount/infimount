@@ -14,8 +14,10 @@ thiserror = "2.0.18"
 base64 = "0.22"
 indexmap = "2.13.0"
 keyring = { version = "=4.1.5", default-features = false, features = ["v1"] }
-age = { version = "0.12", default-features = false, features = ["armor"] }
-age-core = "0.12"
+# age 0.11.5 preserves the passphrase/scrypt backup API and does not
+# introduce the old P-256 crypto-bigint path (RUSTSEC-2026-0387).
+# Treat this as a compatibility experiment until cross-version tests pass.
+age = { version = "=0.11.5", default-features = false, features = ["armor"] }
 sha2 = "0.10"
 zeroize = "1.8"
 uuid = { version = "1", features = ["v4"] }
