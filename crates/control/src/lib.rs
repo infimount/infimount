@@ -6,6 +6,7 @@
 pub mod publication;
 pub mod publication_context;
 pub mod publication_destination;
+pub mod publication_engine;
 pub mod publication_evidence;
 pub mod publication_plan;
 pub mod review;
