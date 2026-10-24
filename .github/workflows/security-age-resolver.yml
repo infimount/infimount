@@ -1,0 +1,32 @@
+name: Temporary age security resolver (remove before merge)
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/security-age-resolver.yml"
+      - "crates/core/Cargo.toml"
+
+permissions:
+  contents: read
+
+jobs:
+  update-age-lockfile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install pinned Rust
+        uses: dtolnay/rust-toolchain@1.94.0
+      - name: Resolve pinned age dependencies
+        run: |
+          cargo update -p age --precise 0.11.5
+          cargo update -p age-core --precise 0.11.0
+          echo "::group::Cargo lockfile diff"
+          git --no-pager diff -- Cargo.lock
+          echo "::endgroup::"
+          if grep -A3 '^name = "crypto-bigint"' Cargo.lock | grep -q '^version = "0.5.5"'; then
+            echo "::error::Still locks vulnerable crypto-bigint 0.5.5"
+            exit 1
+          fi
+          cargo +1.94.0 metadata --locked --no-deps --format-version 1 > /dev/null
