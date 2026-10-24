@@ -2513,10 +2513,12 @@ name = "infimount_control"
 version = "0.8.1"
 dependencies = [
  "infimount_core",
+ "infimount_mcp",
  "opendal",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
  "tokio",
  "uuid",
 ]
