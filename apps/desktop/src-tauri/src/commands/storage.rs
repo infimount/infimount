@@ -1365,8 +1365,7 @@ fn update_storage_with_draft(
         })?;
         Some(format!(
             "storage/{storageId}/revision/{}/{}",
-            next_revision,
-            transaction_id
+            next_revision, transaction_id
         ))
     } else if credentials_changed {
         None
@@ -2300,8 +2299,8 @@ mod tests {
             oauth_session_id: None,
             secret_mutations: HashMap::new(),
         };
-        let error = update_storage_with_draft(&state, storage.id.clone(), draft, false, false)
-            .unwrap_err();
+        let error =
+            update_storage_with_draft(&state, storage.id.clone(), draft, false, false).unwrap_err();
         assert_eq!(error.code, McpErrorCode::ERR_INTERNAL);
         let persisted = state.registry.load_all().unwrap();
         assert_eq!(persisted.len(), 1);
