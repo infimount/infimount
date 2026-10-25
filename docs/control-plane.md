@@ -259,6 +259,19 @@ older bytes. Issue #185 tracks the independent trusted approval epoch and
 restore/import/recovery integration. No human grants or headless publication
 are enabled by this patch.
 
+## B1.13c3: checked imported-storage revision transitions
+
+Both legacy and preview/apply configuration imports now reject exhausted
+storage revisions instead of silently saturating a changed record at the same
+numeric revision. Existing unchanged records retain their revision, while
+normal changes still advance by exactly one. Regression tests cover
+saturation and unchanged vs changed imports.
+
+This only closes the numeric overflow case. Import transaction rollback can
+restore previous registry bytes. Pending headless grants must be invalidated
+by a separate process-owned approval ledger under the same authoritative
+locks. No production grant issuer or headless publication exists.
+
 ## Trust and behavioral compatibility
 
 The **same** Tauri handlers still own `preview_agent_task_publication` and
