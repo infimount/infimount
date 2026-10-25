@@ -12,11 +12,35 @@ use infimount_core::agent_task_io::{
 use infimount_core::CoreError;
 use infimount_mcp::registry::StorageRecord;
 use opendal::{ErrorKind, Operator};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
+use crate::publication::{
+    normalize_destination_dir, validate_publication_request, AgentTaskPublicationRequest,
+};
 use crate::publication_context::{validate_destination_path, validate_local_path};
 use crate::publication_engine::PublicationPlan;
-use crate::publication_plan::AgentTaskPublicationPlanFile;
+use crate::publication_plan::{
+    publication_preview_fingerprint, AgentTaskPublicationFingerprint, AgentTaskPublicationPlanFile,
+    AgentTaskPublishReceipt, AGENT_TASK_PUBLICATION_SCHEMA_VERSION,
+};
+
+const AGENT_TASK_PUBLISH_RECEIPT_PREFIX: &str = "publish-receipt-";
+
+/// The existing desktop publication response, retained byte-for-byte at
+/// the serialized camelCase boundary while the trusted apply moves here.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTaskPublicationOutput {
+    pub publication_id: String,
+    pub published_at: String,
+    pub workspace_id: String,
+    pub task_id: String,
+    pub destination_storage_id: String,
+    pub destination_storage_name: String,
+    pub receipt_path: String,
+    pub files: Vec<AgentTaskPublicationPlanFile>,
+}
 
 /// Validate a freshly rebuilt, trusted plan against an earlier preview.
 /// This must execute UNDER the existing desktop publication mutation locks.
@@ -109,7 +133,7 @@ pub async fn write_publication_receipt(
 /// This check and the byte copy are co-located so no consumer can forget
 /// stale-preview and conflict validation when invoking this shared loop.
 /// This function is a privileged Rust primitive, not an agent-facing API.
-pub async fn publish_locked_reviewed_files(
+pub(crate) async fn publish_locked_reviewed_files(
     plan: &PublicationPlan,
     reviewed_preview_token: &str,
 ) -> Result<Vec<AgentTaskPublicationPlanFile>, CoreError> {
@@ -161,6 +185,123 @@ pub async fn publish_locked_reviewed_files(
     Ok(published)
 }
 
+/// Complete the desktop-mediated publication transaction, including its
+/// unique create-only integrity-checked receipt. The caller MUST hold the
+/// lifecycle, configuration and workspace mutation locks throughout.
+/// A future headless caller MUST additionally supply an authenticated,
+/// atomically consumed server-held human approval. This is not an endpoint.
+pub async fn commit_locked_publication<F>(
+    plan: &PublicationPlan,
+    request: &AgentTaskPublicationRequest,
+    reviewed_preview_token: &str,
+    issue_receipt_identity: F,
+) -> Result<AgentTaskPublicationOutput, CoreError>
+where
+    F: FnOnce() -> (String, String),
+{
+    validate_request_matches_locked_plan(plan, request)?;
+    let published = publish_locked_reviewed_files(plan, reviewed_preview_token).await?;
+    // Issue the receipt identity after the exact reviewed output bytes commit.
+    let (publication_id, published_at) = issue_receipt_identity();
+    let receipt = AgentTaskPublishReceipt {
+        schema_version: AGENT_TASK_PUBLICATION_SCHEMA_VERSION,
+        publication_id: publication_id.clone(),
+        task_id: request.task_id.clone(),
+        workspace_id: request.workspace_id.clone(),
+        published_at: published_at.clone(),
+        destination_storage_id: plan.context.destination_storage.id.clone(),
+        destination_storage_name: plan.context.destination_storage.name.clone(),
+        destination_dir: plan.context.destination_dir.clone(),
+        conflict_policy: request.conflict_policy.clone(),
+        files: published.clone(),
+    };
+    let receipt_file = format!("{AGENT_TASK_PUBLISH_RECEIPT_PREFIX}{publication_id}.json");
+    let receipt_path = join_path(&plan.context.workspace_task_path, &receipt_file);
+    // Any failure after output bytes committed leaves potentially ambiguous
+    // destination/receipt state. Never try to rollback by deleting paths.
+    let relative_receipt_path = async {
+        validate_local_path(&plan.context.workspace_storage, &receipt_path)?;
+        let mut bytes = serde_json::to_vec_pretty(&receipt)?;
+        bytes.push(b'\n');
+        write_publication_receipt(&plan.context.workspace_op, &receipt_path, &bytes).await?;
+        relative_to_root(&plan.context.workspace.root_path, &receipt_path)
+    }
+    .await
+    .map_err(|_| CoreError::TransferCleanupRequired)?;
+
+    Ok(AgentTaskPublicationOutput {
+        publication_id,
+        published_at,
+        workspace_id: request.workspace_id.clone(),
+        task_id: request.task_id.clone(),
+        destination_storage_id: plan.context.destination_storage.id.clone(),
+        destination_storage_name: plan.context.destination_storage.name.clone(),
+        receipt_path: relative_receipt_path,
+        files: published,
+    })
+}
+
+fn validate_request_matches_locked_plan(
+    plan: &PublicationPlan,
+    request: &AgentTaskPublicationRequest,
+) -> Result<(), CoreError> {
+    let selected = validate_publication_request(request)?;
+    let recomputed_preview_token = fingerprint_for_request(plan, request)?;
+    let task_id = plan
+        .context
+        .task_root
+        .strip_prefix("tasks/")
+        .ok_or_else(|| CoreError::Config("trusted publication task binding is invalid".into()))?;
+    if request.workspace_id != plan.context.workspace.id
+        || request.task_id != task_id
+        || request.destination_storage_id != plan.context.destination_storage.id
+        || normalize_destination_dir(&request.destination_dir)? != plan.context.destination_dir
+        || plan.preview_token != recomputed_preview_token
+        || selected.len() != plan.files.len()
+        || selected.iter().zip(&plan.files).any(|(reviewed, planned)| {
+            reviewed.task_path != planned.task_path
+                || reviewed.byte_size != planned.byte_size
+                || reviewed.sha256 != planned.sha256
+        })
+    {
+        return Err(CoreError::Config(
+            "reviewed publication request no longer matches the trusted plan".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn fingerprint_for_request(
+    plan: &PublicationPlan,
+    request: &AgentTaskPublicationRequest,
+) -> Result<String, CoreError> {
+    publication_preview_fingerprint(&AgentTaskPublicationFingerprint {
+        schema_version: AGENT_TASK_PUBLICATION_SCHEMA_VERSION,
+        workspace_id: &request.workspace_id,
+        task_id: &request.task_id,
+        workspace_namespace: &plan.context.workspace_namespace,
+        destination_storage_id: &plan.context.destination_storage.id,
+        destination_namespace: &plan.context.destination_namespace,
+        destination_dir: &plan.context.destination_dir,
+        conflict_policy: &request.conflict_policy,
+        files: &plan.files,
+    })
+}
+
+fn relative_to_root(root: &str, path: &str) -> Result<String, CoreError> {
+    let root = root.trim().trim_matches('/');
+    let path = path.trim().trim_matches('/');
+    if root.is_empty() {
+        return (!path.is_empty())
+            .then(|| path.to_string())
+            .ok_or_else(|| CoreError::Config("publication receipt path is invalid".into()));
+    }
+    path.strip_prefix(&format!("{root}/"))
+        .filter(|relative| !relative.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| CoreError::Config("publication receipt escaped the workspace".into()))
+}
+
 fn join_path(root: &str, relative: &str) -> String {
     let root = root.trim().trim_matches('/');
     let relative = relative.trim().trim_matches('/');
@@ -190,7 +331,7 @@ mod tests {
         destination.id = "destination".into();
         let namespace = storage_namespace_fingerprint(&source).unwrap();
         let workspace = WorkspaceRecord {
-            id: "workspace-id".into(),
+            id: "f8f47aa7-702d-4fd6-8815-84cbdf3b3127".into(),
             schema_version: WORKSPACE_RECORD_SCHEMA_VERSION,
             storage_id: source.id.clone(),
             name: "Coding".into(),
@@ -381,6 +522,166 @@ mod tests {
             plan.context
                 .destination_op
                 .read("exports/occupied")
+                .await
+                .unwrap()
+                .to_vec(),
+            b"sentinel"
+        );
+    }
+
+    fn matching_request(plan: &PublicationPlan) -> AgentTaskPublicationRequest {
+        use crate::publication::{AgentTaskPublishConflictPolicy, ReviewedAgentTaskOutput};
+        AgentTaskPublicationRequest {
+            workspace_id: plan.context.workspace.id.clone(),
+            task_id: "81f08176-86e4-40ec-a9a4-a219c4c9b454".into(),
+            outputs: plan
+                .files
+                .iter()
+                .map(|file| ReviewedAgentTaskOutput {
+                    task_path: file.task_path.clone(),
+                    byte_size: file.byte_size,
+                    sha256: file.sha256.clone(),
+                })
+                .collect(),
+            destination_storage_id: plan.context.destination_storage.id.clone(),
+            destination_dir: "exports".into(),
+            conflict_policy: AgentTaskPublishConflictPolicy::Fail,
+        }
+    }
+
+    fn bind_plan_fingerprint(plan: &mut PublicationPlan, request: &AgentTaskPublicationRequest) {
+        plan.preview_token = fingerprint_for_request(plan, request).unwrap();
+    }
+
+    #[tokio::test]
+    async fn full_locked_commit_returns_legacy_wire_and_verifies_receipt() {
+        let (_temp, mut plan) = plan_fixture().await;
+        let request = matching_request(&plan);
+        bind_plan_fingerprint(&mut plan, &request);
+        let result = commit_locked_publication(&plan, &request, &plan.preview_token, || {
+            (
+                "d2534279-250e-4788-a807-c390c2c173b1".into(),
+                "2026-10-25T11:00:00+05:30".into(),
+            )
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(result.files, plan.files);
+        assert_eq!(result.task_id, request.task_id);
+        assert_eq!(
+            serde_json::to_value(&result).unwrap()["destinationStorageId"],
+            "destination"
+        );
+        let absolute_receipt = join_path(&plan.context.workspace.root_path, &result.receipt_path);
+        let receipt_bytes = plan
+            .context
+            .workspace_op
+            .read(&absolute_receipt)
+            .await
+            .unwrap()
+            .to_vec();
+        assert!(receipt_bytes.ends_with(b"\n"));
+        let receipt: serde_json::Value = serde_json::from_slice(&receipt_bytes).unwrap();
+        assert_eq!(receipt["schemaVersion"], 1);
+        assert_eq!(receipt["publicationId"], result.publication_id);
+        assert_eq!(receipt["files"][0]["destinationPath"], "exports/a.txt");
+        assert!(receipt.get("sourceStorageId").is_none());
+        assert!(receipt.get("hostPath").is_none());
+    }
+
+    #[tokio::test]
+    async fn inconsistent_request_rejects_before_any_destination_write() {
+        let (_temp, mut plan) = plan_fixture().await;
+        let mut request = matching_request(&plan);
+        bind_plan_fingerprint(&mut plan, &request);
+        request.outputs[0].sha256 = "c".repeat(64);
+        let result = commit_locked_publication(&plan, &request, &plan.preview_token, || {
+            ("unused".into(), "unused".into())
+        })
+        .await;
+        assert!(result.is_err());
+        assert!(plan
+            .context
+            .destination_op
+            .stat("exports/a.txt")
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn altered_conflict_policy_rejects_before_destination_write() {
+        use crate::publication::AgentTaskPublishConflictPolicy;
+        let (_temp, mut plan) = plan_fixture().await;
+        let mut request = matching_request(&plan);
+        bind_plan_fingerprint(&mut plan, &request);
+        request.conflict_policy = AgentTaskPublishConflictPolicy::Rename;
+        let result = commit_locked_publication(&plan, &request, &plan.preview_token, || {
+            ("unused".into(), "unused".into())
+        })
+        .await;
+        assert!(result.is_err());
+        assert!(plan
+            .context
+            .destination_op
+            .stat("exports/a.txt")
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn destination_binding_change_never_issues_receipt_or_writes() {
+        let (_temp, mut plan) = plan_fixture().await;
+        let mut request = matching_request(&plan);
+        bind_plan_fingerprint(&mut plan, &request);
+        request.destination_storage_id = "different".into();
+        let result = commit_locked_publication(&plan, &request, &plan.preview_token, || {
+            panic!("rejected publication must not issue receipt metadata")
+        })
+        .await;
+        assert!(result.is_err());
+        assert!(plan
+            .context
+            .destination_op
+            .stat("exports/a.txt")
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn receipt_collision_after_committed_files_requires_cleanup() {
+        let (_temp, mut plan) = plan_fixture().await;
+        let request = matching_request(&plan);
+        bind_plan_fingerprint(&mut plan, &request);
+        let receipt_id = "e1b6a197-31a9-4cda-a327-068d413bc4db";
+        let receipt = join_path(
+            &plan.context.workspace_task_path,
+            &format!("publish-receipt-{receipt_id}.json"),
+        );
+        plan.context
+            .workspace_op
+            .write(&receipt, "sentinel")
+            .await
+            .unwrap();
+        let error = commit_locked_publication(&plan, &request, &plan.preview_token, || {
+            (receipt_id.into(), "2026-10-25T11:00:00+05:30".into())
+        })
+        .await
+        .unwrap_err();
+        assert!(matches!(error, CoreError::TransferCleanupRequired));
+        assert_eq!(
+            plan.context
+                .destination_op
+                .read("exports/a.txt")
+                .await
+                .unwrap()
+                .to_vec(),
+            b"alpha"
+        );
+        assert_eq!(
+            plan.context
+                .workspace_op
+                .read(&receipt)
                 .await
                 .unwrap()
                 .to_vec(),
