@@ -179,6 +179,30 @@ before headless publication is implemented. Neither a preview token nor a
 serialized approval record is sufficient permission. Desktop publication is
 unchanged and remains the only existing apply entry point.
 
+## B1.11: shared reviewed-file commit loop under desktop locks
+
+`infimount_control::publication_apply::publish_locked_reviewed_files` now
+co-locates revalidation of the reviewed preview fingerprint/conflict count
+with the existing create-only reviewed-file copy loop. It verifies source
+paths and hashes, destination path confinement and committed destination
+hashes, and retains partial-commit `TransferCleanupRequired` behavior
+without unsafe rollback by deletion.
+
+Filesystem-backed tests prove exact bytes, source drift rejection, stale or
+conflicting plan rejection before any write, and late second-destination
+collision with the earlier published file and occupied sentinel preserved.
+
+Failures on a later file, including destination validation or parent creation
+before opening its writer, report `TransferCleanupRequired` if an earlier file
+has already committed. Existing committed output and unrelated sentinels remain
+untouched.
+
+This remains a privileged Rust helper, **not publication approval**. Only
+the existing Tauri command invokes it after re-planning under lifecycle,
+configuration and workspace locks. Tauri still owns actor/UI authorization,
+recording receipt metadata, verified create-only receipt persistence and
+final response semantics. No CLI or MCP publication endpoint is enabled.
+
 ## Trust and behavioral compatibility
 
 The **same** Tauri handlers still own `preview_agent_task_publication` and
@@ -193,14 +217,13 @@ v0.8.1 104-argument Codex fixture and the A4 opt-in Claude pilot are unchanged.
 
 ## Next B1 slices
 
-1. Extract the remaining trusted apply transaction (per-file verified
-   create-only publication and receipt orchestration) without changing desktop
-   lock ordering, human approval, or ambiguous-write cleanup policy.
-2. Build the server-owned, single-use human approval store with authoritative
-   actor authentication, protected persistence, expiry, revocation and
-   atomic consumption under the existing locks before headless apply.
-3. Only after approval-store and apply parity tests, build the B2 CLI
-   against that single trusted service.
+1. Consolidate the remaining publication receipt orchestration and lock
+   authority behind one trusted apply service, keeping desktop mediation.
+2. Build the server-owned, single-use human approval store with authenticated
+   actors, protected persistence, expiry, revocation and atomic consumption
+   under the existing locks before headless apply.
+3. Only after the protected approval store and apply parity tests, build
+   the B2 CLI against that same trusted service.
    Headless publication must require explicit, server-controlled human
    approval or a narrowly scoped audited delegation; a `--yes` switch is
    not sufficient.
