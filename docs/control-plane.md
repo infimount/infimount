@@ -244,6 +244,21 @@ monotonic. Configuration imports/restores and out-of-band registry edits still
 require explicit audit and fail-closed handling before actual headless apply.
 No approval issuer, persistence, consumption or new publishing endpoint ships.
 
+## B1.13c1: fail-closed revision exhaustion
+
+Storage updates and legacy secret migrations now use
+`next_storage_revision` with a checked increment instead of
+`saturating_add(1)`. A revision at `u64::MAX` is rejected before
+writing a replacement record or allocating a new credential reference.
+Regression tests verify no wraparound, no saturation replay and no partial
+desktop update for an exhausted revision.
+
+**Not yet ABA-safe across restore/import:** a recovery restore can still
+replace the registry with saved revision values, and raw rollback can restore
+older bytes. Issue #185 tracks the independent trusted approval epoch and
+restore/import/recovery integration. No human grants or headless publication
+are enabled by this patch.
+
 ## Trust and behavioral compatibility
 
 The **same** Tauri handlers still own `preview_agent_task_publication` and

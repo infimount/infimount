@@ -13,7 +13,9 @@ use infimount_mcp::policy::{
     migrate_legacy_policy, normalize_policy_path, normalize_storage_policy, McpAccessMode,
     McpRuleSource, McpStoragePolicy,
 };
-use infimount_mcp::registry::{ensure_unique_name, validate_storage_name, StorageRecord};
+use infimount_mcp::registry::{
+    ensure_unique_name, next_storage_revision, validate_storage_name, StorageRecord,
+};
 use infimount_mcp::tools_storage::{
     apply_storage_import_with_validator_locked, cancel_storage_import_preview, export_config,
     preview_storage_import, validate_storage_record, zeroize_all_storage_import_previews,
@@ -1295,6 +1297,8 @@ fn update_storage_with_draft(
     let schema_secret_names = secrets::discover_secret_field_names();
 
     let current = state.find_storage_by_id(&storageId)?;
+    // Resolve overflow before secret-ref allocation or any configuration write.
+    let next_revision = next_storage_revision(current.revision)?;
     let previous_ref = current.secret_ref.clone();
     let previous_bundle = match previous_ref.as_deref() {
         Some(account) => state
@@ -1361,8 +1365,7 @@ fn update_storage_with_draft(
         })?;
         Some(format!(
             "storage/{storageId}/revision/{}/{}",
-            current.revision.saturating_add(1),
-            transaction_id
+            next_revision, transaction_id
         ))
     } else if credentials_changed {
         None
@@ -1383,7 +1386,7 @@ fn update_storage_with_draft(
         .as_object()
         .map(|object| object.keys().cloned().collect())
         .unwrap_or_default();
-    updated.revision = updated.revision.saturating_add(1);
+    updated.revision = next_revision;
     updated.updated_at = Utc::now().to_rfc3339();
 
     if !dependent.is_empty() {
@@ -2269,6 +2272,41 @@ fn validate_storage_draft(storage: &StorageDraft) -> McpResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn storage_update_revision_exhaustion_is_rejected_before_writes() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(
+            temp.path(),
+            std::sync::Arc::new(infimount_core::secrets::MemorySecretStore::new()),
+        );
+        let mut storage = StorageRecord::new(
+            "Saturated".into(),
+            "local".into(),
+            json!({ "root": temp.path().to_string_lossy().to_string() }),
+        );
+        storage.revision = u64::MAX;
+        state.registry.save_all_atomic(&[storage.clone()]).unwrap();
+
+        let draft = StorageDraft {
+            storage_id: None,
+            name: storage.name.clone(),
+            backend: storage.backend.clone(),
+            config: storage.config.clone(),
+            enabled: storage.enabled,
+            mcp_exposed: storage.mcp_exposed,
+            read_only: storage.read_only,
+            oauth_session_id: None,
+            secret_mutations: HashMap::new(),
+        };
+        let error =
+            update_storage_with_draft(&state, storage.id.clone(), draft, false, false).unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_INTERNAL);
+        let persisted = state.registry.load_all().unwrap();
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(persisted[0].revision, u64::MAX);
+        assert_eq!(persisted[0].name, storage.name);
+    }
 
     #[test]
     fn validate_storage_draft_accepts_all_desktop_backends() {
