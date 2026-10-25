@@ -205,6 +205,7 @@ describe("useTransferQueue", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Add transfer" }));
     await waitFor(() => expect(screen.getByTestId("first-status")).toHaveTextContent("running"));
+    await waitFor(() => expect(transferEntries).toHaveBeenCalledTimes(1));
     const jobId = vi.mocked(transferEntries).mock.calls[0][6];
 
     eventMock.listener?.({
@@ -220,6 +221,7 @@ describe("useTransferQueue", () => {
 
     await waitFor(() => expect(screen.getByTestId("first-progress")).toHaveTextContent("50"));
     resolveTransfer();
+    await waitFor(() => expect(screen.getByTestId("first-status")).toHaveTextContent("completed"));
   });
 
   it("persists completed transfer history locally", async () => {
@@ -264,22 +266,33 @@ describe("useTransferQueue", () => {
   });
 
   it("requests cancellation for the active transfer", async () => {
+    let rejectTransfer!: (reason: Error) => void;
     vi.mocked(transferEntries).mockImplementationOnce(
-      () => new Promise((resolve) => setTimeout(resolve, 50)),
+      () => new Promise<void>((_resolve, reject) => {
+        rejectTransfer = reject;
+      }),
     );
     renderQueue();
 
     fireEvent.click(screen.getByRole("button", { name: "Add transfer" }));
     await waitFor(() => expect(screen.getByTestId("first-status")).toHaveTextContent("running"));
+    await waitFor(() => expect(transferEntries).toHaveBeenCalledTimes(1));
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel last" }));
+    await waitFor(() =>
+      expect(cancelTransferJob).toHaveBeenCalledWith(expect.stringMatching(/^transfer-/)),
+    );
 
-    await waitFor(() => expect(cancelTransferJob).toHaveBeenCalledWith(expect.stringMatching(/^transfer-/)));
+    rejectTransfer(new Error("Transfer cancelled"));
+    await waitFor(() => expect(screen.getByTestId("first-status")).toHaveTextContent("cancelled"));
   });
 
   it("cancels queued transfers before they start", async () => {
+    let resolveTransfer!: () => void;
     vi.mocked(transferEntries).mockImplementationOnce(
-      () => new Promise((resolve) => setTimeout(resolve, 50)),
+      () => new Promise<void>((resolve) => {
+        resolveTransfer = resolve;
+      }),
     );
     renderQueue();
 
@@ -287,8 +300,11 @@ describe("useTransferQueue", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add transfer" }));
 
     await waitFor(() => expect(screen.getByTestId("job-count")).toHaveTextContent("2"));
+    await waitFor(() => expect(transferEntries).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", { name: "Cancel last" }));
 
     await waitFor(() => expect(screen.getByTestId("last-status")).toHaveTextContent("cancelled"));
+    resolveTransfer();
+    await waitFor(() => expect(screen.getByTestId("first-status")).toHaveTextContent("completed"));
   });
 });

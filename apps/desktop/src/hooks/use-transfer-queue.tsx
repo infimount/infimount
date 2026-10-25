@@ -166,11 +166,15 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
   const [jobs, setJobs] = useState<TransferJob[]>(() => readPersistedJobs());
   const callbacksRef = useRef(new Map<string, TransferJobCallbacks>());
   const processingRef = useRef(false);
+  const mountedRef = useRef(true);
   const cancelledJobIdsRef = useRef(new Set<string>());
   const latestJobsRef = useRef(jobs);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const patchJob = useCallback((jobId: string, patch: Partial<TransferJob>) => {
+    // Native transfers may settle after the owning WebView unmounts.
+    // Never schedule React updates against a disposed provider.
+    if (!mountedRef.current) return;
     setJobs((current) =>
       current.map((job) =>
         job.id === jobId
@@ -268,15 +272,19 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
     }, TRANSFER_PROGRESS_PERSIST_DEBOUNCE_MS);
   }, [jobs]);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
       if (persistTimerRef.current) {
         clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = null;
       }
+      // Keep the interrupted-transfer recovery snapshot, rather than
+      // silently marking in-flight native work complete after unmount.
       persistJobs(latestJobsRef.current);
-    },
-    [],
-  );
+    };
+  }, []);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -461,7 +469,9 @@ export function TransferQueueProvider({ children }: { children: ReactNode }) {
         await callbacksRef.current.get(nextJob.id)?.onFailed?.(failedJob, error);
       } finally {
         processingRef.current = false;
-        setJobs((current) => [...current]);
+        if (mountedRef.current) {
+          setJobs((current) => [...current]);
+        }
       }
     };
 
