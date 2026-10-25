@@ -1,4 +1,7 @@
 use infimount_control::publication::validate_sha256;
+use infimount_control::publication_apply::{
+    ensure_publication_parent, validate_locked_publication_plan, write_publication_receipt,
+};
 pub use infimount_control::publication::{
     AgentTaskPublicationRequest, AgentTaskPublishConflictPolicy,
 };
@@ -12,14 +15,11 @@ use infimount_control::publication_plan::AgentTaskPublishAction;
 use infimount_control::publication_plan::{
     AgentTaskPublishReceipt, AGENT_TASK_PUBLICATION_SCHEMA_VERSION,
 };
-use infimount_core::agent_task_io::{
-    hash_agent_task_file, publish_reviewed_agent_task_file, AgentTaskFileDigest,
-};
+use infimount_core::agent_task_io::{publish_reviewed_agent_task_file, AgentTaskFileDigest};
 use infimount_core::CoreError;
+#[cfg(test)]
 use infimount_mcp::registry::StorageRecord;
-use opendal::ErrorKind;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tauri::State;
 use uuid::Uuid;
 
@@ -139,16 +139,11 @@ pub async fn publish_agent_task_outputs(
     // Rebuild the complete plan from current source bytes and current destination
     // state. The preview token is a staleness token, not an authorization token.
     let plan = build_publication_plan(&state, &request.publication).await?;
-    if plan.preview_token != request.preview_token {
-        return Err(CoreError::Config(
-            "Agent Task publication changed since review; review the publication plan again".into(),
-        ));
-    }
-    if plan.conflict_count != 0 {
-        return Err(CoreError::Config(
-            "Agent Task publication has unresolved destination conflicts".into(),
-        ));
-    }
+    validate_locked_publication_plan(
+        &plan.preview_token,
+        &request.preview_token,
+        plan.conflict_count,
+    )?;
 
     let mut published = Vec::<AgentTaskPublicationPlanFile>::new();
     for file in &plan.files {
@@ -241,64 +236,6 @@ async fn build_publication_plan(
         |id| state.operator_for_storage_id(id),
     )
     .await
-}
-
-async fn ensure_publication_parent(
-    op: &opendal::Operator,
-    storage: &StorageRecord,
-    destination_path: &str,
-) -> Result<(), CoreError> {
-    let Some((parent, _)) = destination_path.rsplit_once('/') else {
-        return Ok(());
-    };
-    if parent.is_empty() || !op.info().capability().create_dir {
-        return Ok(());
-    }
-    validate_destination_path(storage, parent)?;
-    op.create_dir(&format!("{}/", parent.trim_end_matches('/')))
-        .await?;
-    Ok(())
-}
-
-async fn write_publication_receipt(
-    op: &opendal::Operator,
-    path: &str,
-    bytes: &[u8],
-) -> Result<(), CoreError> {
-    if !op.info().capability().write_with_if_not_exists {
-        return Err(CoreError::Config(
-            "Agent Task workspace does not support safe create-only publication receipts".into(),
-        ));
-    }
-
-    let expected = AgentTaskFileDigest {
-        byte_size: bytes.len() as u64,
-        sha256: format!("{:x}", Sha256::digest(bytes)),
-    };
-    let mut writer = op.writer_with(path).if_not_exists(true).await?;
-    if let Err(error) = writer.write(bytes.to_vec()).await {
-        if writer.abort().await.is_err() {
-            return Err(CoreError::TransferCleanupRequired);
-        }
-        return Err(error.into());
-    }
-    if let Err(error) = writer.close().await {
-        if writer.abort().await.is_err() {
-            return Err(CoreError::TransferCleanupRequired);
-        }
-        return Err(error.into());
-    }
-
-    match hash_agent_task_file(op, path).await {
-        Ok(actual) if actual == expected => Ok(()),
-        Ok(_) => Err(CoreError::TransferCleanupRequired),
-        Err(CoreError::Storage(error)) if error.kind() == ErrorKind::NotFound => {
-            Err(CoreError::Config(
-                "Agent Task publication receipt disappeared during integrity verification".into(),
-            ))
-        }
-        Err(_) => Err(CoreError::TransferCleanupRequired),
-    }
 }
 
 fn validate_preview_token(value: &str) -> Result<(), CoreError> {

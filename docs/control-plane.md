@@ -143,6 +143,22 @@ destination writes and integrity-checked publication receipts. The shared
 planner does not approve or apply a publication, expose new MCP tools or
 require agent setup for ordinary file browsing.
 
+## B1.9: shared locked-plan checks and create-only receipt persistence
+
+`infimount_control::publication_apply` now owns the exact stale-preview
+and unresolved-conflict checks that run after the desktop rebuilds a publication
+plan under lifecycle, configuration and workspace mutation locks. It also
+owns capability-gated parent directory creation and integrity-checked,
+create-only receipt persistence (including abort and ambiguity handling).
+Tests verify that stale review or unresolved conflicts fail closed, receipts
+are not overwritten on replay, and invalid parent paths are rejected.
+
+These helpers do **not** constitute authorization. The desktop remains the
+only trusted caller of the publication apply transaction and retains its
+lock order, source rehashing, destination confinement, create-only file
+publication, cleanup policy, receipt path binding and final result contract.
+No CLI, IPC or agent-visible publication endpoint is exposed.
+
 ## Trust and behavioral compatibility
 
 The **same** Tauri handlers still own `preview_agent_task_publication` and
@@ -157,10 +173,12 @@ v0.8.1 104-argument Codex fixture and the A4 opt-in Claude pilot are unchanged.
 
 ## Next B1 slices
 
-1. Move the trusted apply transaction into the shared control service
-   without weakening single-use approval, lock ownership, or cleanup policy.
-   Tauri should then become a thin wrapper.
-2. Only after parity tests, build the B2 CLI against the shared services.
+1. Extract the remaining trusted apply transaction (per-file verified
+   create-only publication and receipt orchestration) without changing desktop
+   lock ordering, human approval, or ambiguous-write cleanup policy.
+2. Design a server-side, single-use human approval/delegation store before
+   any headless apply entry point. Only then build the B2 CLI against the
+   same trusted service after parity testing.
    Headless publication must require explicit, server-controlled human
    approval or a narrowly scoped audited delegation; a `--yes` switch is
    not sufficient.
