@@ -3,9 +3,9 @@ pub use infimount_control::publication::{
     AgentTaskPublicationRequest, AgentTaskPublishConflictPolicy,
 };
 use infimount_control::publication_apply::{
-    ensure_publication_parent, validate_locked_publication_plan, write_publication_receipt,
+    publish_locked_reviewed_files, write_publication_receipt,
 };
-use infimount_control::publication_context::{validate_destination_path, validate_local_path};
+use infimount_control::publication_context::validate_local_path;
 use infimount_control::publication_engine::{
     build_publication_plan as shared_build_publication_plan, PublicationPlan,
 };
@@ -15,7 +15,6 @@ use infimount_control::publication_plan::AgentTaskPublishAction;
 use infimount_control::publication_plan::{
     AgentTaskPublishReceipt, AGENT_TASK_PUBLICATION_SCHEMA_VERSION,
 };
-use infimount_core::agent_task_io::{publish_reviewed_agent_task_file, AgentTaskFileDigest};
 use infimount_core::CoreError;
 #[cfg(test)]
 use infimount_mcp::registry::StorageRecord;
@@ -139,47 +138,7 @@ pub async fn publish_agent_task_outputs(
     // Rebuild the complete plan from current source bytes and current destination
     // state. The preview token is a staleness token, not an authorization token.
     let plan = build_publication_plan(&state, &request.publication).await?;
-    validate_locked_publication_plan(
-        &plan.preview_token,
-        &request.preview_token,
-        plan.conflict_count,
-    )?;
-
-    let mut published = Vec::<AgentTaskPublicationPlanFile>::new();
-    for file in &plan.files {
-        let source_path = join_path(&plan.context.workspace_task_path, &file.task_path);
-        validate_local_path(&plan.context.workspace_storage, &source_path)?;
-        validate_destination_path(&plan.context.destination_storage, &file.destination_path)?;
-        ensure_publication_parent(
-            &plan.context.destination_op,
-            &plan.context.destination_storage,
-            &file.destination_path,
-        )
-        .await?;
-
-        let expected = AgentTaskFileDigest {
-            byte_size: file.byte_size,
-            sha256: file.sha256.clone(),
-        };
-        if let Err(error) = publish_reviewed_agent_task_file(
-            &plan.context.workspace_op,
-            &source_path,
-            &plan.context.destination_op,
-            &file.destination_path,
-            &expected,
-        )
-        .await
-        {
-            if published.is_empty() {
-                return Err(error);
-            }
-            // Some create-only destinations are already committed. OpenDAL 0.58
-            // has no portable compare-and-delete primitive, so automatic rollback
-            // could delete data replaced by another writer after our verification.
-            return Err(CoreError::TransferCleanupRequired);
-        }
-        published.push(file.clone());
-    }
+    let published = publish_locked_reviewed_files(&plan, &request.preview_token).await?;
 
     let publication_id = Uuid::new_v4().to_string();
     let published_at = chrono::Utc::now().to_rfc3339();
