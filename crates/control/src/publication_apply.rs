@@ -137,11 +137,15 @@ mod tests {
             .await
             .unwrap();
         assert!(op.stat("reports/2026/").await.unwrap().is_dir());
-        assert!(ensure_publication_parent(&op, &storage, "reports/../secret/report.md")
-            .await
-            .is_err());
-        assert!(ensure_publication_parent(&op, &storage, "reports\\secret/report.md")
-            .await
-            .is_err());
+        assert!(
+            ensure_publication_parent(&op, &storage, "reports/../secret/report.md")
+                .await
+                .is_err()
+        );
+        assert!(
+            ensure_publication_parent(&op, &storage, "reports\\secret/report.md")
+                .await
+                .is_err()
+        );
     }
 }
