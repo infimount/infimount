@@ -631,6 +631,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn destination_binding_change_never_issues_receipt_or_writes() {
+        let (_temp, mut plan) = plan_fixture().await;
+        let mut request = matching_request(&plan);
+        bind_plan_fingerprint(&mut plan, &request);
+        request.destination_storage_id = "different".into();
+        let result = commit_locked_publication(&plan, &request, &plan.preview_token, || {
+            panic!("rejected publication must not issue receipt metadata")
+        })
+        .await;
+        assert!(result.is_err());
+        assert!(plan
+            .context
+            .destination_op
+            .stat("exports/a.txt")
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
     async fn receipt_collision_after_committed_files_requires_cleanup() {
         let (_temp, mut plan) = plan_fixture().await;
         let request = matching_request(&plan);
