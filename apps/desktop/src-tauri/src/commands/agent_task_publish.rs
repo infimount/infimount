@@ -2,16 +2,17 @@ use infimount_control::publication::validate_sha256;
 pub use infimount_control::publication::{
     AgentTaskPublicationRequest, AgentTaskPublishConflictPolicy,
 };
-use infimount_control::publication_apply::{
-    publish_locked_reviewed_files, write_publication_receipt,
-};
-use infimount_control::publication_context::validate_local_path;
+use infimount_control::publication_apply::commit_locked_publication;
+pub use infimount_control::publication_apply::AgentTaskPublicationOutput;
+#[cfg(test)]
+use infimount_control::publication_apply::write_publication_receipt;
 use infimount_control::publication_engine::{
     build_publication_plan as shared_build_publication_plan, PublicationPlan,
 };
 pub use infimount_control::publication_plan::AgentTaskPublicationPlanFile;
 #[cfg(test)]
 use infimount_control::publication_plan::AgentTaskPublishAction;
+#[cfg(test)]
 use infimount_control::publication_plan::{
     AgentTaskPublishReceipt, AGENT_TASK_PUBLICATION_SCHEMA_VERSION,
 };
@@ -29,8 +30,6 @@ use infimount_control::publication::normalize_destination_dir;
 use infimount_control::publication_plan::{
     publication_preview_fingerprint, AgentTaskPublicationFingerprint,
 };
-
-const AGENT_TASK_PUBLISH_RECEIPT_PREFIX: &str = "publish-receipt-";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -57,19 +56,6 @@ pub struct AgentTaskPublicationPreview {
     pub conflict_count: usize,
     pub can_publish: bool,
     pub preview_token: String,
-    pub files: Vec<AgentTaskPublicationPlanFile>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentTaskPublicationOutput {
-    pub publication_id: String,
-    pub published_at: String,
-    pub workspace_id: String,
-    pub task_id: String,
-    pub destination_storage_id: String,
-    pub destination_storage_name: String,
-    pub receipt_path: String,
     pub files: Vec<AgentTaskPublicationPlanFile>,
 }
 
@@ -138,46 +124,10 @@ pub async fn publish_agent_task_outputs(
     // Rebuild the complete plan from current source bytes and current destination
     // state. The preview token is a staleness token, not an authorization token.
     let plan = build_publication_plan(&state, &request.publication).await?;
-    let published = publish_locked_reviewed_files(&plan, &request.preview_token).await?;
-
-    let publication_id = Uuid::new_v4().to_string();
-    let published_at = chrono::Utc::now().to_rfc3339();
-    let receipt = AgentTaskPublishReceipt {
-        schema_version: AGENT_TASK_PUBLICATION_SCHEMA_VERSION,
-        publication_id: publication_id.clone(),
-        task_id: request.publication.task_id.clone(),
-        workspace_id: request.publication.workspace_id.clone(),
-        published_at: published_at.clone(),
-        destination_storage_id: plan.context.destination_storage.id.clone(),
-        destination_storage_name: plan.context.destination_storage.name.clone(),
-        destination_dir: plan.context.destination_dir.clone(),
-        conflict_policy: request.publication.conflict_policy,
-        files: published.clone(),
-    };
-    let receipt_file = format!("{AGENT_TASK_PUBLISH_RECEIPT_PREFIX}{publication_id}.json");
-    let receipt_path = join_path(&plan.context.workspace_task_path, &receipt_file);
-    validate_local_path(&plan.context.workspace_storage, &receipt_path)?;
-    let mut receipt_bytes = serde_json::to_vec_pretty(&receipt)?;
-    receipt_bytes.push(b'\n');
-    if write_publication_receipt(&plan.context.workspace_op, &receipt_path, &receipt_bytes)
-        .await
-        .is_err()
-    {
-        // Outputs have already committed. Preserve them and any ambiguous
-        // receipt state for explicit cleanup rather than deleting by path.
-        return Err(CoreError::TransferCleanupRequired);
-    }
-
-    Ok(AgentTaskPublicationOutput {
-        publication_id,
-        published_at,
-        workspace_id: request.publication.workspace_id,
-        task_id: request.publication.task_id,
-        destination_storage_id: plan.context.destination_storage.id,
-        destination_storage_name: plan.context.destination_storage.name,
-        receipt_path: relative_to_root(&plan.context.workspace.root_path, &receipt_path)?,
-        files: published,
+    commit_locked_publication(&plan, &request.publication, &request.preview_token, || {
+        (Uuid::new_v4().to_string(), chrono::Utc::now().to_rfc3339())
     })
+    .await
 }
 
 async fn build_publication_plan(
@@ -200,31 +150,6 @@ async fn build_publication_plan(
 fn validate_preview_token(value: &str) -> Result<(), CoreError> {
     validate_sha256(value)
         .map_err(|_| CoreError::Config("invalid publication preview token".into()))
-}
-
-fn join_path(root: &str, relative: &str) -> String {
-    let root = root.trim().trim_matches('/');
-    let relative = relative.trim().trim_matches('/');
-    match (root.is_empty(), relative.is_empty()) {
-        (true, true) => String::new(),
-        (true, false) => relative.to_string(),
-        (false, true) => root.to_string(),
-        (false, false) => format!("{root}/{relative}"),
-    }
-}
-
-fn relative_to_root(root: &str, path: &str) -> Result<String, CoreError> {
-    let root = root.trim().trim_matches('/');
-    let path = path.trim().trim_matches('/');
-    if root.is_empty() {
-        return (!path.is_empty())
-            .then(|| path.to_string())
-            .ok_or_else(|| CoreError::Config("publication receipt path is invalid".into()));
-    }
-    path.strip_prefix(&format!("{root}/"))
-        .filter(|relative| !relative.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| CoreError::Config("publication receipt escaped the workspace".into()))
 }
 
 #[cfg(test)]

@@ -199,9 +199,33 @@ untouched.
 
 This remains a privileged Rust helper, **not publication approval**. Only
 the existing Tauri command invokes it after re-planning under lifecycle,
-configuration and workspace locks. Tauri still owns actor/UI authorization,
-recording receipt metadata, verified create-only receipt persistence and
-final response semantics. No CLI or MCP publication endpoint is enabled.
+configuration and workspace locks. B1.12 consolidates receipt persistence
+into the same helper. No CLI or MCP publication endpoint is enabled.
+
+## B1.12: one shared, verified output-and-receipt commit transaction
+
+The existing desktop command retains operational-state checks, preview token
+shape validation, lifecycle/configuration/workspace locks and authoritative
+plan rebuilding. It now calls a single trusted control helper that verifies
+the request and conflict policy match the rebuilt plan fingerprint, commits each reviewed file create-only,
+then creates and integrity-verifies the unique publication receipt.
+
+Any failure after committed destination bytes, including receipt validation,
+serialization, collision or write verification, returns
+`TransferCleanupRequired` without deleting potentially replaced paths.
+A deterministic receipt collision test and a full exact-byte receipt/response
+test protect this boundary. The desktop still issues receipt IDs/timestamps
+only after source publication succeeds, preserving the legacy API and timing.
+
+The underlying per-file commit loop is crate-private, so external trusted
+callers must use the shared output-and-receipt orchestration rather than
+silently omitting the receipt.
+
+**No new authorization:** This remains an internal privileged Rust service.
+It accepts no model-created approval as authority and is invoked only through
+the existing desktop-human-mediated command under its original lock order.
+A protected, single-use approval store remains mandatory before any B2
+headless publication entry point.
 
 ## Trust and behavioral compatibility
 
@@ -217,8 +241,9 @@ v0.8.1 104-argument Codex fixture and the A4 opt-in Claude pilot are unchanged.
 
 ## Next B1 slices
 
-1. Consolidate the remaining publication receipt orchestration and lock
-   authority behind one trusted apply service, keeping desktop mediation.
+1. Bind future control-service lock ownership and authenticated actor authority
+   explicitly. Do not permit a new caller to invoke privileged apply mechanics
+   without mandatory guards.
 2. Build the server-owned, single-use human approval store with authenticated
    actors, protected persistence, expiry, revocation and atomic consumption
    under the existing locks before headless apply.
