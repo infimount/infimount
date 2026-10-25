@@ -159,6 +159,26 @@ lock order, source rehashing, destination confinement, create-only file
 publication, cleanup policy, receipt path binding and final result contract.
 No CLI, IPC or agent-visible publication endpoint is exposed.
 
+## B1.10 contract only: protected, single-use publication approval binding
+
+`infimount_control::publication_approval` defines the future protected-store
+approval record and pure binding checks. The record binds a trusted actor,
+workspace/task identity, exact reviewed file hashes and destination paths,
+destination storage ID, namespace fingerprint and revision, conflict mode,
+preview fingerprint, creation/expiry and a one-use nonce. Records are capped at
+15 minutes, fail on revocation or prior consumption, reject unknown fields,
+and must match freshly replanned source/destination state. Tests cover expiry,
+replay, actor substitution, namespace/revision drift, conflicts, changed bytes
+and altered output paths.
+
+**Not yet enabled:** This is a validation contract, not a grant issuer or an
+authority to publish. It does **not** load, authenticate, store or atomically
+consume approvals. A future server-owned persistent grant store outside
+agent-visible paths must provide those guarantees under the existing locks
+before headless publication is implemented. Neither a preview token nor a
+serialized approval record is sufficient permission. Desktop publication is
+unchanged and remains the only existing apply entry point.
+
 ## Trust and behavioral compatibility
 
 The **same** Tauri handlers still own `preview_agent_task_publication` and
@@ -176,9 +196,11 @@ v0.8.1 104-argument Codex fixture and the A4 opt-in Claude pilot are unchanged.
 1. Extract the remaining trusted apply transaction (per-file verified
    create-only publication and receipt orchestration) without changing desktop
    lock ordering, human approval, or ambiguous-write cleanup policy.
-2. Design a server-side, single-use human approval/delegation store before
-   any headless apply entry point. Only then build the B2 CLI against the
-   same trusted service after parity testing.
+2. Build the server-owned, single-use human approval store with authoritative
+   actor authentication, protected persistence, expiry, revocation and
+   atomic consumption under the existing locks before headless apply.
+3. Only after approval-store and apply parity tests, build the B2 CLI
+   against that single trusted service.
    Headless publication must require explicit, server-controlled human
    approval or a narrowly scoped audited delegation; a `--yes` switch is
    not sufficient.
