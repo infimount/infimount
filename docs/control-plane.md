@@ -227,6 +227,23 @@ the existing desktop-human-mediated command under its original lock order.
 A protected, single-use approval store remains mandatory before any B2
 headless publication entry point.
 
+## B1.13b: live destination revision approval snapshot (read-only)
+
+`snapshot_from_rebuilt_publication_plan` validates the exact reviewed request
+against the rebuilt plan and derives a future approval-validation snapshot from
+trusted workspace/task, conflict policy, checked file list, preview fingerprint
+and the **live destination StorageRecord.revision**. The caller must hold the
+existing lifecycle/configuration/workspace mutation locks and resolve the
+authoritative registry state. Conflicted plans, uninitialized revision zero and
+the saturating `u64::MAX` revision are rejected before a grant could be accepted.
+
+A simulated change-away/change-back test shows that a revision increase rejects
+an earlier grant even when the destination namespace and preview fingerprint
+are unchanged. This assumes the storage revision remains authoritative and
+monotonic. Configuration imports/restores and out-of-band registry edits still
+require explicit audit and fail-closed handling before actual headless apply.
+No approval issuer, persistence, consumption or new publishing endpoint ships.
+
 ## Trust and behavioral compatibility
 
 The **same** Tauri handlers still own `preview_agent_task_publication` and
