@@ -21,8 +21,8 @@ use crate::publication::{
 use crate::publication_context::{validate_destination_path, validate_local_path};
 use crate::publication_engine::PublicationPlan;
 use crate::publication_plan::{
-    publication_preview_fingerprint, AgentTaskPublicationFingerprint,
-    AgentTaskPublicationPlanFile, AgentTaskPublishReceipt, AGENT_TASK_PUBLICATION_SCHEMA_VERSION,
+    publication_preview_fingerprint, AgentTaskPublicationFingerprint, AgentTaskPublicationPlanFile,
+    AgentTaskPublishReceipt, AGENT_TASK_PUBLICATION_SCHEMA_VERSION,
 };
 
 const AGENT_TASK_PUBLISH_RECEIPT_PREFIX: &str = "publish-receipt-";
@@ -247,9 +247,11 @@ fn validate_request_matches_locked_plan(
 ) -> Result<(), CoreError> {
     let selected = validate_publication_request(request)?;
     let recomputed_preview_token = fingerprint_for_request(plan, request)?;
-    let task_id = plan.context.task_root.strip_prefix("tasks/").ok_or_else(|| {
-        CoreError::Config("trusted publication task binding is invalid".into())
-    })?;
+    let task_id = plan
+        .context
+        .task_root
+        .strip_prefix("tasks/")
+        .ok_or_else(|| CoreError::Config("trusted publication task binding is invalid".into()))?;
     if request.workspace_id != plan.context.workspace.id
         || request.task_id != task_id
         || request.destination_storage_id != plan.context.destination_storage.id
@@ -556,15 +558,12 @@ mod tests {
         let (_temp, mut plan) = plan_fixture().await;
         let request = matching_request(&plan);
         bind_plan_fingerprint(&mut plan, &request);
-        let result = commit_locked_publication(
-            &plan,
-            &request,
-            &plan.preview_token,
-            || (
+        let result = commit_locked_publication(&plan, &request, &plan.preview_token, || {
+            (
                 "d2534279-250e-4788-a807-c390c2c173b1".into(),
                 "2026-10-25T11:00:00+05:30".into(),
-            ),
-        )
+            )
+        })
         .await
         .unwrap();
 
@@ -680,7 +679,12 @@ mod tests {
             b"alpha"
         );
         assert_eq!(
-            plan.context.workspace_op.read(&receipt).await.unwrap().to_vec(),
+            plan.context
+                .workspace_op
+                .read(&receipt)
+                .await
+                .unwrap()
+                .to_vec(),
             b"sentinel"
         );
     }

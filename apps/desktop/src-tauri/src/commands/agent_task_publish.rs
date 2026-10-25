@@ -3,9 +3,9 @@ pub use infimount_control::publication::{
     AgentTaskPublicationRequest, AgentTaskPublishConflictPolicy,
 };
 use infimount_control::publication_apply::commit_locked_publication;
-pub use infimount_control::publication_apply::AgentTaskPublicationOutput;
 #[cfg(test)]
 use infimount_control::publication_apply::write_publication_receipt;
+pub use infimount_control::publication_apply::AgentTaskPublicationOutput;
 use infimount_control::publication_engine::{
     build_publication_plan as shared_build_publication_plan, PublicationPlan,
 };
