@@ -5,6 +5,7 @@
 //! by every future control surface.
 pub mod publication;
 pub mod publication_apply;
+pub mod publication_approval;
 pub mod publication_context;
 pub mod publication_destination;
 pub mod publication_engine;

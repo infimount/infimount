@@ -4,14 +4,14 @@
 //! A preview fingerprint detects staleness. It is not user approval or a
 //! capability token and must never independently authorize publication.
 use infimount_core::CoreError;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::publication::AgentTaskPublishConflictPolicy;
 
 pub const AGENT_TASK_PUBLICATION_SCHEMA_VERSION: u32 = 1;
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentTaskPublishAction {
     Create,
@@ -19,8 +19,8 @@ pub enum AgentTaskPublishAction {
     Conflict,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentTaskPublicationPlanFile {
     pub task_path: String,
     pub byte_size: u64,
