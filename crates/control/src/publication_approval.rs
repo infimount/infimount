@@ -5,15 +5,18 @@
 //! the actor, lock the authoritative publication context, replan all bytes and
 //! destination state, and consume the grant exactly once before any write.
 //! This module deliberately creates no grant store, IPC or publish endpoint.
+use std::collections::HashSet;
+
 use infimount_core::CoreError;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::publication::{
-    validate_output_task_path, validate_sha256, AgentTaskPublishConflictPolicy,
+    normalize_destination_dir, validate_output_task_path, validate_sha256,
+    AgentTaskPublishConflictPolicy, MAX_AGENT_TASK_DESTINATION_PATH_BYTES,
     MAX_AGENT_TASK_PUBLISH_FILES,
 };
-use crate::publication_plan::AgentTaskPublicationPlanFile;
+use crate::publication_plan::{AgentTaskPublicationPlanFile, AgentTaskPublishAction};
 
 pub const PUBLICATION_APPROVAL_SCHEMA_VERSION: u32 = 1;
 pub const MAX_PUBLICATION_APPROVAL_LIFETIME_MS: u64 = 15 * 60 * 1000;
@@ -93,9 +96,32 @@ pub fn validate_protected_approval_binding(
             "publication approval is invalid, expired, revoked or already consumed".into(),
         ));
     }
+    // Check the sealed record's own structural consistency. Matching a
+    // snapshot alone is insufficient if a future issuer builds that snapshot
+    // incorrectly, or a deserialized record contains contradictory actions.
+    if normalize_destination_dir(&record.destination_dir)
+        .map_or(true, |normalized| normalized != record.destination_dir)
+    {
+        return Err(CoreError::Config(
+            "publication approval destination directory is invalid".into(),
+        ));
+    }
+    let mut seen_task_paths = HashSet::with_capacity(record.files.len());
+    let mut seen_destination_paths = HashSet::with_capacity(record.files.len());
     for (i, file) in record.files.iter().enumerate() {
+        let under_approved_directory = record.destination_dir.is_empty()
+            || file
+                .destination_path
+                .starts_with(&format!("{}/", record.destination_dir));
         if validate_output_task_path(&file.task_path).is_err()
             || validate_sha256(&file.sha256).is_err()
+            || !valid_relative_destination_path(&file.destination_path)
+            || !under_approved_directory
+            || file.action == AgentTaskPublishAction::Conflict
+            || (record.conflict_policy == AgentTaskPublishConflictPolicy::Fail
+                && file.action != AgentTaskPublishAction::Create)
+            || !seen_task_paths.insert(file.task_path.to_lowercase())
+            || !seen_destination_paths.insert(file.destination_path.to_lowercase())
             || (i > 0 && record.files[i - 1].task_path >= file.task_path)
         {
             return Err(CoreError::Config(
@@ -121,6 +147,18 @@ pub fn validate_protected_approval_binding(
         ));
     }
     Ok(())
+}
+
+fn valid_relative_destination_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= MAX_AGENT_TASK_DESTINATION_PATH_BYTES
+        && !path.starts_with('/')
+        && !path.ends_with('/')
+        && !path.contains('\\')
+        && !path.chars().any(char::is_control)
+        && !path
+            .split('/')
+            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
 }
 
 #[cfg(test)]
@@ -236,6 +274,82 @@ mod tests {
         let mut current = snapshot(&record);
         current.files = &files;
         assert!(!valid(&record, &current));
+    }
+
+    #[test]
+    fn contradictory_action_and_unsafe_destination_fail_even_with_matching_snapshot() {
+        let mut grant = record();
+        grant.files[0].action = AgentTaskPublishAction::Conflict;
+        assert!(!valid(&grant, &snapshot(&grant)));
+
+        grant.files[0].action = AgentTaskPublishAction::Rename;
+        assert!(!valid(&grant, &snapshot(&grant)));
+
+        grant.conflict_policy = AgentTaskPublishConflictPolicy::Rename;
+        grant.files[0].destination_path = "../secret/report.md".into();
+        assert!(!valid(&grant, &snapshot(&grant)));
+
+        grant.files[0].destination_path = "outside/report.md".into();
+        assert!(!valid(&grant, &snapshot(&grant)));
+
+        grant.files[0].destination_path = "exports\\report.md".into();
+        assert!(!valid(&grant, &snapshot(&grant)));
+
+        grant.files[0].destination_path = "/exports/report.md".into();
+        assert!(!valid(&grant, &snapshot(&grant)));
+
+        grant.files[0].destination_path = "exports/report.md".into();
+        grant.destination_dir = "exports/".into();
+        assert!(!valid(&grant, &snapshot(&grant)));
+    }
+
+    #[test]
+    fn only_canonical_relative_destination_paths_are_approvable() {
+        let mut grant = record();
+        for bad in [
+            "exports//report.md",
+            "exports/./report.md",
+            "exports/../secret.md",
+            "exports/report.md/",
+            "exports/report\0.md",
+        ] {
+            grant.files[0].destination_path = bad.into();
+            assert!(!valid(&grant, &snapshot(&grant)), "{bad}");
+        }
+
+        // Publishing directly to the destination root remains supported.
+        grant.destination_dir.clear();
+        grant.files[0].destination_path = "report.md".into();
+        assert!(valid(&grant, &snapshot(&grant)));
+    }
+
+    #[test]
+    fn case_collisions_in_outputs_or_destination_paths_fail() {
+        let mut grant = record();
+        grant.files = vec![
+            AgentTaskPublicationPlanFile {
+                task_path: "outputs/A.md".into(),
+                byte_size: 5,
+                sha256: "a".repeat(64),
+                destination_path: "exports/A.md".into(),
+                action: AgentTaskPublishAction::Create,
+            },
+            AgentTaskPublicationPlanFile {
+                task_path: "outputs/a.md".into(),
+                byte_size: 5,
+                sha256: "b".repeat(64),
+                destination_path: "exports/B.md".into(),
+                action: AgentTaskPublishAction::Create,
+            },
+        ];
+        assert!(!valid(&grant, &snapshot(&grant)));
+
+        grant.files[1].task_path = "outputs/b.md".into();
+        grant.files[1].destination_path = "exports/a.MD".into();
+        assert!(!valid(&grant, &snapshot(&grant)));
+
+        grant.files[1].destination_path = "exports/B.md".into();
+        assert!(valid(&grant, &snapshot(&grant)));
     }
 
     #[test]
