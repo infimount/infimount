@@ -1414,7 +1414,7 @@ mod revision_safety_tests {
         assert!(assign_import_revisions(&[original.clone()], &mut [original]).is_err());
 
         let mut new_id = changed;
-        new_id.id = "new-storage-id".into();
+        new_id.id = "681643ee-7bfe-423b-86a0-fbc0426172bd".into();
         assert!(assign_import_revisions(&[], &mut [new_id]).is_err());
     }
 
@@ -1428,10 +1428,8 @@ mod revision_safety_tests {
         existing.revision = 41;
         let mut changed = existing.clone();
         changed.config = serde_json::json!({ "root": "/tmp/two" });
-        let mut merged = vec![changed, existing.clone()];
-        // The production caller already deduplicates IDs. Exercise the
-        // comparison on independent slices to check both decisions.
-        let mut modified = vec![merged.remove(0)];
+        // Exercise changed and unchanged imports independently.
+        let mut modified = vec![changed];
         assign_import_revisions(&[existing.clone()], &mut modified).unwrap();
         assert_eq!(modified[0].revision, 42);
         let mut identical = vec![existing.clone()];
