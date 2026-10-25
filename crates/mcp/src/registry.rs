@@ -836,6 +836,18 @@ fn schema_version_matches_current(version: u32) -> bool {
     version == STORAGE_RECORD_SCHEMA_VERSION
 }
 
+/// Advance a storage configuration revision without allowing an ABA-prone
+/// saturated value to be silently reused. This is a bounded invariant only:
+/// restore/import must also preserve a separate trusted approval epoch.
+pub fn next_storage_revision(current: u64) -> McpResult<u64> {
+    current.checked_add(1).ok_or_else(|| {
+        err(
+            McpErrorCode::ERR_INTERNAL,
+            "storage revision exhausted; refusing to reuse a prior revision",
+        )
+    })
+}
+
 impl Default for StorageRecord {
     fn default() -> Self {
         let now = Utc::now().to_rfc3339();
@@ -1500,6 +1512,13 @@ impl StorageRegistry {
             if secret_fields.is_empty() {
                 continue;
             }
+            let next_revision = match next_storage_revision(storage.revision) {
+                Ok(next) => next,
+                Err(error) => {
+                    self.rollback_secret_writes(rollback)?;
+                    return Err(error);
+                }
+            };
             let secret_ref = storage
                 .secret_ref
                 .clone()
@@ -1540,7 +1559,7 @@ impl StorageRegistry {
             storage.secret_ref = Some(secret_ref);
             storage.secret_fields = extracted_names;
             storage.schema_version = STORAGE_RECORD_SCHEMA_VERSION;
-            storage.revision = storage.revision.saturating_add(1);
+            storage.revision = next_revision;
         }
         Ok(rollback)
     }
@@ -2037,6 +2056,16 @@ mod tests {
 
     use super::*;
     use crate::policy::McpAccessMode;
+
+    #[test]
+    fn storage_revision_advance_is_checked_and_never_wraps_or_saturates() {
+        assert_eq!(next_storage_revision(0).unwrap(), 1);
+        assert_eq!(next_storage_revision(1).unwrap(), 2);
+        assert_eq!(next_storage_revision(u64::MAX - 1).unwrap(), u64::MAX);
+        let error = next_storage_revision(u64::MAX).unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_INTERNAL);
+        assert!(error.message.contains("revision exhausted"));
+    }
 
     #[test]
     fn configuration_transaction_precedes_registry_file_lock() {
