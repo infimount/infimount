@@ -624,13 +624,9 @@ mod tests {
             consumed_at_unix_ms: None,
             revoked_at_unix_ms: None,
         };
-        assert!(validate_protected_approval_binding(
-            &record,
-            &original,
-            "verified-human",
-            2_000,
-        )
-        .is_ok());
+        let initial_check =
+            validate_protected_approval_binding(&record, &original, "verified-human", 2_000);
+        assert!(initial_check.is_ok());
         let previous_namespace = original.destination_namespace.to_owned();
         let previous_fingerprint = original.preview_fingerprint.to_owned();
 
@@ -641,13 +637,9 @@ mod tests {
         let changed = snapshot_from_rebuilt_publication_plan(&plan, &request).unwrap();
         assert_eq!(changed.destination_namespace, previous_namespace);
         assert_eq!(changed.preview_fingerprint, previous_fingerprint);
-        assert!(validate_protected_approval_binding(
-            &record,
-            &changed,
-            "verified-human",
-            2_000,
-        )
-        .is_err());
+        let replay_check =
+            validate_protected_approval_binding(&record, &changed, "verified-human", 2_000);
+        assert!(replay_check.is_err());
     }
 
     #[tokio::test]
