@@ -18,6 +18,7 @@ use sha2::{Digest, Sha256};
 use crate::publication::{
     normalize_destination_dir, validate_publication_request, AgentTaskPublicationRequest,
 };
+use crate::publication_approval::PublicationApprovalSnapshot;
 use crate::publication_context::{validate_destination_path, validate_local_path};
 use crate::publication_engine::PublicationPlan;
 use crate::publication_plan::{
@@ -183,6 +184,43 @@ pub(crate) async fn publish_locked_reviewed_files(
         published.push(file.clone());
     }
     Ok(published)
+}
+
+/// Read-only materialization of the future protected approval binding from a
+/// fresh, authoritative publication plan. Call only while holding the existing
+/// lifecycle, configuration and workspace mutation locks, after re-resolving
+/// storage records. Neither this snapshot nor a matching preview grants consent.
+pub fn snapshot_from_rebuilt_publication_plan<'a>(
+    plan: &'a PublicationPlan,
+    request: &'a AgentTaskPublicationRequest,
+) -> Result<PublicationApprovalSnapshot<'a>, CoreError> {
+    validate_request_matches_locked_plan(plan, request)?;
+    if plan.conflict_count != 0 {
+        return Err(CoreError::Config(
+            "publication approval requires a conflict-free reviewed plan".into(),
+        ));
+    }
+    // The live storage registry supplies this revision under the config lock.
+    // Revision zero is a legacy/uninitialized state. At MAX, the current
+    // saturating increment would stop detecting later configuration edits.
+    let destination_revision = plan.context.destination_storage.revision;
+    if destination_revision == 0 || destination_revision == u64::MAX {
+        return Err(CoreError::Config(
+            "publication destination revision cannot be used for approval".into(),
+        ));
+    }
+    Ok(PublicationApprovalSnapshot {
+        workspace_id: &plan.context.workspace.id,
+        task_id: &request.task_id,
+        destination_storage_id: &plan.context.destination_storage.id,
+        destination_namespace: &plan.context.destination_namespace,
+        destination_revision,
+        destination_dir: &plan.context.destination_dir,
+        conflict_policy: &request.conflict_policy,
+        preview_fingerprint: &plan.preview_token,
+        files: &plan.files,
+        conflict_count: plan.conflict_count,
+    })
 }
 
 /// Complete the desktop-mediated publication transaction, including its
@@ -551,6 +589,80 @@ mod tests {
 
     fn bind_plan_fingerprint(plan: &mut PublicationPlan, request: &AgentTaskPublicationRequest) {
         plan.preview_token = fingerprint_for_request(plan, request).unwrap();
+    }
+
+    #[tokio::test]
+    async fn approval_snapshot_binds_live_storage_revision_not_preview_alone() {
+        use crate::publication_approval::{
+            validate_protected_approval_binding, PublicationApprovalRecord,
+            PUBLICATION_APPROVAL_SCHEMA_VERSION,
+        };
+
+        let (_temp, mut plan) = plan_fixture().await;
+        let request = matching_request(&plan);
+        bind_plan_fingerprint(&mut plan, &request);
+        plan.context.destination_storage.revision = 41;
+
+        let original = snapshot_from_rebuilt_publication_plan(&plan, &request).unwrap();
+        assert_eq!(original.destination_revision, 41);
+        let record = PublicationApprovalRecord {
+            schema_version: PUBLICATION_APPROVAL_SCHEMA_VERSION,
+            grant_id: "421ea05a-95c7-4ef3-a7e3-6b821a0e4ac3".into(),
+            actor_id: "verified-human".into(),
+            workspace_id: original.workspace_id.into(),
+            task_id: original.task_id.into(),
+            destination_storage_id: original.destination_storage_id.into(),
+            destination_namespace: original.destination_namespace.into(),
+            destination_revision: original.destination_revision,
+            destination_dir: original.destination_dir.into(),
+            conflict_policy: original.conflict_policy.clone(),
+            preview_fingerprint: original.preview_fingerprint.into(),
+            files: original.files.to_vec(),
+            issued_at_unix_ms: 1_000,
+            expires_at_unix_ms: 61_000,
+            nonce: "c7da7279-1fc9-4f7f-ad1e-114706628bf1".into(),
+            consumed_at_unix_ms: None,
+            revoked_at_unix_ms: None,
+        };
+        let initial_check =
+            validate_protected_approval_binding(&record, &original, "verified-human", 2_000);
+        assert!(initial_check.is_ok());
+        let previous_namespace = original.destination_namespace.to_owned();
+        let previous_fingerprint = original.preview_fingerprint.to_owned();
+
+        // The destination points at the SAME namespace, selected files and
+        // preview token after two edits (configuration change-away/back).
+        // The monotonic registry revision is the distinguishing binding.
+        plan.context.destination_storage.revision = 43;
+        let changed = snapshot_from_rebuilt_publication_plan(&plan, &request).unwrap();
+        assert_eq!(changed.destination_namespace, previous_namespace);
+        assert_eq!(changed.preview_fingerprint, previous_fingerprint);
+        let replay_check =
+            validate_protected_approval_binding(&record, &changed, "verified-human", 2_000);
+        assert!(replay_check.is_err());
+    }
+
+    #[tokio::test]
+    async fn approval_snapshot_rejects_revision_saturation_conflicts_and_drift() {
+        let (_temp, mut plan) = plan_fixture().await;
+        let mut request = matching_request(&plan);
+        bind_plan_fingerprint(&mut plan, &request);
+
+        plan.context.destination_storage.revision = 0;
+        assert!(snapshot_from_rebuilt_publication_plan(&plan, &request).is_err());
+        plan.context.destination_storage.revision = u64::MAX;
+        assert!(snapshot_from_rebuilt_publication_plan(&plan, &request).is_err());
+        plan.context.destination_storage.revision = 1;
+
+        plan.conflict_count = 1;
+        assert!(snapshot_from_rebuilt_publication_plan(&plan, &request).is_err());
+        plan.conflict_count = 0;
+
+        request.destination_storage_id = "other-destination".into();
+        assert!(snapshot_from_rebuilt_publication_plan(&plan, &request).is_err());
+        request = matching_request(&plan);
+        request.outputs[0].sha256 = "0".repeat(64);
+        assert!(snapshot_from_rebuilt_publication_plan(&plan, &request).is_err());
     }
 
     #[tokio::test]

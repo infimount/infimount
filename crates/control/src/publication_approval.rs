@@ -82,6 +82,8 @@ pub fn validate_protected_approval_binding(
         || record.actor_id.trim() != record.actor_id
         || record.actor_id.chars().any(char::is_control)
         || validate_sha256(&record.preview_fingerprint).is_err()
+        || record.destination_revision == 0
+        || record.destination_revision == u64::MAX
         || record.files.is_empty()
         || record.files.len() > MAX_AGENT_TASK_PUBLISH_FILES
         || record.issued_at_unix_ms >= record.expires_at_unix_ms
@@ -248,6 +250,15 @@ mod tests {
         record.expires_at_unix_ms = 1_300_000;
         record.nonce = "not-a-nonce".into();
         assert!(!valid(&record, &snapshot(&record)));
+    }
+
+    #[test]
+    fn invalid_or_saturated_destination_revisions_fail_closed() {
+        let mut grant = record();
+        grant.destination_revision = 0;
+        assert!(!valid(&grant, &snapshot(&grant)));
+        grant.destination_revision = u64::MAX;
+        assert!(!valid(&grant, &snapshot(&grant)));
     }
 
     #[test]
