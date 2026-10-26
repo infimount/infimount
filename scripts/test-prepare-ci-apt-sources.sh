@@ -12,6 +12,20 @@ EOF
 cat > "$TMP/sources/microsoft-prod.list" <<'EOF'
 deb [arch=amd64] https://packages.microsoft.com/ubuntu/22.04/prod jammy main
 EOF
+cat > "$TMP/apt-mirrors.txt" <<'EOF'
+http://azure.archive.ubuntu.com/ubuntu/
+http://security.ubuntu.com/ubuntu/
+EOF
+
+# On modern hosted runners the deb822 Ubuntu source may refer to this
+# mirrorlist instead of containing a literal Azure URI.
+cat > "$TMP/sources/ubuntu-mirrorlist.sources" <<EOF
+Types: deb
+URIs: mirror+file:$TMP/apt-mirrors.txt
+Suites: jammy jammy-updates
+Components: main universe
+EOF
+
 cat > "$TMP/sources/ubuntu.sources" <<'EOF'
 Types: deb
 URIs: http://azure.archive.ubuntu.com/ubuntu
@@ -22,6 +36,7 @@ EOF
 first_output="$(bash "$ROOT/scripts/prepare-ci-apt-sources.sh" "$TMP/sources")"
 grep -Fq 'Disabled unrelated Google Chrome APT source: google-chrome.list' <<<"$first_output"
 grep -Fq 'Repointed Ubuntu Azure archive to official mirror: ubuntu.sources' <<<"$first_output"
+grep -Fq 'Repointed Ubuntu Azure APT mirrorlist: apt-mirrors.txt' <<<"$first_output"
 
 test ! -e "$TMP/sources/google-chrome.list"
 test -f "$TMP/sources/google-chrome.list.infimount-disabled"
@@ -34,6 +49,10 @@ test -f "$TMP/sources/ubuntu.sources"
 grep -Fq 'packages.microsoft.com' "$TMP/sources/microsoft-prod.list"
 grep -Fq 'URIs: https://archive.ubuntu.com/ubuntu' "$TMP/sources/ubuntu.sources"
 ! grep -Fq 'azure.archive.ubuntu.com' "$TMP/sources/ubuntu.sources"
+grep -Fq 'https://archive.ubuntu.com/ubuntu/' "$TMP/apt-mirrors.txt"
+grep -Fq 'http://security.ubuntu.com/ubuntu/' "$TMP/apt-mirrors.txt"
+! grep -Fq 'azure.archive.ubuntu.com' "$TMP/apt-mirrors.txt"
+grep -Fq "mirror+file:$TMP/apt-mirrors.txt" "$TMP/sources/ubuntu-mirrorlist.sources"
 
 # Idempotent on a second pass: no already-disabled source is renamed again.
 second_output="$(bash "$ROOT/scripts/prepare-ci-apt-sources.sh" "$TMP/sources")"

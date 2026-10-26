@@ -37,3 +37,16 @@ for source in "$sources_dir"/*; do
   fi
 done
 shopt -u nullglob
+
+# Some Ubuntu runner images do not contain the archive URL in a .sources
+# file. Instead their deb822 source uses mirror+file:/etc/apt/apt-mirrors.txt.
+# Rewrite that adjacent Ubuntu mirrorlist too. Leave security and non-Ubuntu
+# entries unchanged, and make a second invocation an idempotent no-op.
+mirrorlist="$(dirname "$sources_dir")/apt-mirrors.txt"
+if [[ -f "$mirrorlist" ]] && grep -Fq 'azure.archive.ubuntu.com/ubuntu' "$mirrorlist"; then
+  sed -i \
+    -e 's#http://azure\.archive\.ubuntu\.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' \
+    -e 's#https://azure\.archive\.ubuntu\.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' \
+    "$mirrorlist"
+  echo "Repointed Ubuntu Azure APT mirrorlist: $(basename "$mirrorlist")"
+fi
