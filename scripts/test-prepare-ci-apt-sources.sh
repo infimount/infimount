@@ -44,6 +44,11 @@ test -f "$TMP/sources/ubuntu.sources"
 # The privileged wrapper must isolate sources first and use a bounded retry loop.
 grep -Fq 'prepare-ci-apt-sources.sh' "$ROOT/scripts/ci-apt-install.sh"
 grep -Fq 'for attempt in 1 2 3' "$ROOT/scripts/ci-apt-install.sh"
-grep -Fq 'apt-get install -y "$@"' "$ROOT/scripts/ci-apt-install.sh"
+# APT update/install must remain bounded and installation must retry
+# transient package download errors rather than hang on a slow mirror.
+grep -Fq 'APT_UPDATE_TIMEOUT_SECONDS="${APT_UPDATE_TIMEOUT_SECONDS:-180}"' "$ROOT/scripts/ci-apt-install.sh"
+grep -Fq 'APT_INSTALL_TIMEOUT_SECONDS="${APT_INSTALL_TIMEOUT_SECONDS:-900}"' "$ROOT/scripts/ci-apt-install.sh"
+grep -Fq 'timeout --signal=TERM --kill-after=15s "${APT_INSTALL_TIMEOUT_SECONDS}s"' "$ROOT/scripts/ci-apt-install.sh"
+grep -Fq 'apt-get -o Acquire::Retries=2 install -y "$@"' "$ROOT/scripts/ci-apt-install.sh"
 
 echo "CI APT source isolation test passed."
