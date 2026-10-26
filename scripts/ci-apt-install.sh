@@ -16,7 +16,10 @@ sudo bash "$ROOT/scripts/prepare-ci-apt-sources.sh" /etc/apt/sources.list.d
 # Time-bound each attempt and kill unresponsive subprocesses, including apt's
 # root-owned descendants. Timeout 124 is treated as an ordinary failed attempt.
 APT_UPDATE_TIMEOUT_SECONDS="${APT_UPDATE_TIMEOUT_SECONDS:-180}"
-APT_INSTALL_TIMEOUT_SECONDS="${APT_INSTALL_TIMEOUT_SECONDS:-360}"
+# Cold GitHub-hosted runners may require more than six minutes for WebKit/GTK
+# packages, especially when the Ubuntu mirror throttles downloads. Retain a
+# finite ceiling without turning legitimate slow installs into false failures.
+APT_INSTALL_TIMEOUT_SECONDS="${APT_INSTALL_TIMEOUT_SECONDS:-900}"
 
 updated=0
 for attempt in 1 2 3; do
@@ -39,7 +42,7 @@ if [[ "$updated" -ne 1 ]]; then
   exit 1
 fi
 
-if ! sudo timeout --signal=TERM --kill-after=15s "${APT_INSTALL_TIMEOUT_SECONDS}s" apt-get install -y "$@"; then
+if ! sudo timeout --signal=TERM --kill-after=15s "${APT_INSTALL_TIMEOUT_SECONDS}s" apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=45 -o Acquire::https::Timeout=45 install -y "$@"; then
   echo "APT package installation failed or timed out." >&2
   exit 1
 fi
