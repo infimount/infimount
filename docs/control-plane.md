@@ -272,6 +272,25 @@ restore previous registry bytes. Pending headless grants must be invalidated
 by a separate process-owned approval ledger under the same authoritative
 locks. No production grant issuer or headless publication exists.
 
+## B1.13d prototype: process-private one-use approval ledger
+
+`EphemeralPublicationApprovalLedger` is a memory-only trust-state prototype
+with **no production grant issuer**. The only fixture insertion API is compiled
+under `cfg(test)`. Under its mutex, a matching approval can be consumed at most
+once before output I/O, and a mismatch permanently revokes the pending grant.
+Tests cover concurrent attempts, replay after an output failure, expiry, actor
+and revision drift, configuration invalidation, duplicate nonce and restart.
+
+A new process begins with an empty ledger. No grant record or nonce is
+serialized into the user-accessible task workspace or backup. This avoids
+promising that persisted `StorageRecord.revision` is a durable authorization
+epoch across backup/raw rollback.
+
+**Not connected:** The existing desktop apply command is unchanged. There
+is no user-presence proof, grant issuance service, config-mutation hook wiring,
+cross-process authority owner, IPC or CLI publish entry point. Issue #181 must
+prove these before any headless apply can ship.
+
 ## Trust and behavioral compatibility
 
 The **same** Tauri handlers still own `preview_agent_task_publication` and
