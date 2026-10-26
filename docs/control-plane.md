@@ -259,6 +259,36 @@ older bytes. Issue #185 tracks the independent trusted approval epoch and
 restore/import/recovery integration. No human grants or headless publication
 are enabled by this patch.
 
+## B1.13c2: rebase successful recovery restore revisions
+
+Recovery restore now uses an atomic registry-locked read/rebase/write operation
+for storage records. For a storage ID that exists in the live registry, the
+restored revision becomes one greater than the larger of the existing and
+backup revisions. Repeated restoration of historical data cannot decrement or
+reuse that particular revision, and duplicate IDs and overflow are rejected.
+Synthetic and filesystem-backed regression tests cover restore ABA behavior.
+
+**Not a complete approval epoch:** import, deletion/recreation of a previously
+used ID and raw-byte journal rollback remain distinct cases requiring proof.
+Recovery from already-malformed registry JSON stays available, but has no
+trustworthy previous revision to rebase against. A future approval issuer must
+treat that state as untrusted until a separate service-owned epoch is created.
+This slice retains the existing backup JSON schema and never permits headless
+publishing. Issue #185 stays open.
+
+## B1.13c3: checked imported-storage revision transitions
+
+Both legacy and preview/apply configuration imports now reject exhausted
+storage revisions instead of silently saturating a changed record at the same
+numeric revision. Existing unchanged records retain their revision, while
+normal changes still advance by exactly one. Regression tests cover
+saturation and unchanged vs changed imports.
+
+This only closes the numeric overflow case. Import transaction rollback can
+restore previous registry bytes. Pending headless grants must be invalidated
+by a separate process-owned approval ledger under the same authoritative
+locks. No production grant issuer or headless publication exists.
+
 ## B1.13c3: checked imported-storage revision transitions
 
 Both legacy and preview/apply configuration imports now reject exhausted

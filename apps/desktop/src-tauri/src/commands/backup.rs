@@ -829,7 +829,7 @@ async fn apply_validated_restore(
         .map_err(|message| ("operatorPreflight", message))?;
     state
         .registry
-        .save_legacy_records_secure(validated.storages.clone())
+        .save_restored_records_secure(validated.storages.clone())
         .map_err(|_| ("storages", "failed to persist restored storages"))?;
     if request.restore_mcp_settings {
         if let Some(settings) = &validated.mcp_settings {

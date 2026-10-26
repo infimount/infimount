@@ -14,7 +14,7 @@ use infimount_core::secrets::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -848,6 +848,43 @@ pub fn next_storage_revision(current: u64) -> McpResult<u64> {
     })
 }
 
+/// Rebase the imported revisions against the live registry without trusting
+/// an incoming backup's older numeric counter. This does not cover storage IDs
+/// deleted before the import or raw-byte rollback of the registry.
+fn rebase_restored_storage_revisions(
+    current: &[StorageRecord],
+    restored: &mut [StorageRecord],
+) -> McpResult<()> {
+    let mut old = HashMap::with_capacity(current.len());
+    for record in current {
+        if old.insert(record.id.as_str(), record.revision).is_some() {
+            return Err(err(
+                McpErrorCode::ERR_INTERNAL,
+                "storage revision rebase encountered duplicate existing identities",
+            ));
+        }
+    }
+
+    let mut seen = HashSet::with_capacity(restored.len());
+    for record in restored {
+        if !seen.insert(record.id.clone()) {
+            return Err(err(
+                McpErrorCode::ERR_INTERNAL,
+                "storage revision rebase encountered duplicate restored identities",
+            ));
+        }
+        if let Some(previous) = old.get(record.id.as_str()) {
+            record.revision = next_storage_revision((*previous).max(record.revision))?;
+        } else if record.revision == u64::MAX {
+            return Err(err(
+                McpErrorCode::ERR_INTERNAL,
+                "restored storage revision is exhausted",
+            ));
+        }
+    }
+    Ok(())
+}
+
 impl Default for StorageRecord {
     fn default() -> Self {
         let now = Utc::now().to_rfc3339();
@@ -1303,6 +1340,41 @@ impl StorageRegistry {
         }
         self.save_all_atomic_unlocked(replacement)?;
         Ok(true)
+    }
+
+    /// Restore a recovered storage set while preserving the highest *currently
+    /// visible* revision for matching IDs. This is a storage correctness guard,
+    /// NOT a durable security approval epoch: raw journal rollback and prior
+    /// deletion can still restore/reuse an earlier revision.
+    ///
+    /// The read/rebase/write sequence holds the same cross-process registry
+    /// file lock. Legacy secret migrations remain transactional.
+    pub fn save_restored_records_secure(&self, mut restored: Vec<StorageRecord>) -> McpResult<()> {
+        self.with_file_lock(REGISTRY_LOCK_TIMEOUT, || {
+            // Preserve recovery from an already-corrupt registry: a trusted
+            // restore may replace malformed JSON, but no prior revision can
+            // be proven in that case. Headless approval must remain disabled
+            // until an independent authority epoch has been established.
+            let existing = match self.load_all_unlocked() {
+                Ok(existing) => existing,
+                Err(error) => {
+                    let raw = fs::read_to_string(&self.path).map_err(|read_error| {
+                        map_io_error(&read_error, McpErrorCode::ERR_INTERNAL)
+                    })?;
+                    if serde_json::from_str::<Vec<StorageRecord>>(&raw).is_ok() {
+                        return Err(error);
+                    }
+                    Vec::new()
+                }
+            };
+            rebase_restored_storage_revisions(&existing, &mut restored)?;
+            let rollback = self.migrate_secrets_in_batch(&mut restored)?;
+            if let Err(error) = self.save_all_atomic_unlocked(&restored) {
+                self.rollback_secret_writes(rollback)?;
+                return Err(error);
+            }
+            Ok(())
+        })
     }
 
     pub fn save_legacy_records_secure(&self, mut storages: Vec<StorageRecord>) -> McpResult<()> {
@@ -2056,6 +2128,99 @@ mod tests {
 
     use super::*;
     use crate::policy::McpAccessMode;
+
+    #[test]
+    fn restoring_same_id_advances_revision_even_after_configuration_aba() {
+        let mut current = StorageRecord::new(
+            "Original".into(),
+            "local".into(),
+            json!({ "root": "/tmp/one" }),
+        );
+        current.revision = 41;
+        let mut historical = current.clone();
+        historical.revision = 1;
+
+        let mut restored = vec![historical.clone()];
+        rebase_restored_storage_revisions(&[current.clone()], &mut restored).unwrap();
+        assert_eq!(restored[0].revision, 42);
+
+        // Restore the exact same historical bytes again. Reused input revision
+        // must not roll back the counter or replay the prior generation.
+        let mut replay = vec![historical];
+        rebase_restored_storage_revisions(&restored, &mut replay).unwrap();
+        assert_eq!(replay[0].revision, 43);
+        assert_eq!(replay[0].config, current.config);
+    }
+
+    #[test]
+    fn restored_revision_rebase_rejects_duplicates_and_saturation() {
+        let original = StorageRecord::new(
+            "Original".into(),
+            "local".into(),
+            json!({ "root": "/tmp/one" }),
+        );
+        let mut duplicates = vec![original.clone(), original.clone()];
+        assert!(rebase_restored_storage_revisions(&[], &mut duplicates).is_err());
+        let mut unchanged = vec![original.clone()];
+        assert!(rebase_restored_storage_revisions(
+            &[original.clone(), original.clone()],
+            &mut unchanged
+        )
+        .is_err());
+        let mut saturated = original.clone();
+        saturated.revision = u64::MAX;
+        assert!(rebase_restored_storage_revisions(&[original], &mut [saturated]).is_err());
+    }
+
+    #[test]
+    fn recovery_restore_can_repair_unreadable_existing_registry() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("storages.json");
+        let registry = StorageRegistry::with_secret_store(
+            Some(path.clone()),
+            Arc::new(infimount_core::secrets::MemorySecretStore::new()),
+        );
+        fs::write(&path, b"{invalid json").unwrap();
+        let recovered = StorageRecord::new(
+            "Recovered".into(),
+            "local".into(),
+            json!({ "root": "/tmp/recovered" }),
+        );
+        registry
+            .save_restored_records_secure(vec![recovered.clone()])
+            .unwrap();
+        let actual = registry.load_all().unwrap();
+        assert_eq!(actual.len(), 1);
+        assert_eq!(actual[0].id, recovered.id);
+        assert_eq!(actual[0].revision, recovered.revision);
+    }
+
+    #[test]
+    fn restore_revision_rebase_is_atomic_under_registry_file_lock() {
+        let dir = TempDir::new().unwrap();
+        let registry = StorageRegistry::with_secret_store(
+            Some(dir.path().join("storages.json")),
+            Arc::new(infimount_core::secrets::MemorySecretStore::new()),
+        );
+        let original = StorageRecord::new(
+            "Original".into(),
+            "local".into(),
+            json!({ "root": "/tmp/one" }),
+        );
+        registry
+            .save_all_atomic(std::slice::from_ref(&original))
+            .unwrap();
+        let mut old_backup = original.clone();
+        old_backup.revision = 0;
+        registry
+            .save_restored_records_secure(vec![old_backup.clone()])
+            .unwrap();
+        assert_eq!(registry.load_all().unwrap()[0].revision, 2);
+        registry
+            .save_restored_records_secure(vec![old_backup])
+            .unwrap();
+        assert_eq!(registry.load_all().unwrap()[0].revision, 3);
+    }
 
     #[test]
     fn storage_revision_advance_is_checked_and_never_wraps_or_saturates() {
