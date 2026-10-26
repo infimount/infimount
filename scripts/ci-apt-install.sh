@@ -42,7 +42,7 @@ if [[ "$updated" -ne 1 ]]; then
   exit 1
 fi
 
-if ! sudo timeout --signal=TERM --kill-after=15s "${APT_INSTALL_TIMEOUT_SECONDS}s" apt-get -o Acquire::Retries=2 install -y "$@"; then
+if ! sudo timeout --signal=TERM --kill-after=15s "${APT_INSTALL_TIMEOUT_SECONDS}s" apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=45 -o Acquire::https::Timeout=45 install -y "$@"; then
   echo "APT package installation failed or timed out." >&2
   exit 1
 fi

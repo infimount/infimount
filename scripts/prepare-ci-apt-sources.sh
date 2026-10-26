@@ -24,5 +24,16 @@ for source in "$sources_dir"/*; do
     mv "$source" "$disabled"
     echo "Disabled unrelated Google Chrome APT source: $(basename "$source")"
   fi
+
+  # The Azure-hosted Ubuntu APT mirror can stall for the full install timeout
+  # while fetching the large WebKit2GTK package. Use Canonical's standard
+  # signed Ubuntu archive instead. Do not touch third-party or security URLs.
+  if grep -Fq 'azure.archive.ubuntu.com/ubuntu' "$source"; then
+    sed -i \
+      -e 's#http://azure\.archive\.ubuntu\.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' \
+      -e 's#https://azure\.archive\.ubuntu\.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' \
+      "$source"
+    echo "Repointed Ubuntu Azure archive to official mirror: $(basename "$source")"
+  fi
 done
 shopt -u nullglob
