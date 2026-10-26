@@ -82,9 +82,21 @@ fn assign_import_revisions(
 ) -> McpResult<()> {
     for record in merged {
         let Some(previous) = existing.iter().find(|item| item.id == record.id) else {
+            if record.revision == u64::MAX {
+                return Err(err(
+                    McpErrorCode::ERR_INTERNAL,
+                    "imported storage revision is exhausted",
+                ));
+            }
             record.revision = record.revision.max(1);
             continue;
         };
+        if previous.revision == u64::MAX {
+            return Err(err(
+                McpErrorCode::ERR_INTERNAL,
+                "existing storage revision is exhausted",
+            ));
+        }
         let mut comparable = record.clone();
         comparable.revision = previous.revision;
         let unchanged = serde_json::to_value(&comparable).map_err(|_| {
@@ -101,7 +113,7 @@ fn assign_import_revisions(
         record.revision = if unchanged {
             previous.revision
         } else {
-            previous.revision.saturating_add(1)
+            crate::registry::next_storage_revision(previous.revision)?
         };
     }
     Ok(())
@@ -1377,4 +1389,51 @@ where
         applied: entry.storages.len(),
         warnings,
     })
+}
+
+#[cfg(test)]
+mod revision_safety_tests {
+    use super::*;
+
+    #[test]
+    fn import_revision_advance_rejects_saturation_without_changing_record() {
+        let mut original = StorageRecord::new(
+            "Original".into(),
+            "local".into(),
+            serde_json::json!({ "root": "/tmp/one" }),
+        );
+        original.revision = u64::MAX;
+        let mut changed = original.clone();
+        changed.name = "Changed".into();
+        let mut incoming = vec![changed.clone()];
+        assert!(assign_import_revisions(&[original.clone()], &mut incoming).is_err());
+        assert_eq!(incoming[0].revision, u64::MAX);
+
+        // Even an unchanged import cannot silently preserve an exhausted
+        // counter that is ineligible for future publication approvals.
+        assert!(assign_import_revisions(&[original.clone()], &mut [original]).is_err());
+
+        let mut new_id = changed;
+        new_id.id = "681643ee-7bfe-423b-86a0-fbc0426172bd".into();
+        assert!(assign_import_revisions(&[], &mut [new_id]).is_err());
+    }
+
+    #[test]
+    fn import_revisions_advance_only_changed_records() {
+        let mut existing = StorageRecord::new(
+            "Existing".into(),
+            "local".into(),
+            serde_json::json!({ "root": "/tmp/one" }),
+        );
+        existing.revision = 41;
+        let mut changed = existing.clone();
+        changed.config = serde_json::json!({ "root": "/tmp/two" });
+        // Exercise changed and unchanged imports independently.
+        let mut modified = vec![changed];
+        assign_import_revisions(&[existing.clone()], &mut modified).unwrap();
+        assert_eq!(modified[0].revision, 42);
+        let mut identical = vec![existing.clone()];
+        assign_import_revisions(&[existing], &mut identical).unwrap();
+        assert_eq!(identical[0].revision, 41);
+    }
 }
