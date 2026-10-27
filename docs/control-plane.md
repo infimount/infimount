@@ -315,6 +315,20 @@ A persisted numeric revision still is **not** an approval authority across
 raw journal rollback, delete/recreate or unrestricted same-user file access.
 No new grant issuer, CLI or agent-visible publication endpoint is created.
 
+## B1.13c5: manual policy and generic MCP edit revisions
+
+The manual MCP storage policy editor now advances the stored revision whenever
+the normalized policy changes, while keeping no-op revisions stable.
+The generic MCP `edit_storage` tool now advances a checked revision for all
+persisted edit operations, not only configuration edits, and uses that same
+value for staged credential references. This closes previously overlooked
+enable/disable, exposure, read-only, rename and backend edit cases.
+
+Unit and filesystem-backed tests cover no-op/changed policy, nonsecret
+configuration and exposure edits, and fail-closed revision exhaustion.
+This still does not authorize headless publishing or replace a trusted
+single-use human approval.
+
 ## B1.13d prototype: process-private one-use approval ledger
 
 `EphemeralPublicationApprovalLedger` is a memory-only trust-state prototype

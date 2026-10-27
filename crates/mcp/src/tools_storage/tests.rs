@@ -148,6 +148,92 @@ async fn add_edit_remove_storage_round_trip() {
 }
 
 #[tokio::test]
+async fn mcp_edit_revision_tracks_nonsecret_mutations_and_rejects_overflow() {
+    let dir = TempDir::new().unwrap();
+    let ctx = FsToolsContext {
+        registry: registry_in(&dir),
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+    let original = crate::registry::StorageRecord::new(
+        "Revision Test".into(),
+        "local".into(),
+        serde_json::json!({ "root": "/tmp/one" }),
+    );
+    ctx.registry
+        .save_all_atomic(std::slice::from_ref(&original))
+        .unwrap();
+
+    let edited = edit_storage(
+        &ctx,
+        EditStorageInput {
+            name: original.name.clone(),
+            patch: EditStoragePatch {
+                backend: None,
+                config: None,
+                enabled: Some(false),
+                mcp_exposed: None,
+                read_only: None,
+                new_name: None,
+            },
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(edited.storage.revision, 2);
+    let saved = ctx.registry.load_all().unwrap();
+    assert_eq!(saved[0].revision, 2);
+    assert!(!saved[0].enabled);
+
+    let changed = edit_storage(
+        &ctx,
+        EditStorageInput {
+            name: original.name.clone(),
+            patch: EditStoragePatch {
+                backend: None,
+                config: Some(serde_json::json!({ "root": "/tmp/two" })),
+                enabled: None,
+                mcp_exposed: None,
+                read_only: None,
+                new_name: None,
+            },
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(changed.storage.revision, 3);
+
+    ctx.registry
+        .with_locked_mutation(|storages| {
+            storages[0].revision = u64::MAX;
+            Ok(())
+        })
+        .unwrap();
+    let failure = edit_storage(
+        &ctx,
+        EditStorageInput {
+            name: original.name.clone(),
+            patch: EditStoragePatch {
+                backend: None,
+                config: None,
+                enabled: Some(true),
+                mcp_exposed: None,
+                read_only: None,
+                new_name: None,
+            },
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(failure.code, McpErrorCode::ERR_INTERNAL);
+    let unchanged = ctx.registry.load_all().unwrap();
+    assert_eq!(unchanged[0].revision, u64::MAX);
+    assert!(!unchanged[0].enabled);
+    assert_eq!(unchanged[0].config["root"], "/tmp/two");
+}
+
+#[tokio::test]
 async fn add_storage_defaults_to_not_mcp_exposed_when_omitted() {
     let dir = TempDir::new().unwrap();
     let registry = registry_in(&dir);

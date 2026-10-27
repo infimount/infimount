@@ -1734,10 +1734,23 @@ pub async fn update_mcp_storage_policy(
             &workspace_roots,
         )?;
 
-        storage.mcp_policy = prospective;
-        storage.updated_at = Utc::now().to_rfc3339();
+        apply_storage_policy_record_update(storage, prospective)?;
         Ok(storage.clone())
     })
+}
+
+/// A policy change is a storage configuration generation change even if its
+/// storage namespace fingerprint remains identical. Preserve no-op revisions.
+fn apply_storage_policy_record_update(
+    storage: &mut StorageRecord,
+    prospective: McpStoragePolicy,
+) -> McpResult<()> {
+    if storage.mcp_policy != prospective {
+        storage.revision = next_storage_revision(storage.revision)?;
+    }
+    storage.mcp_policy = prospective;
+    storage.updated_at = Utc::now().to_rfc3339();
+    Ok(())
 }
 
 fn assert_generic_policy_respects_workspace_rules(
@@ -2306,6 +2319,29 @@ mod tests {
         assert_eq!(persisted.len(), 1);
         assert_eq!(persisted[0].revision, u64::MAX);
         assert_eq!(persisted[0].name, storage.name);
+    }
+
+    #[test]
+    fn manual_policy_edit_advances_revision_and_rejects_exhaustion() {
+        let mut record = StorageRecord::new(
+            "Policy".into(),
+            "local".into(),
+            json!({ "root": "/tmp/policy" }),
+        );
+        let mut policy = record.mcp_policy.clone();
+        policy.default_access = McpAccessMode::ReadOnly;
+        apply_storage_policy_record_update(&mut record, policy.clone()).unwrap();
+        assert_eq!(record.revision, 2);
+
+        apply_storage_policy_record_update(&mut record, policy.clone()).unwrap();
+        assert_eq!(record.revision, 2);
+
+        record.revision = u64::MAX;
+        let mut changed = policy;
+        changed.default_access = McpAccessMode::ReadWrite;
+        assert!(apply_storage_policy_record_update(&mut record, changed).is_err());
+        assert_eq!(record.revision, u64::MAX);
+        assert_eq!(record.mcp_policy.default_access, McpAccessMode::ReadOnly);
     }
 
     #[test]
