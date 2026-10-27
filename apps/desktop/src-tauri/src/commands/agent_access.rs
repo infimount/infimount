@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use infimount_core::workspaces::workspace_schema_supported;
 use infimount_mcp::errors::{err, err_with_details, McpError, McpErrorCode, McpResult};
 use infimount_mcp::policy::{McpAccessMode, McpRuleSource};
-use infimount_mcp::registry::StorageRecord;
+use infimount_mcp::registry::{next_storage_revision, StorageRecord};
 use serde::Serialize;
 use serde_json::Value;
 use tauri::State;
@@ -191,7 +191,7 @@ pub async fn prepare_workspace_storage_binding(
             ));
         }
         normalize_local_root_config(&mut current.config, &root, &canonical);
-        current.revision = current.revision.saturating_add(1);
+        current.revision = next_storage_revision(current.revision)?;
         current.updated_at = chrono::Utc::now().to_rfc3339();
         Ok(())
     })?;
@@ -385,7 +385,7 @@ pub async fn prepare_workspace_agent_access(
         }
         validate_simple_workspace_exposure(current, &workspace)?;
         current.mcp_exposed = true;
-        current.revision = current.revision.saturating_add(1);
+        current.revision = next_storage_revision(current.revision)?;
         current.updated_at = chrono::Utc::now().to_rfc3339();
         Ok(())
     })?;

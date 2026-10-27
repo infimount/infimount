@@ -5,7 +5,7 @@ use infimount_core::workspaces::{
 };
 use infimount_mcp::errors::{err, err_with_details, McpError, McpErrorCode, McpResult};
 use infimount_mcp::policy::{McpAccessMode, McpPathRule, McpRuleSource};
-use infimount_mcp::registry::{StorageRecord, StorageRegistry};
+use infimount_mcp::registry::{next_storage_revision, StorageRecord, StorageRegistry};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -726,7 +726,7 @@ fn apply_workspace_policy_rule(
                 storage.mcp_policy.rules.push(rule);
             }
 
-            storage.revision = storage.revision.saturating_add(1);
+            storage.revision = next_storage_revision(storage.revision)?;
             storage.updated_at = chrono::Utc::now().to_rfc3339();
             Ok(())
         })
@@ -822,7 +822,7 @@ fn remove_workspace_policy_rule(
                         revision: storage.revision,
                     });
                     storage.mcp_policy.rules.retain(|r| r.id != rule_id);
-                    storage.revision = storage.revision.saturating_add(1);
+                    storage.revision = next_storage_revision(storage.revision)?;
                     storage.updated_at = chrono::Utc::now().to_rfc3339();
                     Ok(())
                 }
@@ -919,7 +919,7 @@ fn restore_policy_rule(
                 storage.mcp_policy.rules.retain(|r| r.id != rule_id);
             }
             // Rollback is itself a new mutation; never move a persisted revision backwards.
-            storage.revision = storage.revision.saturating_add(1);
+            storage.revision = next_storage_revision(storage.revision)?;
             storage.updated_at = chrono::Utc::now().to_rfc3339();
             Ok(())
         })
@@ -2035,6 +2035,37 @@ mod tests {
             memory_files: memory_files_for("coding"),
             checkpoint_ids: vec![],
         }
+    }
+
+    #[test]
+    fn workspace_policy_mutation_refuses_revision_exhaustion_without_side_effects() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let storage_root = tempfile::tempdir().unwrap();
+        let registry = StorageRegistry::with_secret_store(
+            Some(config_dir.path().join("storages.json")),
+            std::sync::Arc::new(infimount_core::secrets::MemorySecretStore::new()),
+        );
+        let storage_id = create_test_storage(&registry, &storage_root);
+        registry
+            .with_locked_mutation(|storages| {
+                storages[0].revision = u64::MAX;
+                Ok(())
+            })
+            .unwrap();
+        let workspace = make_workspace_record("revision-guard", &storage_id, "/protected");
+        let mut mutations = Vec::new();
+        assert!(apply_workspace_policy_rule(
+            &registry,
+            &storage_id,
+            &workspace,
+            McpAccessMode::ReadWrite,
+            &mut mutations,
+        )
+        .is_err());
+        assert!(mutations.is_empty());
+        let saved = registry.load_all().unwrap();
+        assert_eq!(saved[0].revision, u64::MAX);
+        assert!(saved[0].mcp_policy.rules.is_empty());
     }
 
     #[tokio::test]
