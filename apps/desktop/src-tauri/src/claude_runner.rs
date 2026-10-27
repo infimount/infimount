@@ -401,7 +401,11 @@ mod tests {
     fn invalid_json_or_cli_error_does_not_claim_success() {
         let temp = private_tempdir();
         for output in ["not-json", r#"{"is_error":true}"#] {
-            let identity = mock_cli(temp.path(), &format!("printf '%s' '{output}'"));
+            // Each case needs a distinct executable inode. Rewriting the same
+            // script can race with shell script execution on Linux (ETXTBSY),
+            // making a valid fail-closed test nondeterministic in parallel CI.
+            let case = tempfile::tempdir_in(temp.path()).unwrap();
+            let identity = mock_cli(case.path(), &format!("printf '%s' '{output}'"));
             let outcome = execute_verified_claude(
                 &identity,
                 &[],
@@ -411,6 +415,9 @@ mod tests {
             )
             .unwrap();
             assert_eq!(outcome.result, ClaudeOutcome::Failed);
+            // Must prove parsing failed for an actually completed mock, not
+            // treat a child-spawn failure as sufficient test coverage.
+            assert_eq!(outcome.exit_code, Some(0));
         }
     }
 }
