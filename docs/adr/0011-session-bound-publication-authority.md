@@ -82,6 +82,22 @@ credential to the request, headless preview may remain supported but
 headless publication must be disabled. Long-lived and automatic delegated
 grants remain out of scope.
 
+## B1.14 contract-only native presence challenge
+
+A read-only, domain-separated SHA-256 digest now binds a future native
+user-presence request to a fresh control-process UUIDv4, a distinct challenge
+UUIDv4, the actor, a bounded 2-minute lifetime and the exact conflict-free
+reviewed task, destination revision, namespace, selected hashes and paths.
+The digest is deterministic for the same fields and changes on actor, nonce
+or authoritative plan drift. Its inputs must come from the **trusted process**
+under the existing locks, not from a shell agent's chosen data.
+
+This is **only the challenge-to-be-signed**, not proof of user presence.
+There is no OS authenticator invocation, signature verification, credential
+enrollment, trusted UI presentation, stored grant or headless apply endpoint.
+Linux/macOS/Windows must qualify their native verification separately.
+The existing fail-closed desktop-human-mediated flow remains unchanged.
+
 ## Validation before moving to Accepted
 
 - Prove real native user verification and secure enrollment/recovery on

@@ -12,5 +12,6 @@ pub mod publication_destination;
 pub mod publication_engine;
 pub mod publication_evidence;
 pub mod publication_plan;
+pub mod publication_presence_challenge;
 pub mod review;
 pub mod review_evidence;
