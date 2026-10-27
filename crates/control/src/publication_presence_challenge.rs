@@ -442,7 +442,6 @@ mod tests {
         assert_ne!(digest, digest_for(&changed));
     }
 
-
     #[test]
     fn presence_challenge_rejects_reused_session_nonrandom_id_and_invalid_actor() {
         let record = record();
@@ -467,7 +466,7 @@ mod tests {
             1_000,
             60_000
         ));
-        assert!(!accepts(SESSION, NONCE, "with\\nnewline", 1_000, 60_000));
+        assert!(!accepts(SESSION, NONCE, "with\nnewline", 1_000, 60_000));
         assert!(!accepts(SESSION, NONCE, " trailing ", 1_000, 60_000));
         assert!(!accepts(SESSION, NONCE, "verified-person", 1_000, 1_000));
     }
