@@ -60,9 +60,10 @@ fn is_random_uuid(value: &str) -> bool {
         .is_some_and(|id| id.get_version() == Some(Version::Random))
 }
 
-/// Produces only SHA-256 bytes for signing/verification by a separately
-/// qualified platform authenticator. It is NOT a verified assertion, user
-/// presence proof, or a publication capability.
+/// Returns lowercase SHA-256 hexadecimal text representing 32 digest bytes.
+/// A future native adapter must decode and bind those bytes using the
+/// authenticator's own protocol-defined signed-message format.
+/// This is NOT a verified assertion, presence proof or publication capability.
 ///
 /// A caller must additionally prove process/actor authority, fresh trusted
 /// randomness, immutable UI presentation and transaction-bound verification.
@@ -214,6 +215,9 @@ mod tests {
         };
         let digest = presence_challenge_digest(&inputs).unwrap();
         assert_eq!(digest.len(), 64);
+        assert!(digest
+            .bytes()
+            .all(|value| value.is_ascii_hexdigit() && !value.is_ascii_uppercase()));
         assert_eq!(digest, presence_challenge_digest(&inputs).unwrap());
         let other_nonce = PresenceChallengeInput {
             challenge_nonce: OTHER_NONCE,
