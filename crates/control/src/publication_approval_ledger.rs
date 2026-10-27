@@ -16,9 +16,9 @@ use infimount_core::CoreError;
 use crate::publication_approval::{
     validate_protected_approval_binding, PublicationApprovalRecord, PublicationApprovalSnapshot,
 };
-use crate::publication_presence_proof::VerifiedPublicationPresence;
 #[cfg(test)]
 use crate::publication_presence_challenge::{presence_challenge_digest, PresenceChallengeInput};
+use crate::publication_presence_proof::VerifiedPublicationPresence;
 
 struct StoredApproval {
     record: PublicationApprovalRecord,
@@ -225,7 +225,10 @@ mod tests {
         }
     }
 
-    fn verified_actor(record: &PublicationApprovalRecord, actor: &str) -> VerifiedPublicationPresence {
+    fn verified_actor(
+        record: &PublicationApprovalRecord,
+        actor: &str,
+    ) -> VerifiedPublicationPresence {
         VerifiedPublicationPresence::test_fixture(actor, &fixture_challenge_digest(record).unwrap())
     }
 
@@ -514,5 +517,4 @@ mod tests {
             .claim(&record.grant_id, &snapshot, &stale_proof, 2_000)
             .is_err());
     }
-
 }
