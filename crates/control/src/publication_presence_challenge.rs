@@ -348,4 +348,126 @@ mod tests {
         };
         assert!(presence_challenge_digest(&conflicted).is_err());
     }
+
+    #[test]
+    fn native_presence_digest_has_a_stable_cross_platform_golden_vector() {
+        // Versioned challenge bytes must not drift silently when future native
+        // platform verifiers are added. This is a digest, not an assertion.
+        let record = record();
+        let snapshot = make_snapshot(&record);
+        let input = PresenceChallengeInput {
+            control_session_id: SESSION,
+            challenge_nonce: NONCE,
+            actor_id: "verified-person",
+            issued_at_unix_ms: 1_000,
+            expires_at_unix_ms: 60_000,
+            snapshot: &snapshot,
+        };
+        assert_eq!(
+            presence_challenge_digest(&input).unwrap(),
+            "65c77d7313bea4f4fa9242c779bf64a33718aadfc87a83bec6fe2e3044595aff"
+        );
+    }
+
+    #[test]
+    fn challenge_rejects_case_collisions_and_unreviewed_actions() {
+        let original = record();
+        let is_invalid = |record: &PublicationApprovalRecord| {
+            let current = make_snapshot(record);
+            let input = PresenceChallengeInput {
+                control_session_id: SESSION,
+                challenge_nonce: NONCE,
+                actor_id: "verified-person",
+                issued_at_unix_ms: 1_000,
+                expires_at_unix_ms: 60_000,
+                snapshot: &current,
+            };
+            presence_challenge_digest(&input).is_err()
+        };
+
+        // Both task paths are ASCII-sorted, but would collide on a
+        // case-insensitive filesystem. Neither can be signed as reviewed.
+        let mut colliding_sources = original.clone();
+        let mut first = original.files[0].clone();
+        first.task_path = "outputs/Report.md".into();
+        first.destination_path = "exports/a.md".into();
+        let mut second = original.files[0].clone();
+        second.task_path = "outputs/report.md".into();
+        second.destination_path = "exports/b.md".into();
+        colliding_sources.files = vec![first, second];
+        assert!(is_invalid(&colliding_sources));
+
+        let mut colliding_targets = original.clone();
+        let mut first = original.files[0].clone();
+        first.task_path = "outputs/a.md".into();
+        first.destination_path = "exports/Report.md".into();
+        let mut second = original.files[0].clone();
+        second.task_path = "outputs/z.md".into();
+        second.destination_path = "exports/report.md".into();
+        colliding_targets.files = vec![first, second];
+        assert!(is_invalid(&colliding_targets));
+
+        let mut unreviewed_action = original.clone();
+        unreviewed_action.files[0].action = AgentTaskPublishAction::Rename;
+        assert!(is_invalid(&unreviewed_action));
+
+        let mut outside_destination = original;
+        outside_destination.files[0].destination_path = "exports2/report.md".into();
+        assert!(is_invalid(&outside_destination));
+    }
+
+    #[test]
+    fn challenge_digest_binds_byte_size_and_conflict_policy() {
+        let original = record();
+        let digest_for = |record: &PublicationApprovalRecord| {
+            let snapshot = make_snapshot(record);
+            presence_challenge_digest(&PresenceChallengeInput {
+                control_session_id: SESSION,
+                challenge_nonce: NONCE,
+                actor_id: "verified-person",
+                issued_at_unix_ms: 1_000,
+                expires_at_unix_ms: 60_000,
+                snapshot: &snapshot,
+            })
+            .unwrap()
+        };
+        let digest = digest_for(&original);
+
+        let mut changed = original.clone();
+        changed.files[0].byte_size += 1;
+        assert_ne!(digest, digest_for(&changed));
+
+        changed = original;
+        changed.conflict_policy = AgentTaskPublishConflictPolicy::Rename;
+        assert_ne!(digest, digest_for(&changed));
+    }
+
+    #[test]
+    fn presence_challenge_rejects_reused_session_nonrandom_id_and_invalid_actor() {
+        let record = record();
+        let snapshot = make_snapshot(&record);
+        let accepts = |session: &str, nonce: &str, actor: &str, start, end| {
+            presence_challenge_digest(&PresenceChallengeInput {
+                control_session_id: session,
+                challenge_nonce: nonce,
+                actor_id: actor,
+                issued_at_unix_ms: start,
+                expires_at_unix_ms: end,
+                snapshot: &snapshot,
+            })
+            .is_ok()
+        };
+        assert!(accepts(SESSION, NONCE, "verified-person", 1_000, 60_000));
+        assert!(!accepts(SESSION, SESSION, "verified-person", 1_000, 60_000));
+        assert!(!accepts(
+            "00000000-0000-1000-8000-000000000000",
+            NONCE,
+            "verified-person",
+            1_000,
+            60_000
+        ));
+        assert!(!accepts(SESSION, NONCE, "with\nnewline", 1_000, 60_000));
+        assert!(!accepts(SESSION, NONCE, " trailing ", 1_000, 60_000));
+        assert!(!accepts(SESSION, NONCE, "verified-person", 1_000, 1_000));
+    }
 }
