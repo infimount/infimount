@@ -441,4 +441,34 @@ mod tests {
         changed.conflict_policy = AgentTaskPublishConflictPolicy::Rename;
         assert_ne!(digest, digest_for(&changed));
     }
+
+
+    #[test]
+    fn presence_challenge_rejects_reused_session_nonrandom_id_and_invalid_actor() {
+        let record = record();
+        let snapshot = make_snapshot(&record);
+        let accepts = |session: &str, nonce: &str, actor: &str, start, end| {
+            presence_challenge_digest(&PresenceChallengeInput {
+                control_session_id: session,
+                challenge_nonce: nonce,
+                actor_id: actor,
+                issued_at_unix_ms: start,
+                expires_at_unix_ms: end,
+                snapshot: &snapshot,
+            })
+            .is_ok()
+        };
+        assert!(accepts(SESSION, NONCE, "verified-person", 1_000, 60_000));
+        assert!(!accepts(SESSION, SESSION, "verified-person", 1_000, 60_000));
+        assert!(!accepts(
+            "00000000-0000-1000-8000-000000000000",
+            NONCE,
+            "verified-person",
+            1_000,
+            60_000
+        ));
+        assert!(!accepts(SESSION, NONCE, "with\\nnewline", 1_000, 60_000));
+        assert!(!accepts(SESSION, NONCE, " trailing ", 1_000, 60_000));
+        assert!(!accepts(SESSION, NONCE, "verified-person", 1_000, 1_000));
+    }
 }
