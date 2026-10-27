@@ -16,12 +16,16 @@ use infimount_core::CoreError;
 use crate::publication_approval::{
     validate_protected_approval_binding, PublicationApprovalRecord, PublicationApprovalSnapshot,
 };
+use crate::publication_presence_proof::VerifiedPublicationPresence;
 
 struct StoredApproval {
     record: PublicationApprovalRecord,
     /// Private control-session generation at the moment a trusted issuer
     /// would have registered the grant. Never accept this from a client.
     issuance_epoch: u64,
+    /// Bound to a verified native challenge by a future trusted issuer,
+    /// not to a digest provided through an agent-visible request.
+    challenge_digest: String,
 }
 
 #[derive(Default)]
@@ -50,14 +54,14 @@ impl EphemeralPublicationApprovalLedger {
     /// Validate a server-held grant against a freshly rebuilt, trusted plan
     /// and consume it while holding the ledger mutex, BEFORE publication I/O.
     ///
-    /// Callers must already hold lifecycle → configuration → workspace locks
-    /// and establish the actor through a future native trust ceremony. The
-    /// supplied actor string is not authenticated by this function itself.
+    /// Callers must already hold lifecycle → configuration → workspace locks.
+    /// The opaque proof has NO production constructor until a native
+    /// platform verifier is implemented and separately qualified.
     pub fn claim(
         &self,
         grant_id: &str,
         snapshot: &PublicationApprovalSnapshot<'_>,
-        authenticated_actor_id: &str,
+        verified_presence: &VerifiedPublicationPresence,
         now_unix_ms: u64,
     ) -> Result<(), CoreError> {
         let mut state = self
@@ -72,10 +76,13 @@ impl EphemeralPublicationApprovalLedger {
         // Even if restored storage bytes and its persisted revision return to
         // an earlier value (ABA), a grant from the prior process epoch cannot
         // be claimed. This remains only a prototype without a trusted issuer.
-        if sealed || stored.issuance_epoch != epoch {
+        if sealed
+            || stored.issuance_epoch != epoch
+            || stored.challenge_digest != verified_presence.challenge_digest()
+        {
             stored.record.revoked_at_unix_ms = Some(now_unix_ms);
             return Err(CoreError::Config(
-                "publication approval belongs to a stale or sealed session".into(),
+                "publication approval belongs to a stale session or different challenge".into(),
             ));
         }
 
@@ -84,7 +91,7 @@ impl EphemeralPublicationApprovalLedger {
         if let Err(error) = validate_protected_approval_binding(
             &stored.record,
             snapshot,
-            authenticated_actor_id,
+            verified_presence.actor_id(),
             now_unix_ms,
         ) {
             stored.record.revoked_at_unix_ms = Some(now_unix_ms);
@@ -146,6 +153,7 @@ impl EphemeralPublicationApprovalLedger {
             StoredApproval {
                 record,
                 issuance_epoch: epoch,
+                challenge_digest: "a".repeat(64),
             },
         );
         Ok(())
@@ -186,6 +194,10 @@ mod tests {
         }
     }
 
+    fn verified_actor(actor: &str) -> VerifiedPublicationPresence {
+        VerifiedPublicationPresence::test_fixture(actor, &"a".repeat(64))
+    }
+
     fn snapshot(record: &PublicationApprovalRecord) -> PublicationApprovalSnapshot<'_> {
         PublicationApprovalSnapshot {
             workspace_id: &record.workspace_id,
@@ -216,7 +228,12 @@ mod tests {
                     let current = &current;
                     scope.spawn(move || {
                         ledger
-                            .claim(grant_id, current, "native-verified-human", 2_000)
+                            .claim(
+                                grant_id,
+                                current,
+                                &verified_actor("native-verified-human"),
+                                2_000,
+                            )
                             .is_ok()
                     })
                 })
@@ -231,19 +248,45 @@ mod tests {
     }
 
     #[test]
+    fn matching_actor_cannot_replay_different_verified_challenge() {
+        let ledger = EphemeralPublicationApprovalLedger::new();
+        let grant = grant();
+        ledger.insert_fixture(grant.clone()).unwrap();
+        let current = snapshot(&grant);
+        let incorrect =
+            VerifiedPublicationPresence::test_fixture("native-verified-human", &"b".repeat(64));
+        let rejected = ledger.claim(&grant.grant_id, &current, &incorrect, 2_000);
+        assert!(rejected.is_err());
+        // A mismatching proof spends the chance to claim this grant.
+        let valid = verified_actor("native-verified-human");
+        let replay = ledger.claim(&grant.grant_id, &current, &valid, 2_010);
+        assert!(replay.is_err());
+    }
+
+    #[test]
     fn failed_publication_does_not_reset_spent_grant() {
         let ledger = EphemeralPublicationApprovalLedger::new();
         let record = grant();
         ledger.insert_fixture(record.clone()).unwrap();
         let current = snapshot(&record);
         ledger
-            .claim(&record.grant_id, &current, "native-verified-human", 2_000)
+            .claim(
+                &record.grant_id,
+                &current,
+                &verified_actor("native-verified-human"),
+                2_000,
+            )
             .unwrap();
 
         // Simulate output/receipt failure after consumption. The grant stays
         // spent regardless of any subsequent cleanup or retry.
         assert!(ledger
-            .claim(&record.grant_id, &current, "native-verified-human", 2_100)
+            .claim(
+                &record.grant_id,
+                &current,
+                &verified_actor("native-verified-human"),
+                2_100,
+            )
             .is_err());
     }
 
@@ -255,12 +298,22 @@ mod tests {
         let current = snapshot(&record);
         ledger.invalidate_pending(2_000).unwrap();
         assert!(ledger
-            .claim(&record.grant_id, &current, "native-verified-human", 2_100)
+            .claim(
+                &record.grant_id,
+                &current,
+                &verified_actor("native-verified-human"),
+                2_100,
+            )
             .is_err());
 
         let restarted = EphemeralPublicationApprovalLedger::new();
         assert!(restarted
-            .claim(&record.grant_id, &current, "native-verified-human", 2_100)
+            .claim(
+                &record.grant_id,
+                &current,
+                &verified_actor("native-verified-human"),
+                2_100,
+            )
             .is_err());
     }
 
@@ -285,7 +338,7 @@ mod tests {
         let old_claim = ledger.claim(
             &old.grant_id,
             &same_snapshot,
-            "native-verified-human",
+            &verified_actor("native-verified-human"),
             2_010,
         );
         assert!(old_claim.is_err());
@@ -299,12 +352,17 @@ mod tests {
         ledger.insert_fixture(fresh.clone()).unwrap();
         let current = snapshot(&fresh);
         ledger
-            .claim(&fresh.grant_id, &current, "native-verified-human", 2_020)
+            .claim(
+                &fresh.grant_id,
+                &current,
+                &verified_actor("native-verified-human"),
+                2_020,
+            )
             .unwrap();
         let replay = ledger.claim(
             &old.grant_id,
             &same_snapshot,
-            "native-verified-human",
+            &verified_actor("native-verified-human"),
             2_030,
         );
         assert!(replay.is_err());
@@ -321,7 +379,12 @@ mod tests {
         }
         assert!(ledger.invalidate_pending(2_000).is_err());
         let present = snapshot(&old);
-        let overflow_claim = ledger.claim(&old.grant_id, &present, "native-verified-human", 2_010);
+        let overflow_claim = ledger.claim(
+            &old.grant_id,
+            &present,
+            &verified_actor("native-verified-human"),
+            2_010,
+        );
         assert!(overflow_claim.is_err());
 
         let mut fresh = old;
@@ -338,10 +401,20 @@ mod tests {
         ledger.insert_fixture(record.clone()).unwrap();
         let current = snapshot(&record);
         assert!(ledger
-            .claim(&record.grant_id, &current, "model-process", 2_000)
+            .claim(
+                &record.grant_id,
+                &current,
+                &verified_actor("model-process"),
+                2_000,
+            )
             .is_err());
         assert!(ledger
-            .claim(&record.grant_id, &current, "native-verified-human", 2_100)
+            .claim(
+                &record.grant_id,
+                &current,
+                &verified_actor("native-verified-human"),
+                2_100,
+            )
             .is_err());
 
         let second = EphemeralPublicationApprovalLedger::new();
@@ -349,13 +422,23 @@ mod tests {
         let mut stale = snapshot(&record);
         stale.destination_revision += 1;
         assert!(second
-            .claim(&record.grant_id, &stale, "native-verified-human", 2_000)
+            .claim(
+                &record.grant_id,
+                &stale,
+                &verified_actor("native-verified-human"),
+                2_000,
+            )
             .is_err());
 
         let third = EphemeralPublicationApprovalLedger::new();
         third.insert_fixture(record.clone()).unwrap();
         assert!(third
-            .claim(&record.grant_id, &current, "native-verified-human", 61_000)
+            .claim(
+                &record.grant_id,
+                &current,
+                &verified_actor("native-verified-human"),
+                61_000,
+            )
             .is_err());
 
         let mut another = record.clone();
