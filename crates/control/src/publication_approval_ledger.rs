@@ -17,9 +17,20 @@ use crate::publication_approval::{
     validate_protected_approval_binding, PublicationApprovalRecord, PublicationApprovalSnapshot,
 };
 
+struct StoredApproval {
+    record: PublicationApprovalRecord,
+    /// Private control-session generation at the moment a trusted issuer
+    /// would have registered the grant. Never accept this from a client.
+    issuance_epoch: u64,
+}
+
 #[derive(Default)]
 struct LedgerState {
-    records: HashMap<String, PublicationApprovalRecord>,
+    /// In-memory epoch. Config/workspace mutations must invalidate pending
+    /// grants before modifying authoritative state, under the same locks.
+    epoch: u64,
+    sealed: bool,
+    records: HashMap<String, StoredApproval>,
     #[cfg(test)]
     used_nonces: HashSet<String>,
 }
@@ -53,23 +64,34 @@ impl EphemeralPublicationApprovalLedger {
             .state
             .lock()
             .map_err(|_| CoreError::Config("publication approval ledger is unavailable".into()))?;
-        let record = state.records.get_mut(grant_id).ok_or_else(|| {
+        let epoch = state.epoch;
+        let sealed = state.sealed;
+        let stored = state.records.get_mut(grant_id).ok_or_else(|| {
             CoreError::Config("publication approval was not issued by this process".into())
         })?;
+        // Even if restored storage bytes and its persisted revision return to
+        // an earlier value (ABA), a grant from the prior process epoch cannot
+        // be claimed. This remains only a prototype without a trusted issuer.
+        if sealed || stored.issuance_epoch != epoch {
+            stored.record.revoked_at_unix_ms = Some(now_unix_ms);
+            return Err(CoreError::Config(
+                "publication approval belongs to a stale or sealed session".into(),
+            ));
+        }
 
         // A mismatching attempt revokes the grant rather than permitting a
         // later replay after a mutation, expiry or actor substitution.
         if let Err(error) = validate_protected_approval_binding(
-            record,
+            &stored.record,
             snapshot,
             authenticated_actor_id,
             now_unix_ms,
         ) {
-            record.revoked_at_unix_ms = Some(now_unix_ms);
+            stored.record.revoked_at_unix_ms = Some(now_unix_ms);
             return Err(error);
         }
 
-        record.consumed_at_unix_ms = Some(now_unix_ms);
+        stored.record.consumed_at_unix_ms = Some(now_unix_ms);
         Ok(())
     }
 
@@ -81,10 +103,23 @@ impl EphemeralPublicationApprovalLedger {
             .state
             .lock()
             .map_err(|_| CoreError::Config("publication approval ledger is unavailable".into()))?;
-        for record in state.records.values_mut() {
-            if record.consumed_at_unix_ms.is_none() && record.revoked_at_unix_ms.is_none() {
-                record.revoked_at_unix_ms = Some(now_unix_ms);
+        // Never wrap or saturate a grant epoch. Exhaustion permanently seals
+        // this in-memory ledger, including future attempted test insertions.
+        match state.epoch.checked_add(1) {
+            Some(next) if !state.sealed => state.epoch = next,
+            _ => state.sealed = true,
+        }
+        for stored in state.records.values_mut() {
+            if stored.record.consumed_at_unix_ms.is_none()
+                && stored.record.revoked_at_unix_ms.is_none()
+            {
+                stored.record.revoked_at_unix_ms = Some(now_unix_ms);
             }
+        }
+        if state.sealed {
+            return Err(CoreError::Config(
+                "publication approval session epoch is exhausted".into(),
+            ));
         }
         Ok(())
     }
@@ -97,14 +132,22 @@ impl EphemeralPublicationApprovalLedger {
             .state
             .lock()
             .map_err(|_| CoreError::Config("publication approval ledger is unavailable".into()))?;
-        if state.records.contains_key(&record.grant_id)
+        if state.sealed
+            || state.records.contains_key(&record.grant_id)
             || !state.used_nonces.insert(record.nonce.clone())
         {
             return Err(CoreError::Config(
-                "publication grant id or one-use nonce is already registered".into(),
+                "publication grant epoch, id or nonce is invalid or already registered".into(),
             ));
         }
-        state.records.insert(record.grant_id.clone(), record);
+        let epoch = state.epoch;
+        state.records.insert(
+            record.grant_id.clone(),
+            StoredApproval {
+                record,
+                issuance_epoch: epoch,
+            },
+        );
         Ok(())
     }
 }
@@ -219,6 +262,73 @@ mod tests {
         assert!(restarted
             .claim(&record.grant_id, &current, "native-verified-human", 2_100)
             .is_err());
+    }
+
+    #[test]
+    fn restore_aba_cannot_revalidate_a_grant_from_an_earlier_session_epoch() {
+        let ledger = EphemeralPublicationApprovalLedger::new();
+        let old = grant();
+        ledger.insert_fixture(old.clone()).unwrap();
+        let same_snapshot = snapshot(&old);
+
+        // Simulates storage and workspace being changed, backed up, and then
+        // restored byte-for-byte with the SAME recorded revision and plan.
+        ledger.invalidate_pending(2_000).unwrap();
+        // Stronger than a revocation-only test: even if a future recovery
+        // regression accidentally resurrected the old pending record,
+        // the private epoch mismatch must independently deny its claim.
+        {
+            let mut state = ledger.state.lock().unwrap();
+            let stale = state.records.get_mut(&old.grant_id).unwrap();
+            stale.record.revoked_at_unix_ms = None;
+        }
+        let old_claim = ledger.claim(
+            &old.grant_id,
+            &same_snapshot,
+            "native-verified-human",
+            2_010,
+        );
+        assert!(old_claim.is_err());
+
+        // A fresh fixture with a distinct nonce can be registered only by
+        // the test-only issuer. The new epoch does not permanently block
+        // legitimate later approvals while rejecting the old one.
+        let mut fresh = old.clone();
+        fresh.grant_id = "81d4c2aa-9a35-44fd-9b79-3b8b5e28c765".into();
+        fresh.nonce = "911ab9da-edce-41b8-9c23-aceb3ee5d643".into();
+        ledger.insert_fixture(fresh.clone()).unwrap();
+        let current = snapshot(&fresh);
+        ledger
+            .claim(&fresh.grant_id, &current, "native-verified-human", 2_020)
+            .unwrap();
+        let replay = ledger.claim(
+            &old.grant_id,
+            &same_snapshot,
+            "native-verified-human",
+            2_030,
+        );
+        assert!(replay.is_err());
+    }
+
+    #[test]
+    fn epoch_overflow_permanently_seals_grant_claim_and_issuance() {
+        let ledger = EphemeralPublicationApprovalLedger::new();
+        let old = grant();
+        ledger.insert_fixture(old.clone()).unwrap();
+        {
+            let mut state = ledger.state.lock().unwrap();
+            state.epoch = u64::MAX;
+        }
+        assert!(ledger.invalidate_pending(2_000).is_err());
+        let present = snapshot(&old);
+        let overflow_claim = ledger.claim(&old.grant_id, &present, "native-verified-human", 2_010);
+        assert!(overflow_claim.is_err());
+
+        let mut fresh = old;
+        fresh.grant_id = "20563794-cde0-46db-9ef9-d056d9f51c7b".into();
+        fresh.nonce = "91ed31f9-026c-438c-892f-4b3b42e45e3c".into();
+        assert!(ledger.insert_fixture(fresh).is_err());
+        assert!(ledger.invalidate_pending(2_020).is_err());
     }
 
     #[test]

@@ -56,6 +56,16 @@ grant. To perform a headless write it would need all of the following:
    If invalidation cannot be proven, reject headless apply. Restart erases
    all grants. Do not recover pending approvals from backup or disk.
 
+The internal prototype now additionally increments a process-memory mutation
+epoch during invalidation, binds each test-only grant to the epoch, and seals
+the ledger if its counter would overflow. Tests prove an earlier grant stays
+unusable even if backup restoration recreates an identical snapshot, namespace
+and persisted revision. The epoch is never read from storage or a client.
+
+This **does not** mean production handlers currently invalidate on every
+mutation, that native user verification exists, or that arbitrary same-user
+process injection is prevented. Grant issuance remains compiled only for tests.
+
 The application must keep its existing verified create-only copy and
 receipt transaction and partial-commit cleanup semantics.
 
