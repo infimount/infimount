@@ -4,7 +4,9 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::errors::{err, err_with_details, McpErrorCode, McpResult};
-use crate::registry::{ensure_unique_name, validate_storage_name, StorageRecord};
+use crate::registry::{
+    ensure_unique_name, next_storage_revision, validate_storage_name, StorageRecord,
+};
 use crate::tools_fs::FsToolsContext;
 
 use super::common::{canonical_backend, ensure_config_object, masked};
@@ -71,6 +73,9 @@ pub async fn edit_storage(
             })?;
 
         let mut storage = storages[idx].clone();
+        // Every storage edit writes a new updatedAt, even with an empty patch.
+        // Bind that persisted generation to a checked, non-reusable revision.
+        let next_revision = next_storage_revision(storage.revision)?;
         previous_account = storage
             .secret_ref
             .clone()
@@ -78,7 +83,7 @@ pub async fn edit_storage(
         staged_account = format!(
             "storage/{}/revision/{}/{}",
             storage.id,
-            storage.revision.saturating_add(1),
+            next_revision,
             Uuid::new_v4()
         );
         previous = ctx
@@ -147,7 +152,6 @@ pub async fn edit_storage(
                 .as_object()
                 .map(|object| object.keys().cloned().collect())
                 .unwrap_or_default();
-            storage.revision = storage.revision.saturating_add(1);
         }
         if let Some(enabled) = input.patch.enabled {
             storage.enabled = enabled;
@@ -158,6 +162,7 @@ pub async fn edit_storage(
         if let Some(read_only) = input.patch.read_only {
             storage.read_only = read_only;
         }
+        storage.revision = next_revision;
         storage.updated_at = Utc::now().to_rfc3339();
         storages[idx] = storage.clone();
         Ok(storage)
