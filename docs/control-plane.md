@@ -302,6 +302,19 @@ restore previous registry bytes. Pending headless grants must be invalidated
 by a separate process-owned approval ledger under the same authoritative
 locks. No production grant issuer or headless publication exists.
 
+## B1.13c4: checked workspace-policy and agent-access revisions
+
+Workspace-managed MCP policy mutations (grant, removal and targeted rollback)
+and the desktop Agent Access binding/exposure paths now use checked storage
+revision increments. This rejects exhausted counters before the mutation is
+saved and prevents a saturating ABA replay. A filesystem-backed regression
+proves a failed workspace policy update leaves existing policy and revision
+unchanged.
+
+A persisted numeric revision still is **not** an approval authority across
+raw journal rollback, delete/recreate or unrestricted same-user file access.
+No new grant issuer, CLI or agent-visible publication endpoint is created.
+
 ## B1.13d prototype: process-private one-use approval ledger
 
 `EphemeralPublicationApprovalLedger` is a memory-only trust-state prototype
