@@ -348,6 +348,20 @@ is no user-presence proof, grant issuance service, config-mutation hook wiring,
 cross-process authority owner, IPC or CLI publish entry point. Issue #181 must
 prove these before any headless apply can ship.
 
+## B1.15a: opaque, challenge-bound proof contract
+
+A single-use ledger claim no longer accepts an unauthenticated actor string.
+It requires an opaque `VerifiedPublicationPresence` type and compares the
+proof's challenge digest to the process-held grant's expected digest.
+Actor and challenge mismatch permanently reject the pending grant. Only the
+control crate's unit tests can construct fixture proofs.
+
+The production type has **no constructor**, no serde conversion and no
+`Clone` or default. Future native adapters must verify the authenticator's
+signature, user-presence and user-verification bits, credential enrollment
+and exact request challenge before creating a proof. None exists yet.
+The ledger remains test-issued and headless publication remains disabled.
+
 ## Trust and behavioral compatibility
 
 The **same** Tauri handlers still own `preview_agent_task_publication` and
