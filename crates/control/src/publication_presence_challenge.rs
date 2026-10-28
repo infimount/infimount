@@ -370,6 +370,50 @@ mod tests {
     }
 
     #[test]
+    fn canonical_presence_json_matches_portable_native_verifier_fixture() {
+        // Deliberately compare the *bytes*, not a parsed JSON object. Native
+        // WebAuthn, FIDO2 and Secure Enclave adapters must agree on this v1
+        // challenge digest before they can qualify signed assertions.
+        const GOLDEN_BYTES: &[u8] =
+            include_bytes!("../fixtures/native-publication-presence-v1.canonical.json");
+        const GOLDEN_DIGEST: &str =
+            "65c77d7313bea4f4fa9242c779bf64a33718aadfc87a83bec6fe2e3044595aff";
+
+        let record = record();
+        let snapshot = make_snapshot(&record);
+        let input = PresenceChallengeInput {
+            control_session_id: SESSION,
+            challenge_nonce: NONCE,
+            actor_id: "verified-person",
+            issued_at_unix_ms: 1_000,
+            expires_at_unix_ms: 60_000,
+            snapshot: &snapshot,
+        };
+        let wire = PresenceChallengeWire {
+            domain: CHALLENGE_DOMAIN,
+            schema_version: CHALLENGE_SCHEMA_VERSION,
+            control_session_id: input.control_session_id,
+            challenge_nonce: input.challenge_nonce,
+            actor_id: input.actor_id,
+            issued_at_unix_ms: input.issued_at_unix_ms,
+            expires_at_unix_ms: input.expires_at_unix_ms,
+            workspace_id: snapshot.workspace_id,
+            task_id: snapshot.task_id,
+            destination_storage_id: snapshot.destination_storage_id,
+            destination_namespace: snapshot.destination_namespace,
+            destination_revision: snapshot.destination_revision,
+            destination_dir: snapshot.destination_dir,
+            conflict_policy: snapshot.conflict_policy,
+            preview_fingerprint: snapshot.preview_fingerprint,
+            files: snapshot.files,
+        };
+        let bytes = serde_json::to_vec(&wire).unwrap();
+        assert_eq!(GOLDEN_BYTES.len(), 788);
+        assert_eq!(bytes.as_slice(), GOLDEN_BYTES);
+        assert_eq!(presence_challenge_digest(&input).unwrap(), GOLDEN_DIGEST);
+    }
+
+    #[test]
     fn challenge_rejects_case_collisions_and_unreviewed_actions() {
         let original = record();
         let is_invalid = |record: &PublicationApprovalRecord| {
