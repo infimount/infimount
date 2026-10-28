@@ -44,6 +44,8 @@ jobs:
         run: |
           go install github.com/rhysd/actionlint/cmd/actionlint@latest
           "$(go env GOPATH)/bin/actionlint"
+      - name: Enforce bounded APT workflow operations
+        run: bash scripts/check-ci-apt-workflows.sh
       - name: Zero-manual release policy
         run: ./scripts/check-zero-manual-release-gate.sh
       - name: Deterministic release policy fixtures

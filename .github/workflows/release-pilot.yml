@@ -5,6 +5,7 @@ on:
     branches: ["main"]
     paths:
       - ".github/workflows/release-pilot.yml"
+      - ".github/workflows/coverage.yml"
       - "apps/desktop/**"
       - "crates/core/**"
       - "crates/mcp/**"
