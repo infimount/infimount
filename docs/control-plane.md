@@ -362,6 +362,23 @@ signature, user-presence and user-verification bits, credential enrollment
 and exact request challenge before creating a proof. None exists yet.
 The ledger remains test-issued and headless publication remains disabled.
 
+## B1.15c: consume verified-presence proof on every claim attempt
+
+The control ledger's `claim` interface takes ownership of a
+`VerifiedPublicationPresence` rather than borrowing it. Combined with the
+proof type having no `Clone` implementation or production constructor, this
+prevents safe Rust callers from presenting the **same proof value** twice,
+including after a rejected grant claim. A compile-fail doctest pins that
+property, while existing tests still prove the protected ledger permits only
+one successful claimant and permanently revokes mismatches.
+
+This is **defense in depth**, not evidence that native user verification exists.
+A future faulty verifier could still issue multiple proof values, a same-UID
+process may bypass application mediation, and the ledger currently accepts only
+test-issued grants. Native credential enrollment, exact challenge assertion,
+mutation invalidation, and OS isolation remain gated under #181, #185 and #198.
+No headless publication action is enabled.
+
 ## Trust and behavioral compatibility
 
 The **same** Tauri handlers still own `preview_agent_task_publication` and
