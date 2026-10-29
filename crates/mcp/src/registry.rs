@@ -1505,6 +1505,10 @@ impl StorageRegistry {
 
         if needs_policy_migration || needs_schema_migration || needs_secret_migration {
             let backup_path = self.create_pre_migration_backup(&data)?;
+            // Secret migration already advances the affected record's revision.
+            // Keep the original values to avoid a second bump when a legacy
+            // schema/policy is migrated in the same registry transaction.
+            let original_revisions = storages.iter().map(|s| s.revision).collect::<Vec<_>>();
 
             let rollback = if needs_secret_migration {
                 self.migrate_secrets_in_batch(&mut storages)?
@@ -1513,13 +1517,23 @@ impl StorageRegistry {
             };
 
             let migration_result = (|| -> McpResult<()> {
-                for storage in &mut storages {
-                    if storage.mcp_policy.version != MCP_POLICY_VERSION {
+                for (storage, original_revision) in storages.iter_mut().zip(original_revisions) {
+                    let migrate_policy = storage.mcp_policy.version != MCP_POLICY_VERSION;
+                    let migrate_schema = !schema_version_matches_current(storage.schema_version);
+                    if migrate_policy {
                         let mut policy = storage.mcp_policy.clone();
                         migrate_legacy_policy(&mut policy)?;
                         storage.mcp_policy = policy;
                     }
-                    storage.schema_version = STORAGE_RECORD_SCHEMA_VERSION;
+                    if migrate_schema {
+                        storage.schema_version = STORAGE_RECORD_SCHEMA_VERSION;
+                    }
+                    // A policy/schema rewrite must not reuse an approval-bound
+                    // revision. If the secret migration already bumped it, do
+                    // not bump twice. The checked helper rejects saturation.
+                    if (migrate_policy || migrate_schema) && storage.revision == original_revision {
+                        storage.revision = next_storage_revision(original_revision)?;
+                    }
                 }
                 self.save_all_atomic_unlocked(&storages)?;
                 let persisted = fs::read(&self.path).map_err(|error| {
@@ -2128,6 +2142,104 @@ mod tests {
 
     use super::*;
     use crate::policy::McpAccessMode;
+
+    #[test]
+    fn automatic_policy_schema_migrations_advance_revision_once_and_are_idempotent() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("storages.json");
+        let registry = StorageRegistry::with_secret_store(
+            Some(path.clone()),
+            Arc::new(infimount_core::secrets::MemorySecretStore::new()),
+        );
+        let make = |name: &str, revision| {
+            let mut record = StorageRecord::new(
+                name.into(),
+                "local".into(),
+                json!({ "root": "/tmp/fixture" }),
+            );
+            record.revision = revision;
+            record
+        };
+        let mut policy_only = make("policy", 41);
+        policy_only.mcp_policy.version = 0;
+        let mut schema_only = make("schema", 7);
+        schema_only.schema_version = 1;
+        let mut both = make("both", 24);
+        both.mcp_policy.version = 0;
+        both.schema_version = 1;
+        let unchanged = make("unchanged", 13);
+
+        let originals = vec![policy_only, schema_only, both, unchanged];
+        fs::write(&path, serde_json::to_vec(&originals).unwrap()).unwrap();
+        let migrated = registry.load_all().unwrap();
+        assert_eq!(
+            migrated
+                .iter()
+                .map(|storage| storage.revision)
+                .collect::<Vec<_>>(),
+            vec![42, 8, 25, 13],
+        );
+        assert!(migrated.iter().all(|storage| storage.schema_version
+            == STORAGE_RECORD_SCHEMA_VERSION
+            && storage.mcp_policy.version == MCP_POLICY_VERSION));
+        let persisted = fs::read(&path).unwrap();
+        assert_eq!(registry.load_all().unwrap()[0].revision, 42);
+        assert_eq!(fs::read(&path).unwrap(), persisted);
+    }
+
+    #[test]
+    fn secret_and_policy_schema_migration_share_one_revision_advance() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("storages.json");
+        let secrets = Arc::new(infimount_core::secrets::MemorySecretStore::new());
+        let registry = StorageRegistry::with_secret_store(Some(path.clone()), secrets.clone());
+        let mut legacy = StorageRecord::new(
+            "S3".into(),
+            "s3".into(),
+            json!({ "secretAccessKey": "TEST_SECRET_DO_NOT_SHIP" }),
+        );
+        legacy.revision = 8;
+        legacy.schema_version = 1;
+        legacy.mcp_policy.version = 0;
+        fs::write(&path, serde_json::to_vec(&vec![legacy]).unwrap()).unwrap();
+
+        let loaded = registry.load_all().unwrap();
+        assert_eq!(loaded[0].revision, 9);
+        assert_eq!(loaded[0].schema_version, STORAGE_RECORD_SCHEMA_VERSION);
+        assert_eq!(loaded[0].mcp_policy.version, MCP_POLICY_VERSION);
+        assert!(loaded[0].config.get("secretAccessKey").is_none());
+        assert!(secrets
+            .get_json(&format!("storage/{}", loaded[0].id))
+            .unwrap()
+            .is_some());
+        assert!(!fs::read_to_string(&path)
+            .unwrap()
+            .contains("TEST_SECRET_DO_NOT_SHIP"));
+    }
+
+    #[test]
+    fn exhausted_revision_rejects_automatic_policy_schema_migration_without_rewrite() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("storages.json");
+        let registry = StorageRegistry::with_secret_store(
+            Some(path.clone()),
+            Arc::new(infimount_core::secrets::MemorySecretStore::new()),
+        );
+        let mut legacy = StorageRecord::new(
+            "old".into(),
+            "local".into(),
+            json!({ "root": "/tmp/fixture" }),
+        );
+        legacy.revision = u64::MAX;
+        legacy.schema_version = 1;
+        legacy.mcp_policy.version = 0;
+        let original = serde_json::to_vec(&vec![legacy]).unwrap();
+        fs::write(&path, &original).unwrap();
+        let error = registry.load_all().unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_INTERNAL);
+        assert!(error.message.contains("revision exhausted"));
+        assert_eq!(fs::read(&path).unwrap(), original);
+    }
 
     #[test]
     fn restoring_same_id_advances_revision_even_after_configuration_aba() {
