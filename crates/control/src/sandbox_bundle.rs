@@ -167,6 +167,11 @@ mod tests {
         assert_eq!(bundle.inputs[0].task_path, "inputs/a.md");
         assert_eq!(bundle.requested_outputs[0], "outputs/chart.csv");
         assert_eq!(bundle.bundle_aggregate_sha256.len(), 64);
+        // Cross-runtime canonical v1 wire vector, independently SHA-256 hashed.
+        assert_eq!(
+            bundle.bundle_aggregate_sha256,
+            "308bdae03cc5e13da6a10dcb5d755d1bb83e8ae614059a92a16949e184a75971"
+        );
 
         let json = serde_json::to_value(&bundle).unwrap();
         assert_eq!(json["schemaVersion"], 1);
