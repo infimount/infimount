@@ -53,6 +53,11 @@ to read source storage, launch remote compute, or publish results.
 
 ## Canonical v1 digest vector
 
+The serialized field is `bundleMetadataSha256`. It is intentionally **not**
+called `bundleAggregateSha256`, because an end-to-end bundle digest must
+also verify the actual copied input bytes and transfer envelope in a later
+implementation.
+
 The SHA-256 digest is computed over compact UTF-8 JSON of a field-ordered
 unsigned envelope with domain
 `infimount:v0.8.2:sandbox-task-bundle:v1`, schema version, task ID,
