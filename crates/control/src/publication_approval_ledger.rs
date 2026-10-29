@@ -16,6 +16,8 @@ use infimount_core::CoreError;
 use crate::publication_approval::{
     validate_protected_approval_binding, PublicationApprovalRecord, PublicationApprovalSnapshot,
 };
+#[cfg(test)]
+use crate::publication_presence_challenge::{presence_challenge_digest, PresenceChallengeInput};
 use crate::publication_presence_proof::VerifiedPublicationPresence;
 
 struct StoredApproval {
@@ -37,6 +39,34 @@ struct LedgerState {
     records: HashMap<String, StoredApproval>,
     #[cfg(test)]
     used_nonces: HashSet<String>,
+}
+
+#[cfg(test)]
+fn fixture_challenge_digest(record: &PublicationApprovalRecord) -> Result<String, CoreError> {
+    // This is deterministic test data, not a native authenticator, issuer or
+    // production nonce generator. The fixtures exercise the *real* versioned
+    // challenge serializer instead of accepting a fabricated digest.
+    const TEST_PROCESS_ID: &str = "6fcfa0a4-e772-4f09-a7de-14c487877798";
+    let snapshot = PublicationApprovalSnapshot {
+        workspace_id: &record.workspace_id,
+        task_id: &record.task_id,
+        destination_storage_id: &record.destination_storage_id,
+        destination_namespace: &record.destination_namespace,
+        destination_revision: record.destination_revision,
+        destination_dir: &record.destination_dir,
+        conflict_policy: &record.conflict_policy,
+        preview_fingerprint: &record.preview_fingerprint,
+        files: &record.files,
+        conflict_count: 0,
+    };
+    presence_challenge_digest(&PresenceChallengeInput {
+        control_session_id: TEST_PROCESS_ID,
+        challenge_nonce: &record.nonce,
+        actor_id: &record.actor_id,
+        issued_at_unix_ms: record.issued_at_unix_ms,
+        expires_at_unix_ms: record.expires_at_unix_ms,
+        snapshot: &snapshot,
+    })
 }
 
 /// Fresh on every trusted service boot. Never serialize or back up this state.
@@ -135,6 +165,7 @@ impl EphemeralPublicationApprovalLedger {
     /// code, CLI, IPC or MCP entry point can mint an approval.
     #[cfg(test)]
     fn insert_fixture(&self, record: PublicationApprovalRecord) -> Result<(), CoreError> {
+        let challenge_digest = fixture_challenge_digest(&record)?;
         let mut state = self
             .state
             .lock()
@@ -153,7 +184,7 @@ impl EphemeralPublicationApprovalLedger {
             StoredApproval {
                 record,
                 issuance_epoch: epoch,
-                challenge_digest: "a".repeat(64),
+                challenge_digest,
             },
         );
         Ok(())
@@ -194,8 +225,11 @@ mod tests {
         }
     }
 
-    fn verified_actor(actor: &str) -> VerifiedPublicationPresence {
-        VerifiedPublicationPresence::test_fixture(actor, &"a".repeat(64))
+    fn verified_actor(
+        record: &PublicationApprovalRecord,
+        actor: &str,
+    ) -> VerifiedPublicationPresence {
+        VerifiedPublicationPresence::test_fixture(actor, &fixture_challenge_digest(record).unwrap())
     }
 
     fn snapshot(record: &PublicationApprovalRecord) -> PublicationApprovalSnapshot<'_> {
@@ -226,12 +260,13 @@ mod tests {
                 .map(|_| {
                     let ledger = &ledger;
                     let current = &current;
+                    let record = &record;
                     scope.spawn(move || {
                         ledger
                             .claim(
                                 grant_id,
                                 current,
-                                &verified_actor("native-verified-human"),
+                                &verified_actor(record, "native-verified-human"),
                                 2_000,
                             )
                             .is_ok()
@@ -258,7 +293,7 @@ mod tests {
         let rejected = ledger.claim(&grant.grant_id, &current, &incorrect, 2_000);
         assert!(rejected.is_err());
         // A mismatching proof spends the chance to claim this grant.
-        let valid = verified_actor("native-verified-human");
+        let valid = verified_actor(&grant, "native-verified-human");
         let replay = ledger.claim(&grant.grant_id, &current, &valid, 2_010);
         assert!(replay.is_err());
     }
@@ -273,7 +308,7 @@ mod tests {
             .claim(
                 &record.grant_id,
                 &current,
-                &verified_actor("native-verified-human"),
+                &verified_actor(&record, "native-verified-human"),
                 2_000,
             )
             .unwrap();
@@ -284,7 +319,7 @@ mod tests {
             .claim(
                 &record.grant_id,
                 &current,
-                &verified_actor("native-verified-human"),
+                &verified_actor(&record, "native-verified-human"),
                 2_100,
             )
             .is_err());
@@ -301,7 +336,7 @@ mod tests {
             .claim(
                 &record.grant_id,
                 &current,
-                &verified_actor("native-verified-human"),
+                &verified_actor(&record, "native-verified-human"),
                 2_100,
             )
             .is_err());
@@ -311,7 +346,7 @@ mod tests {
             .claim(
                 &record.grant_id,
                 &current,
-                &verified_actor("native-verified-human"),
+                &verified_actor(&record, "native-verified-human"),
                 2_100,
             )
             .is_err());
@@ -338,7 +373,7 @@ mod tests {
         let old_claim = ledger.claim(
             &old.grant_id,
             &same_snapshot,
-            &verified_actor("native-verified-human"),
+            &verified_actor(&old, "native-verified-human"),
             2_010,
         );
         assert!(old_claim.is_err());
@@ -355,14 +390,14 @@ mod tests {
             .claim(
                 &fresh.grant_id,
                 &current,
-                &verified_actor("native-verified-human"),
+                &verified_actor(&fresh, "native-verified-human"),
                 2_020,
             )
             .unwrap();
         let replay = ledger.claim(
             &old.grant_id,
             &same_snapshot,
-            &verified_actor("native-verified-human"),
+            &verified_actor(&old, "native-verified-human"),
             2_030,
         );
         assert!(replay.is_err());
@@ -382,7 +417,7 @@ mod tests {
         let overflow_claim = ledger.claim(
             &old.grant_id,
             &present,
-            &verified_actor("native-verified-human"),
+            &verified_actor(&old, "native-verified-human"),
             2_010,
         );
         assert!(overflow_claim.is_err());
@@ -404,7 +439,7 @@ mod tests {
             .claim(
                 &record.grant_id,
                 &current,
-                &verified_actor("model-process"),
+                &verified_actor(&record, "model-process"),
                 2_000,
             )
             .is_err());
@@ -412,7 +447,7 @@ mod tests {
             .claim(
                 &record.grant_id,
                 &current,
-                &verified_actor("native-verified-human"),
+                &verified_actor(&record, "native-verified-human"),
                 2_100,
             )
             .is_err());
@@ -425,7 +460,7 @@ mod tests {
             .claim(
                 &record.grant_id,
                 &stale,
-                &verified_actor("native-verified-human"),
+                &verified_actor(&record, "native-verified-human"),
                 2_000,
             )
             .is_err());
@@ -436,7 +471,7 @@ mod tests {
             .claim(
                 &record.grant_id,
                 &current,
-                &verified_actor("native-verified-human"),
+                &verified_actor(&record, "native-verified-human"),
                 61_000,
             )
             .is_err());
@@ -444,5 +479,43 @@ mod tests {
         let mut another = record.clone();
         another.grant_id = "89846fbd-c253-42ff-9ab7-aed9d2b0c200".into();
         assert!(third.insert_fixture(another).is_err());
+    }
+
+    #[test]
+    fn genuine_challenge_digest_rejects_a_copied_actor_and_modified_plan() {
+        let record = grant();
+        let digest = fixture_challenge_digest(&record).unwrap();
+        assert_ne!(digest, "a".repeat(64));
+        let snapshot = snapshot(&record);
+
+        // A proof for a new nonce is not equivalent to human approval of
+        // the pending grant, even when the actor and reviewed paths match.
+        let mut other_nonce = record.clone();
+        other_nonce.nonce = "911ab9da-edce-41b8-9c23-aceb3ee5d643".into();
+        let wrong_nonce = verified_actor(&other_nonce, &record.actor_id);
+        let ledger = EphemeralPublicationApprovalLedger::new();
+        ledger.insert_fixture(record.clone()).unwrap();
+        assert!(ledger
+            .claim(&record.grant_id, &snapshot, &wrong_nonce, 2_000)
+            .is_err());
+        assert!(ledger
+            .claim(
+                &record.grant_id,
+                &snapshot,
+                &verified_actor(&record, &record.actor_id),
+                2_010,
+            )
+            .is_err());
+
+        // A changed file digest is rejected even when its byte size,
+        // destination, actor, storage revision and preview are unchanged.
+        let mut other_bytes = record.clone();
+        other_bytes.files[0].sha256 = "c".repeat(64);
+        let stale_proof = verified_actor(&other_bytes, &record.actor_id);
+        let another = EphemeralPublicationApprovalLedger::new();
+        another.insert_fixture(record.clone()).unwrap();
+        assert!(another
+            .claim(&record.grant_id, &snapshot, &stale_proof, 2_000)
+            .is_err());
     }
 }
