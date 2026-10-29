@@ -38,7 +38,7 @@ pub struct SandboxTaskBundle {
     pub input_total_bytes: u64,
     /// SHA-256 over the versioned, domain-separated metadata contract.
     /// This is NOT proof that the source file bytes were rehashed for upload.
-    pub bundle_aggregate_sha256: String,
+    pub bundle_metadata_sha256: String,
 }
 
 #[derive(Serialize)]
@@ -121,7 +121,7 @@ pub fn build_sandbox_task_bundle(
         outputs_directory: AGENT_TASK_OUTPUTS_DIR.to_owned(),
         requested_outputs,
         input_total_bytes,
-        bundle_aggregate_sha256: format!("{:x}", Sha256::digest(bytes)),
+        bundle_metadata_sha256: format!("{:x}", Sha256::digest(bytes)),
     };
     // Bound the *final* serialized payload, including its digest field.
     if serde_json::to_vec(&bundle)?.len() > MAX_SANDBOX_BUNDLE_MANIFEST_BYTES {
@@ -174,10 +174,10 @@ mod tests {
         assert_eq!(bundle.input_total_bytes, 12);
         assert_eq!(bundle.inputs[0].task_path, "inputs/a.md");
         assert_eq!(bundle.requested_outputs[0], "outputs/chart.csv");
-        assert_eq!(bundle.bundle_aggregate_sha256.len(), 64);
+        assert_eq!(bundle.bundle_metadata_sha256.len(), 64);
         // Cross-runtime canonical v1 wire vector, independently SHA-256 hashed.
         assert_eq!(
-            bundle.bundle_aggregate_sha256,
+            bundle.bundle_metadata_sha256,
             "308bdae03cc5e13da6a10dcb5d755d1bb83e8ae614059a92a16949e184a75971"
         );
 
@@ -185,6 +185,11 @@ mod tests {
         assert_eq!(json["schemaVersion"], 1);
         assert_eq!(json["outputsDirectory"], "outputs");
         assert_eq!(json["title"], "Summarize sample data");
+        assert_eq!(
+            json["bundleMetadataSha256"],
+            "308bdae03cc5e13da6a10dcb5d755d1bb83e8ae614059a92a16949e184a75971"
+        );
+        assert!(json.get("bundleAggregateSha256").is_none());
         for field in [
             "workspaceId",
             "taskRoot",
@@ -218,15 +223,15 @@ mod tests {
         reordered.inputs[0].sha256 = "c".repeat(64);
         let changed_source = build_sandbox_task_bundle(&reordered, &reviewed).unwrap();
         assert_ne!(
-            initial.bundle_aggregate_sha256,
-            changed_source.bundle_aggregate_sha256
+            initial.bundle_metadata_sha256,
+            changed_source.bundle_metadata_sha256
         );
 
         reviewed.objective.push_str(" Add a short risks section.");
         let changed_review = build_sandbox_task_bundle(&task(), &reviewed).unwrap();
         assert_ne!(
-            initial.bundle_aggregate_sha256,
-            changed_review.bundle_aggregate_sha256
+            initial.bundle_metadata_sha256,
+            changed_review.bundle_metadata_sha256
         );
     }
 
