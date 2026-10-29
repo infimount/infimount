@@ -4,7 +4,8 @@ on:
   push:
     branches: ["main"]
   pull_request:
-    branches: ["main"]
+    branches: ["**"]
+    types: [opened, reopened, synchronize, edited, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -19,6 +20,7 @@ concurrency:
 
 jobs:
   lint-rustfmt:
+    if: github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/v')
     name: Rust Formatting (fast)
     runs-on: ubuntu-latest
     steps:
@@ -35,6 +37,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Require canonical target for merge-ready PRs
+        env:
+          PR_BASE: ${{ github.base_ref }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          PR_EVENT: ${{ github.event_name }}
+        run: |
+          bash scripts/check-pr-merge-target.sh --self-test
+          bash scripts/check-pr-merge-target.sh "$PR_BASE" "$PR_DRAFT" "$PR_EVENT"
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
@@ -56,6 +66,7 @@ jobs:
           ./scripts/test-packaged-sidecar-checksum.sh
 
   lint-yaml:
+    if: github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/v')
     name: YAML Lint
     runs-on: ubuntu-latest
     steps:
@@ -70,6 +81,7 @@ jobs:
         run: yamllint -c .yamllint.yaml .
 
   lint-markdown:
+    if: github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/v')
     name: Markdown Lint
     runs-on: ubuntu-latest
     steps:
