@@ -70,9 +70,10 @@ pub fn build_sandbox_task_bundle(
 
     if reviewed_export_brief.title.trim() != reviewed_export_brief.title
         || reviewed_export_brief.objective.trim() != reviewed_export_brief.objective
-        || reviewed_export_brief.objective.chars().any(|ch| {
-            ch.is_control() && !matches!(ch, '\n' | '\r' | '\t')
-        })
+        || reviewed_export_brief
+            .objective
+            .chars()
+            .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\r' | '\t'))
     {
         return Err(CoreError::Config(
             "sandbox export requires canonical, reviewed title and instructions".into(),
