@@ -111,7 +111,7 @@ pub fn build_sandbox_task_bundle(
             "sandbox metadata manifest exceeds the 4 MiB limit".into(),
         ));
     }
-    Ok(SandboxTaskBundle {
+    let bundle = SandboxTaskBundle {
         schema_version: SANDBOX_TASK_BUNDLE_SCHEMA_VERSION,
         task_id: manifest.task_id.clone(),
         title: reviewed_export_brief.title.clone(),
@@ -121,7 +121,14 @@ pub fn build_sandbox_task_bundle(
         requested_outputs,
         input_total_bytes,
         bundle_aggregate_sha256: format!("{:x}", Sha256::digest(bytes)),
-    })
+    };
+    // Bound the *final* serialized payload, including its digest field.
+    if serde_json::to_vec(&bundle)?.len() > MAX_SANDBOX_BUNDLE_MANIFEST_BYTES {
+        return Err(CoreError::Config(
+            "sandbox metadata manifest exceeds the 4 MiB limit".into(),
+        ));
+    }
+    Ok(bundle)
 }
 
 #[cfg(test)]
