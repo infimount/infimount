@@ -291,21 +291,11 @@ mod tests {
         }];
         let mut brief = reviewed();
         brief.requested_outputs = vec!["outputs/z.md".into(), "outputs/a.md".into()];
-        let first = build_openai_hosted_offline_request(
-            &prepared,
-            &brief,
-            &inputs,
-            "gpt-6-astra",
-        )
-        .unwrap();
+        let first =
+            build_openai_hosted_offline_request(&prepared, &brief, &inputs, "gpt-6-astra").unwrap();
         brief.requested_outputs.reverse();
-        let second = build_openai_hosted_offline_request(
-            &prepared,
-            &brief,
-            &inputs,
-            "gpt-6-astra",
-        )
-        .unwrap();
+        let second =
+            build_openai_hosted_offline_request(&prepared, &brief, &inputs, "gpt-6-astra").unwrap();
         assert_eq!(
             serde_json::to_vec(&first).unwrap(),
             serde_json::to_vec(&second).unwrap()
@@ -317,10 +307,10 @@ mod tests {
         assert!(input.find("outputs/a.md").unwrap() < input.find("outputs/z.md").unwrap());
 
         brief.requested_outputs = vec!["outputs/../secret".into()];
-        assert!(build_openai_hosted_offline_request(
-            &prepared, &brief, &inputs, "gpt-6-astra",
-        )
-        .is_err());
+        assert!(
+            build_openai_hosted_offline_request(&prepared, &brief, &inputs, "gpt-6-astra",)
+                .is_err()
+        );
     }
 
     #[test]
