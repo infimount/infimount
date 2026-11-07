@@ -128,8 +128,8 @@ pub async fn ingest_sandbox_output_into_memory(
         ));
     }
 
-    let mut committed = 0_usize;
-    for (file, destination) in candidate.entries.iter().zip(&destination_paths) {
+    let planned = candidate.entries.iter().zip(&destination_paths);
+    for (committed, (file, destination)) in planned.enumerate() {
         let expected = AgentTaskFileDigest {
             byte_size: file.byte_size,
             sha256: file.sha256.clone(),
@@ -153,7 +153,6 @@ pub async fn ingest_sandbox_output_into_memory(
                 CoreError::TransferCleanupRequired
             });
         }
-        committed += 1;
     }
 
     Ok(InMemorySandboxIngestResult {
