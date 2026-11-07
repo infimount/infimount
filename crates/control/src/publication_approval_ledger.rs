@@ -91,7 +91,7 @@ impl EphemeralPublicationApprovalLedger {
         &self,
         grant_id: &str,
         snapshot: &PublicationApprovalSnapshot<'_>,
-        verified_presence: &VerifiedPublicationPresence,
+        verified_presence: VerifiedPublicationPresence,
         now_unix_ms: u64,
     ) -> Result<(), CoreError> {
         let mut state = self
@@ -266,7 +266,7 @@ mod tests {
                             .claim(
                                 grant_id,
                                 current,
-                                &verified_actor(record, "native-verified-human"),
+                                verified_actor(record, "native-verified-human"),
                                 2_000,
                             )
                             .is_ok()
@@ -290,11 +290,11 @@ mod tests {
         let current = snapshot(&grant);
         let incorrect =
             VerifiedPublicationPresence::test_fixture("native-verified-human", &"b".repeat(64));
-        let rejected = ledger.claim(&grant.grant_id, &current, &incorrect, 2_000);
+        let rejected = ledger.claim(&grant.grant_id, &current, incorrect, 2_000);
         assert!(rejected.is_err());
         // A mismatching proof spends the chance to claim this grant.
         let valid = verified_actor(&grant, "native-verified-human");
-        let replay = ledger.claim(&grant.grant_id, &current, &valid, 2_010);
+        let replay = ledger.claim(&grant.grant_id, &current, valid, 2_010);
         assert!(replay.is_err());
     }
 
@@ -308,7 +308,7 @@ mod tests {
             .claim(
                 &record.grant_id,
                 &current,
-                &verified_actor(&record, "native-verified-human"),
+                verified_actor(&record, "native-verified-human"),
                 2_000,
             )
             .unwrap();
@@ -319,7 +319,7 @@ mod tests {
             .claim(
                 &record.grant_id,
                 &current,
-                &verified_actor(&record, "native-verified-human"),
+                verified_actor(&record, "native-verified-human"),
                 2_100,
             )
             .is_err());
@@ -336,7 +336,7 @@ mod tests {
             .claim(
                 &record.grant_id,
                 &current,
-                &verified_actor(&record, "native-verified-human"),
+                verified_actor(&record, "native-verified-human"),
                 2_100,
             )
             .is_err());
@@ -346,7 +346,7 @@ mod tests {
             .claim(
                 &record.grant_id,
                 &current,
-                &verified_actor(&record, "native-verified-human"),
+                verified_actor(&record, "native-verified-human"),
                 2_100,
             )
             .is_err());
@@ -373,7 +373,7 @@ mod tests {
         let old_claim = ledger.claim(
             &old.grant_id,
             &same_snapshot,
-            &verified_actor(&old, "native-verified-human"),
+            verified_actor(&old, "native-verified-human"),
             2_010,
         );
         assert!(old_claim.is_err());
@@ -390,14 +390,14 @@ mod tests {
             .claim(
                 &fresh.grant_id,
                 &current,
-                &verified_actor(&fresh, "native-verified-human"),
+                verified_actor(&fresh, "native-verified-human"),
                 2_020,
             )
             .unwrap();
         let replay = ledger.claim(
             &old.grant_id,
             &same_snapshot,
-            &verified_actor(&old, "native-verified-human"),
+            verified_actor(&old, "native-verified-human"),
             2_030,
         );
         assert!(replay.is_err());
@@ -417,7 +417,7 @@ mod tests {
         let overflow_claim = ledger.claim(
             &old.grant_id,
             &present,
-            &verified_actor(&old, "native-verified-human"),
+            verified_actor(&old, "native-verified-human"),
             2_010,
         );
         assert!(overflow_claim.is_err());
@@ -439,7 +439,7 @@ mod tests {
             .claim(
                 &record.grant_id,
                 &current,
-                &verified_actor(&record, "model-process"),
+                verified_actor(&record, "model-process"),
                 2_000,
             )
             .is_err());
@@ -447,7 +447,7 @@ mod tests {
             .claim(
                 &record.grant_id,
                 &current,
-                &verified_actor(&record, "native-verified-human"),
+                verified_actor(&record, "native-verified-human"),
                 2_100,
             )
             .is_err());
@@ -460,7 +460,7 @@ mod tests {
             .claim(
                 &record.grant_id,
                 &stale,
-                &verified_actor(&record, "native-verified-human"),
+                verified_actor(&record, "native-verified-human"),
                 2_000,
             )
             .is_err());
@@ -471,7 +471,7 @@ mod tests {
             .claim(
                 &record.grant_id,
                 &current,
-                &verified_actor(&record, "native-verified-human"),
+                verified_actor(&record, "native-verified-human"),
                 61_000,
             )
             .is_err());
@@ -496,13 +496,13 @@ mod tests {
         let ledger = EphemeralPublicationApprovalLedger::new();
         ledger.insert_fixture(record.clone()).unwrap();
         assert!(ledger
-            .claim(&record.grant_id, &snapshot, &wrong_nonce, 2_000)
+            .claim(&record.grant_id, &snapshot, wrong_nonce, 2_000)
             .is_err());
         assert!(ledger
             .claim(
                 &record.grant_id,
                 &snapshot,
-                &verified_actor(&record, &record.actor_id),
+                verified_actor(&record, &record.actor_id),
                 2_010,
             )
             .is_err());
@@ -515,7 +515,7 @@ mod tests {
         let another = EphemeralPublicationApprovalLedger::new();
         another.insert_fixture(record.clone()).unwrap();
         assert!(another
-            .claim(&record.grant_id, &snapshot, &stale_proof, 2_000)
+            .claim(&record.grant_id, &snapshot, stale_proof, 2_000)
             .is_err());
     }
 }
