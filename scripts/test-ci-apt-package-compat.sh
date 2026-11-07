@@ -17,6 +17,11 @@ apt-cache() {
   echo "${2:-}:"
   echo "  Installed: (none)"
   echo "  Candidate: $candidate"
+  # A long policy listing must not be mistaken for a failed lookup because
+  # its consumer closes the pipe before apt-cache finishes writing.
+  for ((index = 0; index < 1024; index++)); do
+    echo "    1.0-ubuntu.$index 500"
+  done
 }
 
 CI_APT_TEST_CASE=old
