@@ -11,7 +11,7 @@ accepts a sandbox output **candidate** from C1.2, one isolated OpenDAL
 Memory staging operator, a separate Memory destination operator and a
 trusted task ID.
 
-The operation is deliberately restricted to `Scheme::Memory` for both
+The operation is deliberately restricted to the OpenDAL `memory` scheme for both
 operators. An arbitrary filesystem or cloud operator fails closed.
 A same-user process does not gain a real storage write capability by
 calling this function.
