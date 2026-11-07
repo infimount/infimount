@@ -15,7 +15,7 @@ use infimount_core::agent_task_io::{
 };
 use infimount_core::agent_tasks::agent_task_root;
 use infimount_core::CoreError;
-use opendal::{ErrorKind, Operator, Scheme};
+use opendal::{ErrorKind, Operator};
 use serde::Serialize;
 
 use crate::review_evidence::list_review_output_entries;
@@ -47,8 +47,8 @@ pub async fn ingest_sandbox_output_into_memory(
     destination_workspace: &Operator,
     trusted_task_id: &str,
 ) -> Result<InMemorySandboxIngestResult, CoreError> {
-    if staged.info().scheme() != Scheme::Memory
-        || destination_workspace.info().scheme() != Scheme::Memory
+    if staged.info().scheme() != "memory"
+        || destination_workspace.info().scheme() != "memory"
     {
         return Err(CoreError::Config(
             "sandbox ingestion prototype requires isolated memory storage".into(),
