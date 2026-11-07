@@ -2512,6 +2512,7 @@ dependencies = [
 name = "infimount_control"
 version = "0.8.1"
 dependencies = [
+ "base64 0.22.1",
  "infimount_core",
  "infimount_mcp",
  "opendal",
