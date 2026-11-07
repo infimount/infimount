@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Linux package-launch dependencies
         run: bash scripts/ci-apt-install.sh xvfb gnome-keyring dbus-x11 libsecret-tools
