@@ -47,9 +47,7 @@ pub async fn ingest_sandbox_output_into_memory(
     destination_workspace: &Operator,
     trusted_task_id: &str,
 ) -> Result<InMemorySandboxIngestResult, CoreError> {
-    if staged.info().scheme() != "memory"
-        || destination_workspace.info().scheme() != "memory"
-    {
+    if staged.info().scheme() != "memory" || destination_workspace.info().scheme() != "memory" {
         return Err(CoreError::Config(
             "sandbox ingestion prototype requires isolated memory storage".into(),
         ));
