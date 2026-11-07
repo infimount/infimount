@@ -23,6 +23,21 @@ pub const OPENAI_HOSTED_REQUEST_MAX_JSON_BYTES: usize = 12 * 1024 * 1024;
 const FIXED_AGENT_INSTRUCTIONS: &str =
     "Use only the provided workspace inputs. Write deliverables under /workspace/outputs/. Do not seek source storage credentials or change the destination.";
 
+/// Tell the hosted agent the exact separately reviewed deliverables.
+/// These are task instructions, not filesystem or publication permissions.
+fn render_hosted_input(instructions: &str, requested_outputs: &[String]) -> String {
+    let mut input = instructions.to_owned();
+    if !requested_outputs.is_empty() {
+        input.push_str("\n\nApproved deliverables (paths inside /workspace):\n");
+        for output in requested_outputs {
+            input.push_str("- /workspace/");
+            input.push_str(output);
+            input.push('\n');
+        }
+    }
+    input
+}
+
 pub struct ReviewedSandboxInputBytes<'a> {
     pub task_path: &'a str,
     pub bytes: &'a [u8],
@@ -145,7 +160,7 @@ pub fn build_openai_hosted_offline_request(
             network: HostedNetwork { access: "disabled" },
             files,
         },
-        input: bundle.instructions,
+        input: render_hosted_input(&bundle.instructions, &bundle.requested_outputs),
         stream: true,
     };
 
@@ -215,7 +230,11 @@ mod tests {
         assert_eq!(json["environment"]["files"][0]["data"], "YWxwaGE=");
         assert_eq!(
             json["input"],
-            "Summarize only sample.csv into outputs/summary.md."
+            concat!(
+                "Summarize only sample.csv into outputs/summary.md.",
+                "\n\nApproved deliverables (paths inside /workspace):\n",
+                "- /workspace/outputs/summary.md\n",
+            )
         );
         assert_eq!(json["stream"], true);
         for key in [
@@ -261,6 +280,47 @@ mod tests {
             },
         ];
         assert!(build_openai_hosted_offline_request(&task, &brief, &extra, "gpt-6-astra").is_err());
+    }
+
+    #[test]
+    fn reviewed_deliverable_paths_are_sorted_and_included_in_model_task() {
+        let prepared = manifest(b"alpha");
+        let inputs = [ReviewedSandboxInputBytes {
+            task_path: "inputs/sample.csv",
+            bytes: b"alpha",
+        }];
+        let mut brief = reviewed();
+        brief.requested_outputs = vec!["outputs/z.md".into(), "outputs/a.md".into()];
+        let first = build_openai_hosted_offline_request(
+            &prepared,
+            &brief,
+            &inputs,
+            "gpt-6-astra",
+        )
+        .unwrap();
+        brief.requested_outputs.reverse();
+        let second = build_openai_hosted_offline_request(
+            &prepared,
+            &brief,
+            &inputs,
+            "gpt-6-astra",
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_vec(&first).unwrap(),
+            serde_json::to_vec(&second).unwrap()
+        );
+        let serialized = serde_json::to_value(&first).unwrap();
+        let input = serialized["input"].as_str().unwrap();
+        assert!(input.contains("- /workspace/outputs/a.md\n"));
+        assert!(input.contains("- /workspace/outputs/z.md\n"));
+        assert!(input.find("outputs/a.md").unwrap() < input.find("outputs/z.md").unwrap());
+
+        brief.requested_outputs = vec!["outputs/../secret".into()];
+        assert!(build_openai_hosted_offline_request(
+            &prepared, &brief, &inputs, "gpt-6-astra",
+        )
+        .is_err());
     }
 
     #[test]
