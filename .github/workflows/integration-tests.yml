@@ -49,7 +49,10 @@ jobs:
 
   desktop-ui:
     name: Desktop UI (Playwright CT)
-    runs-on: ubuntu-latest
+    # Playwright Chromium does not yet support ubuntu26.04-x64, which
+    # ubuntu-latest began selecting in the October-November 2026 migration.
+    # Retain the full UI suite on a supported host instead of skipping it.
+    runs-on: ubuntu-24.04
 
     defaults:
       run:
