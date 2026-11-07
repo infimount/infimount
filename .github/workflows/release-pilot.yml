@@ -16,6 +16,8 @@ on:
       - "scripts/build-mcp-sidecar.sh"
       - "scripts/prepare-mcp-sidecar.mjs"
       - "scripts/ci-apt-install.sh"
+      - "scripts/ci-apt-package-compat.sh"
+      - "scripts/test-ci-apt-package-compat.sh"
       - "scripts/prepare-ci-apt-sources.sh"
       - "scripts/release-pilot*.sh"
       - "scripts/release-pilot*.mjs"
