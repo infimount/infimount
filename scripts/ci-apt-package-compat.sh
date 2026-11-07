@@ -4,7 +4,9 @@
 
 ci_apt_has_candidate() {
   local candidate
-  candidate="$(LC_ALL=C apt-cache policy "$1" | awk '$1 == "Candidate:" { print $2; exit }')" || return 1
+  # Consume the full APT policy output. Early awk exit can trigger
+  # SIGPIPE in apt-cache under pipefail, falsely reporting no candidate.
+  candidate="$(LC_ALL=C apt-cache policy "$1" | awk '$1 == "Candidate:" { value = $2 } END { print value }')" || return 1
   [[ -n "$candidate" && "$candidate" != "(none)" ]]
 }
 
