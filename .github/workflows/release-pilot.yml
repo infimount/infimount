@@ -41,7 +41,10 @@ concurrency:
 jobs:
   desktop-release-pilot:
     name: Desktop Release Pilot
-    runs-on: ubuntu-latest
+    # The real WebKit/Tauri WebDriver pilot is qualified on Ubuntu 24.04.
+    # Ubuntu 26.04 changes both package names and WebKit rendering behavior;
+    # preserve the entire non-skippable pilot until platform qualification.
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       INFIMOUNT_PILOT_HOME: /tmp/infimount-release-pilot
