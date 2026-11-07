@@ -72,6 +72,8 @@ grep -Fq 'APT_INSTALL_TIMEOUT_SECONDS="${APT_INSTALL_TIMEOUT_SECONDS:-900}"' "$R
 grep -Fq 'timeout --signal=TERM --kill-after=15s "${APT_INSTALL_TIMEOUT_SECONDS}s"' "$ROOT/scripts/ci-apt-install.sh"
 grep -Fq 'Acquire::Retries=3' "$ROOT/scripts/ci-apt-install.sh"
 grep -Fq 'Acquire::http::Timeout=45' "$ROOT/scripts/ci-apt-install.sh"
-grep -Fq 'Acquire::https::Timeout=45 install -y "$@"' "$ROOT/scripts/ci-apt-install.sh"
+grep -Fq 'source "$ROOT/scripts/ci-apt-package-compat.sh"' "$ROOT/scripts/ci-apt-install.sh"
+grep -Fq 'ci_apt_resolve_packages "$@"' "$ROOT/scripts/ci-apt-install.sh"
+grep -Fq 'Acquire::https::Timeout=45 install -y "${CI_APT_PACKAGES[@]}"' "$ROOT/scripts/ci-apt-install.sh"
 
 echo "CI APT source isolation test passed."

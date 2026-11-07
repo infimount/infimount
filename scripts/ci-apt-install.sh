@@ -42,7 +42,13 @@ if [[ "$updated" -ne 1 ]]; then
   exit 1
 fi
 
-if ! sudo timeout --signal=TERM --kill-after=15s "${APT_INSTALL_TIMEOUT_SECONDS}s" apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=45 -o Acquire::https::Timeout=45 install -y "$@"; then
+# APT package names differ between Ubuntu runner generations. Resolve only
+# the known WebKit driver alias after index refresh, never skip a missing driver.
+# shellcheck source=scripts/ci-apt-package-compat.sh
+source "$ROOT/scripts/ci-apt-package-compat.sh"
+ci_apt_resolve_packages "$@"
+
+if ! sudo timeout --signal=TERM --kill-after=15s "${APT_INSTALL_TIMEOUT_SECONDS}s" apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=45 -o Acquire::https::Timeout=45 install -y "${CI_APT_PACKAGES[@]}"; then
   echo "APT package installation failed or timed out." >&2
   exit 1
 fi

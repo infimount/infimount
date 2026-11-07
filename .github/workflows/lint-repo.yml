@@ -56,6 +56,10 @@ jobs:
           "$(go env GOPATH)/bin/actionlint"
       - name: Enforce bounded APT workflow operations
         run: bash scripts/check-ci-apt-workflows.sh
+      - name: Verify WebKit APT package compatibility
+        run: |
+          bash -n scripts/ci-apt-package-compat.sh scripts/ci-apt-install.sh
+          bash scripts/test-ci-apt-package-compat.sh
       - name: Zero-manual release policy
         run: ./scripts/check-zero-manual-release-gate.sh
       - name: Deterministic release policy fixtures
