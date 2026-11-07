@@ -14,7 +14,10 @@ ci_apt_resolve_packages() {
   for package in "$@"; do
     if [[ "$package" == "webkit2gtk-driver" ]] && ! ci_apt_has_candidate "$package"; then
       if ! ci_apt_has_candidate "webkitgtk-webdriver"; then
-        echo "Neither Ubuntu WebKit WebDriver package is installable." >&2
+        echo "Neither Ubuntu WebKit WebDriver package has an APT candidate." >&2
+        LC_ALL=C apt-cache policy webkit2gtk-driver webkitgtk-webdriver >&2 || true
+        # Only print Ubuntu repository components, not private apt source URLs.
+        grep -hs '^Components:' /etc/apt/sources.list.d/*.sources >&2 || true
         return 1
       fi
       package="webkitgtk-webdriver"
