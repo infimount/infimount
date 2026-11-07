@@ -6,6 +6,21 @@
 //! A native adapter must verify signed challenge, enrolled key and user
 //! verification BEFORE creating this value in a future reviewed change.
 
+/// Opaque, non-cloneable proof for a future qualified native verification.
+///
+/// The ledger consumes this value by ownership on a claim attempt. A caller
+/// cannot reuse the *same safe Rust value* for another grant, even if a claim
+/// fails. This does not prevent a compromised verifier from issuing a second
+/// proof and is not OS-level isolation or evidence of physical user consent.
+///
+/// ```compile_fail
+/// use infimount_control::publication_presence_proof::VerifiedPublicationPresence;
+///
+/// fn cannot_replay(proof: VerifiedPublicationPresence) {
+///     drop(proof);
+///     drop(proof); // use of moved value must fail to compile
+/// }
+/// ```
 pub struct VerifiedPublicationPresence {
     actor_id: String,
     challenge_digest: String,
