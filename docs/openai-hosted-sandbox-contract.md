@@ -33,7 +33,11 @@ The returned payload is a tightly allowlisted v1 Agents API session request:
 - `environment.network.access: "disabled"`, **always explicit**.
 - `environment.files[]`: inline base64 bytes for only reviewed `inputs/`
   paths inside `/workspace/`. No host mounts or source storage credentials.
-- The reviewed export objective as `input`, and `stream: true`.
+- The reviewed export objective plus a **canonical sorted list** of every
+  requested `outputs/` deliverable as `input`, and `stream: true`.
+  These paths are instructions to the agent, not permission to write local
+  storage or publish files. Future output import still independently
+  inventories and hashes provider artifacts against the user's review.
 
 No `env`, `setup_commands`, `packages`, `mounts`, external `mcp`,
 source storage ID or API token field is included. The request struct does
