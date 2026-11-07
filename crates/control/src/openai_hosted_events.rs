@@ -224,10 +224,8 @@ mod tests {
             br#"{"type":"agent.session.turn.completed","turn":{"subagent_id":null}}"#,
         )
         .unwrap();
-        gate.observe_json(
-            br#"{"type":"agent.session.turn.failed","turn":{"subagent_id":null}}"#,
-        )
-        .unwrap();
+        gate.observe_json(br#"{"type":"agent.session.turn.failed","turn":{"subagent_id":null}}"#)
+            .unwrap();
         assert_eq!(gate.finish_stream(), Outcome::SessionFailed);
 
         let mut gate = HostedSessionEventGate::new();
