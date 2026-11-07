@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Sourced by ci-apt-install.sh AFTER apt-get update. No external side effects.
+# Keep the Linux desktop pilot runnable across GitHub Ubuntu 24.04 and 26.04.
+
+ci_apt_has_candidate() {
+  local candidate
+  candidate="$(LC_ALL=C apt-cache policy "$1" | awk '$1 == "Candidate:" { print $2; exit }')" || return 1
+  [[ -n "$candidate" && "$candidate" != "(none)" ]]
+}
+
+ci_apt_resolve_packages() {
+  CI_APT_PACKAGES=()
+  local package
+  for package in "$@"; do
+    if [[ "$package" == "webkit2gtk-driver" ]] && ! ci_apt_has_candidate "$package"; then
+      if ! ci_apt_has_candidate "webkitgtk-webdriver"; then
+        echo "Neither Ubuntu WebKit WebDriver package is installable." >&2
+        return 1
+      fi
+      package="webkitgtk-webdriver"
+      echo "Using Ubuntu's renamed WebKit WebDriver package: $package" >&2
+    fi
+    CI_APT_PACKAGES+=("$package")
+  done
+}
