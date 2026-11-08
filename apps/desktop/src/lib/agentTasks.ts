@@ -20,6 +20,32 @@ export interface AgentTaskListRequest {
   workspaceId: string;
 }
 
+export interface PreviewHostedTaskExportRequest extends AgentTaskIdentityRequest {
+  reviewedExportBrief: {
+    title: string;
+    objective: string;
+    requestedOutputs: string[];
+  };
+}
+
+export interface HostedTaskExportPreview {
+  provider: "openai_agents_api";
+  dataResidency: "United States";
+  zeroDataRetentionSupported: false;
+  sandboxNetworkAccess: "disabled";
+  pilotSpendLimitUsdCents: number;
+  reviewedTitle: string;
+  reviewedInstructions: string;
+  requestedOutputs: string[];
+  inputs: Array<{ taskPath: string; byteSize: number; sha256: string }>;
+  inputFileCount: number;
+  inputTotalBytes: number;
+  bundleMetadataSha256: string;
+  inputsRehashed: false;
+  exportAuthorized: false;
+  executable: false;
+}
+
 export interface ClaudePilotBuildInfo {
   enabled: boolean;
   platformSupported: boolean;
@@ -198,6 +224,7 @@ async function invokeTask<T>(
   request:
     | AgentTaskPreparationRequest
     | AgentTaskIdentityRequest
+    | PreviewHostedTaskExportRequest
     | AgentTaskListRequest
     | AgentTaskPublicationRequest
     | ApplyAgentTaskPublicationRequest
@@ -273,6 +300,12 @@ export function reviewAgentTaskOutputs(
   request: AgentTaskOutputReviewRequest,
 ): Promise<AgentTaskOutputReviewOutput> {
   return invokeTask<AgentTaskOutputReviewOutput>("review_agent_task_outputs", request);
+}
+
+export function previewHostedTaskExport(
+  request: PreviewHostedTaskExportRequest,
+): Promise<HostedTaskExportPreview> {
+  return invokeTask<HostedTaskExportPreview>("preview_hosted_task_export", request);
 }
 
 export function previewAgentTaskPublication(

@@ -175,6 +175,7 @@ fn main() {
             commands::prepare_agent_task,
             commands::list_agent_tasks,
             commands::review_agent_task_outputs,
+            commands::preview_hosted_task_export,
             commands::preview_agent_task_publication,
             commands::publish_agent_task_outputs,
             agent_adapters::list_agent_task_adapters,
