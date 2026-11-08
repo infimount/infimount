@@ -102,7 +102,7 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
         onClick={() => {
           if (opened) invalidateReview();
           setOpened(!opened);
-        }
+        }}
       >
         <span className="flex items-center gap-2">
           <FileCheck2 className="h-4 w-4 text-primary" />
