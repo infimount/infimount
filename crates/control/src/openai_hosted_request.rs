@@ -20,6 +20,8 @@ pub const OPENAI_HOSTED_INLINE_MAX_FILES: usize = 32;
 pub const OPENAI_HOSTED_INLINE_MAX_FILE_BYTES: usize = 5 * 1024 * 1024;
 pub const OPENAI_HOSTED_INLINE_MAX_BYTES: usize = 8 * 1024 * 1024;
 pub const OPENAI_HOSTED_REQUEST_MAX_JSON_BYTES: usize = 12 * 1024 * 1024;
+/// Fixed USD-cent ceiling for synthetic C2 hosted pilot sessions, not user consent.
+pub const OPENAI_HOSTED_PILOT_SESSION_SPEND_CENTS: u32 = 100;
 
 const FIXED_AGENT_INSTRUCTIONS: &str =
     "Use only the provided workspace inputs. Write deliverables under /workspace/outputs/. Do not seek source storage credentials or change the destination.";
@@ -56,6 +58,11 @@ struct HostedNetwork {
 }
 
 #[derive(Serialize)]
+struct HostedSpendControl {
+    limit: u32,
+}
+
+#[derive(Serialize)]
 struct HostedInlineFile {
     #[serde(rename = "type")]
     file_type: &'static str,
@@ -78,6 +85,7 @@ pub struct OpenAiHostedOfflineSessionRequest {
     agent: HostedAgent,
     environment: HostedEnvironment,
     input: String,
+    spend_control: HostedSpendControl,
     stream: bool,
 }
 
@@ -167,6 +175,12 @@ pub fn build_openai_hosted_offline_request(
             files,
         },
         input: render_hosted_input(&bundle.instructions, &bundle.requested_outputs),
+        // The Agents API otherwise creates an UNLIMITED session. This is a
+        // fixed maximum for the offline synthetic pilot. A trusted future UI
+        // must separately authorize the specific export, provider and spend.
+        spend_control: HostedSpendControl {
+            limit: OPENAI_HOSTED_PILOT_SESSION_SPEND_CENTS,
+        },
         stream: true,
     };
 
@@ -242,6 +256,7 @@ mod tests {
                 "- /workspace/outputs/summary.md\n",
             )
         );
+        assert_eq!(json["spend_control"]["limit"], 100);
         assert_eq!(json["stream"], true);
         for key in [
             "env",

@@ -127,6 +127,7 @@ async fn reviewed_request_root_items_artifacts_hashes_and_create_only_import() {
         build_openai_hosted_offline_request(&manifest, &brief, &provided, "gpt-6-astra").unwrap();
     let wire = serde_json::to_value(&request).unwrap();
     assert_eq!(wire["environment"]["network"]["access"], "disabled");
+    assert_eq!(wire["spend_control"]["limit"], 100);
     let input = wire["input"].as_str().unwrap();
     assert!(input.contains("/workspace/outputs/summary.json"));
     assert!(input.contains("/workspace/outputs/audit.txt"));

@@ -35,6 +35,10 @@ The returned payload is a tightly allowlisted v1 Agents API session request:
   paths inside `/workspace/`. No host mounts or source storage credentials.
 - The reviewed export objective plus a **canonical sorted list** of every
   requested `outputs/` deliverable as `input`, and `stream: true`.
+- `spend_control.limit: 100` (USD cents), an explicit **$1 pilot-session
+  spending ceiling**. The Agents API otherwise creates unlimited sessions
+  when this field is omitted. This provider-side control is best-effort and
+  not a guarantee against all charges or a substitute for user consent.
   These paths are instructions to the agent, not permission to write local
   storage or publish files. Future output import still independently
   inventories and hashes provider artifacts against the user's review.
