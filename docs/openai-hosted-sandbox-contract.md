@@ -43,7 +43,8 @@ No `env`, `setup_commands`, `packages`, `mounts`, external `mcp`,
 source storage ID or API token field is included. The request struct does
 not derive `Debug` because it contains reviewed user data.
 
-The first inline-only pilot caps inputs to **32 files / 8 MiB** and the
+The first inline-only pilot caps inputs to **32 files / 8 MiB total**, with
+the hosted API's **5 MiB maximum per inline file**, and the
 complete serialized request to **12 MiB**. Larger inputs require a separately
 approved File-ID upload stage and independently verified byte evidence.
 The OpenAI documentation's hosted-sandbox networking default is enabled,

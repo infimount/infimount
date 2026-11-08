@@ -17,6 +17,7 @@ use sha2::{Digest, Sha256};
 use crate::sandbox_bundle::build_sandbox_task_bundle;
 
 pub const OPENAI_HOSTED_INLINE_MAX_FILES: usize = 32;
+pub const OPENAI_HOSTED_INLINE_MAX_FILE_BYTES: usize = 5 * 1024 * 1024;
 pub const OPENAI_HOSTED_INLINE_MAX_BYTES: usize = 8 * 1024 * 1024;
 pub const OPENAI_HOSTED_REQUEST_MAX_JSON_BYTES: usize = 12 * 1024 * 1024;
 
@@ -117,6 +118,11 @@ pub fn build_openai_hosted_offline_request(
     sorted.sort_by(|left, right| left.task_path.cmp(right.task_path));
     let mut total_bytes = 0_usize;
     for (given, expected) in sorted.iter().zip(&bundle.inputs) {
+        if given.bytes.len() > OPENAI_HOSTED_INLINE_MAX_FILE_BYTES {
+            return Err(CoreError::Config(
+                "sandbox inline input exceeds the hosted 5 MiB per-file limit".into(),
+            ));
+        }
         if given.task_path != expected.task_path
             || given.task_path.len() > MAX_AGENT_TASK_PATH_LEN
             || given.bytes.len() as u64 != expected.byte_size
@@ -328,6 +334,18 @@ mod tests {
         let mut brief = reviewed();
         brief.objective = " unreviewed whitespace ".into();
         assert!(build_openai_hosted_offline_request(&task, &brief, &input, "gpt-6-astra").is_err());
+
+        // The hosted API rejects an inline file over 5 MiB even when our
+        // 8 MiB aggregate pilot quota would otherwise allow it.
+        let over_file_limit = vec![b'x'; OPENAI_HOSTED_INLINE_MAX_FILE_BYTES + 1];
+        let task = manifest(&over_file_limit);
+        let file = [ReviewedSandboxInputBytes {
+            task_path: "inputs/sample.csv",
+            bytes: &over_file_limit,
+        }];
+        assert!(
+            build_openai_hosted_offline_request(&task, &reviewed(), &file, "gpt-6-astra").is_err()
+        );
 
         let oversized = vec![b'x'; OPENAI_HOSTED_INLINE_MAX_BYTES + 1];
         let task = manifest(&oversized);
