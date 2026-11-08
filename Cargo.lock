@@ -2515,6 +2515,7 @@ dependencies = [
  "base64 0.22.1",
  "infimount_core",
  "infimount_mcp",
+ "libc",
  "opendal",
  "serde",
  "serde_json",

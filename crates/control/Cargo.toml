@@ -14,6 +14,9 @@ base64 = "0.22"
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 opendal = { version = "0.58.1", features = ["services-fs", "services-memory"] }
 tempfile = "3"
