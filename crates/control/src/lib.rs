@@ -24,3 +24,7 @@ pub mod sandbox_bundle;
 pub mod sandbox_import;
 pub mod sandbox_memory_ingest;
 pub mod sandbox_reviewed_ingest;
+// Unix output import is internal until workspace locks and native review qualify.
+#[cfg(unix)]
+#[allow(dead_code)]
+mod sandbox_local_ingest;
