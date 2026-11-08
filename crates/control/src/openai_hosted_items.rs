@@ -44,6 +44,7 @@ pub struct HostedSavedItemAudit {
     items: usize,
     command_executions: usize,
     item_ids: HashSet<String>,
+    seen_cursors: HashSet<String>,
     exhausted: bool,
     failed: bool,
 }
@@ -60,6 +61,7 @@ impl HostedSavedItemAudit {
             items: 0,
             command_executions: 0,
             item_ids: HashSet::new(),
+            seen_cursors: HashSet::new(),
             exhausted: false,
             failed: false,
         })
@@ -116,9 +118,6 @@ impl HostedSavedItemAudit {
             if index == 0 && page.first_id.as_deref() != Some(id) {
                 return self.reject();
             }
-            if index == page.data.len() - 1 && page.last_id.as_deref() != Some(id) {
-                return self.reject();
-            }
             match item.get("type").and_then(Value::as_str) {
                 // The constrained C2.1 adapter does not provision external
                 // MCP, web search, functions, computer use or subagent tools.
@@ -146,9 +145,20 @@ impl HostedSavedItemAudit {
                 _ => return self.reject(),
             }
         }
-        if page.has_more && page.last_id.as_deref().is_none_or(|id| !safe_opaque_id(id)) {
+        // ConversationCursorPage's last_id may differ from the final item ID.
+        // Treat it as an OPAQUE pagination cursor, not an item identity.
+        // Prevent a provider-side pagination loop without comparing it to
+        // arbitrary model-authored item fields.
+        let Some(last_cursor) = page.last_id.as_deref() else {
+            return self.reject();
+        };
+        if !safe_page_cursor(last_cursor)
+            || self.seen_cursors.contains(last_cursor)
+            || self.next_after.as_deref() == Some(last_cursor)
+        {
             return self.reject();
         }
+        self.seen_cursors.insert(last_cursor.to_owned());
         self.item_ids.extend(page_ids);
         self.items += page.data.len();
         self.command_executions += new_commands;
@@ -187,6 +197,11 @@ impl HostedSavedItemAudit {
         self.failed = true;
         Err(audit_error())
     }
+}
+
+/// Opaque API cursors must be URL-encoded by the trusted HTTP transport.
+fn safe_page_cursor(cursor: &str) -> bool {
+    !cursor.is_empty() && cursor.len() <= 1024 && cursor.bytes().all(|b| b.is_ascii_graphic())
 }
 
 fn safe_opaque_id(id: &str) -> bool {
@@ -289,6 +304,59 @@ mod tests {
     }
 
     #[test]
+    fn provider_opaque_last_id_different_from_item_id_is_supported() {
+        let mut audit = HostedSavedItemAudit::new(TURN).unwrap();
+        let first = json!({
+            "object":"list", "data":[message("item_a")],
+            "first_id":"item_a", "last_id":"cursor:opaque_1", "has_more":true
+        });
+        audit
+            .observe_page(&serde_json::to_vec(&first).unwrap(), None)
+            .unwrap();
+        assert_eq!(audit.next_after(), Some("cursor:opaque_1"));
+        let second = json!({
+            "object":"list", "data":[message("item_b")],
+            "first_id":"item_b", "last_id":"cursor:opaque_2", "has_more":false
+        });
+        audit
+            .observe_page(
+                &serde_json::to_vec(&second).unwrap(),
+                Some("cursor:opaque_1"),
+            )
+            .unwrap();
+        assert_eq!(audit.finish(ROOT).unwrap().pages, 2);
+    }
+
+    #[test]
+    fn repeated_or_unbounded_opaque_page_cursor_fails_closed() {
+        let mut audit = HostedSavedItemAudit::new(TURN).unwrap();
+        let first = json!({
+            "object":"list", "data":[message("item_a")],
+            "first_id":"item_a", "last_id":"cursor_repeat", "has_more":true
+        });
+        audit
+            .observe_page(&serde_json::to_vec(&first).unwrap(), None)
+            .unwrap();
+        let second = json!({
+            "object":"list", "data":[message("item_b")],
+            "first_id":"item_b", "last_id":"cursor_repeat", "has_more":true
+        });
+        assert!(audit
+            .observe_page(&serde_json::to_vec(&second).unwrap(), Some("cursor_repeat"))
+            .is_err());
+        assert!(audit.finish(ROOT).is_err());
+
+        let mut audit = HostedSavedItemAudit::new(TURN).unwrap();
+        let too_long = json!({
+            "object":"list", "data":[message("item_a")],
+            "first_id":"item_a", "last_id":"x".repeat(1025), "has_more":true
+        });
+        assert!(audit
+            .observe_page(&serde_json::to_vec(&too_long).unwrap(), None)
+            .is_err());
+    }
+
+    #[test]
     fn wrong_cursor_and_duplicate_ids_poison_the_audit() {
         let mut audit = HostedSavedItemAudit::new(TURN).unwrap();
         audit
@@ -382,7 +450,7 @@ mod tests {
             }),
             json!({
                 "object":"list", "data":[message("item_1")],
-                "first_id":"item_1", "last_id":"bad", "has_more":false
+                "first_id":"item_1", "last_id":"", "has_more":false
             }),
             json!({
                 "object":"not_list", "data":[message("item_1")],

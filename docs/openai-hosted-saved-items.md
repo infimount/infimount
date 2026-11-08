@@ -10,13 +10,17 @@ A root turn completing is not proof that every tool succeeded. The
 returns paginated `data`, `first_id`, `last_id`, and `has_more`.
 A trusted caller must fetch all pages in ascending order, passing the previous
 `last_id` as the next `after` cursor, for a pinned session/root turn.
+The API explicitly documents that `last_id` can differ from the ID of the
+last returned item. Treat it as an opaque, bounded cursor, percent-encode it
+when constructing an HTTP query, and reject repeated cursors or loops.
 
 `openai_hosted_items::HostedSavedItemAudit` provides an offline gate:
 
 - Check expected root turn ID on each item. The trusted transport separately
   binds the authenticated session and actual root-turn response.
-- Reject duplicate item IDs, incorrect turn, invalid page boundaries, cursor
-  drift, malformed JSON, partial pagination, and unexpected extra pages.
+- Reject duplicate item IDs, incorrect turn, malformed/oversized or repeated
+  opaque page cursors, inconsistent first-item identity, cursor drift,
+  malformed JSON, partial pagination, and unexpected extra pages.
 - Bound each raw page to 2 MiB and 100 items, at most 50 pages / 5,000
   items total. Do not retain item content.
 - For the restricted C2.1 pilot, permit completed messages and reasoning
