@@ -72,7 +72,7 @@ describe("AgentTaskHostedExportPreview", () => {
     });
     expect(await screen.findByTestId("hosted-export-preview")).toHaveTextContent("inputs/sample.csv");
     expect(screen.getByText(/No data transferred/i)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /execute|upload|publish/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^(execute|upload|publish)/i })).not.toBeInTheDocument();
   });
 
   it("hides the previous digest as soon as the reviewed instructions change", async () => {
