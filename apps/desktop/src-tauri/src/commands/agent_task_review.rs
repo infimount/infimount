@@ -4,14 +4,21 @@ pub use infimount_control::review::{
 use infimount_control::review_evidence::{
     checked_reviewed_output_bytes, list_review_output_entries,
 };
+use infimount_control::openai_hosted_request::{
+    OPENAI_HOSTED_INLINE_MAX_BYTES, OPENAI_HOSTED_INLINE_MAX_FILES,
+    OPENAI_HOSTED_INLINE_MAX_FILE_BYTES, OPENAI_HOSTED_PILOT_SESSION_SPEND_CENTS,
+};
+use infimount_control::sandbox_bundle::build_sandbox_task_bundle;
 use infimount_core::agent_task_io::hash_agent_task_file;
 use infimount_core::agent_tasks::{
-    agent_task_root, validate_agent_task_manifest, AgentTaskManifest, AGENT_TASK_MANIFEST_FILE,
+    agent_task_root, validate_agent_task_manifest, AgentTaskBrief, AgentTaskInput,
+    AgentTaskManifest, AGENT_TASK_MANIFEST_FILE,
     AGENT_TASK_OUTPUTS_DIR,
 };
 use infimount_core::workspaces::workspace_schema_supported;
 use infimount_core::{CoreError, SourceKind};
 use infimount_mcp::registry::StorageRecord;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 use uuid::Uuid;
 
@@ -90,6 +97,97 @@ pub async fn review_agent_task_outputs(
     })
 }
 
+/// Desktop-only, metadata-only review of a separately redacted export. It
+/// neither reads prepared input bytes nor uploads them. A later trusted
+/// transfer MUST independently rehash bytes and obtain separate consent.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PreviewHostedTaskExportRequest {
+    pub workspace_id: String,
+    pub task_id: String,
+    pub reviewed_export_brief: AgentTaskBrief,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostedTaskExportPreview {
+    pub provider: &'static str,
+    pub data_residency: &'static str,
+    pub zero_data_retention_supported: bool,
+    pub sandbox_network_access: &'static str,
+    pub pilot_spend_limit_usd_cents: u32,
+    pub reviewed_title: String,
+    pub reviewed_instructions: String,
+    pub requested_outputs: Vec<String>,
+    pub inputs: Vec<AgentTaskInput>,
+    pub input_file_count: usize,
+    pub input_total_bytes: u64,
+    pub bundle_metadata_sha256: String,
+    pub inputs_rehashed: bool,
+    pub export_authorized: bool,
+    pub executable: bool,
+}
+
+fn build_hosted_export_preview(
+    manifest: &AgentTaskManifest,
+    reviewed_export_brief: &AgentTaskBrief,
+) -> Result<HostedTaskExportPreview, CoreError> {
+    let bundle = build_sandbox_task_bundle(manifest, reviewed_export_brief)?;
+    if bundle.requested_outputs.is_empty() {
+        return Err(CoreError::Config(
+            "Hosted export review requires an explicit output file list".into(),
+        ));
+    }
+    if bundle.inputs.len() > OPENAI_HOSTED_INLINE_MAX_FILES
+        || bundle.input_total_bytes > OPENAI_HOSTED_INLINE_MAX_BYTES as u64
+        || bundle
+            .inputs
+            .iter()
+            .any(|file| file.byte_size > OPENAI_HOSTED_INLINE_MAX_FILE_BYTES as u64)
+    {
+        return Err(CoreError::Config(
+            "Prepared inputs exceed the first hosted inline pilot limits".into(),
+        ));
+    }
+
+    Ok(HostedTaskExportPreview {
+        provider: "openai_agents_api",
+        data_residency: "United States",
+        zero_data_retention_supported: false,
+        sandbox_network_access: "disabled",
+        pilot_spend_limit_usd_cents: OPENAI_HOSTED_PILOT_SESSION_SPEND_CENTS,
+        reviewed_title: bundle.title,
+        reviewed_instructions: bundle.instructions,
+        requested_outputs: bundle.requested_outputs,
+        input_file_count: bundle.inputs.len(),
+        input_total_bytes: bundle.input_total_bytes,
+        inputs: bundle.inputs,
+        bundle_metadata_sha256: bundle.bundle_metadata_sha256,
+        inputs_rehashed: false,
+        export_authorized: false,
+        executable: false,
+    })
+}
+
+/// A read-only desktop preflight. Neither this command nor a returned digest
+/// is a grant to transfer data, spend money, create sessions, or publish.
+#[tauri::command]
+pub async fn preview_hosted_task_export(
+    state: State<'_, AppState>,
+    request: PreviewHostedTaskExportRequest,
+) -> Result<HostedTaskExportPreview, CoreError> {
+    state.require_operational().map_err(|_| {
+        CoreError::Config("Hosted export preview is unavailable while Infimount is degraded".into())
+    })?;
+    let local_request = AgentTaskOutputReviewRequest {
+        workspace_id: request.workspace_id,
+        task_id: request.task_id,
+    };
+    let context = load_review_context(&state, &local_request)?;
+    let manifest = validate_task_manifest(&context, &local_request).await?;
+    build_hosted_export_preview(&manifest, &request.reviewed_export_brief)
+}
+
 fn load_review_context(
     state: &AppState,
     request: &AgentTaskOutputReviewRequest,
@@ -164,7 +262,7 @@ fn load_review_context(
 async fn validate_task_manifest(
     context: &ReviewContext,
     request: &AgentTaskOutputReviewRequest,
-) -> Result<(), CoreError> {
+) -> Result<AgentTaskManifest, CoreError> {
     require_directory(
         &context.op,
         &context.workspace_task_path,
@@ -205,7 +303,7 @@ async fn validate_task_manifest(
             "Agent Task manifest does not match the requested workspace task".into(),
         ));
     }
-    Ok(())
+    Ok(manifest)
 }
 
 async fn output_preview(
@@ -308,6 +406,50 @@ mod tests {
             "outputs/report.md"
         );
         assert!(relative_to_root("agent/tasks/task", "agent/tasks/other/report.md").is_err());
+    }
+
+
+    #[test]
+    fn hosted_export_preview_only_contains_separately_reviewed_metadata() {
+        use infimount_core::agent_tasks::{AGENT_TASK_SCHEMA_VERSION, AgentTaskInput};
+        let manifest = AgentTaskManifest {
+            schema_version: AGENT_TASK_SCHEMA_VERSION,
+            task_id: "81f08176-86e4-40ec-a9a4-a219c4c9b454".into(),
+            title: "PRIVATE original title".into(),
+            created_at: "2026-11-08T12:00:00Z".into(),
+            workspace_id: "f8f47aa7-702d-4fd6-8815-84cbdf3b3127".into(),
+            task_root: "tasks/81f08176-86e4-40ec-a9a4-a219c4c9b454".into(),
+            outputs_directory: "outputs".into(),
+            inputs: vec![AgentTaskInput {
+                task_path: "inputs/reviewed.csv".into(),
+                byte_size: 5,
+                sha256: "a".repeat(64),
+            }],
+        };
+        let brief = AgentTaskBrief {
+            title: "Approved synthetic description".into(),
+            objective: "Summarize only the selected CSV.".into(),
+            requested_outputs: vec!["outputs/summary.md".into()],
+        };
+        let preview = build_hosted_export_preview(&manifest, &brief).unwrap();
+        assert_eq!(preview.input_file_count, 1);
+        assert_eq!(preview.input_total_bytes, 5);
+        assert_eq!(preview.pilot_spend_limit_usd_cents, 100);
+        assert_eq!(preview.sandbox_network_access, "disabled");
+        assert!(!preview.inputs_rehashed);
+        assert!(!preview.export_authorized);
+        assert!(!preview.executable);
+        let wire = serde_json::to_string(&preview).unwrap();
+        assert!(wire.contains("Approved synthetic description"));
+        assert!(!wire.contains("PRIVATE original title"));
+        assert!(!wire.contains(&manifest.workspace_id));
+        assert!(!wire.contains("token"));
+        let mut missing_outputs = brief.clone();
+        missing_outputs.requested_outputs.clear();
+        assert!(build_hosted_export_preview(&manifest, &missing_outputs).is_err());
+        let mut over_limit = manifest.clone();
+        over_limit.inputs[0].byte_size = (OPENAI_HOSTED_INLINE_MAX_FILE_BYTES + 1) as u64;
+        assert!(build_hosted_export_preview(&over_limit, &brief).is_err());
     }
 
     #[test]

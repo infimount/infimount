@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FileClock, RefreshCw, ShieldAlert } from "lucide-react";
 
 import { AgentTaskOutputReview } from "./AgentTaskOutputReview";
+import { AgentTaskHostedExportPreview } from "./AgentTaskHostedExportPreview";
 import { Button } from "@/components/ui/button";
 import {
   listAgentTasks,
@@ -130,6 +131,10 @@ export function AgentWorkspaceTasks({ workspaceId }: AgentWorkspaceTasksProps) {
                     Reviewing <strong className="text-foreground">{selectedTask.title}</strong>. Task discovery and review are read-only; publication remains a separate explicit step.
                   </div>
                   <AgentTaskOutputReview
+                    workspaceId={workspaceId}
+                    taskId={selectedTask.taskId}
+                  />
+                  <AgentTaskHostedExportPreview
                     workspaceId={workspaceId}
                     taskId={selectedTask.taskId}
                   />
