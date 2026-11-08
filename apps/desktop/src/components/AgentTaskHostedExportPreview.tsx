@@ -39,31 +39,36 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
   const [objective, setObjective] = useState("");
   const [outputsText, setOutputsText] = useState("");
   const [preview, setPreview] = useState<HostedTaskExportPreview | null>(null);
-  const [previewKey, setPreviewKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const currentKey = `${workspaceId}:${taskId}:${reviewedTitle}:${objective}:${outputsText}`;
-  const latestKey = useRef(currentKey);
-  latestKey.current = currentKey;
+  // A monotonic generation also rejects ABA edits (A -> B -> A) while an
+  // older preview is in flight. A matching text key alone is not sufficient.
+  const generation = useRef(0);
+
+  const invalidateReview = () => {
+    generation.current += 1;
+    setPreview(null);
+    setError(null);
+    setLoading(false);
+  };
 
   useEffect(() => {
+    generation.current += 1;
     setOpened(false);
     setReviewedTitle("");
     setObjective("");
     setOutputsText("");
     setPreview(null);
-    setPreviewKey(null);
     setLoading(false);
     setError(null);
   }, [workspaceId, taskId]);
 
   const reviewedOutputs = requestedOutputsFromText(outputsText);
   const valid = reviewedTitle.trim().length > 0 && objective.trim().length > 0 && reviewedOutputs.length > 0;
-  const visible = previewKey === currentKey ? preview : null;
 
   const showScope = async () => {
     if (!valid || loading) return;
-    const key = currentKey;
+    const currentGeneration = ++generation.current;
     const request: PreviewHostedTaskExportRequest = {
       workspaceId,
       taskId,
@@ -76,17 +81,15 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
     setLoading(true);
     setError(null);
     setPreview(null);
-    setPreviewKey(null);
     try {
       const result = await previewHostedTaskExport(request);
-      if (latestKey.current !== key) return;
+      if (generation.current !== currentGeneration) return;
       setPreview(result);
-      setPreviewKey(key);
     } catch (value) {
-      if (latestKey.current !== key) return;
+      if (generation.current !== currentGeneration) return;
       setError(value instanceof Error ? value.message : "Remote export preview failed.");
     } finally {
-      if (latestKey.current === key) setLoading(false);
+      if (generation.current === currentGeneration) setLoading(false);
     }
   };
 
@@ -96,7 +99,10 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
         type="button"
         className="flex w-full items-center justify-between text-left text-sm font-medium"
         aria-expanded={opened}
-        onClick={() => setOpened((old) => !old)}
+        onClick={() => {
+          if (opened) invalidateReview();
+          setOpened(!opened);
+        }
       >
         <span className="flex items-center gap-2">
           <FileCheck2 className="h-4 w-4 text-primary" />
@@ -122,7 +128,10 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
             <Input
               aria-label="Reviewed export title"
               value={reviewedTitle}
-              onChange={(event) => setReviewedTitle(event.target.value)}
+              onChange={(event) => {
+                invalidateReview();
+                setReviewedTitle(event.target.value);
+              }}
               maxLength={120}
               placeholder="Example: Summarize approved sample data"
             />
@@ -132,7 +141,10 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
             <Textarea
               aria-label="Reviewed objective"
               value={objective}
-              onChange={(event) => setObjective(event.target.value)}
+              onChange={(event) => {
+                invalidateReview();
+                setObjective(event.target.value);
+              }}
               rows={3}
               maxLength={32768}
               placeholder="Describe only what the remote agent may do with the reviewed input copies."
@@ -143,7 +155,10 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
             <Textarea
               aria-label="Requested outputs"
               value={outputsText}
-              onChange={(event) => setOutputsText(event.target.value)}
+              onChange={(event) => {
+                invalidateReview();
+                setOutputsText(event.target.value);
+              }}
               rows={3}
               placeholder="outputs/summary.md"
             />
@@ -152,18 +167,18 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
             {loading ? "Checking scope…" : "Preview export scope (no upload)"}
           </Button>
           {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
-          {visible ? (
+          {preview ? (
             <div className="space-y-3 rounded-md border bg-background p-3 text-xs" data-testid="hosted-export-preview">
               <div className="font-medium">
-                {visible.inputFileCount} declared input file{visible.inputFileCount === 1 ? "" : "s"}
-                {" · "}{formatBytes(visible.inputTotalBytes)} · $1 pilot session ceiling
+                {preview.inputFileCount} declared input file{preview.inputFileCount === 1 ? "" : "s"}
+                {" · "}{formatBytes(preview.inputTotalBytes)} · ${(preview.pilotSpendLimitUsdCents / 100).toFixed(2)} USD ceiling
               </div>
               <p className="text-muted-foreground">
                 Sandbox outbound network: disabled. Provider data residency: United States.
                 Zero Data Retention: not supported. File hashes below are manifest declarations, not freshly verified bytes.
               </p>
               <div className="space-y-2">
-                {visible.inputs.map((input) => (
+                {preview.inputs.map((input) => (
                   <div key={input.taskPath} className="rounded border p-2">
                     <code className="break-all">{input.taskPath}</code>
                     <div className="mt-1 text-muted-foreground">{formatBytes(input.byteSize)}</div>
@@ -171,9 +186,9 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
                   </div>
                 ))}
               </div>
-              <div>Requested deliverables: {visible.requestedOutputs.join(", ")}</div>
+              <div>Requested deliverables: {preview.requestedOutputs.join(", ")}</div>
               <div className="break-all font-mono text-[10px]">
-                Manifest-only export digest: {visible.bundleMetadataSha256}
+                Manifest-only export digest: {preview.bundleMetadataSha256}
               </div>
               <p className="font-medium">
                 No data transferred. No spending or publication authorized. A future execution must rehash input bytes and obtain separate consent.

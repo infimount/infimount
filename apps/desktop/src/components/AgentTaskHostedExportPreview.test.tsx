@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AgentTaskHostedExportPreview } from "./AgentTaskHostedExportPreview";
@@ -93,5 +93,32 @@ describe("AgentTaskHostedExportPreview", () => {
     fireEvent.click(screen.getByRole("button", { name: /Preview export scope/i }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Prepared inputs exceed");
     expect(screen.queryByTestId("hosted-export-preview")).not.toBeInTheDocument();
+  });
+
+  it("invalidates an in-flight preview even when edited text is restored", async () => {
+    let complete: ((value: typeof preview) => void) | undefined;
+    const pending = new Promise<typeof preview>((resolve) => {
+      complete = resolve;
+    });
+    vi.mocked(previewHostedTaskExport).mockReturnValueOnce(pending);
+    render(<AgentTaskHostedExportPreview workspaceId="workspace" taskId="task-1" />);
+    fill();
+    fireEvent.click(screen.getByRole("button", { name: /Preview export scope/i }));
+    expect(screen.getByRole("button", { name: /Checking scope/i })).toBeDisabled();
+
+    // A -> B -> A must not make response A from the first request valid again.
+    fireEvent.change(screen.getByLabelText("Reviewed objective"), {
+      target: { value: "A different objective" },
+    });
+    fireEvent.change(screen.getByLabelText("Reviewed objective"), {
+      target: { value: "Summarize only the CSV." },
+    });
+    expect(screen.getByRole("button", { name: /Preview export scope/i })).not.toBeDisabled();
+    await act(async () => {
+      complete?.(preview);
+      await pending;
+    });
+    expect(screen.queryByTestId("hosted-export-preview")).not.toBeInTheDocument();
+    expect(previewHostedTaskExport).toHaveBeenCalledTimes(1);
   });
 });
