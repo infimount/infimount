@@ -59,6 +59,12 @@ jobs:
       - name: Run Unit Tests
         run: pnpm test:unit
 
+      - name: Qualify hosted synthetic pilot with mocked provider only
+        working-directory: .
+        env:
+          OPENAI_API_KEY: ""
+        run: node --test scripts/qualify-openai-hosted-synthetic.test.mjs
+
   msrv:
     name: Rust MSRV 1.94.0
     runs-on: ubuntu-latest
