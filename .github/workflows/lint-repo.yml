@@ -24,7 +24,7 @@ jobs:
     name: Rust Formatting (fast)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install pinned Rust formatter
         uses: dtolnay/rust-toolchain@1.94.0
         with:
@@ -36,7 +36,7 @@ jobs:
     name: GitHub Actions Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Require canonical target for merge-ready PRs
         env:
           PR_BASE: ${{ github.base_ref }}
@@ -74,7 +74,7 @@ jobs:
     name: YAML Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
@@ -89,7 +89,7 @@ jobs:
     name: Markdown Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install Node.js
         uses: actions/setup-node@v6
         with:
