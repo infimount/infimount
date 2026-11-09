@@ -2,10 +2,11 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AgentTaskHostedExportPreview } from "./AgentTaskHostedExportPreview";
-import { previewHostedTaskExport } from "@/lib/agentTasks";
+import { previewHostedTaskExport, verifyHostedTaskExport } from "@/lib/agentTasks";
 
 vi.mock("@/lib/agentTasks", () => ({
   previewHostedTaskExport: vi.fn(),
+  verifyHostedTaskExport: vi.fn(),
 }));
 
 const preview = {
@@ -45,10 +46,19 @@ function fill(open = true) {
   });
 }
 
+const verified = {
+  inputFileCount: 1,
+  inputTotalBytes: 5,
+  bundleMetadataSha256: "b".repeat(64),
+  verifiedBytes: true as const,
+  exportAuthorized: false as const,
+};
+
 describe("AgentTaskHostedExportPreview", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(previewHostedTaskExport).mockResolvedValue(preview);
+    vi.mocked(verifyHostedTaskExport).mockResolvedValue(verified);
   });
 
   it("never starts a network or task execution and requires reviewed text", async () => {
@@ -120,5 +130,69 @@ describe("AgentTaskHostedExportPreview", () => {
     });
     expect(screen.queryByTestId("hosted-export-preview")).not.toBeInTheDocument();
     expect(previewHostedTaskExport).toHaveBeenCalledTimes(1);
+  });
+
+  it("rehashes actual prepared input bytes in native code without issuing an upload", async () => {
+    render(<AgentTaskHostedExportPreview workspaceId="workspace" taskId="task-1" />);
+    fill();
+    fireEvent.click(screen.getByRole("button", { name: /Preview export scope/i }));
+    expect(await screen.findByTestId("hosted-export-preview")).toBeInTheDocument();
+    expect(verifyHostedTaskExport).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /Verify actual prepared bytes/i }));
+    await waitFor(() => expect(verifyHostedTaskExport).toHaveBeenCalledWith({
+      workspaceId: "workspace",
+      taskId: "task-1",
+      reviewedExportBrief: {
+        title: "Approved sample",
+        objective: "Summarize only the CSV.",
+        requestedOutputs: ["outputs/report.md"],
+      },
+    }));
+    expect(await screen.findByTestId("hosted-export-verified")).toHaveTextContent(
+      /not export or spending approval/i,
+    );
+    expect(screen.queryByRole("button", { name: /^(execute|upload|publish)/i })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Reviewed objective"), {
+      target: { value: "Changed instructions" },
+    });
+    expect(screen.queryByTestId("hosted-export-verified")).not.toBeInTheDocument();
+  });
+
+  it("rejects a verified result whose actual scope mismatches the reviewed digest", async () => {
+    vi.mocked(verifyHostedTaskExport).mockResolvedValueOnce({
+      ...verified,
+      bundleMetadataSha256: "c".repeat(64),
+    });
+    render(<AgentTaskHostedExportPreview workspaceId="workspace" taskId="task-1" />);
+    fill();
+    fireEvent.click(screen.getByRole("button", { name: /Preview export scope/i }));
+    await screen.findByTestId("hosted-export-preview");
+    fireEvent.click(screen.getByRole("button", { name: /Verify actual prepared bytes/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("scope changed");
+    expect(screen.queryByTestId("hosted-export-verified")).not.toBeInTheDocument();
+  });
+
+  it("never accepts byte-verification evidence after the reviewed brief is changed", async () => {
+    let finish: ((value: typeof verified) => void) | undefined;
+    const pending = new Promise<typeof verified>((resolve) => {
+      finish = resolve;
+    });
+    vi.mocked(verifyHostedTaskExport).mockReturnValueOnce(pending);
+    render(<AgentTaskHostedExportPreview workspaceId="workspace" taskId="task-1" />);
+    fill();
+    fireEvent.click(screen.getByRole("button", { name: /Preview export scope/i }));
+    await screen.findByTestId("hosted-export-preview");
+    fireEvent.click(screen.getByRole("button", { name: /Verify actual prepared bytes/i }));
+    fireEvent.change(screen.getByLabelText("Reviewed objective"), {
+      target: { value: "Changed, then restored" },
+    });
+    fireEvent.change(screen.getByLabelText("Reviewed objective"), {
+      target: { value: "Summarize only the CSV." },
+    });
+    await act(async () => {
+      finish?.(verified);
+      await pending;
+    });
+    expect(screen.queryByTestId("hosted-export-verified")).not.toBeInTheDocument();
   });
 });

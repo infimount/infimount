@@ -9,6 +9,10 @@ use infimount_control::review_evidence::{
     checked_reviewed_output_bytes, list_review_output_entries,
 };
 use infimount_control::sandbox_bundle::build_sandbox_task_bundle;
+#[cfg(unix)]
+use infimount_control::sandbox_local_export::{
+    verify_prepared_hosted_input_scope, VerifiedHostedInputScope,
+};
 use infimount_core::agent_task_executions::{
     AdapterKind, AgentTaskExecutionRecord, ExecutionStatus,
 };
@@ -279,6 +283,73 @@ pub async fn list_hosted_task_execution_status(
         task_id: request.task_id,
         attempts,
     })
+}
+
+/// Stronger read-only desktop verification than the C2.7 metadata preview.
+/// The native code pins the current workspace configuration and reopens the
+/// actual prepared bytes with O_NOFOLLOW. No file bytes, credentials or
+/// authorization tokens are returned to the browser.
+#[cfg(unix)]
+#[tauri::command]
+pub async fn verify_hosted_task_export(
+    state: State<'_, AppState>,
+    request: PreviewHostedTaskExportRequest,
+) -> Result<VerifiedHostedInputScope, CoreError> {
+    state.require_operational().map_err(|_| {
+        CoreError::Config("Hosted input verification is unavailable during recovery".into())
+    })?;
+    let _lifecycle = state.lifecycle_mutation.lock().await;
+    let _configuration = state
+        .registry
+        .acquire_configuration_transaction()
+        .map_err(crate::state::mcp_error_to_core_error)?;
+    state
+        .recover_and_require_clean_configuration_locked()
+        .map_err(crate::state::mcp_error_to_core_error)?;
+    let _workspace = state.workspaces.acquire_mutation_lock()?;
+    let local_request = AgentTaskOutputReviewRequest {
+        workspace_id: request.workspace_id,
+        task_id: request.task_id,
+    };
+    let context = load_review_context(&state, &local_request)?;
+    let manifest = validate_task_manifest(&context, &local_request).await?;
+
+    // A workspace root is storage-relative. Do NOT use that string directly
+    // as a native path or accept an absolute path from the webview.
+    infimount_mcp::storage_namespace::validate_local_mcp_path(
+        &context.storage,
+        &context.workspace.root_path,
+    )
+    .map_err(|_| CoreError::Config("Native workspace root is not confined".into()))?;
+    let address = infimount_mcp::storage_namespace::storage_namespace_address(
+        &context.storage,
+        &context.workspace.root_path,
+    )
+    .map_err(|_| CoreError::Config("Native workspace identity could not be resolved".into()))?
+    .ok_or_else(|| CoreError::Config("Native workspace root is not available".into()))?;
+    let root = std::path::PathBuf::from(address.absolute_path);
+    let reviewed_brief = request.reviewed_export_brief;
+
+    // Reads are bounded but blocking. Keep the native lifecycle,
+    // configuration and workspace locks held until the result is ready.
+    tauri::async_runtime::spawn_blocking(move || {
+        verify_prepared_hosted_input_scope(&root, &manifest, &reviewed_brief)
+    })
+    .await
+    .map_err(|_| CoreError::Config("Native hosted input verification task failed".into()))?
+}
+
+/// Windows and other non-Unix platforms must be separately qualified with
+/// reparse-safe descriptor semantics before this operation can be offered.
+#[cfg(not(unix))]
+#[tauri::command]
+pub async fn verify_hosted_task_export(
+    _state: State<'_, AppState>,
+    _request: PreviewHostedTaskExportRequest,
+) -> Result<serde_json::Value, CoreError> {
+    Err(CoreError::Config(
+        "Native prepared-byte verification is not qualified on this platform".into(),
+    ))
 }
 
 fn load_review_context(
