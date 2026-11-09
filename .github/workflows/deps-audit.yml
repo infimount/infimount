@@ -35,10 +35,21 @@ jobs:
         run: bash scripts/check-ftp-disabled.sh
       - name: Guard Tauri v2 updater against legacy ZIP support
         run: bash scripts/check-updater-no-legacy-zip.sh
+      - name: Install Node.js for scoped rmcp guard
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Verify scoped rmcp server-only advisory exception
+        run: |
+          node scripts/check-rmcp-client-transport-disabled.mjs --self-test
+          node scripts/check-rmcp-client-transport-disabled.mjs
       - name: Run cargo audit
-        # RUSTSEC-2023-0071 has no fixed rsa release. Keep this exact exception
-        # visible and re-evaluate it when a fixed `rsa` release is available.
-        run: cargo audit --ignore RUSTSEC-2023-0071
+        # RUSTSEC-2023-0071 has no fixed rsa release.
+        # RUSTSEC-2026-0462 only affects rmcp Streamable HTTP CLIENTs.
+        # The preceding feature-resolver guard fails if an affected client
+        # feature appears. Remove both exception and guard after issue #231
+        # upgrades rmcp to a fully patched >=3.9.0 release.
+        run: cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0462
 
   js-audit:
     name: JavaScript Audit
