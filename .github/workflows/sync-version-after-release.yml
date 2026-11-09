@@ -71,7 +71,7 @@ jobs:
           fi
 
       - name: Create pull request
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           branch: chore/sync-version-${{ steps.resolve_tag.outputs.tag }}
           title: "chore(release): sync versions for ${{ steps.resolve_tag.outputs.tag }}"
