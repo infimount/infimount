@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FileClock, RefreshCw, ShieldAlert } from "lucide-react";
 
 import { AgentTaskOutputReview } from "./AgentTaskOutputReview";
+import { HostedProviderCredentialPanel } from "./HostedProviderCredentialPanel";
 import { AgentTaskHostedExportPreview } from "./AgentTaskHostedExportPreview";
 import { Button } from "@/components/ui/button";
 import {
@@ -75,6 +76,10 @@ export function AgentWorkspaceTasks({ workspaceId }: AgentWorkspaceTasksProps) {
           <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
           {loading ? "Loading…" : "Refresh tasks"}
         </Button>
+      </div>
+
+      <div className="mt-4">
+        <HostedProviderCredentialPanel />
       </div>
 
       {error ? <p role="alert" className="mt-3 text-sm text-destructive">{error}</p> : null}
