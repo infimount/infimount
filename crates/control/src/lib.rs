@@ -6,6 +6,9 @@
 pub mod openai_hosted_artifacts;
 pub mod openai_hosted_events;
 pub mod openai_hosted_items;
+// Private, offline-only crash-recovery and provider session-ID evidence.
+#[allow(dead_code)]
+mod hosted_execution_recovery;
 pub mod openai_hosted_request;
 pub mod publication;
 pub mod publication_apply;
