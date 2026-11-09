@@ -7,6 +7,8 @@ on:
       - ".github/workflows/release-pilot.yml"
       - ".github/workflows/ci.yml"
       - ".github/workflows/lint-repo.yml"
+      - ".github/workflows/deps-audit.yml"
+      - "scripts/check-rmcp-client-transport-disabled.mjs"
       - ".github/workflows/coverage.yml"
       - "apps/desktop/**"
       - "crates/core/**"
