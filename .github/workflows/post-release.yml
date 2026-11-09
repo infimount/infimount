@@ -69,7 +69,7 @@ jobs:
         run: ./scripts/check-release-links.sh
 
       - name: Install exact release MSRV (Rust 1.94)
-        uses: dtolnay/rust-toolchain@1.94
+        uses: dtolnay/rust-toolchain@1.120
 
       - name: Re-download and validate published assets
         env:

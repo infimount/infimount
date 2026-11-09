@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install pinned Rust formatter
-        uses: dtolnay/rust-toolchain@1.94.0
+        uses: dtolnay/rust-toolchain@1.120
         with:
           components: rustfmt
       - name: Verify Rust formatting without compiling
