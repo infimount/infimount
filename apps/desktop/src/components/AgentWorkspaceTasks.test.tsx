@@ -14,6 +14,10 @@ vi.mock("./AgentTaskOutputReview", () => ({
   ),
 }));
 
+vi.mock("./HostedProviderCredentialPanel", () => ({
+  HostedProviderCredentialPanel: () => <div data-testid="hosted-provider-credentials-mock" />,
+}));
+
 const taskOne = {
   taskId: "81f08176-86e4-40ec-a9a4-a219c4c9b454",
   title: "Newest task",
