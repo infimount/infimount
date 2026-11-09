@@ -263,11 +263,12 @@ pub async fn list_hosted_task_execution_status(
     let store = state.execution_records.clone();
     let workspace_id = request.workspace_id.clone();
     let task_id = request.task_id.clone();
-    let records = tauri::async_runtime::spawn_blocking(move || {
-        store.list_for_task(&workspace_id, &task_id)
-    })
-    .await
-    .map_err(|_| CoreError::Config("Private hosted execution history task failed".into()))??;
+    let records =
+        tauri::async_runtime::spawn_blocking(move || store.list_for_task(&workspace_id, &task_id))
+            .await
+            .map_err(|_| {
+                CoreError::Config("Private hosted execution history task failed".into())
+            })??;
     let attempts = records
         .into_iter()
         .filter(|record| record.adapter_kind == AdapterKind::OpenaiSandbox)
