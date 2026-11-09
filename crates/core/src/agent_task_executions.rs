@@ -559,6 +559,69 @@ impl ExecutionRecordStore {
         Ok(record)
     }
 
+    /// Read a bounded, sanitized execution history for one confirmed workspace
+    /// and task. The trusted caller MUST validate the Agent Task manifest and
+    /// workspace binding first. No provider session ID should be sent to a UI.
+    /// Uses the same cross-process lock as create and transition, and refuses
+    /// malformed private history instead of skipping potentially active runs.
+    pub fn list_for_task(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+    ) -> Result<Vec<AgentTaskExecutionRecord>> {
+        const MAX_HISTORY_ITEMS: usize = 100;
+        if !valid_id(workspace_id) || !valid_id(task_id) {
+            return invalid("invalid private execution history identifiers");
+        }
+        let _lock = self.lock()?;
+        let workspace_dir = self.root.join(workspace_id);
+        let task_dir = workspace_dir.join(task_id);
+        for dir in [&workspace_dir, &task_dir] {
+            match fs::symlink_metadata(dir) {
+                Ok(_) => ensure_real_directory(dir)?,
+                Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+                Err(error) => return Err(CoreError::Io(error)),
+            }
+        }
+        let mut records = Vec::new();
+        for entry in fs::read_dir(&task_dir)? {
+            if records.len() >= MAX_HISTORY_ITEMS {
+                return invalid("private execution history exceeds the bounded read limit");
+            }
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name
+                .to_str()
+                .ok_or_else(|| CoreError::Config("unsafe execution history filename".into()))?;
+            let id = name
+                .strip_suffix(".json")
+                .filter(|id| valid_id(id))
+                .ok_or_else(|| {
+                    CoreError::Config("unrecognized private execution evidence file".into())
+                })?;
+            let record = read_bounded(&entry.path())?;
+            if record.execution_id != id
+                || record.workspace_id != workspace_id
+                || record.task_id != task_id
+            {
+                return invalid("private execution history identity mismatch");
+            }
+            records.push(record);
+        }
+        records.sort_by(|a, b| {
+            let left = DateTime::parse_from_rfc3339(&a.started_at)
+                .map(|time| time.timestamp_millis())
+                .unwrap_or_default();
+            let right = DateTime::parse_from_rfc3339(&b.started_at)
+                .map(|time| time.timestamp_millis())
+                .unwrap_or_default();
+            right
+                .cmp(&left)
+                .then_with(|| b.execution_id.cmp(&a.execution_id))
+        });
+        Ok(records)
+    }
+
     /// Caller passes the last observed record, not just the status. This rejects
     /// stale writers even when a competing process already advanced the record.
     pub fn transition(
@@ -927,6 +990,58 @@ mod tests {
         let mut local_running = running(&local);
         local_running.provider_execution_id = Some("sess_forbidden".into());
         assert!(local_running.validate().is_err());
+    }
+
+    #[test]
+    fn task_history_is_bounded_workspace_scoped_and_survives_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = ExecutionRecordStore::new(dir.path());
+        let record = prepared();
+        assert!(first
+            .list_for_task(&record.workspace_id, &record.task_id)
+            .unwrap()
+            .is_empty());
+        first.create(&record).unwrap();
+        let another_process = ExecutionRecordStore::new(dir.path());
+        let entries = another_process
+            .list_for_task(&record.workspace_id, &record.task_id)
+            .unwrap();
+        assert_eq!(entries, vec![record.clone()]);
+        assert!(another_process
+            .list_for_task("invalid", &record.task_id)
+            .is_err());
+        assert!(another_process
+            .list_for_task(&record.workspace_id, "invalid")
+            .is_err());
+        // A different valid task UUID cannot see this task's records.
+        assert!(another_process
+            .list_for_task(&record.workspace_id, "33333333-3333-4333-8333-333333333333")
+            .unwrap()
+            .is_empty());
+        let state_dir = another_process
+            .root
+            .join(&record.workspace_id)
+            .join(&record.task_id);
+        std::fs::write(state_dir.join(".uncommitted-evidence.tmp"), b"uncertain").unwrap();
+        assert!(another_process
+            .list_for_task(&record.workspace_id, &record.task_id)
+            .is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_history_denies_symlinked_ancestor() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let record = prepared();
+        let store = ExecutionRecordStore::new(temp.path());
+        let state = store.root();
+        std::fs::create_dir_all(state).unwrap();
+        symlink(other.path(), state.join(&record.workspace_id)).unwrap();
+        assert!(store
+            .list_for_task(&record.workspace_id, &record.task_id)
+            .is_err());
     }
 
     #[test]

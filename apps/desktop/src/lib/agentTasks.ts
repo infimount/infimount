@@ -130,6 +130,27 @@ export interface AgentTaskListOutput {
   skippedInvalidTasks: number;
 }
 
+export type HostedRecoveryStatus =
+  | "requires_fresh_approval"
+  | "manual_session_reconciliation"
+  | "inspect_pinned_session"
+  | "terminal_needs_cleanup_review";
+
+export interface HostedExecutionHistoryItem {
+  executionId: string;
+  startedAt: string;
+  finishedAt: string | null;
+  status: "prepared" | "running" | "succeeded" | "failed" | "cancelled";
+  recovery: HostedRecoveryStatus;
+  providerSessionRecorded: boolean;
+}
+
+export interface HostedExecutionHistory {
+  workspaceId: string;
+  taskId: string;
+  attempts: HostedExecutionHistoryItem[];
+}
+
 export interface AgentTaskOutputReviewFile {
   taskPath: string;
   byteSize: number;
@@ -294,6 +315,12 @@ export function listAgentTasks(
   request: AgentTaskListRequest,
 ): Promise<AgentTaskListOutput> {
   return invokeTask<AgentTaskListOutput>("list_agent_tasks", request);
+}
+
+export function listHostedTaskExecutionStatus(
+  request: AgentTaskIdentityRequest,
+): Promise<HostedExecutionHistory> {
+  return invokeTask<HostedExecutionHistory>("list_hosted_task_execution_status", request);
 }
 
 export function reviewAgentTaskOutputs(
