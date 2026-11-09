@@ -44,7 +44,7 @@ jobs:
         run: pnpm test:coverage:frontend
 
       - name: Upload frontend coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-coverage
           path: apps/desktop/coverage/frontend
@@ -72,7 +72,7 @@ jobs:
         run: ./scripts/coverage-rust.sh
 
       - name: Upload Rust coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rust-coverage
           path: coverage/rust
