@@ -361,12 +361,11 @@ impl AgentTaskExecutionRecord {
         // exactly one persisted ID binding without changing execution state,
         // scope, tools or hashes. A second Running -> Running transition
         // (including a repeat of the same ID) is forbidden.
-        let first_remote_session_binding =
-            self.status == ExecutionStatus::Running
-                && next.status == ExecutionStatus::Running
-                && self.runtime_kind == RuntimeKind::RemoteSandbox
-                && self.provider_execution_id.is_none()
-                && next.provider_execution_id.is_some();
+        let first_remote_session_binding = self.status == ExecutionStatus::Running
+            && next.status == ExecutionStatus::Running
+            && self.runtime_kind == RuntimeKind::RemoteSandbox
+            && self.provider_execution_id.is_none()
+            && next.provider_execution_id.is_some();
         let allowed = matches!(
             (self.status, next.status),
             (ExecutionStatus::Prepared, ExecutionStatus::Running)
@@ -875,16 +874,28 @@ mod tests {
         bound.provider_execution_id = Some("sess_pinned_2026".into());
         store.transition(&started, &bound).unwrap();
         assert_eq!(
-            store.read(&bound.workspace_id, &bound.task_id, &bound.execution_id)
-                .unwrap().provider_execution_id.as_deref(),
+            store
+                .read(&bound.workspace_id, &bound.task_id, &bound.execution_id)
+                .unwrap()
+                .provider_execution_id
+                .as_deref(),
             Some("sess_pinned_2026")
         );
 
-        assert!(store.transition(&started, &bound).is_err(), "stale bind denied");
-        assert!(store.transition(&bound, &bound).is_err(), "duplicate bind denied");
+        assert!(
+            store.transition(&started, &bound).is_err(),
+            "stale bind denied"
+        );
+        assert!(
+            store.transition(&bound, &bound).is_err(),
+            "duplicate bind denied"
+        );
         let mut different = bound.clone();
         different.provider_execution_id = Some("sess_other".into());
-        assert!(store.transition(&bound, &different).is_err(), "rebind denied");
+        assert!(
+            store.transition(&bound, &different).is_err(),
+            "rebind denied"
+        );
 
         let mut changed_scope = bound.clone();
         changed_scope.task_scope_digest = "c".repeat(64);
@@ -895,7 +906,10 @@ mod tests {
         failed.finished_at = Some("2026-10-16T10:18:00Z".into());
         failed.error_code = Some("ERR_REMOTE_FAILED".into());
         store.transition(&bound, &failed).unwrap();
-        assert!(store.transition(&failed, &bound).is_err(), "terminal is final");
+        assert!(
+            store.transition(&failed, &bound).is_err(),
+            "terminal is final"
+        );
     }
 
     #[test]

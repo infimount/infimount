@@ -185,9 +185,7 @@ pub(crate) fn recover_hosted_attempt(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use infimount_core::agent_tasks::{
-        AgentTaskInput, AGENT_TASK_SCHEMA_VERSION,
-    };
+    use infimount_core::agent_tasks::{AgentTaskInput, AGENT_TASK_SCHEMA_VERSION};
 
     const TASK_ID: &str = "81f08176-86e4-40ec-a9a4-a219c4c9b454";
     const WORKSPACE_ID: &str = "f8f47aa7-702d-4fd6-8815-84cbdf3b3127";
@@ -219,9 +217,13 @@ mod tests {
 
     fn prepare(store: &ExecutionRecordStore) -> AgentTaskExecutionRecord {
         prepare_hosted_execution(
-            store, &manifest(), &reviewed(), "gpt-6-astra",
-            "2026-11-10T00:30:00Z"
-        ).unwrap()
+            store,
+            &manifest(),
+            &reviewed(),
+            "gpt-6-astra",
+            "2026-11-10T00:30:00Z",
+        )
+        .unwrap()
     }
 
     #[test]
@@ -232,10 +234,18 @@ mod tests {
         assert_eq!(p.status, ExecutionStatus::Prepared);
         assert_eq!(p.provider_execution_id, None);
         assert_eq!(p.enabled_task_tools.len(), 0);
-        assert_eq!(recover_hosted_attempt(&store, WORKSPACE_ID, TASK_ID, &p.execution_id).unwrap(),
-            HostedRecoveryAction::AwaitExplicitApproval);
-        assert!(prepare_hosted_execution(&store, &manifest(), &reviewed(),
-            "gpt-6-astra", "2026-11-10T00:31:00Z").is_err());
+        assert_eq!(
+            recover_hosted_attempt(&store, WORKSPACE_ID, TASK_ID, &p.execution_id).unwrap(),
+            HostedRecoveryAction::AwaitExplicitApproval
+        );
+        assert!(prepare_hosted_execution(
+            &store,
+            &manifest(),
+            &reviewed(),
+            "gpt-6-astra",
+            "2026-11-10T00:31:00Z"
+        )
+        .is_err());
         let serialized = serde_json::to_string(&p).unwrap();
         assert!(!serialized.contains("PRIVATE original title"));
         assert!(!serialized.contains("inputs/sample.csv"));
@@ -244,9 +254,13 @@ mod tests {
         extra.requested_outputs.push("outputs/extra.md".into());
         let other = tempfile::tempdir().unwrap();
         let different = prepare_hosted_execution(
-            &ExecutionRecordStore::new(other.path()), &manifest(), &extra,
-            "gpt-6-astra", "2026-11-10T00:30:00Z"
-        ).unwrap();
+            &ExecutionRecordStore::new(other.path()),
+            &manifest(),
+            &extra,
+            "gpt-6-astra",
+            "2026-11-10T00:30:00Z",
+        )
+        .unwrap();
         assert_ne!(p.task_scope_digest, different.task_scope_digest);
     }
 
@@ -256,14 +270,24 @@ mod tests {
         let store = ExecutionRecordStore::new(dir.path());
         let p = prepare(&store);
         let started = mark_hosted_create_started(&store, &p).unwrap();
-        assert_eq!(recover_hosted_attempt(&store, WORKSPACE_ID, TASK_ID, &p.execution_id).unwrap(),
-            HostedRecoveryAction::ManualReconciliationRequired);
+        assert_eq!(
+            recover_hosted_attempt(&store, WORKSPACE_ID, TASK_ID, &p.execution_id).unwrap(),
+            HostedRecoveryAction::ManualReconciliationRequired
+        );
         let restarted = ExecutionRecordStore::new(dir.path());
-        assert_eq!(recover_hosted_attempt(&restarted, WORKSPACE_ID, TASK_ID, &p.execution_id).unwrap(),
-            HostedRecoveryAction::ManualReconciliationRequired);
+        assert_eq!(
+            recover_hosted_attempt(&restarted, WORKSPACE_ID, TASK_ID, &p.execution_id).unwrap(),
+            HostedRecoveryAction::ManualReconciliationRequired
+        );
         assert!(mark_hosted_create_started(&restarted, &p).is_err());
-        assert!(prepare_hosted_execution(&restarted, &manifest(), &reviewed(),
-            "gpt-6-astra", "2026-11-10T00:32:00Z").is_err());
+        assert!(prepare_hosted_execution(
+            &restarted,
+            &manifest(),
+            &reviewed(),
+            "gpt-6-astra",
+            "2026-11-10T00:32:00Z"
+        )
+        .is_err());
         assert_eq!(started.status, ExecutionStatus::Running);
     }
 
@@ -275,8 +299,10 @@ mod tests {
         let running = mark_hosted_create_started(&first, &prepared).unwrap();
         let bound = bind_hosted_session_once(&first, &running, "sess_real_1").unwrap();
         let second = ExecutionRecordStore::new(dir.path());
-        assert_eq!(recover_hosted_attempt(&second, WORKSPACE_ID, TASK_ID, &bound.execution_id).unwrap(),
-            HostedRecoveryAction::RecoverPinnedSession("sess_real_1".into()));
+        assert_eq!(
+            recover_hosted_attempt(&second, WORKSPACE_ID, TASK_ID, &bound.execution_id).unwrap(),
+            HostedRecoveryAction::RecoverPinnedSession("sess_real_1".into())
+        );
         assert!(bind_hosted_session_once(&second, &running, "sess_other").is_err());
         assert!(bind_hosted_session_once(&second, &bound, "sess_real_1").is_err());
         assert!(mark_hosted_create_started(&second, &prepared).is_err());
@@ -288,10 +314,22 @@ mod tests {
         let store = ExecutionRecordStore::new(dir.path());
         let mut blank = reviewed();
         blank.requested_outputs.clear();
-        assert!(prepare_hosted_execution(&store, &manifest(), &blank,
-            "gpt-6-astra", "2026-11-10T00:30:00Z").is_err());
-        assert!(prepare_hosted_execution(&store, &manifest(), &reviewed(),
-            "https://attacker.invalid", "2026-11-10T00:30:00Z").is_err());
+        assert!(prepare_hosted_execution(
+            &store,
+            &manifest(),
+            &blank,
+            "gpt-6-astra",
+            "2026-11-10T00:30:00Z"
+        )
+        .is_err());
+        assert!(prepare_hosted_execution(
+            &store,
+            &manifest(),
+            &reviewed(),
+            "https://attacker.invalid",
+            "2026-11-10T00:30:00Z"
+        )
+        .is_err());
         let p = prepare(&store);
         let running = mark_hosted_create_started(&store, &p).unwrap();
         for bad in ["", "../secret", "sess id", &"x".repeat(129)] {
