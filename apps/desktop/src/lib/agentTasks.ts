@@ -28,6 +28,14 @@ export interface PreviewHostedTaskExportRequest extends AgentTaskIdentityRequest
   };
 }
 
+export interface VerifiedHostedInputScope {
+  inputFileCount: number;
+  inputTotalBytes: number;
+  bundleMetadataSha256: string;
+  verifiedBytes: true;
+  exportAuthorized: false;
+}
+
 export interface HostedTaskExportPreview {
   provider: "openai_agents_api";
   dataResidency: "United States";
@@ -333,6 +341,12 @@ export function previewHostedTaskExport(
   request: PreviewHostedTaskExportRequest,
 ): Promise<HostedTaskExportPreview> {
   return invokeTask<HostedTaskExportPreview>("preview_hosted_task_export", request);
+}
+
+export function verifyHostedTaskExport(
+  request: PreviewHostedTaskExportRequest,
+): Promise<VerifiedHostedInputScope> {
+  return invokeTask<VerifiedHostedInputScope>("verify_hosted_task_export", request);
 }
 
 export function previewAgentTaskPublication(

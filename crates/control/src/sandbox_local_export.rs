@@ -25,8 +25,9 @@ use crate::openai_hosted_request::{
     ReviewedSandboxInputBytes, OPENAI_HOSTED_INLINE_MAX_BYTES, OPENAI_HOSTED_INLINE_MAX_FILES,
     OPENAI_HOSTED_INLINE_MAX_FILE_BYTES,
 };
-use crate::sandbox_bundle::build_sandbox_task_bundle;
+use crate::sandbox_bundle::{build_sandbox_task_bundle, SandboxTaskBundle};
 use crate::sandbox_local_ingest::{open_absolute_root, require_existing_chain};
+use serde::Serialize;
 
 const MAX_TRUSTED_TASK_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -86,12 +87,11 @@ struct PreparedInputBytes {
 /// the already bounded, offline-only hosted request. The returned object
 /// contains inline base64 user bytes, so it must never be logged or returned
 /// to the browser/MCP. This does not contact an API or spend any money.
-pub(crate) fn build_verified_hosted_request_from_unix_workspace(
+fn verify_prepared_input_handles(
     trusted_workspace_root: &Path,
     trusted_manifest: &AgentTaskManifest,
     separately_reviewed_export_brief: &AgentTaskBrief,
-    model_id: &str,
-) -> Result<OpenAiHostedOfflineSessionRequest, CoreError> {
+) -> Result<(SandboxTaskBundle, Vec<PreparedInputBytes>), CoreError> {
     let bundle = build_sandbox_task_bundle(trusted_manifest, separately_reviewed_export_brief)?;
     if bundle.requested_outputs.is_empty()
         || bundle.inputs.len() > OPENAI_HOSTED_INLINE_MAX_FILES
@@ -140,6 +140,58 @@ pub(crate) fn build_verified_hosted_request_from_unix_workspace(
     if total != bundle.input_total_bytes {
         return Err(fail());
     }
+    Ok((bundle, verified))
+}
+
+/// A sanitized, bounded result of an actual native no-follow read.
+/// This is a *fresh observation*, not a stable authorization, proof of user
+/// presence, provider connection or permission to transfer those bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifiedHostedInputScope {
+    pub input_file_count: usize,
+    pub input_total_bytes: u64,
+    pub bundle_metadata_sha256: String,
+    pub verified_bytes: bool,
+    pub export_authorized: bool,
+}
+
+/// Re-open every prepared byte through pinned no-follow Unix handles, verify
+/// sizes and SHA-256 and immediately zeroize the in-memory copies. Returns
+/// only metadata and a digest already bound to the manifest and reviewed
+/// instructions. Future execution MUST verify again under native locks.
+pub fn verify_prepared_hosted_input_scope(
+    trusted_workspace_root: &Path,
+    trusted_manifest: &AgentTaskManifest,
+    separately_reviewed_export_brief: &AgentTaskBrief,
+) -> Result<VerifiedHostedInputScope, CoreError> {
+    let (bundle, _verified_bytes) = verify_prepared_input_handles(
+        trusted_workspace_root,
+        trusted_manifest,
+        separately_reviewed_export_brief,
+    )?;
+    Ok(VerifiedHostedInputScope {
+        input_file_count: bundle.inputs.len(),
+        input_total_bytes: bundle.input_total_bytes,
+        bundle_metadata_sha256: bundle.bundle_metadata_sha256,
+        verified_bytes: true,
+        export_authorized: false,
+    })
+}
+
+/// Rehash actual input bytes again before constructing the offline request.
+/// The caller must NEVER serialize this request to renderer or MCP output.
+pub(crate) fn build_verified_hosted_request_from_unix_workspace(
+    trusted_workspace_root: &Path,
+    trusted_manifest: &AgentTaskManifest,
+    separately_reviewed_export_brief: &AgentTaskBrief,
+    model_id: &str,
+) -> Result<OpenAiHostedOfflineSessionRequest, CoreError> {
+    let (_bundle, verified) = verify_prepared_input_handles(
+        trusted_workspace_root,
+        trusted_manifest,
+        separately_reviewed_export_brief,
+    )?;
     let exact_refs: Vec<_> = verified
         .iter()
         .map(|entry| ReviewedSandboxInputBytes {
@@ -226,6 +278,28 @@ mod tests {
         let raw = serde_json::to_string(&json).unwrap();
         assert!(!raw.contains("PRIVATE original task"));
         assert!(!raw.contains(&manifest.workspace_id));
+    }
+
+    #[test]
+    fn fresh_native_byte_scope_proves_actual_content_without_returning_any_bytes() {
+        let (root, manifest, brief) = fixture();
+        let scope = verify_prepared_hosted_input_scope(root.path(), &manifest, &brief).unwrap();
+        assert_eq!(scope.input_file_count, 1);
+        assert_eq!(scope.input_total_bytes, 5);
+        assert!(scope.verified_bytes);
+        assert!(!scope.export_authorized);
+        assert_eq!(scope.bundle_metadata_sha256.len(), 64);
+        let safe = serde_json::to_string(&scope).unwrap();
+        assert!(!safe.contains("YWxwaGE="));
+        assert!(!safe.contains("alpha"));
+        assert!(!safe.contains("PRIVATE original task"));
+        assert!(!safe.contains("inputs/sample.csv"));
+        std::fs::write(
+            root.path().join(format!("tasks/{ID}/inputs/sample.csv")),
+            b"omega",
+        )
+        .unwrap();
+        assert!(verify_prepared_hosted_input_scope(root.path(), &manifest, &brief).is_err());
     }
 
     #[test]
