@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FileClock, RefreshCw, ShieldAlert } from "lucide-react";
 
 import { AgentTaskOutputReview } from "./AgentTaskOutputReview";
+import { HostedTaskRecoveryStatus } from "./HostedTaskRecoveryStatus";
 import { HostedProviderCredentialPanel } from "./HostedProviderCredentialPanel";
 import { AgentTaskHostedExportPreview } from "./AgentTaskHostedExportPreview";
 import { Button } from "@/components/ui/button";
@@ -140,6 +141,10 @@ export function AgentWorkspaceTasks({ workspaceId }: AgentWorkspaceTasksProps) {
                     taskId={selectedTask.taskId}
                   />
                   <AgentTaskHostedExportPreview
+                    workspaceId={workspaceId}
+                    taskId={selectedTask.taskId}
+                  />
+                  <HostedTaskRecoveryStatus
                     workspaceId={workspaceId}
                     taskId={selectedTask.taskId}
                   />

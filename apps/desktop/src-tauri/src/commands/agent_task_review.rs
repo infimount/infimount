@@ -9,6 +9,9 @@ use infimount_control::review_evidence::{
     checked_reviewed_output_bytes, list_review_output_entries,
 };
 use infimount_control::sandbox_bundle::build_sandbox_task_bundle;
+use infimount_core::agent_task_executions::{
+    AdapterKind, AgentTaskExecutionRecord, ExecutionStatus,
+};
 use infimount_core::agent_task_io::hash_agent_task_file;
 use infimount_core::agent_tasks::{
     agent_task_root, validate_agent_task_manifest, AgentTaskBrief, AgentTaskInput,
@@ -185,6 +188,97 @@ pub async fn preview_hosted_task_export(
     let context = load_review_context(&state, &local_request)?;
     let manifest = validate_task_manifest(&context, &local_request).await?;
     build_hosted_export_preview(&manifest, &request.reviewed_export_brief)
+}
+
+/// A read-only, sanitized view of PRIVATE hosted execution evidence.
+/// Session IDs and provider credentials never cross the IPC boundary.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostedRecoveryStatus {
+    RequiresFreshApproval,
+    ManualSessionReconciliation,
+    InspectPinnedSession,
+    TerminalNeedsCleanupReview,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostedExecutionHistoryItem {
+    pub execution_id: String,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub status: ExecutionStatus,
+    pub recovery: HostedRecoveryStatus,
+    pub provider_session_recorded: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostedExecutionHistory {
+    pub workspace_id: String,
+    pub task_id: String,
+    pub attempts: Vec<HostedExecutionHistoryItem>,
+}
+
+fn sanitized_hosted_attempt(record: AgentTaskExecutionRecord) -> HostedExecutionHistoryItem {
+    let recovery = match record.status {
+        ExecutionStatus::Prepared => HostedRecoveryStatus::RequiresFreshApproval,
+        ExecutionStatus::Running if record.provider_execution_id.is_some() => {
+            HostedRecoveryStatus::InspectPinnedSession
+        }
+        ExecutionStatus::Running => HostedRecoveryStatus::ManualSessionReconciliation,
+        ExecutionStatus::Succeeded | ExecutionStatus::Failed | ExecutionStatus::Cancelled => {
+            // The v1 private execution schema does not prove provider deletion.
+            // Even a terminal attempt cannot prove the session was cleaned.
+            HostedRecoveryStatus::TerminalNeedsCleanupReview
+        }
+    };
+    HostedExecutionHistoryItem {
+        execution_id: record.execution_id,
+        started_at: record.started_at,
+        finished_at: record.finished_at,
+        status: record.status,
+        recovery,
+        provider_session_recorded: record.provider_execution_id.is_some(),
+    }
+}
+
+/// Inspect the private evidence store after revalidating the selected task's
+/// workspace and manifest. This does not contact a provider or authorize
+/// another charged create. An unrecorded ID is NOT a reason to retry.
+#[tauri::command]
+pub async fn list_hosted_task_execution_status(
+    state: State<'_, AppState>,
+    request: AgentTaskOutputReviewRequest,
+) -> Result<HostedExecutionHistory, CoreError> {
+    state.require_operational().map_err(|_| {
+        CoreError::Config(
+            "Hosted execution history is unavailable while Infimount is degraded".into(),
+        )
+    })?;
+    let context = load_review_context(&state, &request)?;
+    validate_task_manifest(&context, &request).await?;
+    // ExecutionRecordStore uses a bounded cross-process file lock.
+    // Keep blocking OS evidence reads off the Tauri async worker.
+    let store = state.execution_records.clone();
+    let workspace_id = request.workspace_id.clone();
+    let task_id = request.task_id.clone();
+    let records =
+        tauri::async_runtime::spawn_blocking(move || store.list_for_task(&workspace_id, &task_id))
+            .await
+            .map_err(|_| {
+                CoreError::Config("Private hosted execution history task failed".into())
+            })??;
+    let attempts = records
+        .into_iter()
+        .filter(|record| record.adapter_kind == AdapterKind::OpenaiSandbox)
+        .map(sanitized_hosted_attempt)
+        .collect();
+    Ok(HostedExecutionHistory {
+        workspace_id: request.workspace_id,
+        task_id: request.task_id,
+        attempts,
+    })
 }
 
 fn load_review_context(
@@ -448,6 +542,46 @@ mod tests {
         let mut over_limit = manifest.clone();
         over_limit.inputs[0].byte_size = (OPENAI_HOSTED_INLINE_MAX_FILE_BYTES + 1) as u64;
         assert!(build_hosted_export_preview(&over_limit, &brief).is_err());
+    }
+
+    #[test]
+    fn hosted_history_projection_never_discloses_provider_session_id() {
+        use infimount_core::agent_task_executions::{
+            IsolationProfile, RuntimeKind, RuntimeProvider, EXECUTION_SCHEMA_VERSION,
+        };
+        let mut record = AgentTaskExecutionRecord {
+            schema_version: EXECUTION_SCHEMA_VERSION,
+            execution_id: "44444444-4444-4444-8444-444444444444".into(),
+            task_id: "11111111-1111-4111-8111-111111111111".into(),
+            workspace_id: "22222222-2222-4222-8222-222222222222".into(),
+            adapter_kind: AdapterKind::OpenaiSandbox,
+            adapter_version: "Agents API beta".into(),
+            executable_sha256: None,
+            runtime_kind: RuntimeKind::RemoteSandbox,
+            runtime_provider: Some(RuntimeProvider::Openai),
+            started_at: "2026-11-10T00:00:00Z".into(),
+            finished_at: None,
+            status: ExecutionStatus::Running,
+            task_scope_digest: "a".repeat(64),
+            enabled_task_tools: vec![],
+            isolation_profile: IsolationProfile::RemoteBundleIsolated,
+            prompt_sha256: "b".repeat(64),
+            output_file_count: 0,
+            output_total_bytes: 0,
+            output_aggregate_sha256: None,
+            error_code: None,
+            provider_execution_id: Some("sess_private_never_in_ipc".into()),
+        };
+        record.validate().unwrap();
+        let projection = sanitized_hosted_attempt(record.clone());
+        let wire = serde_json::to_string(&projection).unwrap();
+        assert!(wire.contains("inspect_pinned_session"));
+        assert!(projection.provider_session_recorded);
+        assert!(!wire.contains("sess_private_never_in_ipc"));
+        assert!(!wire.contains("providerExecutionId"));
+        record.provider_execution_id = None;
+        let unbound = serde_json::to_string(&sanitized_hosted_attempt(record)).unwrap();
+        assert!(unbound.contains("manual_session_reconciliation"));
     }
 
     #[test]

@@ -175,6 +175,7 @@ fn main() {
             commands::prepare_agent_task,
             commands::list_agent_tasks,
             commands::review_agent_task_outputs,
+            commands::list_hosted_task_execution_status,
             commands::preview_hosted_task_export,
             commands::hosted_provider_credential_status,
             commands::save_hosted_provider_credential,
