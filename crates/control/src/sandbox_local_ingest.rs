@@ -59,7 +59,7 @@ fn open_directory(parent: &OwnedFd, name: &OsStr) -> io::Result<OwnedFd> {
     Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
-fn open_absolute_root(root: &Path) -> Result<OwnedFd, CoreError> {
+pub(crate) fn open_absolute_root(root: &Path) -> Result<OwnedFd, CoreError> {
     if !root.is_absolute() {
         return Err(error("sandbox task workspace root must be absolute"));
     }
@@ -106,7 +106,10 @@ fn open_existing_chain(root: &OwnedFd, components: &[&str]) -> io::Result<Option
     Ok(Some(dir))
 }
 
-fn require_existing_chain(root: &OwnedFd, components: &[&str]) -> Result<OwnedFd, CoreError> {
+pub(crate) fn require_existing_chain(
+    root: &OwnedFd,
+    components: &[&str],
+) -> Result<OwnedFd, CoreError> {
     open_existing_chain(root, components)
         .map_err(|_| error("sandbox task output ancestor is linked or inaccessible"))?
         .ok_or_else(|| error("sandbox task output directory is missing"))

@@ -16,6 +16,7 @@ uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+zeroize = "1"
 
 [dev-dependencies]
 opendal = { version = "0.58.1", features = ["services-fs", "services-memory"] }
