@@ -356,6 +356,17 @@ impl AgentTaskExecutionRecord {
         if !self.immutable_identity_matches(next) {
             return invalid("execution identity, scope, tools, or launch details changed");
         }
+        // OpenAI's initial create request may stream the provider session ID
+        // only after the private execution record has entered Running. Permit
+        // exactly one persisted ID binding without changing execution state,
+        // scope, tools or hashes. A second Running -> Running transition
+        // (including a repeat of the same ID) is forbidden.
+        let first_remote_session_binding =
+            self.status == ExecutionStatus::Running
+                && next.status == ExecutionStatus::Running
+                && self.runtime_kind == RuntimeKind::RemoteSandbox
+                && self.provider_execution_id.is_none()
+                && next.provider_execution_id.is_some();
         let allowed = matches!(
             (self.status, next.status),
             (ExecutionStatus::Prepared, ExecutionStatus::Running)
@@ -364,7 +375,7 @@ impl AgentTaskExecutionRecord {
                 | (ExecutionStatus::Running, ExecutionStatus::Succeeded)
                 | (ExecutionStatus::Running, ExecutionStatus::Failed)
                 | (ExecutionStatus::Running, ExecutionStatus::Cancelled)
-        );
+        ) || first_remote_session_binding;
         if !allowed {
             return invalid("illegal execution lifecycle transition");
         }
@@ -845,6 +856,63 @@ mod tests {
             "terminal is immutable"
         );
         assert!(store.create(&initial).is_err(), "cannot reuse existing ID");
+    }
+
+    #[test]
+    fn remote_session_id_can_be_persisted_exactly_once_while_running() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ExecutionRecordStore::new(dir.path());
+        let mut original = AgentTaskExecutionRecord::parse(fixture("remote").as_bytes()).unwrap();
+        original.provider_execution_id = None;
+        original.execution_id = generate_execution_id();
+        store.create(&original).unwrap();
+
+        let started = running(&original);
+        store.transition(&original, &started).unwrap();
+        assert!(store.transition(&started, &started).is_err());
+
+        let mut bound = started.clone();
+        bound.provider_execution_id = Some("sess_pinned_2026".into());
+        store.transition(&started, &bound).unwrap();
+        assert_eq!(
+            store.read(&bound.workspace_id, &bound.task_id, &bound.execution_id)
+                .unwrap().provider_execution_id.as_deref(),
+            Some("sess_pinned_2026")
+        );
+
+        assert!(store.transition(&started, &bound).is_err(), "stale bind denied");
+        assert!(store.transition(&bound, &bound).is_err(), "duplicate bind denied");
+        let mut different = bound.clone();
+        different.provider_execution_id = Some("sess_other".into());
+        assert!(store.transition(&bound, &different).is_err(), "rebind denied");
+
+        let mut changed_scope = bound.clone();
+        changed_scope.task_scope_digest = "c".repeat(64);
+        assert!(store.transition(&bound, &changed_scope).is_err());
+
+        let mut failed = bound.clone();
+        failed.status = ExecutionStatus::Failed;
+        failed.finished_at = Some("2026-10-16T10:18:00Z".into());
+        failed.error_code = Some("ERR_REMOTE_FAILED".into());
+        store.transition(&bound, &failed).unwrap();
+        assert!(store.transition(&failed, &bound).is_err(), "terminal is final");
+    }
+
+    #[test]
+    fn session_binding_requires_running_remote_not_prepared_or_local() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ExecutionRecordStore::new(temp.path());
+        let mut original = AgentTaskExecutionRecord::parse(fixture("remote").as_bytes()).unwrap();
+        original.provider_execution_id = None;
+        store.create(&original).unwrap();
+        let mut premature = original.clone();
+        premature.provider_execution_id = Some("sess_premature".into());
+        assert!(store.transition(&original, &premature).is_err());
+
+        let local = prepared();
+        let mut local_running = running(&local);
+        local_running.provider_execution_id = Some("sess_forbidden".into());
+        assert!(local_running.validate().is_err());
     }
 
     #[test]
