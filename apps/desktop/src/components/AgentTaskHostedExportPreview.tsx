@@ -6,8 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   previewHostedTaskExport,
+  verifyHostedTaskExport,
   type HostedTaskExportPreview,
   type PreviewHostedTaskExportRequest,
+  type VerifiedHostedInputScope,
 } from "@/lib/agentTasks";
 
 interface Props {
@@ -39,7 +41,9 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
   const [objective, setObjective] = useState("");
   const [outputsText, setOutputsText] = useState("");
   const [preview, setPreview] = useState<HostedTaskExportPreview | null>(null);
+  const [verified, setVerified] = useState<VerifiedHostedInputScope | null>(null);
   const [loading, setLoading] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // A monotonic generation also rejects ABA edits (A -> B -> A) while an
   // older preview is in flight. A matching text key alone is not sufficient.
@@ -48,8 +52,10 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
   const invalidateReview = () => {
     generation.current += 1;
     setPreview(null);
+    setVerified(null);
     setError(null);
     setLoading(false);
+    setVerifying(false);
   };
 
   useEffect(() => {
@@ -59,7 +65,9 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
     setObjective("");
     setOutputsText("");
     setPreview(null);
+    setVerified(null);
     setLoading(false);
+    setVerifying(false);
     setError(null);
   }, [workspaceId, taskId]);
 
@@ -67,7 +75,7 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
   const valid = reviewedTitle.trim().length > 0 && objective.trim().length > 0 && reviewedOutputs.length > 0;
 
   const showScope = async () => {
-    if (!valid || loading) return;
+    if (!valid || loading || verifying) return;
     const currentGeneration = ++generation.current;
     const request: PreviewHostedTaskExportRequest = {
       workspaceId,
@@ -81,6 +89,7 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
     setLoading(true);
     setError(null);
     setPreview(null);
+    setVerified(null);
     try {
       const result = await previewHostedTaskExport(request);
       if (generation.current !== currentGeneration) return;
@@ -90,6 +99,39 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
       setError(value instanceof Error ? value.message : "Remote export preview failed.");
     } finally {
       if (generation.current === currentGeneration) setLoading(false);
+    }
+  };
+
+  const verifyPreparedBytes = async () => {
+    if (!preview || loading || verifying) return;
+    const currentGeneration = generation.current;
+    const request: PreviewHostedTaskExportRequest = {
+      workspaceId,
+      taskId,
+      reviewedExportBrief: {
+        title: reviewedTitle.trim(),
+        objective: objective.trim(),
+        requestedOutputs: reviewedOutputs,
+      },
+    };
+    setVerifying(true);
+    setVerified(null);
+    setError(null);
+    try {
+      const result = await verifyHostedTaskExport(request);
+      if (generation.current !== currentGeneration) return;
+      if (!result.verifiedBytes || result.exportAuthorized
+        || result.bundleMetadataSha256 !== preview.bundleMetadataSha256
+        || result.inputFileCount !== preview.inputFileCount
+        || result.inputTotalBytes !== preview.inputTotalBytes) {
+        throw new Error("Scope mismatch");
+      }
+      setVerified(result);
+    } catch {
+      if (generation.current !== currentGeneration) return;
+      setError("Actual prepared-byte verification failed or the reviewed scope changed. Recheck the task before proceeding.");
+    } finally {
+      if (generation.current === currentGeneration) setVerifying(false);
     }
   };
 
@@ -163,7 +205,7 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
               placeholder="outputs/summary.md"
             />
           </label>
-          <Button variant="outline" size="sm" onClick={() => void showScope()} disabled={!valid || loading}>
+          <Button variant="outline" size="sm" onClick={() => void showScope()} disabled={!valid || loading || verifying}>
             {loading ? "Checking scope…" : "Preview export scope (no upload)"}
           </Button>
           {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
@@ -190,6 +232,15 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
               <div className="break-all font-mono text-[10px]">
                 Manifest-only export digest: {preview.bundleMetadataSha256}
               </div>
+              <Button variant="outline" size="sm" disabled={loading || verifying} onClick={() => void verifyPreparedBytes()}>
+                {verifying ? "Verifying prepared files…" : "Verify actual prepared bytes (no upload)"}
+              </Button>
+              {verified ? (
+                <p className="font-medium" data-testid="hosted-export-verified">
+                  Actual prepared bytes matched the reviewed manifest at the time of this check.
+                  This is not export or spending approval. Any future execution must reverify bytes.
+                </p>
+              ) : null}
               <p className="font-medium">
                 No data transferred. No spending or publication authorized. A future execution must rehash input bytes and obtain separate consent.
               </p>

@@ -14,7 +14,8 @@ use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 use infimount_core::agent_tasks::{
-    agent_task_root, AgentTaskBrief, AgentTaskManifest, AGENT_TASK_MANIFEST_FILE,
+    agent_task_root, validate_agent_task_manifest, AgentTaskBrief, AgentTaskManifest,
+    AGENT_TASK_MANIFEST_FILE,
 };
 use infimount_core::CoreError;
 use sha2::{Digest, Sha256};
@@ -25,8 +26,9 @@ use crate::openai_hosted_request::{
     ReviewedSandboxInputBytes, OPENAI_HOSTED_INLINE_MAX_BYTES, OPENAI_HOSTED_INLINE_MAX_FILES,
     OPENAI_HOSTED_INLINE_MAX_FILE_BYTES,
 };
-use crate::sandbox_bundle::build_sandbox_task_bundle;
+use crate::sandbox_bundle::{build_sandbox_task_bundle, SandboxTaskBundle};
 use crate::sandbox_local_ingest::{open_absolute_root, require_existing_chain};
+use serde::Serialize;
 
 const MAX_TRUSTED_TASK_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -82,16 +84,39 @@ struct PreparedInputBytes {
     bytes: Zeroizing<Vec<u8>>,
 }
 
-/// Rehash all prepared task bytes from pinned Unix descriptors and construct
-/// the already bounded, offline-only hosted request. The returned object
-/// contains inline base64 user bytes, so it must never be logged or returned
-/// to the browser/MCP. This does not contact an API or spend any money.
-pub(crate) fn build_verified_hosted_request_from_unix_workspace(
-    trusted_workspace_root: &Path,
+/// The first manifest read must use the same bounded, no-follow descriptor
+/// path as the inputs. A path-based stat followed by an unbounded read would
+/// let a replaced or growing manifest block or exhaust the native preflight.
+fn read_prepared_task_manifest(
+    task_dir: &OwnedFd,
+    expected_workspace_id: &str,
+    expected_task_id: &str,
+) -> Result<AgentTaskManifest, CoreError> {
+    uuid::Uuid::parse_str(expected_workspace_id).map_err(|_| fail())?;
+    let task_root = agent_task_root(expected_task_id).map_err(|_| fail())?;
+    let bytes = read_one_regular_file(
+        task_dir,
+        &[AGENT_TASK_MANIFEST_FILE],
+        MAX_TRUSTED_TASK_MANIFEST_BYTES,
+    )?;
+    let manifest: AgentTaskManifest = serde_json::from_slice(&bytes).map_err(|_| fail())?;
+    validate_agent_task_manifest(&manifest).map_err(|_| fail())?;
+    if manifest.workspace_id != expected_workspace_id
+        || manifest.task_id != expected_task_id
+        || manifest.task_root != task_root
+    {
+        return Err(fail());
+    }
+    Ok(manifest)
+}
+
+/// Rehash prepared inputs under the same pinned task used to load and bind
+/// the manifest. The returned byte buffers never cross the native boundary.
+fn verify_prepared_input_handles(
+    task_dir: &OwnedFd,
     trusted_manifest: &AgentTaskManifest,
     separately_reviewed_export_brief: &AgentTaskBrief,
-    model_id: &str,
-) -> Result<OpenAiHostedOfflineSessionRequest, CoreError> {
+) -> Result<(SandboxTaskBundle, Vec<PreparedInputBytes>), CoreError> {
     let bundle = build_sandbox_task_bundle(trusted_manifest, separately_reviewed_export_brief)?;
     if bundle.requested_outputs.is_empty()
         || bundle.inputs.len() > OPENAI_HOSTED_INLINE_MAX_FILES
@@ -104,25 +129,12 @@ pub(crate) fn build_verified_hosted_request_from_unix_workspace(
         return Err(fail());
     }
 
-    let root = open_absolute_root(trusted_workspace_root)?;
-    let task_root = agent_task_root(&trusted_manifest.task_id)?;
-    let manifest_path = format!("{task_root}/{AGENT_TASK_MANIFEST_FILE}");
-    let manifest_components: Vec<&str> = manifest_path.split('/').collect();
-    let manifest_bytes =
-        read_one_regular_file(&root, &manifest_components, MAX_TRUSTED_TASK_MANIFEST_BYTES)?;
-    let actual_manifest: AgentTaskManifest =
-        serde_json::from_slice(&manifest_bytes).map_err(|_| fail())?;
-    if actual_manifest != *trusted_manifest {
-        return Err(fail());
-    }
-
     let mut verified = Vec::with_capacity(bundle.inputs.len());
     let mut total = 0_u64;
     for item in &bundle.inputs {
-        let relative = format!("{task_root}/{}", item.task_path);
-        let components: Vec<&str> = relative.split('/').collect();
+        let components: Vec<&str> = item.task_path.split('/').collect();
         let bytes = read_one_regular_file(
-            &root,
+            task_dir,
             &components,
             OPENAI_HOSTED_INLINE_MAX_FILE_BYTES as u64,
         )?;
@@ -140,6 +152,96 @@ pub(crate) fn build_verified_hosted_request_from_unix_workspace(
     if total != bundle.input_total_bytes {
         return Err(fail());
     }
+    Ok((bundle, verified))
+}
+
+fn open_prepared_task_directory(
+    trusted_workspace_root: &Path,
+    expected_task_id: &str,
+) -> Result<OwnedFd, CoreError> {
+    let task_root = agent_task_root(expected_task_id).map_err(|_| fail())?;
+    let root = open_absolute_root(trusted_workspace_root)?;
+    let components: Vec<&str> = task_root.split('/').collect();
+    require_existing_chain(&root, &components)
+}
+
+/// A sanitized, bounded result of an actual native no-follow read.
+/// This is a *fresh observation*, not a stable authorization, proof of user
+/// presence, provider connection or permission to transfer those bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifiedHostedInputScope {
+    pub input_file_count: usize,
+    pub input_total_bytes: u64,
+    pub bundle_metadata_sha256: String,
+    pub verified_bytes: bool,
+    pub export_authorized: bool,
+}
+
+/// Load the task manifest and every prepared input through pinned no-follow
+/// Unix handles, verify their workspace/task binding, sizes and SHA-256, and
+/// immediately zeroize the in-memory byte copies. The caller supplies trusted
+/// identity, never a manifest loaded through an earlier path-based read.
+/// Returns only metadata and a digest bound to the reviewed instructions.
+/// Future execution MUST verify again under native locks.
+pub fn verify_prepared_hosted_input_scope(
+    trusted_workspace_root: &Path,
+    expected_workspace_id: &str,
+    expected_task_id: &str,
+    separately_reviewed_export_brief: &AgentTaskBrief,
+) -> Result<VerifiedHostedInputScope, CoreError> {
+    let task_dir = open_prepared_task_directory(trusted_workspace_root, expected_task_id)?;
+    let manifest = read_prepared_task_manifest(&task_dir, expected_workspace_id, expected_task_id)?;
+    let (bundle, _verified_bytes) =
+        verify_prepared_input_handles(&task_dir, &manifest, separately_reviewed_export_brief)?;
+    Ok(VerifiedHostedInputScope {
+        input_file_count: bundle.inputs.len(),
+        input_total_bytes: bundle.input_total_bytes,
+        bundle_metadata_sha256: bundle.bundle_metadata_sha256,
+        verified_bytes: true,
+        export_authorized: false,
+    })
+}
+
+/// Rehash actual input bytes again before constructing the offline request.
+/// The caller must NEVER serialize this request to renderer or MCP output.
+pub(crate) fn build_verified_hosted_request_from_unix_workspace(
+    trusted_workspace_root: &Path,
+    trusted_manifest: &AgentTaskManifest,
+    separately_reviewed_export_brief: &AgentTaskBrief,
+    model_id: &str,
+) -> Result<OpenAiHostedOfflineSessionRequest, CoreError> {
+    let task_dir = open_prepared_task_directory(trusted_workspace_root, &trusted_manifest.task_id)?;
+    build_verified_hosted_request_from_pinned_task(
+        &task_dir,
+        trusted_manifest,
+        separately_reviewed_export_brief,
+        model_id,
+    )
+}
+
+/// The native lifecycle retains this task descriptor across execution and
+/// import. Read only relative to the caller's already confined task directory,
+/// and reject a manifest that no longer matches the trusted reviewed task.
+pub(crate) fn build_verified_hosted_request_from_pinned_task(
+    trusted_task_dir: &OwnedFd,
+    trusted_manifest: &AgentTaskManifest,
+    separately_reviewed_export_brief: &AgentTaskBrief,
+    model_id: &str,
+) -> Result<OpenAiHostedOfflineSessionRequest, CoreError> {
+    let manifest = read_prepared_task_manifest(
+        trusted_task_dir,
+        &trusted_manifest.workspace_id,
+        &trusted_manifest.task_id,
+    )?;
+    if manifest != *trusted_manifest {
+        return Err(fail());
+    }
+    let (_bundle, verified) = verify_prepared_input_handles(
+        trusted_task_dir,
+        trusted_manifest,
+        separately_reviewed_export_brief,
+    )?;
     let exact_refs: Vec<_> = verified
         .iter()
         .map(|entry| ReviewedSandboxInputBytes {
@@ -226,6 +328,170 @@ mod tests {
         let raw = serde_json::to_string(&json).unwrap();
         assert!(!raw.contains("PRIVATE original task"));
         assert!(!raw.contains(&manifest.workspace_id));
+    }
+
+    #[test]
+    fn fresh_native_byte_scope_proves_actual_content_without_returning_any_bytes() {
+        let (root, manifest, brief) = fixture();
+        let scope = verify_prepared_hosted_input_scope(
+            root.path(),
+            &manifest.workspace_id,
+            &manifest.task_id,
+            &brief,
+        )
+        .unwrap();
+        assert_eq!(scope.input_file_count, 1);
+        assert_eq!(scope.input_total_bytes, 5);
+        assert!(scope.verified_bytes);
+        assert!(!scope.export_authorized);
+        assert_eq!(scope.bundle_metadata_sha256.len(), 64);
+        let safe = serde_json::to_string(&scope).unwrap();
+        assert!(!safe.contains("YWxwaGE="));
+        assert!(!safe.contains("alpha"));
+        assert!(!safe.contains("PRIVATE original task"));
+        assert!(!safe.contains("inputs/sample.csv"));
+        std::fs::write(
+            root.path().join(format!("tasks/{ID}/inputs/sample.csv")),
+            b"omega",
+        )
+        .unwrap();
+        assert!(verify_prepared_hosted_input_scope(
+            root.path(),
+            &manifest.workspace_id,
+            &manifest.task_id,
+            &brief,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn native_scope_rejects_foreign_workspace_and_task_manifests() {
+        let (root, manifest, brief) = fixture();
+        let path = root
+            .path()
+            .join(format!("tasks/{ID}/{AGENT_TASK_MANIFEST_FILE}"));
+        let other_id = "70bb1d4d-e938-4d57-9918-93caf5df4f43";
+        let mut foreign = manifest.clone();
+        foreign.workspace_id = other_id.into();
+        fs::write(&path, serde_json::to_vec(&foreign).unwrap()).unwrap();
+        assert!(verify_prepared_hosted_input_scope(
+            root.path(),
+            &manifest.workspace_id,
+            &manifest.task_id,
+            &brief,
+        )
+        .is_err());
+
+        foreign = manifest.clone();
+        foreign.task_id = other_id.into();
+        foreign.task_root = agent_task_root(other_id).unwrap();
+        fs::write(&path, serde_json::to_vec(&foreign).unwrap()).unwrap();
+        assert!(verify_prepared_hosted_input_scope(
+            root.path(),
+            &manifest.workspace_id,
+            &manifest.task_id,
+            &brief,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn native_scope_first_manifest_read_rejects_symlinks_and_hardlinks() {
+        for hardlink in [false, true] {
+            let (root, manifest, brief) = fixture();
+            let path = root
+                .path()
+                .join(format!("tasks/{ID}/{AGENT_TASK_MANIFEST_FILE}"));
+            let outside = TempDir::new().unwrap();
+            let external_path = outside.path().join("private-manifest.json");
+            fs::write(&external_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+            fs::remove_file(&path).unwrap();
+            if hardlink {
+                fs::hard_link(&external_path, &path).unwrap();
+            } else {
+                symlink(&external_path, &path).unwrap();
+            }
+            assert!(verify_prepared_hosted_input_scope(
+                root.path(),
+                &manifest.workspace_id,
+                &manifest.task_id,
+                &brief,
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn native_scope_first_manifest_read_rejects_oversize_files_and_fifos() {
+        let (root, manifest, brief) = fixture();
+        let path = root
+            .path()
+            .join(format!("tasks/{ID}/{AGENT_TASK_MANIFEST_FILE}"));
+        File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(MAX_TRUSTED_TASK_MANIFEST_BYTES + 1)
+            .unwrap();
+        assert!(verify_prepared_hosted_input_scope(
+            root.path(),
+            &manifest.workspace_id,
+            &manifest.task_id,
+            &brief,
+        )
+        .is_err());
+
+        fs::remove_file(&path).unwrap();
+        let path_c = CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: a valid NUL-terminated path in this test's private directory.
+        assert_eq!(unsafe { libc::mkfifo(path_c.as_ptr(), 0o600) }, 0);
+        // No writer exists. A blocking open would hang here, so this exercises
+        // the O_NONBLOCK check on the very first manifest access.
+        assert!(verify_prepared_hosted_input_scope(
+            root.path(),
+            &manifest.workspace_id,
+            &manifest.task_id,
+            &brief,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn manifest_and_inputs_remain_bound_to_the_same_pinned_task_directory() {
+        let (root, manifest, brief) = fixture();
+        let pinned_task = open_prepared_task_directory(root.path(), &manifest.task_id).unwrap();
+        let replacement_parent = TempDir::new().unwrap();
+        let moved_root = replacement_parent.path().join("original-workspace");
+        fs::rename(root.path(), &moved_root).unwrap();
+        fs::create_dir(root.path()).unwrap();
+
+        // The original absolute path now points to a different, empty root.
+        // Both reads must continue through the pinned original task descriptor.
+        let observed =
+            read_prepared_task_manifest(&pinned_task, &manifest.workspace_id, &manifest.task_id)
+                .unwrap();
+        let (bundle, bytes) =
+            verify_prepared_input_handles(&pinned_task, &observed, &brief).unwrap();
+        assert_eq!(observed, manifest);
+        assert_eq!(bundle.input_total_bytes, 5);
+        assert_eq!(bytes[0].bytes.as_slice(), b"alpha");
+        let request = build_verified_hosted_request_from_pinned_task(
+            &pinned_task,
+            &manifest,
+            &brief,
+            "gpt-6-astra",
+        )
+        .unwrap();
+        assert!(serde_json::to_string(&request)
+            .unwrap()
+            .contains("YWxwaGE="));
+        assert!(verify_prepared_hosted_input_scope(
+            root.path(),
+            &manifest.workspace_id,
+            &manifest.task_id,
+            &brief,
+        )
+        .is_err());
     }
 
     #[test]

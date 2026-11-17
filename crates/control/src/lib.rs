@@ -30,7 +30,7 @@ pub mod sandbox_reviewed_ingest;
 // Unix output import is internal until workspace locks and native review qualify.
 #[cfg(unix)]
 #[allow(dead_code)]
-mod sandbox_local_export;
+pub mod sandbox_local_export;
 #[cfg(unix)]
 #[allow(dead_code)]
 mod sandbox_local_ingest;
