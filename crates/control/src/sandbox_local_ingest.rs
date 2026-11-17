@@ -115,6 +115,72 @@ pub(crate) fn require_existing_chain(
         .ok_or_else(|| error("sandbox task output directory is missing"))
 }
 
+/// Starting a new provider session requires no existing output of any kind.
+/// Read only the pinned directory, with at most '.', '..' and one real entry.
+/// Never follow symlinks or enumerate a replacement path from the filesystem.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn require_empty_pinned_output_directory(dir: &OwnedFd) -> Result<(), CoreError> {
+    use std::os::fd::IntoRawFd;
+    struct DirectoryStream(std::ptr::NonNull<libc::DIR>);
+    impl Drop for DirectoryStream {
+        fn drop(&mut self) {
+            // SAFETY: fdopendir transferred its descriptor to this sole owner.
+            unsafe { libc::closedir(self.0.as_ptr()) };
+        }
+    }
+    let duplicate = dir.try_clone()?;
+    // SAFETY: a live owned descriptor for the pinned directory.
+    let pointer = unsafe { libc::fdopendir(duplicate.as_raw_fd()) };
+    let stream = DirectoryStream(
+        std::ptr::NonNull::new(pointer)
+            .ok_or_else(|| error("sandbox output directory could not be inspected"))?,
+    );
+    // fdopendir now owns the duplicate. On failure above OwnedFd closes it.
+    let _transferred = duplicate.into_raw_fd();
+    // SAFETY: stream remains live until the end of this function. Duplicated
+    // descriptors share the offset, so always reset it before inspecting.
+    unsafe { libc::rewinddir(stream.0.as_ptr()) };
+    for _ in 0..3 {
+        // SAFETY: errno is thread-local and the pointer is supplied by libc.
+        #[cfg(target_os = "linux")]
+        let errno = unsafe { libc::__errno_location() };
+        #[cfg(target_os = "macos")]
+        let errno = unsafe { libc::__error() };
+        // SAFETY: a null readdir result is EOF only when errno stayed zero.
+        unsafe { *errno = 0 };
+        // SAFETY: the stream is valid and accessed by this thread only.
+        let entry = unsafe { libc::readdir(stream.0.as_ptr()) };
+        if entry.is_null() {
+            // SAFETY: same thread-local errno as above, before any other I/O.
+            return if unsafe { *errno } == 0 {
+                Ok(())
+            } else {
+                Err(error("sandbox output directory could not be inspected"))
+            };
+        }
+        // SAFETY: POSIX readdir supplies a NUL-terminated name valid until
+        // the next read on this stream. No contents or link target are read.
+        let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+        if name != b"." && name != b".." {
+            return Err(error("sandbox task outputs must be empty before execution"));
+        }
+    }
+    Err(error(
+        "sandbox output directory inspection did not terminate",
+    ))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub(crate) fn require_empty_pinned_output_directory(_dir: &OwnedFd) -> Result<(), CoreError> {
+    Err(error(
+        "sandbox output emptiness is unqualified on this platform",
+    ))
+}
+
+fn sync_directory(dir: &OwnedFd) -> io::Result<()> {
+    File::from(dir.try_clone()?).sync_all()
+}
+
 fn leaf_exists(dir: &OwnedFd, leaf: &str) -> io::Result<bool> {
     let leaf = component_cstring(OsStr::new(leaf))?;
     let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
@@ -147,7 +213,13 @@ fn ensure_child_dir(dir: &OwnedFd, name: &str) -> io::Result<OwnedFd> {
             return Err(err);
         }
     }
-    open_directory(dir, OsStr::new(name))
+    let child = open_directory(dir, OsStr::new(name))?;
+    if rc == 0 {
+        // File fsync alone cannot make a newly created directory entry durable.
+        sync_directory(&child)?;
+        sync_directory(dir)?;
+    }
+    Ok(child)
 }
 
 fn create_new_file(dir: &OwnedFd, name: &str) -> io::Result<File> {
@@ -212,6 +284,31 @@ pub(crate) fn ingest_reviewed_outputs_to_unix_workspace(
     candidate: &SandboxOutputCandidatePlan,
     staged: &[VerifiedStagedOutput<'_>],
 ) -> Result<NofollowImportSummary, CoreError> {
+    let workspace = open_absolute_root(trusted_workspace_root)?;
+    let task_root = agent_task_root(&trusted_manifest.task_id)?;
+    let task_outputs = format!("{task_root}/outputs");
+    let task_parts: Vec<&str> = task_outputs.split('/').collect();
+    let output_dir = require_existing_chain(&workspace, &task_parts)?;
+    ingest_reviewed_outputs_to_pinned_directory(
+        &output_dir,
+        trusted_manifest,
+        reviewed_brief,
+        candidate,
+        staged,
+    )
+}
+
+/// Reuse the output directory pinned BEFORE a hosted execution. Renaming or
+/// replacing a task pathname cannot redirect these writes into another tree.
+/// Only the trusted coordinator may supply this descriptor, with its task and
+/// workspace locks held. This does not grant original-storage publication.
+pub(crate) fn ingest_reviewed_outputs_to_pinned_directory(
+    output_dir: &OwnedFd,
+    trusted_manifest: &AgentTaskManifest,
+    reviewed_brief: &AgentTaskBrief,
+    candidate: &SandboxOutputCandidatePlan,
+    staged: &[VerifiedStagedOutput<'_>],
+) -> Result<NofollowImportSummary, CoreError> {
     verify_reviewed_sandbox_output_scope(trusted_manifest, reviewed_brief, candidate)?;
 
     if staged.len() != candidate.entries.len() {
@@ -259,16 +356,10 @@ pub(crate) fn ingest_reviewed_outputs_to_unix_workspace(
         ));
     }
 
-    let workspace = open_absolute_root(trusted_workspace_root)?;
-    let task_root = agent_task_root(&trusted_manifest.task_id)?;
-    let task_outputs = format!("{task_root}/outputs");
-    let task_parts: Vec<&str> = task_outputs.split('/').collect();
-    let output_dir = require_existing_chain(&workspace, &task_parts)?;
-
     // Preflight destination absence and existing parent integrity before any
     // output or new child directory is created.
     for (parts, _, _) in &preflight {
-        if let Some(parent) = open_existing_chain(&output_dir, &parts[..parts.len() - 1])
+        if let Some(parent) = open_existing_chain(output_dir, &parts[..parts.len() - 1])
             .map_err(|_| error("sandbox output parent is a symlink or inaccessible"))?
         {
             if leaf_exists(&parent, parts[parts.len() - 1])
@@ -291,6 +382,7 @@ pub(crate) fn ingest_reviewed_outputs_to_unix_workspace(
             .map_err(|_| CoreError::TransferCleanupRequired)?;
         if destination.write_all(bytes).is_err()
             || verify_committed_bytes(&mut destination, entry.byte_size, &entry.sha256).is_err()
+            || sync_directory(&parent).is_err()
         {
             // Created bytes might be partially committed. Never delete on a
             // potentially raced path, and require visible manual cleanup.
@@ -316,6 +408,21 @@ mod tests {
     use tempfile::TempDir;
 
     const ID: &str = "81f08176-86e4-40ec-a9a4-a219c4c9b454";
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn repeated_pinned_empty_checks_rewind_and_reject_any_new_entry() {
+        let root = TempDir::new().unwrap();
+        let directory = open_absolute_root(root.path()).unwrap();
+        require_empty_pinned_output_directory(&directory).unwrap();
+        require_empty_pinned_output_directory(&directory).unwrap();
+        fs::write(root.path().join("entry"), b"existing").unwrap();
+        assert!(require_empty_pinned_output_directory(&directory).is_err());
+        fs::remove_file(root.path().join("entry")).unwrap();
+        require_empty_pinned_output_directory(&directory).unwrap();
+        fs::create_dir(root.path().join("entry")).unwrap();
+        assert!(require_empty_pinned_output_directory(&directory).is_err());
+    }
 
     fn prepared() -> (TempDir, AgentTaskManifest, AgentTaskBrief) {
         let root = TempDir::new().unwrap();
