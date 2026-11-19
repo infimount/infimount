@@ -23,6 +23,7 @@ tokio = { version = "1.50.0", features = ["sync", "net", "io-util", "time"] }
 reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "json", "form"] }
 rand = "0.9"
 sha2 = "0.10"
+zeroize = "1"
 base64 = "0.22"
 dirs = "6"
 urlencoding = "2.1"
