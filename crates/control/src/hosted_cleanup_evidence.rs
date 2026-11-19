@@ -59,8 +59,11 @@ fn directory_at(parent: &OwnedFd, component: &str) -> io::Result<Option<OwnedFd>
     let component = CString::new(component).map_err(|_| io::ErrorKind::InvalidInput)?;
     // SAFETY: pinned directory descriptor, one NUL-terminated component.
     let fd = unsafe {
-        libc::openat(parent.as_raw_fd(), component.as_ptr(),
-            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        libc::openat(
+            parent.as_raw_fd(),
+            component.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
     };
     if fd < 0 {
         let error = io::Error::last_os_error();
@@ -113,8 +116,10 @@ fn verified_receipt(
         || receipt.physical_deletion_confirmed
         || receipt.confirmed_at.len() > 48
         || receipt.confirmed_at.is_empty()
-        || !receipt.confirmed_at.bytes().all(|b| b.is_ascii_alphanumeric()
-            || matches!(b, b'-' | b':' | b'.' | b'+' ))
+        || !receipt
+            .confirmed_at
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b':' | b'.' | b'+'))
     {
         return Err(rejected());
     }
@@ -154,9 +159,12 @@ pub(crate) fn persist_public_deletion(
     let leaf = name(&format!("{}.json", running.execution_id))?;
     // SAFETY: create-new, no-follow file under pinned directory.
     let fd = unsafe {
-        libc::openat(task.as_raw_fd(), leaf.as_ptr(),
+        libc::openat(
+            task.as_raw_fd(),
+            leaf.as_ptr(),
             libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-            0o600)
+            0o600,
+        )
     };
     if fd < 0 {
         return Err(rejected());
@@ -191,8 +199,11 @@ pub fn public_deletion_confirmed(
     let leaf = name(&format!("{}.json", record.execution_id))?;
     // SAFETY: confined, non-blocking, no-follow read of a fixed file name.
     let fd = unsafe {
-        libc::openat(parent.as_raw_fd(), leaf.as_ptr(),
-            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+        libc::openat(
+            parent.as_raw_fd(),
+            leaf.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC,
+        )
     };
     if fd < 0 {
         let error = io::Error::last_os_error();
@@ -205,7 +216,9 @@ pub fn public_deletion_confirmed(
     // SAFETY: successful openat gave one owned file.
     let file = unsafe { File::from_raw_fd(fd) };
     let metadata = file.metadata()?;
-    if !metadata.is_file() || metadata.nlink() != 1 || metadata.mode() & 0o077 != 0
+    if !metadata.is_file()
+        || metadata.nlink() != 1
+        || metadata.mode() & 0o077 != 0
         || metadata.len() > MAX_RECEIPT_BYTES
     {
         return Err(rejected());
@@ -229,8 +242,12 @@ mod tests {
 
     fn fixture() -> AgentTaskExecutionRecord {
         let mut record = AgentTaskExecutionRecord::parse(
-            include_str!("../../../tests/fixtures/agent-task-executions/valid-remote-prepared.json").as_bytes()
-        ).unwrap();
+            include_str!(
+                "../../../tests/fixtures/agent-task-executions/valid-remote-prepared.json"
+            )
+            .as_bytes(),
+        )
+        .unwrap();
         record.status = ExecutionStatus::Running;
         record.provider_execution_id = Some("sess_synthetic".into());
         record.validate().unwrap();
@@ -261,8 +278,11 @@ mod tests {
         let store = ExecutionRecordStore::new(home.path());
         let running = fixture();
         persist_public_deletion(&store, &running, "2026-11-17T07:00:00Z").unwrap();
-        let file = home.path().join(RECEIPTS_DIR)
-            .join(&running.workspace_id).join(&running.task_id)
+        let file = home
+            .path()
+            .join(RECEIPTS_DIR)
+            .join(&running.workspace_id)
+            .join(&running.task_id)
             .join(format!("{}.json", running.execution_id));
         let original = fs::read(&file).unwrap();
         fs::write(&file, b"not json").unwrap();

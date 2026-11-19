@@ -1044,7 +1044,13 @@ mod tests {
     fn successful_delete_requires_durable_public_receipt() {
         let fixture = Fixture::new();
         let mut provider = MockProvider::new(&fixture, Fault::None);
-        run_hosted_execution(&fixture.context(), Some(fixture.consent()), &mut provider, &Clock).unwrap();
+        run_hosted_execution(
+            &fixture.context(),
+            Some(fixture.consent()),
+            &mut provider,
+            &Clock,
+        )
+        .unwrap();
         assert!(public_deletion_confirmed(&fixture.records, &fixture.record()).unwrap());
     }
 
@@ -1052,7 +1058,13 @@ mod tests {
     fn failed_delete_never_writes_public_receipt() {
         let fixture = Fixture::new();
         let mut provider = MockProvider::new(&fixture, Fault::CleanupFailure);
-        assert!(run_hosted_execution(&fixture.context(), Some(fixture.consent()), &mut provider, &Clock).is_err());
+        assert!(run_hosted_execution(
+            &fixture.context(),
+            Some(fixture.consent()),
+            &mut provider,
+            &Clock
+        )
+        .is_err());
         assert!(!public_deletion_confirmed(&fixture.records, &fixture.record()).unwrap());
     }
 

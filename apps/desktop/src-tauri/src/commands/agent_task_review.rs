@@ -226,7 +226,10 @@ pub struct HostedExecutionHistory {
     pub attempts: Vec<HostedExecutionHistoryItem>,
 }
 
-fn sanitized_hosted_attempt(record: AgentTaskExecutionRecord, public_deleted: bool) -> HostedExecutionHistoryItem {
+fn sanitized_hosted_attempt(
+    record: AgentTaskExecutionRecord,
+    public_deleted: bool,
+) -> HostedExecutionHistoryItem {
     let recovery = match record.status {
         ExecutionStatus::Prepared => HostedRecoveryStatus::RequiresFreshApproval,
         ExecutionStatus::Running if public_deleted => {
@@ -237,7 +240,10 @@ fn sanitized_hosted_attempt(record: AgentTaskExecutionRecord, public_deleted: bo
         }
         ExecutionStatus::Running => HostedRecoveryStatus::ManualSessionReconciliation,
         ExecutionStatus::Succeeded | ExecutionStatus::Failed | ExecutionStatus::Cancelled
-            if public_deleted => HostedRecoveryStatus::PublicSessionDeletionConfirmed,
+            if public_deleted =>
+        {
+            HostedRecoveryStatus::PublicSessionDeletionConfirmed
+        }
         ExecutionStatus::Succeeded | ExecutionStatus::Failed | ExecutionStatus::Cancelled => {
             HostedRecoveryStatus::TerminalNeedsCleanupReview
         }
@@ -273,13 +279,16 @@ pub async fn list_hosted_task_execution_status(
     let workspace_id = request.workspace_id.clone();
     let task_id = request.task_id.clone();
     let records = tauri::async_runtime::spawn_blocking(move || {
-        store.list_for_task(&workspace_id, &task_id)?
+        store
+            .list_for_task(&workspace_id, &task_id)?
             .into_iter()
             .filter(|record| record.adapter_kind == AdapterKind::OpenaiSandbox)
             .map(|record| {
                 #[cfg(target_os = "linux")]
                 let public_deleted =
-                    infimount_control::hosted_cleanup_evidence::public_deletion_confirmed(&store, &record)?;
+                    infimount_control::hosted_cleanup_evidence::public_deletion_confirmed(
+                        &store, &record,
+                    )?;
                 #[cfg(not(target_os = "linux"))]
                 let public_deleted = false;
                 Ok((record, public_deleted))
@@ -669,7 +678,8 @@ mod tests {
         assert!(projection.provider_session_recorded);
         assert!(!wire.contains("sess_private_never_in_ipc"));
         assert!(!wire.contains("providerExecutionId"));
-        let confirmed = serde_json::to_string(&sanitized_hosted_attempt(record.clone(), true)).unwrap();
+        let confirmed =
+            serde_json::to_string(&sanitized_hosted_attempt(record.clone(), true)).unwrap();
         assert!(confirmed.contains("public_session_deleted_needs_local_review"));
         assert!(!confirmed.contains("sess_private_never_in_ipc"));
         record.provider_execution_id = None;
