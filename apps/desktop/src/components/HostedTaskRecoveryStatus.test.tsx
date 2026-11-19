@@ -51,6 +51,20 @@ describe("HostedTaskRecoveryStatus", () => {
     expect(screen.getByTestId("hosted-execution-status")).not.toHaveTextContent("sess_secret");
   });
 
+  it("distinguishes verified public API deletion from physical erasure", async () => {
+    vi.mocked(listHostedTaskExecutionStatus).mockResolvedValueOnce({
+      ...empty,
+      attempts: [{
+        ...unresolved.attempts[0],
+        recovery: "public_session_deleted_needs_local_review",
+        providerSessionRecorded: true,
+      }],
+    });
+    render(<HostedTaskRecoveryStatus workspaceId="workspace-1" taskId="task-1" />);
+    expect(await screen.findByText(/Physical erasure is not confirmed/)).toBeInTheDocument();
+    expect(screen.getByTestId("hosted-execution-status")).not.toHaveTextContent("sess_secret");
+  });
+
   it("rejects stale workspace history after the selected task changes", async () => {
     let finishOld: ((value: typeof unresolved) => void) | undefined;
     vi.mocked(listHostedTaskExecutionStatus)
