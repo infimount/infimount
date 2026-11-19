@@ -70,7 +70,6 @@ fn read_status(store: &dyn SecretStore) -> Result<HostedProviderCredentialStatus
     Ok(status(true, configured))
 }
 
-
 /// Trusted-process key consumption for a future explicitly user-approved run.
 /// This is NEVER an IPC command. Account configuration is not spend consent.
 /// Remove the field from its JSON wrapper without cloning the key string.
@@ -222,12 +221,18 @@ mod tests {
         let native_only = load_key_for_native_hosted_run(&store).unwrap();
         assert_eq!(native_only.as_str(), key);
         assert!(!serde_json::to_string(&read_status(&store).unwrap())
-            .unwrap().contains(key));
+            .unwrap()
+            .contains(key));
         drop(native_only);
-        store.put_json(HOSTED_PROVIDER_ACCOUNT, &json!({
-            "apiKey": key,
-            "injected": "unexpected"
-        })).unwrap();
+        store
+            .put_json(
+                HOSTED_PROVIDER_ACCOUNT,
+                &json!({
+                    "apiKey": key,
+                    "injected": "unexpected"
+                }),
+            )
+            .unwrap();
         assert!(load_key_for_native_hosted_run(&store).is_err());
         delete_key(&store).unwrap();
         assert!(load_key_for_native_hosted_run(&store).is_err());
