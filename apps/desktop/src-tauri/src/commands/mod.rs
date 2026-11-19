@@ -6,9 +6,9 @@ pub mod agent_task_review;
 pub mod agent_tasks;
 pub mod backup;
 pub mod diagnostics;
-pub mod hosted_provider_credentials;
 #[cfg(target_os = "linux")]
 mod hosted_native_review;
+pub mod hosted_provider_credentials;
 pub mod mcp;
 pub mod mcp_sidecar;
 pub mod oauth;

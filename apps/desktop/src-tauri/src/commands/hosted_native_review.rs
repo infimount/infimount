@@ -25,7 +25,9 @@ fn reject() -> CoreError {
 fn plain_reviewed_text(text: &str, limit: usize) -> bool {
     !text.is_empty()
         && text.len() <= limit
-        && text.bytes().all(|c| c == b'\n' || c == b'\t' || (0x20..=0x7e).contains(&c))
+        && text
+            .bytes()
+            .all(|c| c == b'\n' || c == b'\t' || (0x20..=0x7e).contains(&c))
 }
 
 fn indent_lines(text: &str) -> String {
@@ -52,7 +54,10 @@ pub(crate) fn reviewed_native_message(
         || !plain_reviewed_text(&bundle.title, 160)
         || !plain_reviewed_text(&bundle.instructions, MAX_INSTRUCTION_CHARS)
         || verified.bundle_metadata_sha256.len() != 64
-        || !verified.bundle_metadata_sha256.bytes().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        || !verified
+            .bundle_metadata_sha256
+            .bytes()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
     {
         return Err(reject());
     }
@@ -67,7 +72,10 @@ pub(crate) fn reviewed_native_message(
     for file in &bundle.inputs {
         if !plain_reviewed_text(&file.task_path, 256)
             || file.sha256.len() != 64
-            || !file.sha256.bytes().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+            || !file
+                .sha256
+                .bytes()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
         {
             return Err(reject());
         }
@@ -113,7 +121,8 @@ pub(crate) async fn ask_native_hosted_scope_confirmation(
     let (sender, receiver) = tokio::sync::oneshot::channel();
     let handle = app.clone();
     app.run_on_main_thread(move || {
-        let parent = handle.get_webview_window("main")
+        let parent = handle
+            .get_webview_window("main")
             .and_then(|window| window.gtk_window().ok());
         let Some(parent) = parent else {
             let _ = sender.send(false);
@@ -137,7 +146,8 @@ pub(crate) async fn ask_native_hosted_scope_confirmation(
             dialog.destroy();
         });
         dialog.show_all();
-    }).map_err(|_| reject())?;
+    })
+    .map_err(|_| reject())?;
     receiver.await.map_err(|_| reject())
 }
 
@@ -177,11 +187,19 @@ mod tests {
         let (bundle, verified) = fixture();
         let msg = reviewed_native_message(&bundle, &verified).unwrap();
         for expected in [
-            "public-sample.txt", "12 bytes", "Read synthetic data.",
-            "outputs/summary.md", "non-ZDR", "U.S. only",
-            "best-effort limit", "not a guaranteed cap", // case check below
+            "public-sample.txt",
+            "12 bytes",
+            "Read synthetic data.",
+            "outputs/summary.md",
+            "non-ZDR",
+            "U.S. only",
+            "best-effort limit",
+            "not a guaranteed cap", // case check below
         ] {
-            assert!(msg.to_lowercase().contains(&expected.to_lowercase()), "{expected}");
+            assert!(
+                msg.to_lowercase().contains(&expected.to_lowercase()),
+                "{expected}"
+            );
         }
         assert!(!msg.contains("/home/"));
         assert!(!msg.contains("sk-proj"));
