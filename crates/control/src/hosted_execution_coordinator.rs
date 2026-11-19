@@ -19,6 +19,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
+use crate::hosted_cleanup_evidence::persist_public_deletion;
 use crate::hosted_execution_recovery::{
     bind_hosted_session_once, mark_hosted_create_started, prepare_hosted_execution,
 };
@@ -624,6 +625,11 @@ pub(crate) fn run_hosted_execution(
     if confirm_cleanup(transport, session_id).is_err() {
         return Err(fail("ERR_HOSTED_CLEANUP_REQUIRED"));
     }
+    // The remote API confirms public deletion, not immediate physical erasure.
+    // Persist separate create-only evidence BEFORE import or terminal status.
+    // Without durable evidence, retain Running and block a second create.
+    persist_public_deletion(context.records, &running, &clock.rfc3339())
+        .map_err(|_| fail("ERR_HOSTED_DELETION_RECEIPT"))?;
     let verified = match result {
         Ok(verified) => verified,
         Err(_) => {
@@ -698,6 +704,7 @@ pub(crate) fn run_hosted_execution(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hosted_cleanup_evidence::public_deletion_confirmed;
     use crate::hosted_execution_recovery::{recover_hosted_attempt, HostedRecoveryAction};
     use infimount_core::agent_tasks::{AgentTaskInput, AGENT_TASK_SCHEMA_VERSION};
     use serde_json::json;
@@ -1031,6 +1038,22 @@ mod tests {
                 receive,
             )
         }
+    }
+
+    #[test]
+    fn successful_delete_requires_durable_public_receipt() {
+        let fixture = Fixture::new();
+        let mut provider = MockProvider::new(&fixture, Fault::None);
+        run_hosted_execution(&fixture.context(), Some(fixture.consent()), &mut provider, &Clock).unwrap();
+        assert!(public_deletion_confirmed(&fixture.records, &fixture.record()).unwrap());
+    }
+
+    #[test]
+    fn failed_delete_never_writes_public_receipt() {
+        let fixture = Fixture::new();
+        let mut provider = MockProvider::new(&fixture, Fault::CleanupFailure);
+        assert!(run_hosted_execution(&fixture.context(), Some(fixture.consent()), &mut provider, &Clock).is_err());
+        assert!(!public_deletion_confirmed(&fixture.records, &fixture.record()).unwrap());
     }
 
     #[test]
