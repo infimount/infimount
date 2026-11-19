@@ -6,6 +6,7 @@ use infimount_core::{CoreError, SecretStore, SecretStoreStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::State;
+use zeroize::Zeroizing;
 
 use crate::state::AppState;
 
@@ -67,6 +68,35 @@ fn read_status(store: &dyn SecretStore) -> Result<HostedProviderCredentialStatus
             .is_some_and(|key| validate_api_key(key).is_ok()),
     };
     Ok(status(true, configured))
+}
+
+
+/// Trusted-process key consumption for a future explicitly user-approved run.
+/// This is NEVER an IPC command. Account configuration is not spend consent.
+/// Remove the field from its JSON wrapper without cloning the key string.
+#[allow(dead_code)]
+pub(crate) fn load_key_for_native_hosted_run(
+    store: &dyn SecretStore,
+) -> Result<Zeroizing<String>, CoreError> {
+    let unavailable = || CoreError::Config("ERR_HOSTED_NATIVE_CREDENTIAL_UNAVAILABLE".into());
+    if !matches!(store.status(), SecretStoreStatus::Available) {
+        return Err(unavailable());
+    }
+    let mut bundle = store
+        .get_json(HOSTED_PROVIDER_ACCOUNT)
+        .map_err(|_| unavailable())?
+        .ok_or_else(unavailable)?;
+    let obj = bundle.as_object_mut().ok_or_else(unavailable)?;
+    if obj.len() != 1 {
+        return Err(unavailable());
+    }
+    let raw = obj.remove("apiKey").ok_or_else(unavailable)?;
+    let key = match raw {
+        serde_json::Value::String(value) => Zeroizing::new(value),
+        _ => return Err(unavailable()),
+    };
+    validate_api_key(&key).map_err(|_| unavailable())?;
+    Ok(key)
 }
 
 fn save_key(
@@ -181,6 +211,26 @@ mod tests {
         }
         assert!(save_key(&store, "x".repeat(MAX_KEY_LENGTH + 1)).is_err());
         assert_eq!(read_status(&store).unwrap(), status(true, false));
+    }
+
+    #[test]
+    fn native_key_consumer_never_needs_a_public_get_secret_ipc() {
+        let store = MemorySecretStore::new();
+        let key = "sk-test-native-key-only-123456";
+        assert!(load_key_for_native_hosted_run(&store).is_err());
+        save_key(&store, key.into()).unwrap();
+        let native_only = load_key_for_native_hosted_run(&store).unwrap();
+        assert_eq!(native_only.as_str(), key);
+        assert!(!serde_json::to_string(&read_status(&store).unwrap())
+            .unwrap().contains(key));
+        drop(native_only);
+        store.put_json(HOSTED_PROVIDER_ACCOUNT, &json!({
+            "apiKey": key,
+            "injected": "unexpected"
+        })).unwrap();
+        assert!(load_key_for_native_hosted_run(&store).is_err());
+        delete_key(&store).unwrap();
+        assert!(load_key_for_native_hosted_run(&store).is_err());
     }
 
     #[test]
