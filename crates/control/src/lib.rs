@@ -12,6 +12,10 @@ mod hosted_execution_recovery;
 // Private deletion receipt format with a read-only status projection.
 #[cfg(target_os = "linux")]
 pub mod hosted_cleanup_evidence;
+// Private authenticated transport, deliberately not reachable from an IPC command.
+#[cfg(target_os = "linux")]
+#[allow(dead_code)]
+mod hosted_http_transport;
 // Private, mocked-provider Linux lifecycle. No live transport or consent issuer.
 #[cfg(target_os = "linux")]
 #[allow(dead_code)]
