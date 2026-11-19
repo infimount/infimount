@@ -2486,6 +2486,7 @@ dependencies = [
  "chrono",
  "dirs",
  "fs2",
+ "gtk",
  "infimount_control",
  "infimount_core",
  "infimount_mcp",
