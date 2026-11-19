@@ -21,6 +21,10 @@ function recoveryMessage(item: HostedExecutionHistoryItem): string {
       return "Session creation may have succeeded, but its ID was not captured. Check provider sessions manually. Do not retry creation.";
     case "inspect_pinned_session":
       return "A provider session ID is stored privately. Inspect and clean up this same session before doing more work.";
+    case "public_session_deleted_needs_local_review":
+      return "The provider confirmed removal from its public API. Local import or terminal evidence still needs inspection. Physical erasure is not confirmed.";
+    case "public_session_deletion_confirmed":
+      return "The provider confirmed removal from its public API. Physical erasure and retention expiry are not confirmed.";
     case "terminal_needs_cleanup_review":
       return "Execution is terminal. The private record does not prove provider-side deletion.";
   }

@@ -9,6 +9,9 @@ pub mod openai_hosted_items;
 // Private, offline-only crash-recovery and provider session-ID evidence.
 #[allow(dead_code)]
 mod hosted_execution_recovery;
+// Private deletion receipt format with a read-only status projection.
+#[cfg(target_os = "linux")]
+pub mod hosted_cleanup_evidence;
 // Private, mocked-provider Linux lifecycle. No live transport or consent issuer.
 #[cfg(target_os = "linux")]
 #[allow(dead_code)]

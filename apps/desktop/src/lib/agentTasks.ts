@@ -142,6 +142,8 @@ export type HostedRecoveryStatus =
   | "requires_fresh_approval"
   | "manual_session_reconciliation"
   | "inspect_pinned_session"
+  | "public_session_deleted_needs_local_review"
+  | "public_session_deletion_confirmed"
   | "terminal_needs_cleanup_review";
 
 export interface HostedExecutionHistoryItem {

@@ -33,6 +33,9 @@ The new private `hosted_execution_coordinator` runs the following sequence:
    cursor chains and bind each artifact to that session, environment, root
    turn and exact reviewed output path. Download and hash the actual bytes.
 6. Confirm deletion of the same provider session before importing outputs.
+   Persist a separate private, create-only public-deletion receipt tied to the
+   execution UUID and hash of the pinned session ID before importing bytes.
+   The receipt records only public API removal, not physical erasure.
    Any known session receives a cleanup attempt even after stream, evidence,
    parsing, identity, tool, pagination or download failure.
 7. Check that the originally pinned task and output directories remain
@@ -92,9 +95,13 @@ error body or prompt is logged or returned as execution evidence.
 | Final evidence update fails after import | Failure returned, imported bytes retained, no successful result claimed |
 
 The existing v1 execution record has no provider-deletion receipt field.
-Therefore a terminal record alone remains **insufficient proof of cleanup**.
-The existing recovery UI keeps its conservative wording. Durable deletion
-receipts and resumable recovery remain later work.
+C2.9e therefore stores a separate, create-only receipt outside the task
+workspace and v1 record directory. A terminal record alone still does not
+prove deletion. The desktop history reports confirmed *public API* deletion
+only when the corresponding bounded, no-follow, session-bound receipt exists.
+It does not claim physical erasure or provider retention expiry. Interrupted
+writes, malformed receipts and missing evidence remain unresolved. Resumable
+authenticated recovery remains later work.
 
 The shared importer now treats failure to sync created directory entries as
 an import-cleanup failure. The pre-existing private record store still uses
