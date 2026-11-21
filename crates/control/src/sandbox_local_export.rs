@@ -87,7 +87,7 @@ struct PreparedInputBytes {
 /// The first manifest read must use the same bounded, no-follow descriptor
 /// path as the inputs. A path-based stat followed by an unbounded read would
 /// let a replaced or growing manifest block or exhaust the native preflight.
-fn read_prepared_task_manifest(
+pub(crate) fn read_prepared_task_manifest(
     task_dir: &OwnedFd,
     expected_workspace_id: &str,
     expected_task_id: &str,

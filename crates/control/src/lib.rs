@@ -12,6 +12,9 @@ mod hosted_execution_recovery;
 // Private deletion receipt format with a read-only status projection.
 #[cfg(target_os = "linux")]
 pub mod hosted_cleanup_evidence;
+// Offline-only terminalization of a previously deleted hosted session.
+#[cfg(target_os = "linux")]
+pub mod hosted_cleanup_reconcile;
 // Private, mocked-provider Linux lifecycle. No live transport or consent issuer.
 #[cfg(target_os = "linux")]
 #[allow(dead_code)]
