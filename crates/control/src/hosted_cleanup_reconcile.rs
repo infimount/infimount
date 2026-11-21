@@ -86,7 +86,9 @@ pub fn reconcile_after_confirmed_public_deletion(
     terminal.status = ExecutionStatus::Failed;
     terminal.finished_at = Some(finished_at.to_owned());
     terminal.error_code = Some("ERR_HOSTED_RECOVERED_AFTER_DELETE".into());
-    records.transition(&running, &terminal).map_err(|_| denied())
+    records
+        .transition(&running, &terminal)
+        .map_err(|_| denied())
 }
 
 #[cfg(test)]
@@ -180,12 +182,7 @@ mod tests {
         }
 
         fn confirm_delete(&self) {
-            persist_public_deletion(
-                &self.records,
-                &self.record,
-                "2026-11-19T10:00:00Z",
-            )
-            .unwrap();
+            persist_public_deletion(&self.records, &self.record, "2026-11-19T10:00:00Z").unwrap();
         }
     }
 
@@ -194,18 +191,32 @@ mod tests {
         let fixture = Fixture::new();
         assert!(fixture.reconcile().is_err());
         assert_eq!(
-            fixture.records.read(
-                &fixture.record.workspace_id, &fixture.record.task_id, &fixture.record.execution_id
-            ).unwrap().status,
+            fixture
+                .records
+                .read(
+                    &fixture.record.workspace_id,
+                    &fixture.record.task_id,
+                    &fixture.record.execution_id
+                )
+                .unwrap()
+                .status,
             ExecutionStatus::Running
         );
         fixture.confirm_delete();
         fixture.reconcile().unwrap();
-        let finished = fixture.records.read(
-            &fixture.record.workspace_id, &fixture.record.task_id, &fixture.record.execution_id
-        ).unwrap();
+        let finished = fixture
+            .records
+            .read(
+                &fixture.record.workspace_id,
+                &fixture.record.task_id,
+                &fixture.record.execution_id,
+            )
+            .unwrap();
         assert_eq!(finished.status, ExecutionStatus::Failed);
-        assert_eq!(finished.error_code.as_deref(), Some("ERR_HOSTED_RECOVERED_AFTER_DELETE"));
+        assert_eq!(
+            finished.error_code.as_deref(),
+            Some("ERR_HOSTED_RECOVERED_AFTER_DELETE")
+        );
         assert!(fixture.reconcile().is_err());
     }
 

@@ -380,7 +380,6 @@ pub async fn verify_hosted_task_export(
     ))
 }
 
-
 /// Explicit local-only action after the trusted native runtime has recorded
 /// public-API session deletion. Does not contact, create or retry a provider.
 #[derive(Debug, Clone, Deserialize)]
@@ -397,9 +396,9 @@ pub async fn reconcile_deleted_hosted_attempt(
     state: State<'_, AppState>,
     request: ReconcileDeletedHostedAttemptRequest,
 ) -> Result<bool, CoreError> {
-    state.require_operational().map_err(|_| {
-        CoreError::Config("ERR_HOSTED_LOCAL_RECONCILIATION_REQUIRED".into())
-    })?;
+    state
+        .require_operational()
+        .map_err(|_| CoreError::Config("ERR_HOSTED_LOCAL_RECONCILIATION_REQUIRED".into()))?;
     // Keep the same lock order as native hosted export verification.
     // These locks span all root binding, no-follow verification and CAS.
     let _lifecycle = state.lifecycle_mutation.lock().await;
