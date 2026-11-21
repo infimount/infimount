@@ -24,8 +24,8 @@ fn denied() -> CoreError {
 
 /// A missing or uncertain deletion receipt never permits reconciliation.
 /// The caller may only mark a previously Running attempt Failed when the
-/// exact session's public deletion is durably confirmed and the original task
-/// output directory is empty. Local recovery never means remote data erasure.
+/// exact session's public deletion is durably confirmed and the currently
+/// attached, trusted task output directory is empty. Local recovery never means remote data erasure.
 pub fn reconcile_after_confirmed_public_deletion(
     records: &ExecutionRecordStore,
     trusted_workspace_root: &Path,
@@ -57,7 +57,8 @@ pub fn reconcile_after_confirmed_public_deletion(
     read_prepared_task_manifest(&task, workspace_id, task_id).map_err(|_| denied())?;
     let outputs = require_existing_chain(&task, &["outputs"]).map_err(|_| denied())?;
     // An uncertain partial import, existing file, directory or link remains
-    // untouched and blocks terminalization and any subsequent execution.
+    // untouched and blocks terminalization. Any future run still requires
+    // separate consent and a fresh no-follow output preflight.
     require_empty_pinned_output_directory(&outputs).map_err(|_| denied())?;
 
     // Fail if the workspace/task/output path was detached between validation
@@ -222,7 +223,7 @@ mod tests {
     }
 
     #[test]
-    fn detached_outputs_directory_and_changed_manifest_fail_closed() {
+    fn replacement_with_outputs_and_changed_manifest_are_rejected() {
         let fixture = Fixture::new();
         fixture.confirm_delete();
         let output = fixture.output();
