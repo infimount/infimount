@@ -72,6 +72,8 @@ export function HostedTaskRecoveryStatus({ workspaceId, taskId }: Props) {
     try {
       await reconcileDeletedHostedAttempt({ workspaceId, taskId, executionId });
       if (generation.current !== current) return;
+      // refresh increments the generation, so clear this action first.
+      setReconciling(null);
       await refresh();
     } catch {
       if (generation.current !== current) return;
