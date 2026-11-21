@@ -176,6 +176,7 @@ fn main() {
             commands::list_agent_tasks,
             commands::review_agent_task_outputs,
             commands::list_hosted_task_execution_status,
+            commands::reconcile_deleted_hosted_attempt,
             commands::preview_hosted_task_export,
             commands::verify_hosted_task_export,
             commands::hosted_provider_credential_status,

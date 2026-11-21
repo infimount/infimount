@@ -161,6 +161,10 @@ export interface HostedExecutionHistory {
   attempts: HostedExecutionHistoryItem[];
 }
 
+export interface ReconcileDeletedHostedAttemptRequest extends AgentTaskIdentityRequest {
+  executionId: string;
+}
+
 export interface AgentTaskOutputReviewFile {
   taskPath: string;
   byteSize: number;
@@ -259,7 +263,8 @@ async function invokeTask<T>(
     | AgentTaskListRequest
     | AgentTaskPublicationRequest
     | ApplyAgentTaskPublicationRequest
-    | RunClaudePilotRequest,
+    | RunClaudePilotRequest
+    | ReconcileDeletedHostedAttemptRequest,
 ): Promise<T> {
   try {
     return await tauriInvoke<T>(command, { request });
@@ -331,6 +336,12 @@ export function listHostedTaskExecutionStatus(
   request: AgentTaskIdentityRequest,
 ): Promise<HostedExecutionHistory> {
   return invokeTask<HostedExecutionHistory>("list_hosted_task_execution_status", request);
+}
+
+export function reconcileDeletedHostedAttempt(
+  request: ReconcileDeletedHostedAttemptRequest,
+): Promise<boolean> {
+  return invokeTask<boolean>("reconcile_deleted_hosted_attempt", request);
 }
 
 export function reviewAgentTaskOutputs(

@@ -228,10 +228,8 @@ mod tests {
         let output = fixture.output();
         fs::rename(&output, output.with_file_name("moved-outputs")).unwrap();
         fs::create_dir(&output).unwrap();
-        // A changed path is not trusted even when a new directory is empty.
-        // The safe reconciliation requires the ORIGINAL pinned directory,
-        // but this function has no earlier snapshot, so explicitly reject
-        // by requiring a legitimate manifest and blocked output evidence.
+        // A substituted directory containing unexpected output evidence
+        // remains blocked. This does not claim an earlier persistent inode pin.
         fs::write(output.join("sentinel"), b"x").unwrap();
         assert!(fixture.reconcile().is_err());
         fs::remove_file(output.join("sentinel")).unwrap();
