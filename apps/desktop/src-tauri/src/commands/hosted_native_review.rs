@@ -128,16 +128,30 @@ pub(crate) async fn ask_native_hosted_scope_confirmation(
             let _ = sender.send(false);
             return;
         };
-        let dialog = gtk::MessageDialog::new(
+        // A message label may clip a long SHA/file/instruction review on
+        // small screens. Keep the ENTIRE approved scope readable and scrollable.
+        let dialog = gtk::Dialog::with_buttons(
+            Some("Review external hosted execution"),
             Some(&parent),
             gtk::DialogFlags::MODAL | gtk::DialogFlags::DESTROY_WITH_PARENT,
-            gtk::MessageType::Warning,
-            gtk::ButtonsType::None,
-            &message,
+            &[
+                ("Cancel", gtk::ResponseType::Cancel),
+                ("Approve one hosted run", gtk::ResponseType::Ok),
+            ],
         );
-        dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-        dialog.add_button("Approve one hosted run", gtk::ResponseType::Ok);
+        dialog.set_default_size(760, 520);
+        dialog.set_resizable(true);
         dialog.set_default_response(gtk::ResponseType::Cancel);
+        let scroll = gtk::ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+        scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        let buffer = gtk::TextBuffer::new(None::<&gtk::TextTagTable>);
+        buffer.set_text(&message);
+        let view = gtk::TextView::with_buffer(&buffer);
+        view.set_editable(false);
+        view.set_cursor_visible(false);
+        view.set_wrap_mode(gtk::WrapMode::WordChar);
+        scroll.add(&view);
+        dialog.content_area().pack_start(&scroll, true, true, 8);
         let once = RefCell::new(Some(sender));
         dialog.connect_response(move |dialog, response| {
             if let Some(sender) = once.borrow_mut().take() {
