@@ -143,7 +143,9 @@ pub(crate) async fn ask_native_hosted_scope_confirmation(
             if let Some(sender) = once.borrow_mut().take() {
                 let _ = sender.send(response == gtk::ResponseType::Ok);
             }
-            dialog.destroy();
+            // SAFETY: this is the final use of the live GTK dialog in the
+            // response callback. The dialog is not accessed after destruction.
+            unsafe { dialog.destroy() };
         });
         dialog.show_all();
     })
