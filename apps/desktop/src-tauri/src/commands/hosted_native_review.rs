@@ -30,6 +30,13 @@ fn plain_reviewed_text(text: &str, limit: usize) -> bool {
             .all(|c| c == b'\n' || c == b'\t' || (0x20..=0x7e).contains(&c))
 }
 
+fn safe_single_line(value: &str, limit: usize) -> bool {
+    plain_reviewed_text(value, limit)
+        && !value.contains('\n')
+        && !value.contains('\r')
+        && !value.contains('\t')
+}
+
 fn indent_lines(text: &str) -> String {
     text.lines()
         .map(|line| format!("  | {line}"))
@@ -51,7 +58,7 @@ pub(crate) fn reviewed_native_message(
         || bundle.bundle_metadata_sha256 != verified.bundle_metadata_sha256
         || !verified.verified_bytes
         || verified.export_authorized
-        || !plain_reviewed_text(&bundle.title, 160)
+        || !safe_single_line(&bundle.title, 160)
         || !plain_reviewed_text(&bundle.instructions, MAX_INSTRUCTION_CHARS)
         || verified.bundle_metadata_sha256.len() != 64
         || !verified
@@ -70,7 +77,7 @@ pub(crate) fn reviewed_native_message(
         indent_lines(&bundle.instructions),
     );
     for file in &bundle.inputs {
-        if !plain_reviewed_text(&file.task_path, 256)
+        if !safe_single_line(&file.task_path, 256)
             || file.sha256.len() != 64
             || !file
                 .sha256
@@ -86,7 +93,7 @@ pub(crate) fn reviewed_native_message(
     }
     message.push_str("\nRequested output paths:\n");
     for output in &bundle.requested_outputs {
-        if !plain_reviewed_text(output, 256) {
+        if !safe_single_line(output, 256) {
             return Err(reject());
         }
         message.push_str(&format!("  {output}\n"));
