@@ -2,10 +2,11 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HostedTaskRecoveryStatus } from "./HostedTaskRecoveryStatus";
-import { listHostedTaskExecutionStatus } from "@/lib/agentTasks";
+import { listHostedTaskExecutionStatus, reconcileDeletedHostedAttempt } from "@/lib/agentTasks";
 
 vi.mock("@/lib/agentTasks", () => ({
   listHostedTaskExecutionStatus: vi.fn(),
+  reconcileDeletedHostedAttempt: vi.fn(),
 }));
 
 const empty = {
@@ -63,6 +64,23 @@ describe("HostedTaskRecoveryStatus", () => {
     render(<HostedTaskRecoveryStatus workspaceId="workspace-1" taskId="task-1" />);
     expect(await screen.findByText(/Physical erasure is not confirmed/)).toBeInTheDocument();
     expect(screen.getByTestId("hosted-execution-status")).not.toHaveTextContent("sess_secret");
+  });
+
+  it("offers local reconciliation only after a verified deletion receipt", async () => {
+    const cleaned = { ...unresolved.attempts[0], recovery: "public_session_deleted_needs_local_review" as const };
+    vi.mocked(listHostedTaskExecutionStatus)
+      .mockResolvedValueOnce({ ...empty, attempts: [cleaned] })
+      .mockResolvedValueOnce({ ...empty, attempts: [{
+        ...cleaned, status: "failed" as const, recovery: "public_session_deletion_confirmed" as const,
+      }] });
+    vi.mocked(reconcileDeletedHostedAttempt).mockResolvedValue(true);
+    render(<HostedTaskRecoveryStatus workspaceId="workspace-1" taskId="task-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Resolve local attempt" }));
+    await waitFor(() => expect(reconcileDeletedHostedAttempt).toHaveBeenCalledWith({
+      workspaceId: "workspace-1", taskId: "task-1", executionId: cleaned.executionId,
+    }));
+    expect(await screen.findByText(/Physical erasure and retention expiry are not confirmed/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resolve local attempt" })).not.toBeInTheDocument();
   });
 
   it("rejects stale workspace history after the selected task changes", async () => {

@@ -4,6 +4,7 @@ import { FileClock, RefreshCw, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   listHostedTaskExecutionStatus,
+  reconcileDeletedHostedAttempt,
   type HostedExecutionHistory,
   type HostedExecutionHistoryItem,
 } from "@/lib/agentTasks";
@@ -34,6 +35,7 @@ function recoveryMessage(item: HostedExecutionHistoryItem): string {
 export function HostedTaskRecoveryStatus({ workspaceId, taskId }: Props) {
   const [history, setHistory] = useState<HostedExecutionHistory | null>(null);
   const [loading, setLoading] = useState(false);
+  const [reconciling, setReconciling] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
 
@@ -57,9 +59,29 @@ export function HostedTaskRecoveryStatus({ workspaceId, taskId }: Props) {
   useEffect(() => {
     setHistory(null);
     setError(null);
+    setReconciling(null);
     void refresh();
     return () => { generation.current += 1; };
   }, [refresh]);
+
+  const reconcile = useCallback(async (executionId: string) => {
+    if (loading || reconciling) return;
+    const current = generation.current;
+    setReconciling(executionId);
+    setError(null);
+    try {
+      await reconcileDeletedHostedAttempt({ workspaceId, taskId, executionId });
+      if (generation.current !== current) return;
+      // refresh increments the generation, so clear this action first.
+      setReconciling(null);
+      await refresh();
+    } catch {
+      if (generation.current !== current) return;
+      setError("Local reconciliation is blocked. Preserve existing outputs and inspect the execution status.");
+    } finally {
+      if (generation.current === current) setReconciling(null);
+    }
+  }, [loading, reconciling, refresh, taskId, workspaceId]);
 
   return (
     <section className="mt-3 rounded-xl border bg-muted/15 p-4" data-testid="hosted-execution-status">
@@ -96,6 +118,17 @@ export function HostedTaskRecoveryStatus({ workspaceId, taskId }: Props) {
           <div className="mt-2 truncate font-mono text-[10px] text-muted-foreground">
             Attempt {attempt.executionId}
           </div>
+          {attempt.recovery === "public_session_deleted_needs_local_review" ? (
+            <Button
+              className="mt-2"
+              variant="outline"
+              size="sm"
+              disabled={loading || reconciling !== null}
+              onClick={() => void reconcile(attempt.executionId)}
+            >
+              {reconciling === attempt.executionId ? "Checking local state…" : "Resolve local attempt"}
+            </Button>
+          ) : null}
         </article>
       ))}
     </section>

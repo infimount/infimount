@@ -380,6 +380,82 @@ pub async fn verify_hosted_task_export(
     ))
 }
 
+/// Explicit local-only action after the trusted native runtime has recorded
+/// public-API session deletion. Does not contact, create or retry a provider.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReconcileDeletedHostedAttemptRequest {
+    pub workspace_id: String,
+    pub task_id: String,
+    pub execution_id: String,
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+pub async fn reconcile_deleted_hosted_attempt(
+    state: State<'_, AppState>,
+    request: ReconcileDeletedHostedAttemptRequest,
+) -> Result<bool, CoreError> {
+    state
+        .require_operational()
+        .map_err(|_| CoreError::Config("ERR_HOSTED_LOCAL_RECONCILIATION_REQUIRED".into()))?;
+    // Keep the same lock order as native hosted export verification.
+    // These locks span all root binding, no-follow verification and CAS.
+    let _lifecycle = state.lifecycle_mutation.lock().await;
+    let _configuration = state
+        .registry
+        .acquire_configuration_transaction()
+        .map_err(crate::state::mcp_error_to_core_error)?;
+    state
+        .recover_and_require_clean_configuration_locked()
+        .map_err(crate::state::mcp_error_to_core_error)?;
+    let _workspace = state.workspaces.acquire_mutation_lock()?;
+    let local_request = AgentTaskOutputReviewRequest {
+        workspace_id: request.workspace_id,
+        task_id: request.task_id,
+    };
+    let context = load_review_context(&state, &local_request)?;
+    infimount_mcp::storage_namespace::validate_local_mcp_path(
+        &context.storage,
+        &context.workspace.root_path,
+    )
+    .map_err(|_| CoreError::Config("ERR_HOSTED_LOCAL_RECONCILIATION_REQUIRED".into()))?;
+    let address = infimount_mcp::storage_namespace::storage_namespace_address(
+        &context.storage,
+        &context.workspace.root_path,
+    )
+    .map_err(|_| CoreError::Config("ERR_HOSTED_LOCAL_RECONCILIATION_REQUIRED".into()))?
+    .ok_or_else(|| CoreError::Config("ERR_HOSTED_LOCAL_RECONCILIATION_REQUIRED".into()))?;
+    let root = std::path::PathBuf::from(address.absolute_path);
+    let records = state.execution_records.clone();
+    let execution_id = request.execution_id;
+    let finished_at = chrono::Utc::now().to_rfc3339();
+    let workspace_id = local_request.workspace_id;
+    let task_id = local_request.task_id;
+    tauri::async_runtime::spawn_blocking(move || {
+        infimount_control::hosted_cleanup_reconcile::reconcile_after_confirmed_public_deletion(
+            &records,
+            &root,
+            &workspace_id,
+            &task_id,
+            &execution_id,
+            &finished_at,
+        )
+    })
+    .await
+    .map_err(|_| CoreError::Config("ERR_HOSTED_LOCAL_RECONCILIATION_REQUIRED".into()))??;
+    Ok(true)
+}
+
+#[cfg(not(target_os = "linux"))]
+#[tauri::command]
+pub async fn reconcile_deleted_hosted_attempt(
+    _state: State<'_, AppState>,
+    _request: ReconcileDeletedHostedAttemptRequest,
+) -> Result<bool, CoreError> {
+    Err(CoreError::Config("ERR_HOSTED_UNQUALIFIED_PLATFORM".into()))
+}
+
 fn load_review_context(
     state: &AppState,
     request: &AgentTaskOutputReviewRequest,
