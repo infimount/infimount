@@ -139,7 +139,7 @@ pub(crate) enum HostedRead<'a> {
     },
 }
 
-type Receive<'a> = dyn FnMut(&[u8]) -> Result<(), CoreError> + 'a;
+pub(crate) type Receive<'a> = dyn FnMut(&[u8]) -> Result<(), CoreError> + 'a;
 
 /// Every implementation must stop on callback errors, enforce its deadline
 /// during blocking I/O and bind authenticated responses to the requested IDs.
