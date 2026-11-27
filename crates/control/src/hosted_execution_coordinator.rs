@@ -19,7 +19,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
-use crate::hosted_cleanup_evidence::persist_public_deletion;
+use crate::hosted_cleanup_evidence::{persist_public_deletion, public_deletion_confirmed};
 use crate::hosted_execution_recovery::{
     bind_hosted_session_once, mark_hosted_create_started, prepare_hosted_execution,
 };
@@ -160,6 +160,13 @@ pub trait HostedTransport {
         deadline: Instant,
         receive: &mut Receive<'_>,
     ) -> Result<(), CoreError>;
+    fn cancel_active_turn(
+        &mut self,
+        _session_id: &str,
+        _deadline: Instant,
+    ) -> Result<(), CoreError> {
+        Err(fail("ERR_HOSTED_CANCEL_UNSUPPORTED"))
+    }
     fn delete_session(
         &mut self,
         session_id: &str,
@@ -559,6 +566,99 @@ fn confirm_cleanup(
     Ok(())
 }
 
+/// Read the exact provider session over authenticated bounded transport.
+/// An idle session is sufficient for deletion, NOT proof that a turn succeeded.
+/// Unknown status or mismatched identity leaves cleanup unresolved.
+fn pinned_session_busy(
+    transport: &mut impl HostedTransport,
+    session_id: &str,
+    deadline: Instant,
+) -> Result<bool, CoreError> {
+    let bytes = read_bounded(
+        transport,
+        HostedRead::Session { session_id },
+        MAX_JSON_BYTES,
+        deadline,
+    )?;
+    let value: Value =
+        serde_json::from_slice(&bytes).map_err(|_| fail("ERR_HOSTED_SESSION_BINDING"))?;
+    if value["id"].as_str() != Some(session_id) || value["object"].as_str() != Some("agent.session")
+    {
+        return Err(fail("ERR_HOSTED_SESSION_BINDING"));
+    }
+    match value["status"].as_str() {
+        Some("idle" | "failed") => Ok(false),
+        Some("in_progress" | "requires_action" | "budget_reached") => Ok(true),
+        _ => Err(fail("ERR_HOSTED_SESSION_BINDING")),
+    }
+}
+
+fn settle_pinned_session_for_delete(
+    transport: &mut impl HostedTransport,
+    session_id: &str,
+) -> Result<(), CoreError> {
+    let deadline = Instant::now() + Duration::from_secs(45);
+    if !pinned_session_busy(transport, session_id, deadline)? {
+        return Ok(());
+    }
+    // Only the separate native cleanup confirmation authorizes this
+    // cancellation. It cannot start another run, submit task files or retry
+    // the original charged create.
+    transport.cancel_active_turn(session_id, deadline)?;
+    for _ in 0..40 {
+        if !pinned_session_busy(transport, session_id, deadline)? {
+            return Ok(());
+        }
+        check_deadline(deadline)?;
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    Err(fail("ERR_HOSTED_CANCEL_NOT_SETTLED"))
+}
+
+/// Idempotent, explicit, cleanup-only recovery for a RUNNING attempt with
+/// a durable provider session ID. This never creates a session, uploads files,
+/// reads artifacts, imports outputs or claims physical provider erasure.
+///
+/// The trusted caller must have revalidated the selected workspace/task and
+/// hold lifecycle/configuration/workspace mutation locks across this action.
+pub fn cleanup_known_hosted_session(
+    store: &ExecutionRecordStore,
+    workspace_id: &str,
+    task_id: &str,
+    execution_id: &str,
+    transport: &mut impl HostedTransport,
+    clock: &impl HostedClock,
+) -> Result<bool, CoreError> {
+    use infimount_core::agent_task_executions::{AdapterKind, RuntimeKind, RuntimeProvider};
+    let record = store
+        .read(workspace_id, task_id, execution_id)
+        .map_err(|_| fail("ERR_HOSTED_RECOVERY_IDENTITY"))?;
+    if record.status != ExecutionStatus::Running
+        || record.adapter_kind != AdapterKind::OpenaiSandbox
+        || record.runtime_kind != RuntimeKind::RemoteSandbox
+        || record.runtime_provider != Some(RuntimeProvider::Openai)
+    {
+        return Err(fail("ERR_HOSTED_RECOVERY_IDENTITY"));
+    }
+    let session_id = record
+        .provider_execution_id
+        .as_deref()
+        .ok_or_else(|| fail("ERR_HOSTED_MANUAL_RECONCILIATION"))?;
+
+    if public_deletion_confirmed(store, &record).map_err(|_| fail("ERR_HOSTED_DELETION_RECEIPT"))? {
+        return Ok(true);
+    }
+    // The public API requires an active turn to be cancelled BEFORE session
+    // deletion. HTTP 202 means cancel accepted, not terminal, so poll the
+    // same authenticated session to a quiescent state before DELETE.
+    settle_pinned_session_for_delete(transport, session_id)
+        .map_err(|_| fail("ERR_HOSTED_CLEANUP_REQUIRED"))?;
+    confirm_cleanup(transport, session_id).map_err(|_| fail("ERR_HOSTED_CLEANUP_REQUIRED"))?;
+    persist_public_deletion(store, &record, &clock.rfc3339())
+        .map_err(|_| fail("ERR_HOSTED_DELETION_RECEIPT"))?;
+    Ok(true)
+}
+
 fn record_failed(
     context: &HostedRunContext<'_>,
     running: &AgentTaskExecutionRecord,
@@ -875,6 +975,8 @@ mod tests {
         ExtraArtifact,
         OversizedDownload,
         CleanupFailure,
+        NeedsCancel,
+        CancelFailure,
         CompletionConflict,
         LateCollision,
         LateSymlink,
@@ -979,7 +1081,10 @@ mod tests {
                     assert_eq!(session_id, SESSION);
                     Self::emit(
                         json!({"id":if self.fault == Fault::WrongSession {"sess_foreign"} else {SESSION},
-                        "status":"idle", "environment":{"id":ENVIRONMENT}}),
+                        "object":"agent.session",
+                        "status":if matches!(self.fault, Fault::NeedsCancel | Fault::CancelFailure)
+                            && !self.calls.contains(&"cancel") {"in_progress"} else {"idle"},
+                        "environment":{"id":ENVIRONMENT}}),
                         receive,
                     )
                 }
@@ -1046,6 +1151,20 @@ mod tests {
             }
         }
 
+        fn cancel_active_turn(
+            &mut self,
+            session_id: &str,
+            deadline: Instant,
+        ) -> Result<(), CoreError> {
+            check_deadline(deadline)?;
+            assert_eq!(session_id, SESSION);
+            self.calls.push("cancel");
+            if self.fault == Fault::CancelFailure {
+                return Err(fail("ERR_MOCK_CANCEL_FAILURE"));
+            }
+            Ok(())
+        }
+
         fn delete_session(
             &mut self,
             session_id: &str,
@@ -1090,6 +1209,124 @@ mod tests {
                 receive,
             )
         }
+    }
+
+    #[test]
+    fn explicit_cleanup_reuses_pinned_session_without_creating_another() {
+        let fixture = Fixture::new();
+        let prepared = prepare_hosted_execution(
+            &fixture.records,
+            &fixture.manifest,
+            &fixture.brief,
+            fixture.context().model,
+            &Clock.rfc3339(),
+        )
+        .unwrap();
+        let running = mark_hosted_create_started(&fixture.records, &prepared).unwrap();
+        let bound = bind_hosted_session_once(&fixture.records, &running, SESSION).unwrap();
+        let mut transport = MockProvider::new(&fixture, Fault::None);
+        assert!(cleanup_known_hosted_session(
+            &fixture.records,
+            WORKSPACE,
+            TASK,
+            &bound.execution_id,
+            &mut transport,
+            &Clock
+        )
+        .unwrap());
+        assert_eq!(transport.calls, ["session", "delete"]);
+        assert!(public_deletion_confirmed(&fixture.records, &fixture.record()).unwrap());
+        assert!(cleanup_known_hosted_session(
+            &fixture.records,
+            WORKSPACE,
+            TASK,
+            &bound.execution_id,
+            &mut transport,
+            &Clock
+        )
+        .unwrap());
+        assert_eq!(transport.calls, ["session", "delete"]);
+        assert_eq!(fixture.record().status, ExecutionStatus::Running);
+    }
+
+    #[test]
+    fn active_pinned_turn_must_be_cancelled_and_confirmed_idle_before_delete() {
+        let fixture = Fixture::new();
+        let prepared = prepare_hosted_execution(
+            &fixture.records,
+            &fixture.manifest,
+            &fixture.brief,
+            fixture.context().model,
+            &Clock.rfc3339(),
+        )
+        .unwrap();
+        let running = mark_hosted_create_started(&fixture.records, &prepared).unwrap();
+        let bound = bind_hosted_session_once(&fixture.records, &running, SESSION).unwrap();
+        let mut provider = MockProvider::new(&fixture, Fault::NeedsCancel);
+        assert!(cleanup_known_hosted_session(
+            &fixture.records,
+            WORKSPACE,
+            TASK,
+            &bound.execution_id,
+            &mut provider,
+            &Clock
+        )
+        .unwrap());
+        assert_eq!(provider.calls, ["session", "cancel", "session", "delete"]);
+        assert!(public_deletion_confirmed(&fixture.records, &fixture.record()).unwrap());
+    }
+
+    #[test]
+    fn cancel_failure_never_deletes_or_converts_running_into_success() {
+        let fixture = Fixture::new();
+        let prepared = prepare_hosted_execution(
+            &fixture.records,
+            &fixture.manifest,
+            &fixture.brief,
+            fixture.context().model,
+            &Clock.rfc3339(),
+        )
+        .unwrap();
+        let running = mark_hosted_create_started(&fixture.records, &prepared).unwrap();
+        let bound = bind_hosted_session_once(&fixture.records, &running, SESSION).unwrap();
+        let mut provider = MockProvider::new(&fixture, Fault::CancelFailure);
+        assert!(cleanup_known_hosted_session(
+            &fixture.records,
+            WORKSPACE,
+            TASK,
+            &bound.execution_id,
+            &mut provider,
+            &Clock
+        )
+        .is_err());
+        assert_eq!(provider.calls, ["session", "cancel"]);
+        assert!(!public_deletion_confirmed(&fixture.records, &fixture.record()).unwrap());
+        assert_eq!(fixture.record().status, ExecutionStatus::Running);
+    }
+
+    #[test]
+    fn cleanup_without_durable_id_refuses_any_remote_operation() {
+        let fixture = Fixture::new();
+        let prepared = prepare_hosted_execution(
+            &fixture.records,
+            &fixture.manifest,
+            &fixture.brief,
+            fixture.context().model,
+            &Clock.rfc3339(),
+        )
+        .unwrap();
+        let running = mark_hosted_create_started(&fixture.records, &prepared).unwrap();
+        let mut provider = MockProvider::new(&fixture, Fault::None);
+        assert!(cleanup_known_hosted_session(
+            &fixture.records,
+            WORKSPACE,
+            TASK,
+            &running.execution_id,
+            &mut provider,
+            &Clock
+        )
+        .is_err());
+        assert!(provider.calls.is_empty());
     }
 
     #[test]

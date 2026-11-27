@@ -2,11 +2,18 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AgentTaskHostedExportPreview } from "./AgentTaskHostedExportPreview";
-import { previewHostedTaskExport, verifyHostedTaskExport } from "@/lib/agentTasks";
+import {
+  previewHostedTaskExport,
+  verifyHostedTaskExport,
+  hostedPilotBuildInfo,
+  runHostedTaskPilot,
+} from "@/lib/agentTasks";
 
 vi.mock("@/lib/agentTasks", () => ({
   previewHostedTaskExport: vi.fn(),
   verifyHostedTaskExport: vi.fn(),
+  hostedPilotBuildInfo: vi.fn(),
+  runHostedTaskPilot: vi.fn(),
 }));
 
 const preview = {
@@ -59,6 +66,9 @@ describe("AgentTaskHostedExportPreview", () => {
     vi.clearAllMocks();
     vi.mocked(previewHostedTaskExport).mockResolvedValue(preview);
     vi.mocked(verifyHostedTaskExport).mockResolvedValue(verified);
+    vi.mocked(hostedPilotBuildInfo).mockResolvedValue({
+      enabled: false, syntheticOnly: true, provider: "openai_agents_api", maxSpendUsdCents: 100,
+    });
   });
 
   it("never starts a network or task execution and requires reviewed text", async () => {
@@ -83,6 +93,50 @@ describe("AgentTaskHostedExportPreview", () => {
     expect(await screen.findByTestId("hosted-export-preview")).toHaveTextContent("inputs/sample.csv");
     expect(screen.getByText(/No data transferred/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^(execute|upload|publish)/i })).not.toBeInTheDocument();
+  });
+
+  it("does not present a paid action in ordinary builds", async () => {
+    render(<AgentTaskHostedExportPreview workspaceId="workspace" taskId="task-1" />);
+    fill();
+    fireEvent.click(screen.getByRole("button", { name: /Preview export scope/i }));
+    await screen.findByTestId("hosted-export-preview");
+    fireEvent.click(screen.getByRole("button", { name: /Verify actual prepared bytes/i }));
+    await screen.findByTestId("hosted-export-verified");
+    expect(screen.queryByTestId("hosted-synthetic-pilot")).not.toBeInTheDocument();
+    expect(runHostedTaskPilot).not.toHaveBeenCalled();
+  });
+
+  it("only passes reviewed scope to native pilot without a webview approval flag", async () => {
+    vi.mocked(hostedPilotBuildInfo).mockResolvedValueOnce({
+      enabled: true, syntheticOnly: true, provider: "openai_agents_api", maxSpendUsdCents: 100,
+    });
+    vi.mocked(runHostedTaskPilot).mockResolvedValueOnce({
+      executionId: "44444444-4444-4444-8444-444444444444",
+      outputFileCount: 1,
+      outputTotalBytes: 25,
+    });
+    render(<AgentTaskHostedExportPreview workspaceId="workspace" taskId="task-1" />);
+    fill();
+    fireEvent.click(screen.getByRole("button", { name: /Preview export scope/i }));
+    await screen.findByTestId("hosted-export-preview");
+    fireEvent.click(screen.getByRole("button", { name: /Verify actual prepared bytes/i }));
+    await screen.findByTestId("hosted-export-verified");
+    const action = await screen.findByRole("button", { name: /Review natively and run synthetic pilot/i });
+    fireEvent.click(action);
+    await waitFor(() => expect(runHostedTaskPilot).toHaveBeenCalledWith({
+      workspaceId: "workspace",
+      taskId: "task-1",
+      reviewedExportBrief: {
+        title: "Approved sample",
+        objective: "Summarize only the CSV.",
+        requestedOutputs: ["outputs/report.md"],
+      },
+    }));
+    const wire = vi.mocked(runHostedTaskPilot).mock.calls[0][0] as unknown as Record<string, unknown>;
+    expect(wire).not.toHaveProperty("approved");
+    expect(wire).not.toHaveProperty("apiKey");
+    expect(await screen.findByRole("status")).toHaveTextContent("Review the task outputs separately");
+    expect(screen.queryByTestId("hosted-export-verified")).not.toBeInTheDocument();
   });
 
   it("hides the previous digest as soon as the reviewed instructions change", async () => {

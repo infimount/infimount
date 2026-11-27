@@ -433,7 +433,7 @@ pub async fn reconcile_deleted_hosted_attempt(
     let workspace_id = local_request.workspace_id;
     let task_id = local_request.task_id;
     tauri::async_runtime::spawn_blocking(move || {
-        infimount_control::hosted_cleanup_reconcile::reconcile_after_confirmed_public_deletion(
+        infimount_control::hosted_cleanup_reconcile::resolve_safe_hosted_local_attempt(
             &records,
             &root,
             &workspace_id,
@@ -454,6 +454,293 @@ pub async fn reconcile_deleted_hosted_attempt(
     _request: ReconcileDeletedHostedAttemptRequest,
 ) -> Result<bool, CoreError> {
     Err(CoreError::Config("ERR_HOSTED_UNQUALIFIED_PLATFORM".into()))
+}
+
+/// The initial opt-in live pilot accepts exactly one public synthetic input.
+/// A matching declared hash is checked AGAIN against actual bytes by the
+/// pinned no-follow coordinator before remote upload.
+#[cfg(any(test, all(target_os = "linux", feature = "hosted-live-pilot")))]
+const PILOT_PUBLIC_INPUT: &[u8] = b"Infimount synthetic hosted pilot v1\n";
+#[cfg(any(test, all(target_os = "linux", feature = "hosted-live-pilot")))]
+const PILOT_PUBLIC_INPUT_PATH: &str = "inputs/synthetic.txt";
+#[cfg(any(test, all(target_os = "linux", feature = "hosted-live-pilot")))]
+const PILOT_PUBLIC_OUTPUT_PATH: &str = "outputs/report.md";
+#[cfg(any(test, all(target_os = "linux", feature = "hosted-live-pilot")))]
+const PILOT_PUBLIC_TITLE: &str = "Infimount synthetic pilot";
+#[cfg(any(test, all(target_os = "linux", feature = "hosted-live-pilot")))]
+const PILOT_PUBLIC_OBJECTIVE: &str =
+    "Read the public synthetic input and write the approved report.";
+
+#[cfg(any(test, all(target_os = "linux", feature = "hosted-live-pilot")))]
+fn require_synthetic_hosted_pilot(
+    manifest: &AgentTaskManifest,
+    brief: &AgentTaskBrief,
+) -> Result<(), CoreError> {
+    use sha2::{Digest, Sha256};
+    let accepted = manifest.inputs.len() == 1
+        && manifest.inputs[0].task_path == PILOT_PUBLIC_INPUT_PATH
+        && manifest.inputs[0].byte_size == PILOT_PUBLIC_INPUT.len() as u64
+        && manifest.inputs[0].sha256 == format!("{:x}", Sha256::digest(PILOT_PUBLIC_INPUT))
+        && brief.title == PILOT_PUBLIC_TITLE
+        && brief.objective == PILOT_PUBLIC_OBJECTIVE
+        && brief.requested_outputs.len() == 1
+        && brief.requested_outputs[0] == PILOT_PUBLIC_OUTPUT_PATH;
+    if !accepted {
+        return Err(CoreError::Config("ERR_HOSTED_SYNTHETIC_ONLY".into()));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostedPilotBuildInfo {
+    pub enabled: bool,
+    pub synthetic_only: bool,
+    pub provider: &'static str,
+    pub max_spend_usd_cents: u32,
+}
+
+#[tauri::command]
+pub fn hosted_pilot_build_info() -> HostedPilotBuildInfo {
+    HostedPilotBuildInfo {
+        enabled: cfg!(all(target_os = "linux", feature = "hosted-live-pilot")),
+        synthetic_only: true,
+        provider: "openai_agents_api",
+        max_spend_usd_cents: OPENAI_HOSTED_PILOT_SESSION_SPEND_CENTS,
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostedPilotRunOutput {
+    pub execution_id: String,
+    pub output_file_count: usize,
+    pub output_total_bytes: u64,
+}
+
+/// Only a separately compiled operator pilot can reach authenticated HTTP.
+/// Stable builds register the same IPC name but explicitly reject any attempt.
+#[cfg(all(target_os = "linux", feature = "hosted-live-pilot"))]
+#[tauri::command]
+pub async fn run_hosted_task_pilot(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    request: PreviewHostedTaskExportRequest,
+) -> Result<HostedPilotRunOutput, CoreError> {
+    use infimount_control::hosted_execution_coordinator::{
+        run_hosted_with_native_review, HostedClock, HostedRunContext,
+    };
+    use infimount_control::hosted_http_transport::OpenAiAgentsHttpTransport;
+    use infimount_control::openai_hosted_request::OPENAI_HOSTED_PILOT_MODEL;
+    use infimount_control::sandbox_local_export::read_trusted_prepared_hosted_manifest;
+
+    state
+        .require_operational()
+        .map_err(|_| CoreError::Config("ERR_HOSTED_NATIVE_RUN_UNAVAILABLE".into()))?;
+    // The full transaction, INCLUDING native modal approval, provider API,
+    // clean-up and output import, is serialized against restore and workspace
+    // storage/configuration mutation.
+    let _lifecycle = state.lifecycle_mutation.lock().await;
+    let _configuration = state
+        .registry
+        .acquire_configuration_transaction()
+        .map_err(crate::state::mcp_error_to_core_error)?;
+    state
+        .recover_and_require_clean_configuration_locked()
+        .map_err(crate::state::mcp_error_to_core_error)?;
+    let _workspace = state.workspaces.acquire_mutation_lock()?;
+
+    let task = AgentTaskOutputReviewRequest {
+        workspace_id: request.workspace_id,
+        task_id: request.task_id,
+    };
+    let context = load_review_context(&state, &task)?;
+    infimount_mcp::storage_namespace::validate_local_mcp_path(
+        &context.storage,
+        &context.workspace.root_path,
+    )
+    .map_err(|_| CoreError::Config("ERR_HOSTED_WORKSPACE_BINDING".into()))?;
+    let address = infimount_mcp::storage_namespace::storage_namespace_address(
+        &context.storage,
+        &context.workspace.root_path,
+    )
+    .map_err(|_| CoreError::Config("ERR_HOSTED_WORKSPACE_BINDING".into()))?
+    .ok_or_else(|| CoreError::Config("ERR_HOSTED_WORKSPACE_BINDING".into()))?;
+
+    let root = std::path::PathBuf::from(address.absolute_path);
+    let revision = context.storage.revision;
+    let namespace = context.workspace.storage_namespace_fingerprint.clone();
+    let workspace_id = task.workspace_id;
+    let task_id = task.task_id;
+    let manifest_root = root.clone();
+    let manifest_workspace = workspace_id.clone();
+    let manifest_task = task_id.clone();
+    let manifest = tauri::async_runtime::spawn_blocking(move || {
+        read_trusted_prepared_hosted_manifest(&manifest_root, &manifest_workspace, &manifest_task)
+    })
+    .await
+    .map_err(|_| CoreError::Config("ERR_HOSTED_INPUT_SCOPE".into()))??;
+    require_synthetic_hosted_pilot(&manifest, &request.reviewed_export_brief)?;
+
+    let brief = request.reviewed_export_brief;
+    let records = state.execution_records.clone();
+    let secret_store = state.secret_store.clone();
+
+    struct Clock;
+    impl HostedClock for Clock {
+        fn unix_ms(&self) -> u64 {
+            chrono::Utc::now().timestamp_millis().max(0) as u64
+        }
+        fn rfc3339(&self) -> String {
+            chrono::Utc::now().to_rfc3339()
+        }
+    }
+
+    let summary = tauri::async_runtime::spawn_blocking(move || {
+        let api_key = super::hosted_provider_credentials::load_key_for_native_hosted_run(
+            secret_store.as_ref(),
+        )?;
+        let mut transport = OpenAiAgentsHttpTransport::new(api_key)?;
+        let clock = Clock;
+        let run_context = HostedRunContext {
+            workspace_root: &root,
+            manifest: &manifest,
+            reviewed_brief: &brief,
+            model: OPENAI_HOSTED_PILOT_MODEL,
+            storage_namespace: &namespace,
+            storage_revision: revision,
+            records: &records,
+        };
+        run_hosted_with_native_review(&run_context, &mut transport, &clock, |bundle, verified| {
+            let display_bundle = bundle.clone();
+            let display_verified = verified.clone();
+            tauri::async_runtime::block_on(
+                super::hosted_native_review::ask_native_hosted_scope_confirmation(
+                    &app,
+                    &display_bundle,
+                    &display_verified,
+                ),
+            )
+        })
+    })
+    .await
+    .map_err(|_| CoreError::Config("ERR_HOSTED_NATIVE_RUN_UNAVAILABLE".into()))??;
+
+    Ok(HostedPilotRunOutput {
+        execution_id: summary.execution_id,
+        output_file_count: summary.output_file_count,
+        output_total_bytes: summary.output_total_bytes,
+    })
+}
+
+/// Explicit cleanup ONLY of the privately stored provider session ID.
+/// There is no create POST, no upload and no output import in this command.
+#[cfg(all(target_os = "linux", feature = "hosted-live-pilot"))]
+#[tauri::command]
+pub async fn cleanup_pinned_hosted_session(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    request: ReconcileDeletedHostedAttemptRequest,
+) -> Result<bool, CoreError> {
+    use infimount_control::hosted_execution_coordinator::{
+        cleanup_known_hosted_session, HostedClock,
+    };
+    use infimount_control::hosted_http_transport::OpenAiAgentsHttpTransport;
+    use infimount_control::sandbox_local_export::read_trusted_prepared_hosted_manifest;
+
+    state
+        .require_operational()
+        .map_err(|_| CoreError::Config("ERR_HOSTED_RECOVERY_UNAVAILABLE".into()))?;
+    let _lifecycle = state.lifecycle_mutation.lock().await;
+    let _configuration = state
+        .registry
+        .acquire_configuration_transaction()
+        .map_err(crate::state::mcp_error_to_core_error)?;
+    state
+        .recover_and_require_clean_configuration_locked()
+        .map_err(crate::state::mcp_error_to_core_error)?;
+    let _workspace = state.workspaces.acquire_mutation_lock()?;
+    let task_request = AgentTaskOutputReviewRequest {
+        workspace_id: request.workspace_id.clone(),
+        task_id: request.task_id.clone(),
+    };
+    let context = load_review_context(&state, &task_request)?;
+    infimount_mcp::storage_namespace::validate_local_mcp_path(
+        &context.storage,
+        &context.workspace.root_path,
+    )
+    .map_err(|_| CoreError::Config("ERR_HOSTED_RECOVERY_UNAVAILABLE".into()))?;
+    let address = infimount_mcp::storage_namespace::storage_namespace_address(
+        &context.storage,
+        &context.workspace.root_path,
+    )
+    .map_err(|_| CoreError::Config("ERR_HOSTED_RECOVERY_UNAVAILABLE".into()))?
+    .ok_or_else(|| CoreError::Config("ERR_HOSTED_RECOVERY_UNAVAILABLE".into()))?;
+    if !super::hosted_native_review::ask_native_hosted_cleanup_confirmation(
+        &app,
+        &request.execution_id,
+    )
+    .await
+    .map_err(|_| CoreError::Config("ERR_HOSTED_NATIVE_REVIEW_UNAVAILABLE".into()))?
+    {
+        return Err(CoreError::Config("ERR_HOSTED_CLEANUP_DENIED".into()));
+    }
+    let root = std::path::PathBuf::from(address.absolute_path);
+    let records = state.execution_records.clone();
+    let keyring = state.secret_store.clone();
+
+    struct Clock;
+    impl HostedClock for Clock {
+        fn unix_ms(&self) -> u64 {
+            chrono::Utc::now().timestamp_millis().max(0) as u64
+        }
+        fn rfc3339(&self) -> String {
+            chrono::Utc::now().to_rfc3339()
+        }
+    }
+
+    // This explicit user action never retransmits prepared input bytes.
+    tauri::async_runtime::spawn_blocking(move || {
+        read_trusted_prepared_hosted_manifest(&root, &request.workspace_id, &request.task_id)
+            .map_err(|_| CoreError::Config("ERR_HOSTED_RECOVERY_UNAVAILABLE".into()))?;
+        let api_key =
+            super::hosted_provider_credentials::load_key_for_native_hosted_run(keyring.as_ref())?;
+        let mut transport = OpenAiAgentsHttpTransport::new(api_key)?;
+        cleanup_known_hosted_session(
+            &records,
+            &request.workspace_id,
+            &request.task_id,
+            &request.execution_id,
+            &mut transport,
+            &Clock,
+        )
+    })
+    .await
+    .map_err(|_| CoreError::Config("ERR_HOSTED_RECOVERY_UNAVAILABLE".into()))?
+}
+
+#[cfg(not(all(target_os = "linux", feature = "hosted-live-pilot")))]
+#[tauri::command]
+pub async fn cleanup_pinned_hosted_session(
+    _app: tauri::AppHandle,
+    _state: State<'_, AppState>,
+    _request: ReconcileDeletedHostedAttemptRequest,
+) -> Result<bool, CoreError> {
+    Err(CoreError::Config(
+        "ERR_HOSTED_LIVE_PILOT_NOT_ENABLED".into(),
+    ))
+}
+
+#[cfg(not(all(target_os = "linux", feature = "hosted-live-pilot")))]
+#[tauri::command]
+pub async fn run_hosted_task_pilot(
+    _app: tauri::AppHandle,
+    _state: State<'_, AppState>,
+    _request: PreviewHostedTaskExportRequest,
+) -> Result<HostedPilotRunOutput, CoreError> {
+    Err(CoreError::Config(
+        "ERR_HOSTED_LIVE_PILOT_NOT_ENABLED".into(),
+    ))
 }
 
 fn load_review_context(
@@ -761,6 +1048,46 @@ mod tests {
         record.provider_execution_id = None;
         let unbound = serde_json::to_string(&sanitized_hosted_attempt(record, false)).unwrap();
         assert!(unbound.contains("manual_session_reconciliation"));
+    }
+
+    #[test]
+    fn pilot_guard_blocks_user_data_and_accepts_only_the_exact_public_fixture() {
+        use infimount_core::agent_tasks::{AgentTaskInput, AGENT_TASK_SCHEMA_VERSION};
+        use sha2::{Digest, Sha256};
+        let mut manifest = AgentTaskManifest {
+            schema_version: AGENT_TASK_SCHEMA_VERSION,
+            task_id: "81f08176-86e4-40ec-a9a4-a219c4c9b454".into(),
+            workspace_id: "f8f47aa7-702d-4fd6-8815-84cbdf3b3127".into(),
+            title: PILOT_PUBLIC_TITLE.into(),
+            created_at: "2026-11-21T00:00:00Z".into(),
+            task_root: "tasks/81f08176-86e4-40ec-a9a4-a219c4c9b454".into(),
+            outputs_directory: "outputs".into(),
+            inputs: vec![AgentTaskInput {
+                task_path: PILOT_PUBLIC_INPUT_PATH.into(),
+                byte_size: PILOT_PUBLIC_INPUT.len() as u64,
+                sha256: format!("{:x}", Sha256::digest(PILOT_PUBLIC_INPUT)),
+            }],
+        };
+        let brief = AgentTaskBrief {
+            title: PILOT_PUBLIC_TITLE.into(),
+            objective: PILOT_PUBLIC_OBJECTIVE.into(),
+            requested_outputs: vec![PILOT_PUBLIC_OUTPUT_PATH.into()],
+        };
+        assert!(require_synthetic_hosted_pilot(&manifest, &brief).is_ok());
+        manifest.inputs[0].sha256 = "0".repeat(64);
+        assert!(require_synthetic_hosted_pilot(&manifest, &brief).is_err());
+        manifest.inputs[0].sha256 = format!("{:x}", Sha256::digest(PILOT_PUBLIC_INPUT));
+        let mut modified = brief.clone();
+        modified.objective.push_str(" Upload private data");
+        assert!(require_synthetic_hosted_pilot(&manifest, &modified).is_err());
+    }
+
+    #[test]
+    fn stable_build_does_not_offer_paid_hosted_execution() {
+        let info = hosted_pilot_build_info();
+        assert!(info.synthetic_only);
+        #[cfg(not(feature = "hosted-live-pilot"))]
+        assert!(!info.enabled);
     }
 
     #[test]

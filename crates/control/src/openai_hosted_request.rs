@@ -22,6 +22,8 @@ pub const OPENAI_HOSTED_INLINE_MAX_BYTES: usize = 8 * 1024 * 1024;
 pub const OPENAI_HOSTED_REQUEST_MAX_JSON_BYTES: usize = 12 * 1024 * 1024;
 /// Fixed USD-cent ceiling for synthetic C2 hosted pilot sessions, not user consent.
 pub const OPENAI_HOSTED_PILOT_SESSION_SPEND_CENTS: u32 = 100;
+/// Fixed documented model for the synthetic-only, build-gated live pilot.
+pub const OPENAI_HOSTED_PILOT_MODEL: &str = "gpt-6-astra";
 
 const FIXED_AGENT_INSTRUCTIONS: &str =
     "Use only the provided workspace inputs. Write deliverables under /workspace/outputs/. Do not seek source storage credentials or change the destination.";

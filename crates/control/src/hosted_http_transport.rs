@@ -167,15 +167,15 @@ impl SseDecoder {
     }
 }
 
-/// Native-only. It is deliberately not `pub`, Serialize, Clone or Debug.
+/// Native-only authenticated transport. This is not an IPC or consent issuer.
 /// The API key is kept out of request arguments, logs and frontend results.
-pub(crate) struct OpenAiAgentsHttpTransport {
+pub struct OpenAiAgentsHttpTransport {
     client: Client,
     api_key: Zeroizing<String>,
 }
 
 impl OpenAiAgentsHttpTransport {
-    pub(crate) fn new(api_key: String) -> Result<Self, CoreError> {
+    pub fn new(api_key: Zeroizing<String>) -> Result<Self, CoreError> {
         if api_key.len() < 16
             || api_key.len() > 1024
             || !api_key.bytes().all(|b| (0x21..=0x7e).contains(&b))
@@ -199,10 +199,7 @@ impl OpenAiAgentsHttpTransport {
             .timeout(Duration::from_secs(120))
             .build()
             .map_err(|_| fail())?;
-        Ok(Self {
-            client,
-            api_key: Zeroizing::new(api_key),
-        })
+        Ok(Self { client, api_key })
     }
 
     fn request(
@@ -381,6 +378,26 @@ impl HostedTransport for OpenAiAgentsHttpTransport {
         }
     }
 
+    fn cancel_active_turn(&mut self, session_id: &str, deadline: Instant) -> Result<(), CoreError> {
+        let request = self
+            .request(
+                Method::POST,
+                &format!("/{}/events", checked_id(session_id)?),
+                deadline,
+            )?
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json")
+            .body(r#"{"events":[{"type":"agent.session.input.cancel"}]}"#);
+        deadline_remaining(deadline)?;
+        // Cancellation is an explicit single-shot operation. HTTP 202 is
+        // accepted only as ACK, never evidence the turn became terminal.
+        let response = request.send().map_err(|_| fail())?;
+        if response.status() != StatusCode::ACCEPTED {
+            return Err(fail());
+        }
+        Ok(())
+    }
+
     fn delete_session(
         &mut self,
         session_id: &str,
@@ -443,8 +460,10 @@ mod tests {
 
     #[test]
     fn request_builder_keeps_fixed_tls_host_beta_header_and_encoded_cursors() {
-        let provider =
-            OpenAiAgentsHttpTransport::new("sk-test-offline-key-valid-12345".into()).unwrap();
+        let provider = OpenAiAgentsHttpTransport::new(Zeroizing::new(
+            "sk-test-offline-key-valid-12345".into(),
+        ))
+        .unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
         let built = provider
             .request(Method::GET, "/sess_123/items", deadline)
@@ -484,6 +503,6 @@ mod tests {
         assert!(frames
             .feed(&vec![b'x'; MAX_SSE_FRAME + 1], &mut |_| Ok(()))
             .is_err());
-        assert!(OpenAiAgentsHttpTransport::new("bad key".into()).is_err());
+        assert!(OpenAiAgentsHttpTransport::new(Zeroizing::new("bad key".into())).is_err());
     }
 }

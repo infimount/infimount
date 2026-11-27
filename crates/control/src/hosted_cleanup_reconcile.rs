@@ -22,32 +22,13 @@ fn denied() -> CoreError {
     CoreError::Config("ERR_HOSTED_LOCAL_RECONCILIATION_REQUIRED".into())
 }
 
-/// A missing or uncertain deletion receipt never permits reconciliation.
-/// The caller may only mark a previously Running attempt Failed when the
-/// exact session's public deletion is durably confirmed and the currently
-/// attached, trusted task output directory is empty. Local recovery never means remote data erasure.
-pub fn reconcile_after_confirmed_public_deletion(
-    records: &ExecutionRecordStore,
+/// Checked under the caller's workspace/configuration mutation locks.
+/// No source path or file contents ever leave the native process.
+fn require_trusted_empty_task(
     trusted_workspace_root: &Path,
     workspace_id: &str,
     task_id: &str,
-    execution_id: &str,
-    finished_at: &str,
 ) -> Result<(), CoreError> {
-    let running = records
-        .read(workspace_id, task_id, execution_id)
-        .map_err(|_| denied())?;
-    running.validate().map_err(|_| denied())?;
-    if running.status != ExecutionStatus::Running
-        || running.adapter_kind != AdapterKind::OpenaiSandbox
-        || running.runtime_kind != RuntimeKind::RemoteSandbox
-        || running.runtime_provider != Some(RuntimeProvider::Openai)
-        || running.provider_execution_id.is_none()
-        || !public_deletion_confirmed(records, &running).map_err(|_| denied())?
-    {
-        return Err(denied());
-    }
-
     // Check the original task/manifest through pinned no-follow descriptors.
     // A path-based preliminary read would allow FIFO and symlink substitution.
     let root = open_absolute_root(trusted_workspace_root).map_err(|_| denied())?;
@@ -82,6 +63,36 @@ pub fn reconcile_after_confirmed_public_deletion(
     {
         return Err(denied());
     }
+    Ok(())
+}
+
+/// A missing or uncertain deletion receipt never permits reconciliation.
+/// The caller may only mark a previously Running attempt Failed when the
+/// exact session's public deletion is durably confirmed and the currently
+/// attached, trusted task output directory is empty. Local recovery never means remote data erasure.
+pub fn reconcile_after_confirmed_public_deletion(
+    records: &ExecutionRecordStore,
+    trusted_workspace_root: &Path,
+    workspace_id: &str,
+    task_id: &str,
+    execution_id: &str,
+    finished_at: &str,
+) -> Result<(), CoreError> {
+    let running = records
+        .read(workspace_id, task_id, execution_id)
+        .map_err(|_| denied())?;
+    running.validate().map_err(|_| denied())?;
+    if running.status != ExecutionStatus::Running
+        || running.adapter_kind != AdapterKind::OpenaiSandbox
+        || running.runtime_kind != RuntimeKind::RemoteSandbox
+        || running.runtime_provider != Some(RuntimeProvider::Openai)
+        || running.provider_execution_id.is_none()
+        || !public_deletion_confirmed(records, &running).map_err(|_| denied())?
+    {
+        return Err(denied());
+    }
+
+    require_trusted_empty_task(trusted_workspace_root, workspace_id, task_id)?;
     let mut terminal = running.clone();
     terminal.status = ExecutionStatus::Failed;
     terminal.finished_at = Some(finished_at.to_owned());
@@ -89,6 +100,74 @@ pub fn reconcile_after_confirmed_public_deletion(
     records
         .transition(&running, &terminal)
         .map_err(|_| denied())
+}
+
+/// Close a never-submitted Prepared attempt locally. The coordinator
+/// always persists Running BEFORE any possible charged create. A Prepared
+/// record without a provider ID therefore cannot represent a started run.
+/// Do not use this path for Running attempts whose session ID is missing.
+pub fn cancel_unsubmitted_hosted_attempt(
+    records: &ExecutionRecordStore,
+    trusted_workspace_root: &Path,
+    workspace_id: &str,
+    task_id: &str,
+    execution_id: &str,
+    finished_at: &str,
+) -> Result<(), CoreError> {
+    let prepared = records
+        .read(workspace_id, task_id, execution_id)
+        .map_err(|_| denied())?;
+    prepared.validate().map_err(|_| denied())?;
+    if prepared.status != ExecutionStatus::Prepared
+        || prepared.adapter_kind != AdapterKind::OpenaiSandbox
+        || prepared.runtime_kind != RuntimeKind::RemoteSandbox
+        || prepared.runtime_provider != Some(RuntimeProvider::Openai)
+        || prepared.provider_execution_id.is_some()
+    {
+        return Err(denied());
+    }
+    require_trusted_empty_task(trusted_workspace_root, workspace_id, task_id)?;
+    let mut cancelled = prepared.clone();
+    cancelled.status = ExecutionStatus::Cancelled;
+    cancelled.finished_at = Some(finished_at.to_owned());
+    cancelled.error_code = Some("ERR_HOSTED_PREPARED_DISCARDED".into());
+    records
+        .transition(&prepared, &cancelled)
+        .map_err(|_| denied())
+}
+
+/// Never transitions Running without a matching deletion receipt, nor any
+/// terminal record. No provider calls, automatic replays, or file deletion.
+pub fn resolve_safe_hosted_local_attempt(
+    records: &ExecutionRecordStore,
+    trusted_workspace_root: &Path,
+    workspace_id: &str,
+    task_id: &str,
+    execution_id: &str,
+    finished_at: &str,
+) -> Result<(), CoreError> {
+    let record = records
+        .read(workspace_id, task_id, execution_id)
+        .map_err(|_| denied())?;
+    match record.status {
+        ExecutionStatus::Prepared => cancel_unsubmitted_hosted_attempt(
+            records,
+            trusted_workspace_root,
+            workspace_id,
+            task_id,
+            execution_id,
+            finished_at,
+        ),
+        ExecutionStatus::Running => reconcile_after_confirmed_public_deletion(
+            records,
+            trusted_workspace_root,
+            workspace_id,
+            task_id,
+            execution_id,
+            finished_at,
+        ),
+        _ => Err(denied()),
+    }
 }
 
 #[cfg(test)]
@@ -184,6 +263,80 @@ mod tests {
         fn confirm_delete(&self) {
             persist_public_deletion(&self.records, &self.record, "2026-11-19T10:00:00Z").unwrap();
         }
+    }
+
+    #[test]
+    fn unsubmitted_prepared_attempt_can_be_discarded_without_remote_evidence() {
+        let fixture = Fixture::new();
+        let other_private = tempfile::tempdir().unwrap();
+        let records = ExecutionRecordStore::new(other_private.path());
+        let mut prepared = fixture.record.clone();
+        prepared.status = ExecutionStatus::Prepared;
+        prepared.provider_execution_id = None;
+        prepared.validate().unwrap();
+        records.create(&prepared).unwrap();
+        assert!(resolve_safe_hosted_local_attempt(
+            &records,
+            fixture.workspace.path(),
+            &prepared.workspace_id,
+            &prepared.task_id,
+            &prepared.execution_id,
+            "2026-11-19T11:00:00Z",
+        )
+        .is_ok());
+        let done = records
+            .read(
+                &prepared.workspace_id,
+                &prepared.task_id,
+                &prepared.execution_id,
+            )
+            .unwrap();
+        assert_eq!(done.status, ExecutionStatus::Cancelled);
+        assert_eq!(
+            done.error_code.as_deref(),
+            Some("ERR_HOSTED_PREPARED_DISCARDED")
+        );
+        assert!(resolve_safe_hosted_local_attempt(
+            &records,
+            fixture.workspace.path(),
+            &prepared.workspace_id,
+            &prepared.task_id,
+            &prepared.execution_id,
+            "2026-11-19T11:00:00Z",
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn prepared_attempt_with_output_collision_remains_untouched() {
+        let fixture = Fixture::new();
+        let other_private = tempfile::tempdir().unwrap();
+        let records = ExecutionRecordStore::new(other_private.path());
+        let mut prepared = fixture.record.clone();
+        prepared.status = ExecutionStatus::Prepared;
+        prepared.provider_execution_id = None;
+        records.create(&prepared).unwrap();
+        fs::write(fixture.output().join("unexpected"), b"sentinel").unwrap();
+        assert!(resolve_safe_hosted_local_attempt(
+            &records,
+            fixture.workspace.path(),
+            &prepared.workspace_id,
+            &prepared.task_id,
+            &prepared.execution_id,
+            "2026-11-19T11:00:00Z",
+        )
+        .is_err());
+        assert_eq!(
+            records
+                .read(
+                    &prepared.workspace_id,
+                    &prepared.task_id,
+                    &prepared.execution_id,
+                )
+                .unwrap()
+                .status,
+            ExecutionStatus::Prepared
+        );
     }
 
     #[test]

@@ -16,13 +16,16 @@ pub mod hosted_cleanup_evidence;
 #[cfg(target_os = "linux")]
 pub mod hosted_cleanup_reconcile;
 // Private authenticated transport, deliberately not reachable from an IPC command.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "hosted-live-pilot"))]
 #[allow(dead_code)]
-mod hosted_http_transport;
+pub mod hosted_http_transport;
 // Private, mocked-provider Linux lifecycle. No live transport or consent issuer.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "hosted-live-pilot"))]
 #[allow(dead_code)]
 pub mod hosted_execution_coordinator;
+#[cfg(all(target_os = "linux", not(feature = "hosted-live-pilot")))]
+#[allow(dead_code)]
+mod hosted_execution_coordinator;
 pub mod openai_hosted_request;
 pub mod publication;
 pub mod publication_apply;

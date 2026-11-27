@@ -2,11 +2,18 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HostedTaskRecoveryStatus } from "./HostedTaskRecoveryStatus";
-import { listHostedTaskExecutionStatus, reconcileDeletedHostedAttempt } from "@/lib/agentTasks";
+import {
+  listHostedTaskExecutionStatus,
+  reconcileDeletedHostedAttempt,
+  cleanupPinnedHostedSession,
+  hostedPilotBuildInfo,
+} from "@/lib/agentTasks";
 
 vi.mock("@/lib/agentTasks", () => ({
   listHostedTaskExecutionStatus: vi.fn(),
   reconcileDeletedHostedAttempt: vi.fn(),
+  cleanupPinnedHostedSession: vi.fn(),
+  hostedPilotBuildInfo: vi.fn(),
 }));
 
 const empty = {
@@ -31,6 +38,9 @@ describe("HostedTaskRecoveryStatus", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(listHostedTaskExecutionStatus).mockResolvedValue(empty);
+    vi.mocked(hostedPilotBuildInfo).mockResolvedValue({
+      enabled: false, syntheticOnly: true, provider: "openai_agents_api", maxSpendUsdCents: 100,
+    });
   });
 
   it("reads only private status and exposes no upload, publish or execute buttons", async () => {
@@ -81,6 +91,52 @@ describe("HostedTaskRecoveryStatus", () => {
     }));
     expect(await screen.findByText(/Physical erasure and retention expiry are not confirmed/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Resolve local attempt" })).not.toBeInTheDocument();
+  });
+
+  it("offers existing-session cleanup only in a compiled opt-in pilot", async () => {
+    const pinned = { ...unresolved.attempts[0],
+      providerSessionRecorded: true,
+      recovery: "inspect_pinned_session" as const,
+    };
+    vi.mocked(hostedPilotBuildInfo).mockResolvedValueOnce({
+      enabled: true, syntheticOnly: true, provider: "openai_agents_api", maxSpendUsdCents: 100,
+    });
+    vi.mocked(listHostedTaskExecutionStatus)
+      .mockResolvedValueOnce({ ...empty, attempts: [pinned] })
+      .mockResolvedValueOnce({ ...empty, attempts: [{
+        ...pinned, recovery: "public_session_deleted_needs_local_review" as const,
+      }] });
+    vi.mocked(cleanupPinnedHostedSession).mockResolvedValueOnce(true);
+    render(<HostedTaskRecoveryStatus workspaceId="workspace-1" taskId="task-1" />);
+    const action = await screen.findByRole("button", { name: "Clean up pinned provider session" });
+    fireEvent.click(action);
+    await waitFor(() => expect(cleanupPinnedHostedSession).toHaveBeenCalledWith({
+      workspaceId: "workspace-1", taskId: "task-1", executionId: pinned.executionId,
+    }));
+    expect(await screen.findByRole("button", { name: "Resolve local attempt" })).toBeInTheDocument();
+    expect(screen.getByTestId("hosted-execution-status")).not.toHaveTextContent("sess_secret");
+  });
+
+  it("permits local discard only for a never-submitted Prepared attempt", async () => {
+    const prepared = { ...unresolved.attempts[0],
+      status: "prepared" as const,
+      recovery: "requires_fresh_approval" as const,
+    };
+    vi.mocked(listHostedTaskExecutionStatus)
+      .mockResolvedValueOnce({ ...empty, attempts: [prepared] })
+      .mockResolvedValueOnce({ ...empty, attempts: [{
+        ...prepared, status: "cancelled" as const,
+        recovery: "terminal_needs_cleanup_review" as const,
+      }] });
+    vi.mocked(reconcileDeletedHostedAttempt).mockResolvedValueOnce(true);
+    render(<HostedTaskRecoveryStatus workspaceId="workspace-1" taskId="task-1" />);
+    const action = await screen.findByRole("button", { name: "Discard unsubmitted attempt" });
+    fireEvent.click(action);
+    await waitFor(() => expect(reconcileDeletedHostedAttempt).toHaveBeenCalledWith({
+      workspaceId: "workspace-1", taskId: "task-1", executionId: prepared.executionId,
+    }));
+    expect(screen.queryByRole("button", { name: "Discard unsubmitted attempt" })).not.toBeInTheDocument();
+    expect(cleanupPinnedHostedSession).not.toHaveBeenCalled();
   });
 
   it("rejects stale workspace history after the selected task changes", async () => {

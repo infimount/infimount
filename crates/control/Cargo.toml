@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+[features]
+# Public hosted transport is unavailable in ordinary desktop builds.
+hosted-live-pilot = []
+
 [dependencies]
 infimount_core = { path = "../core" }
 infimount_mcp = { path = "../mcp" }
