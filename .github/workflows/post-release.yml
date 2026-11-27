@@ -70,7 +70,7 @@ jobs:
         run: ./scripts/check-release-links.sh
 
       - name: Install exact release MSRV (Rust 1.94)
-        uses: dtolnay/rust-toolchain@1.94
+        uses: dtolnay/rust-toolchain@1.120
 
       - uses: actions/setup-python@v6
         with:
