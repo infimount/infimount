@@ -154,6 +154,22 @@ class WebDriver {
     });
   }
 
+  // Use the W3C keyboard input source rather than element Send Keys for
+  // a non-editable, virtualized file card. The active element receives the
+  // trusted keyDown/keyUp pair just as it would from a keyboard.
+  async pressKey(value) {
+    await this.request("POST", this.endpoint("/actions"), {
+      actions: [{
+        type: "key",
+        id: "release-pilot-keyboard",
+        actions: [
+          { type: "keyDown", value },
+          { type: "keyUp", value },
+        ],
+      }],
+    });
+  }
+
   async text(id) {
     return await this.request("GET", this.endpoint(`/element/${id}/text`));
   }
@@ -682,27 +698,70 @@ async function readOnlyAgentAccessSession(driver) {
     // binding below increments the storage revision, intentionally making this
     // continuation cursor stale while the browser stays mounted.
     const paginationSelector = '[role="option"][aria-label="pagination"]';
-    const folder = await driver.waitElement("css selector", paginationSelector, 20000);
-    // WebKit's DOM focus event updates React's roving-tabindex state. That
-    // update may replace the card, making an immediate synthetic keydown on
-    // the old element a silent no-op. Focus first, then re-acquire the live
-    // element and send one *native* WebDriver Enter key, never a dblclick.
+    // Virtual rows can be recreated after scroll/focus. Verify stable DOM
+    // focus and the roving tab stop on the current card before sending one
+    // real keyboard action. Do not retry activation or fall back to a click.
+    let stableFocus = 0;
+    await driver.waitFor(async () => {
+      const focused = await driver.execute(
+        `const option = document.querySelector(arguments[0]);
+         if (!option) return false;
+         if (document.activeElement !== option || option.tabIndex !== 0) {
+           option.scrollIntoView({ block: "center", inline: "nearest" });
+           option.focus({ preventScroll: true });
+           return false;
+         }
+         return option.isConnected;`,
+        [paginationSelector],
+      );
+      stableFocus = focused ? stableFocus + 1 : 0;
+      return stableFocus >= 2;
+    }, 20000, "stable focused pagination card with tabIndex=0");
+
+    // Observe (never dispatch) the actual keyboard event to distinguish
+    // WebDriver delivery problems from application navigation failures.
+    // All data here is from the release pilot's own synthetic fixture.
     await driver.execute(
-      `const element = arguments[0];
-       element.scrollIntoView({ block: "center", inline: "nearest" });
-       element.focus({ preventScroll: true });
+      `const selector = arguments[0];
+       window.__infimountPilotEnterEvents = [];
+       document.addEventListener("keydown", (event) => {
+         if (event.key !== "Enter") return;
+         const target = event.target;
+         window.__infimountPilotEnterEvents.push({
+           trusted: event.isTrusted,
+           onPagination: target instanceof Element && target.matches(selector),
+           role: target instanceof Element ? target.getAttribute("role") : null,
+           label: target instanceof Element ? target.getAttribute("aria-label") : null,
+         });
+       }, { capture: true });
        return true;`,
-      [{ [ELEMENT_KEY]: folder }],
+      [paginationSelector],
     );
-    const focused = await driver.waitElement("css selector", paginationSelector, 20000);
-    await driver.sendKeys(focused, "\uE007");
     try {
-      // Preserve the strict first-page assertion. A missing page is a failed
-      // gate, not an optional smoke-test step.
+      await driver.pressKey("\uE007");
+      // Require a trusted Enter targeted at the actual focused file card,
+      // not simply an eventual page load via some other activation.
+      await driver.waitFor(async () => {
+        const events = await driver.execute("return window.__infimountPilotEnterEvents;");
+        return Array.isArray(events) && events.some((event) => event.trusted && event.onPagination);
+      }, 5000, "trusted Enter keydown on pagination card");
       await driver.waitElement("css selector", '[aria-label="page-0000.txt"]', 20000);
     } catch (error) {
-      const snapshot = await driver.bodySnapshot(12000).catch(() => "<DOM snapshot unavailable>");
-      fail(`Enter did not open pagination or load page one: ${error.message}; DOM: ${snapshot}`);
+      const diagnostic = await driver.execute(
+        `const active = document.activeElement;
+         return {
+           documentFocused: document.hasFocus(),
+           activeRole: active?.getAttribute("role"),
+           activeLabel: active?.getAttribute("aria-label"),
+           activeTabIndex: active?.tabIndex,
+           enterEvents: window.__infimountPilotEnterEvents,
+           folderPresent: Boolean(document.querySelector(arguments[0])),
+           pageOnePresent: Boolean(document.querySelector('[aria-label="page-0000.txt"]')),
+         };`,
+        [paginationSelector],
+      ).catch(() => null);
+      const snapshot = await driver.bodySnapshot(1500).catch(() => "<DOM snapshot unavailable>");
+      fail(`Enter did not open pagination or load page one: ${error.message}; input: ${JSON.stringify(diagnostic)}; DOM: ${snapshot}`);
     }
     const hiddenLoadMore = await driver.waitElement(
       "xpath",
