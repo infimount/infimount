@@ -681,26 +681,29 @@ async function readOnlyAgentAccessSession(driver) {
     // Load the first 200-entry page before any workspace mutation. Workspace
     // binding below increments the storage revision, intentionally making this
     // continuation cursor stale while the browser stays mounted.
-    await driver.waitElement(
-      "css selector",
-      '[role="option"][aria-label="pagination"]',
-      20000,
-    );
-    // A keyboard action and a synthetic double-click back-to-back can
-    // navigate twice or race the unmount of the first directory. Exercise
-    // the existing FileGrid/FileTable Enter-key open handler exactly once.
-    const opened = await driver.execute(
-      `const el = document.querySelector('[role="option"][aria-label="pagination"]');
-       if (!el) return false;
-       el.focus({ preventScroll: true });
-       el.dispatchEvent(new KeyboardEvent("keydown", {
-         key: "Enter", code: "Enter", bubbles: true, cancelable: true
-       }));
+    const paginationSelector = '[role="option"][aria-label="pagination"]';
+    const folder = await driver.waitElement("css selector", paginationSelector, 20000);
+    // WebKit's DOM focus event updates React's roving-tabindex state. That
+    // update may replace the card, making an immediate synthetic keydown on
+    // the old element a silent no-op. Focus first, then re-acquire the live
+    // element and send one *native* WebDriver Enter key, never a dblclick.
+    await driver.execute(
+      `const element = arguments[0];
+       element.scrollIntoView({ block: "center", inline: "nearest" });
+       element.focus({ preventScroll: true });
        return true;`,
+      [{ [ELEMENT_KEY]: folder }],
     );
-    if (!opened) fail("pagination folder disappeared before keyboard navigation");
-    // Keep the same strict first-page and stale-continuation assertions.
-    await driver.waitElement("css selector", '[aria-label="page-0000.txt"]', 20000);
+    const focused = await driver.waitElement("css selector", paginationSelector, 20000);
+    await driver.sendKeys(focused, "\uE007");
+    try {
+      // Preserve the strict first-page assertion. A missing page is a failed
+      // gate, not an optional smoke-test step.
+      await driver.waitElement("css selector", '[aria-label="page-0000.txt"]', 20000);
+    } catch (error) {
+      const snapshot = await driver.bodySnapshot(12000).catch(() => "<DOM snapshot unavailable>");
+      fail(`Enter did not open pagination or load page one: ${error.message}; DOM: ${snapshot}`);
+    }
     const hiddenLoadMore = await driver.waitElement(
       "xpath",
       "//button[contains(normalize-space(.), 'Load more')]",
