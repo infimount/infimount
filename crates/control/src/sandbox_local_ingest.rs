@@ -506,7 +506,10 @@ mod tests {
             create_new_file(&dir, "private.bin").unwrap_err().kind(),
             io::ErrorKind::AlreadyExists
         );
-        assert_eq!(fs::read(canonical.join("private.bin")).unwrap(), b"sentinel");
+        assert_eq!(
+            fs::read(canonical.join("private.bin")).unwrap(),
+            b"sentinel"
+        );
     }
 
     #[test]
