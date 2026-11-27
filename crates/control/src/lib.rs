@@ -25,7 +25,7 @@ pub mod hosted_http_transport;
 pub mod hosted_execution_coordinator;
 #[cfg(all(target_os = "linux", not(feature = "hosted-live-pilot")))]
 #[allow(dead_code)]
-pub mod hosted_execution_coordinator;
+mod hosted_execution_coordinator;
 pub mod openai_hosted_request;
 pub mod publication;
 pub mod publication_apply;
