@@ -2307,10 +2307,7 @@ mod tests {
         );
         for (encoding, content) in [
             ("utf-8", "x".repeat(tools_fs::MAX_MCP_WRITE_BYTES + 1)),
-            (
-                "base64",
-                "A".repeat(tools_fs::MAX_MCP_WRITE_BASE64_LEN + 4),
-            ),
+            ("base64", "A".repeat(tools_fs::MAX_MCP_WRITE_BASE64_LEN + 4)),
             // Exactly the maximum encoded length, but no padding. It
             // represents two more decoded bytes than allowed.
             ("base64", "A".repeat(tools_fs::MAX_MCP_WRITE_BASE64_LEN)),
