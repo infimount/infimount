@@ -42,6 +42,10 @@ export function HostedTaskRecoveryStatus({ workspaceId, taskId }: Props) {
   const [nativePilotEnabled, setNativePilotEnabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
+  // Keep mutation lifetime separate from read generations. Switching tasks
+  // invalidates result rendering, not the native recovery operation.
+  const actionInFlight = useRef(false);
+  const actionBusy = cleaning !== null || reconciling !== null;
 
   const refresh = useCallback(async () => {
     const id = ++generation.current;
@@ -72,47 +76,49 @@ export function HostedTaskRecoveryStatus({ workspaceId, taskId }: Props) {
   useEffect(() => {
     setHistory(null);
     setError(null);
-    setReconciling(null);
     void refresh();
     return () => { generation.current += 1; };
   }, [refresh]);
 
   const reconcile = useCallback(async (executionId: string) => {
-    if (loading || reconciling) return;
+    if (loading || actionInFlight.current) return;
     const current = generation.current;
+    actionInFlight.current = true;
     setReconciling(executionId);
     setError(null);
     try {
-      await reconcileDeletedHostedAttempt({ workspaceId, taskId, executionId });
+      const resolved = await reconcileDeletedHostedAttempt({ workspaceId, taskId, executionId });
       if (generation.current !== current) return;
-      // refresh increments the generation, so clear this action first.
-      setReconciling(null);
+      if (resolved !== true) throw new Error("Local reconciliation not confirmed");
       await refresh();
     } catch {
       if (generation.current !== current) return;
       setError("Local reconciliation is blocked. Preserve existing outputs and inspect the execution status.");
     } finally {
-      if (generation.current === current) setReconciling(null);
+      actionInFlight.current = false;
+      setReconciling(null);
     }
-  }, [loading, reconciling, refresh, taskId, workspaceId]);
+  }, [loading, refresh, taskId, workspaceId]);
 
   const cleanup = useCallback(async (executionId: string) => {
-    if (!nativePilotEnabled || loading || cleaning || reconciling) return;
+    if (!nativePilotEnabled || loading || actionInFlight.current) return;
     const current = generation.current;
+    actionInFlight.current = true;
     setCleaning(executionId);
     setError(null);
     try {
-      await cleanupPinnedHostedSession({ workspaceId, taskId, executionId });
+      const deleted = await cleanupPinnedHostedSession({ workspaceId, taskId, executionId });
       if (generation.current !== current) return;
-      setCleaning(null);
+      if (deleted !== true) throw new Error("Provider deletion not confirmed");
       await refresh();
     } catch {
       if (generation.current !== current) return;
       setError("Authenticated cleanup was not confirmed. The same session remains unresolved. Do not start another run.");
     } finally {
-      if (generation.current === current) setCleaning(null);
+      actionInFlight.current = false;
+      setCleaning(null);
     }
-  }, [nativePilotEnabled, loading, cleaning, reconciling, refresh, workspaceId, taskId]);
+  }, [nativePilotEnabled, loading, refresh, workspaceId, taskId]);
 
   return (
     <section className="mt-3 rounded-xl border bg-muted/15 p-4" data-testid="hosted-execution-status">
@@ -126,11 +132,21 @@ export function HostedTaskRecoveryStatus({ workspaceId, taskId }: Props) {
             Private saved evidence only. Refresh does not contact OpenAI, retry a session, or authorize publication.
           </p>
         </div>
-        <Button variant="outline" size="sm" disabled={loading} onClick={() => void refresh()}>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={loading || actionBusy}
+          onClick={() => { if (!actionInFlight.current) void refresh(); }}
+        >
           <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
           Refresh status
         </Button>
       </div>
+      {actionBusy ? (
+        <p aria-live="polite" className="mt-3 text-xs text-muted-foreground">
+          A native recovery action is in progress. Changing tasks does not cancel it.
+        </p>
+      ) : null}
       {error ? <p role="alert" className="mt-3 text-xs text-destructive">{error}</p> : null}
       {!error && history?.attempts.length === 0 ? (
         <p className="mt-3 text-xs text-muted-foreground">No hosted execution has been recorded for this task.</p>
@@ -154,7 +170,7 @@ export function HostedTaskRecoveryStatus({ workspaceId, taskId }: Props) {
               className="mt-2"
               variant="outline"
               size="sm"
-              disabled={loading || cleaning !== null || reconciling !== null}
+              disabled={loading || actionBusy}
               onClick={() => void cleanup(attempt.executionId)}
             >
               {cleaning === attempt.executionId ? "Cleaning provider session…" : "Clean up pinned provider session"}
@@ -165,7 +181,7 @@ export function HostedTaskRecoveryStatus({ workspaceId, taskId }: Props) {
               className="mt-2"
               variant="outline"
               size="sm"
-              disabled={loading || reconciling !== null || cleaning !== null}
+              disabled={loading || actionBusy}
               onClick={() => void reconcile(attempt.executionId)}
             >
               {reconciling === attempt.executionId ? "Checking local state…" : "Discard unsubmitted attempt"}
@@ -176,7 +192,7 @@ export function HostedTaskRecoveryStatus({ workspaceId, taskId }: Props) {
               className="mt-2"
               variant="outline"
               size="sm"
-              disabled={loading || reconciling !== null || cleaning !== null}
+              disabled={loading || actionBusy}
               onClick={() => void reconcile(attempt.executionId)}
             >
               {reconciling === attempt.executionId ? "Checking local state…" : "Resolve local attempt"}

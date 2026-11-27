@@ -50,6 +50,9 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
   const [verifying, setVerifying] = useState(false);
   const [pilotInfo, setPilotInfo] = useState<HostedPilotBuildInfo | null>(null);
   const [executing, setExecuting] = useState(false);
+  // A native invocation outlives a task-selection generation. Prevent another
+  // submission until that invocation settles, even if the selected task changes.
+  const runInFlight = useRef(false);
   const [pilotResult, setPilotResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // A monotonic generation also rejects ABA edits (A -> B -> A) while an
@@ -154,7 +157,7 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
   };
 
   const runSyntheticPilot = async () => {
-    if (!pilotInfo?.enabled || !verified || !preview || executing || loading || verifying) return;
+    if (!pilotInfo?.enabled || !verified || !preview || runInFlight.current || loading || verifying) return;
     const request: PreviewHostedTaskExportRequest = {
       workspaceId,
       taskId,
@@ -165,6 +168,7 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
       },
     };
     const currentGeneration = generation.current;
+    runInFlight.current = true;
     setExecuting(true);
     setError(null);
     setPilotResult(null);
@@ -177,10 +181,13 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
       setPreview(null);
     } catch {
       if (generation.current !== currentGeneration) return;
-      setError("Hosted synthetic pilot did not complete. Inspect private execution history before attempting another run. No automatic retry.");
+      setError("Hosted synthetic pilot did not complete. The fixture may have been transferred or charged. Inspect private execution history before attempting another run. No automatic retry.");
       setVerified(null);
     } finally {
-      if (generation.current === currentGeneration) setExecuting(false);
+      // Never let an old task's result update the new task, but always release
+      // this component's invocation lock. Selection is not cancellation.
+      runInFlight.current = false;
+      setExecuting(false);
     }
   };
 
@@ -203,6 +210,12 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
         </span>
         <span className="text-xs text-muted-foreground">{opened ? "Hide" : "Show"}</span>
       </button>
+      {executing ? (
+        <p aria-live="polite" className="mt-3 text-xs text-muted-foreground">
+          A native hosted pilot request is in progress. Changing tasks does not cancel it.
+          Inspect private execution history after it finishes.
+        </p>
+      ) : null}
       {opened ? (
         <div className="mt-3 space-y-3" data-testid="hosted-export-form">
           <div className="flex gap-2 rounded-md border p-3 text-xs text-muted-foreground">
@@ -314,7 +327,8 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
                 </div>
               ) : null}
               <p className="font-medium">
-                No data transferred. No spending or publication authorized. A future execution must rehash input bytes and obtain separate consent.
+                No data transferred by preview or byte verification. Neither authorizes spending or publication.
+                A hosted run is a separate action and may transfer the synthetic fixture after native approval.
               </p>
             </div>
           ) : null}

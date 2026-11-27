@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HostedTaskRecoveryStatus } from "./HostedTaskRecoveryStatus";
@@ -115,6 +115,50 @@ describe("HostedTaskRecoveryStatus", () => {
     }));
     expect(await screen.findByRole("button", { name: "Resolve local attempt" })).toBeInTheDocument();
     expect(screen.getByTestId("hosted-execution-status")).not.toHaveTextContent("sess_secret");
+  });
+
+  it("keeps a cleanup in flight across task selection and releases it without a stale refresh", async () => {
+    const pinned = { ...unresolved.attempts[0], providerSessionRecorded: true,
+      recovery: "inspect_pinned_session" as const };
+    const next = { ...pinned, executionId: "55555555-5555-4555-8555-555555555555" };
+    vi.mocked(hostedPilotBuildInfo).mockResolvedValueOnce({
+      enabled: true, syntheticOnly: true, provider: "openai_agents_api", maxSpendUsdCents: 100,
+    });
+    vi.mocked(listHostedTaskExecutionStatus)
+      .mockResolvedValueOnce({ ...empty, attempts: [pinned] })
+      .mockResolvedValueOnce({ workspaceId: "workspace-2", taskId: "task-2", attempts: [next] });
+    let finish!: (value: boolean) => void;
+    const pending = new Promise<boolean>((resolve) => { finish = resolve; });
+    vi.mocked(cleanupPinnedHostedSession).mockReturnValueOnce(pending);
+    const view = render(<HostedTaskRecoveryStatus workspaceId="workspace-1" taskId="task-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Clean up pinned provider session" }));
+    expect(cleanupPinnedHostedSession).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Refresh status" })).toBeDisabled();
+    view.rerender(<HostedTaskRecoveryStatus workspaceId="workspace-2" taskId="task-2" />);
+    await screen.findByText(`Attempt ${next.executionId}`);
+    expect(screen.getByRole("button", { name: "Clean up pinned provider session" })).toBeDisabled();
+    expect(screen.getByText(/Changing tasks does not cancel it/i)).toBeInTheDocument();
+    await act(async () => { finish(true); await pending; });
+    expect(screen.getByRole("button", { name: "Clean up pinned provider session" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Refresh status" })).toBeEnabled();
+    expect(screen.queryByText(`Attempt ${pinned.executionId}`)).not.toBeInTheDocument();
+    expect(listHostedTaskExecutionStatus).toHaveBeenCalledTimes(2);
+    expect(cleanupPinnedHostedSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not refresh or treat false deletion confirmation as success", async () => {
+    const pinned = { ...unresolved.attempts[0], providerSessionRecorded: true,
+      recovery: "inspect_pinned_session" as const };
+    vi.mocked(hostedPilotBuildInfo).mockResolvedValueOnce({
+      enabled: true, syntheticOnly: true, provider: "openai_agents_api", maxSpendUsdCents: 100,
+    });
+    vi.mocked(listHostedTaskExecutionStatus).mockResolvedValueOnce({ ...empty, attempts: [pinned] });
+    vi.mocked(cleanupPinnedHostedSession).mockResolvedValueOnce(false);
+    render(<HostedTaskRecoveryStatus workspaceId="workspace-1" taskId="task-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Clean up pinned provider session" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Authenticated cleanup was not confirmed");
+    expect(listHostedTaskExecutionStatus).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Refresh status" })).toBeEnabled();
   });
 
   it("permits local discard only for a never-submitted Prepared attempt", async () => {
