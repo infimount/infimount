@@ -140,6 +140,10 @@ It is a separate explicitly started service with verified request identity,
 server-owned scopes, create-only artifacts and authenticated transfers. This
 decision does not approve public deployment or the separate live-provider pilot.
 
+Completion of artifact metadata/limits, telemetry and distribution, delegated
+links and governed Python bindings is approved under
+[ADR 0013](docs/adr/0013-artifact-integrations-and-distribution.md).
+
 No v0.9 release is planned for roughly the next year.
 
 ## Brand personality
