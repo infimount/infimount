@@ -137,7 +137,7 @@ jobs:
           mkdir -p hosted-image
           docker save "infimount-hosted:qualification-$IMAGE_ARCH" | gzip -n > "hosted-image/$IMAGE_ARCH.tar.gz"
           docker image inspect "infimount-hosted:qualification-$IMAGE_ARCH" > "hosted-image/$IMAGE_ARCH.inspect.json"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         if: inputs.release_tag != ''
         with:
           name: hosted-image-${{ matrix.arch }}
