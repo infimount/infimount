@@ -681,22 +681,25 @@ async function readOnlyAgentAccessSession(driver) {
     // Load the first 200-entry page before any workspace mutation. Workspace
     // binding below increments the storage revision, intentionally making this
     // continuation cursor stale while the browser stays mounted.
-    const paginationFolder = await driver.waitElement(
+    await driver.waitElement(
       "css selector",
       '[role="option"][aria-label="pagination"]',
       20000,
     );
-    await driver.request(
-      "POST",
-      driver.endpoint(`/element/${paginationFolder}/value`),
-      { text: "\\uE007", value: ["\\uE007"] },
-    ).catch(() => null);
-    await driver.execute(
+    // A keyboard action and a synthetic double-click back-to-back can
+    // navigate twice or race the unmount of the first directory. Exercise
+    // the existing FileGrid/FileTable Enter-key open handler exactly once.
+    const opened = await driver.execute(
       `const el = document.querySelector('[role="option"][aria-label="pagination"]');
        if (!el) return false;
-       el.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, view: window }));
+       el.focus({ preventScroll: true });
+       el.dispatchEvent(new KeyboardEvent("keydown", {
+         key: "Enter", code: "Enter", bubbles: true, cancelable: true
+       }));
        return true;`,
     );
+    if (!opened) fail("pagination folder disappeared before keyboard navigation");
+    // Keep the same strict first-page and stale-continuation assertions.
     await driver.waitElement("css selector", '[aria-label="page-0000.txt"]', 20000);
     const hiddenLoadMore = await driver.waitElement(
       "xpath",
