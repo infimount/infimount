@@ -192,7 +192,7 @@ with fallback to the per-user application cache directory. The staging root is v
 
 ## Bounded and Atomic MCP `write_file`
 
-`write_file` accepts at most **4 MiB** of text content and is disabled by default. A no-overwrite write uses the backend's atomic create-if-absent operation; a backend that cannot guarantee atomic no-overwrite returns `ERR_BACKEND_UNSUPPORTED` rather than risking a stat-then-write race that could silently overwrite an existing object.
+`write_file` accepts at most **4 MiB** of content (measured after decoding; `encoding: "base64"` writes binary bytes) and is disabled by default. Invalid base64 is rejected with `ERR_TEXT_DECODE_FAILED` before any write or parent-directory creation. A no-overwrite write uses the backend's atomic create-if-absent operation; a backend that cannot guarantee atomic no-overwrite returns `ERR_BACKEND_UNSUPPORTED` rather than risking a stat-then-write race that could silently overwrite an existing object.
 
 ## Transactional Directory Transfers
 

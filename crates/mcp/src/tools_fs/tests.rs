@@ -2811,3 +2811,148 @@ async fn write_file_no_overwrite_gate_fires_before_parent_creation() {
 
     assert_eq!(err.code, McpErrorCode::ERR_BACKEND_UNSUPPORTED);
 }
+
+// --- #249: binary-safe write_file (encoding = "base64") ---------------------
+
+use base64::Engine as _;
+
+fn binary_write_ctx(dir: &TempDir) -> (FsToolsContext, std::path::PathBuf) {
+    let local_root = dir.path().join("local");
+    std::fs::create_dir_all(&local_root).unwrap();
+    let registry = registry_in(dir);
+    let mut storage = StorageRecord::new(
+        "Local".to_string(),
+        "local".to_string(),
+        json!({"root": local_root}),
+    );
+    storage.mcp_exposed = true;
+    storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    registry.save_all_atomic(&[storage]).unwrap();
+    let ctx = FsToolsContext {
+        registry,
+        sessions: sessions_in(),
+        allow_insecure: true,
+        auth_token: None,
+    };
+    (ctx, local_root)
+}
+
+fn base64_write(path: &str, content: String) -> WriteFileInput {
+    WriteFileInput {
+        session_id: None,
+        user_metadata: None,
+        confirmation_id: None,
+        path: path.to_string(),
+        content,
+        encoding: "base64".to_string(),
+        overwrite: false,
+        create_parents: false,
+    }
+}
+
+#[tokio::test]
+async fn write_file_base64_writes_exact_bytes() {
+    let dir = TempDir::new().unwrap();
+    let (ctx, local_root) = binary_write_ctx(&dir);
+
+    // "/wAB" is base64 for [0xff, 0x00, 0x01]: not valid UTF-8, so it cannot
+    // be written through the text path.
+    let out = write_file(&ctx, base64_write("/Local/bin.dat", "/wAB".to_string()))
+        .await
+        .unwrap();
+
+    assert_eq!(out.written_bytes, 3);
+    assert_eq!(
+        std::fs::read(local_root.join("bin.dat")).unwrap(),
+        vec![0xff, 0x00, 0x01]
+    );
+}
+
+#[tokio::test]
+async fn write_file_base64_round_trips_with_read_file_binary_mode() {
+    let dir = TempDir::new().unwrap();
+    let (ctx, _) = binary_write_ctx(&dir);
+    let bytes: Vec<u8> = (0u8..=255).collect();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+    write_file(&ctx, base64_write("/Local/all.bin", encoded.clone()))
+        .await
+        .unwrap();
+    let read = read_file(
+        &ctx,
+        ReadFileInput {
+            session_id: None,
+            path: "/Local/all.bin".to_string(),
+            offset_bytes: 0,
+            max_bytes: 262_144,
+            as_text: false,
+            encoding: "utf-8".to_string(),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(read.content, encoded);
+    assert_eq!(read.read_bytes, 256);
+}
+
+#[tokio::test]
+async fn write_file_rejects_invalid_base64_without_side_effects() {
+    let dir = TempDir::new().unwrap();
+    let (ctx, local_root) = binary_write_ctx(&dir);
+
+    let err = write_file(
+        &ctx,
+        base64_write("/Local/bad.bin", "not base64!!".to_string()),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code, McpErrorCode::ERR_TEXT_DECODE_FAILED);
+    // Rejected by the base64 decoder, not by the unsupported-encoding branch.
+    assert_eq!(err.message, "content is not valid base64");
+    assert_eq!(err.details["encoding"], "base64");
+    assert!(!local_root.join("bad.bin").exists());
+}
+
+#[tokio::test]
+async fn write_file_base64_cap_applies_to_decoded_bytes() {
+    let dir = TempDir::new().unwrap();
+    let (ctx, local_root) = binary_write_ctx(&dir);
+    let max = super::write_file::MAX_MCP_WRITE_BYTES;
+    let engine = base64::engine::general_purpose::STANDARD;
+
+    // Exactly 4 MiB of bytes encodes to more than 4 MiB of base64 text; the
+    // cap is on decoded bytes, so this must succeed.
+    let at_limit = engine.encode(vec![0xabu8; max]);
+    assert!(at_limit.len() > max);
+    let ok = write_file(&ctx, base64_write("/Local/at-limit.bin", at_limit))
+        .await
+        .unwrap();
+    assert_eq!(ok.written_bytes as usize, max);
+
+    let over = engine.encode(vec![0xabu8; max + 1]);
+    let err = write_file(&ctx, base64_write("/Local/over-limit.bin", over))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, McpErrorCode::ERR_INVALID_PATH);
+    assert!(!local_root.join("over-limit.bin").exists());
+}
+
+#[test]
+fn write_file_schema_allows_base64_content_up_to_the_byte_cap() {
+    let schema = crate::schemas::schema_write_file();
+    let content = &schema["properties"]["content"];
+    let encoding = &schema["properties"]["encoding"];
+    let max = super::write_file::MAX_MCP_WRITE_BYTES;
+    let base64_len_at_cap = max.div_ceil(3) * 4;
+
+    assert!(content["maxLength"].as_u64().unwrap() as usize >= base64_len_at_cap);
+    let allowed: Vec<&str> = encoding["enum"]
+        .as_array()
+        .expect("encoding lists its allowed values")
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(allowed, vec!["utf-8", "base64"]);
+}

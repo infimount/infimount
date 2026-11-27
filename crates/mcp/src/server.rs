@@ -123,7 +123,7 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "write_file",
-            description: "Write UTF-8 text content to a file path.",
+            description: "Write UTF-8 text, or base64-encoded binary content, to a file path.",
             input_schema: schemas::schema_write_file(),
             category: McpToolCategory::Write,
             risk: McpToolRisk::Medium,

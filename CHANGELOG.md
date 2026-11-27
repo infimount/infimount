@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- MCP `write_file` accepts `encoding: "base64"` for binary content. The 4 MiB cap applies to decoded bytes, invalid base64 fails with `ERR_TEXT_DECODE_FAILED` before any side effect, and policy, confirmation and audit behave as for text writes (#249).
+
 ## [0.8.1] - 2026-10-05
 
 ### Added

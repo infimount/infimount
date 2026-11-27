@@ -1,3 +1,5 @@
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
@@ -75,17 +77,9 @@ pub async fn write_file(ctx: &FsToolsContext, input: WriteFileInput) -> McpResul
         false,
     )?;
 
-    if !input.encoding.eq_ignore_ascii_case("utf-8") {
-        return Err(err_with_details(
-            McpErrorCode::ERR_TEXT_DECODE_FAILED,
-            "failed to encode file content as text",
-            json!({
-                "path": parsed.normalized,
-                "encoding": input.encoding,
-                "supported_encoding": "utf-8"
-            }),
-        ));
-    }
+    // Decode before any side effect so a bad payload never creates parents or
+    // touches the backend. The size cap below applies to the decoded bytes.
+    let bytes = decode_content(&input.content, &input.encoding, &parsed.normalized)?;
 
     let op = opendal_adapter::build_operator(&storage, &ctx.registry)?;
 
@@ -97,7 +91,7 @@ pub async fn write_file(ctx: &FsToolsContext, input: WriteFileInput) -> McpResul
         ));
     }
 
-    let written_bytes = input.content.len() as u64;
+    let written_bytes = bytes.len() as u64;
     if written_bytes as usize > MAX_MCP_WRITE_BYTES {
         return Err(err_with_details(
             McpErrorCode::ERR_INVALID_PATH,
@@ -182,7 +176,6 @@ pub async fn write_file(ctx: &FsToolsContext, input: WriteFileInput) -> McpResul
         ));
     }
 
-    let bytes = input.content.into_bytes();
     if !input.overwrite {
         let write = op
             .write_with(&parsed.backend_path, bytes)
@@ -250,4 +243,39 @@ fn sanitize_user_metadata(
     } else {
         Some(sanitized)
     }
+}
+
+/// Content encodings `write_file` accepts. `utf-8` writes the text as-is;
+/// `base64` (RFC 4648, standard alphabet, padded) writes the decoded bytes so
+/// agents can store binary output such as images, spreadsheets or archives.
+pub const SUPPORTED_WRITE_ENCODINGS: [&str; 2] = ["utf-8", "base64"];
+
+fn decode_content(content: &str, encoding: &str, path: &str) -> McpResult<Vec<u8>> {
+    if encoding.eq_ignore_ascii_case("utf-8") {
+        return Ok(content.as_bytes().to_vec());
+    }
+    if encoding.eq_ignore_ascii_case("base64") {
+        return BASE64_STANDARD.decode(content).map_err(|err| {
+            err_with_details(
+                McpErrorCode::ERR_TEXT_DECODE_FAILED,
+                "content is not valid base64",
+                json!({
+                    "path": path,
+                    "encoding": "base64",
+                    "reason": err.to_string(),
+                    "hint": "use standard base64 (RFC 4648) with padding"
+                }),
+            )
+        });
+    }
+    Err(err_with_details(
+        McpErrorCode::ERR_TEXT_DECODE_FAILED,
+        "unsupported content encoding",
+        json!({
+            "path": path,
+            "encoding": encoding,
+            "supported_encoding": "utf-8",
+            "supported_encodings": SUPPORTED_WRITE_ENCODINGS
+        }),
+    ))
 }
