@@ -93,6 +93,27 @@ jobs:
         run: cargo +1.94.0 check -p infimount --all-targets --features claude-pilot --locked
 
 
+  check-macos-control:
+    name: macOS Control Crate (Compile & Private Create)
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust 1.94.0
+        uses: dtolnay/rust-toolchain@1.94.0
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-control-msrv-1.94.0
+
+      - name: Compile default control crate and tests
+        run: cargo +1.94.0 check -p infimount_control --all-targets --locked
+
+      - name: Test private exclusive file creation
+        run: cargo +1.94.0 test -p infimount_control --locked exclusive_file_create_preserves_private_mode_and_existing_bytes
+
   updater-windows-v2:
     name: Windows v2 Updater (ZIP-free)
     runs-on: windows-latest

@@ -224,13 +224,16 @@ fn ensure_child_dir(dir: &OwnedFd, name: &str) -> io::Result<OwnedFd> {
 
 fn create_new_file(dir: &OwnedFd, name: &str) -> io::Result<File> {
     let leaf = component_cstring(OsStr::new(name))?;
+    // C variadic arguments require integer promotion: macOS mode_t is u16.
+    // The requested mode is representable by both c_int and c_uint (Linux mode_t).
+    let mode: libc::c_int = 0o600;
     // SAFETY: relative leaf, pinned directory, no-follow and exclusive create.
     let fd = unsafe {
         libc::openat(
             dir.as_raw_fd(),
             leaf.as_ptr(),
             libc::O_RDWR | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-            0o600 as libc::mode_t,
+            mode,
         )
     };
     if fd < 0 {
@@ -484,6 +487,29 @@ mod tests {
                 bytes: b"a,b",
             },
         ]
+    }
+
+    #[test]
+    fn exclusive_file_create_preserves_private_mode_and_existing_bytes() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = TempDir::new().unwrap();
+        // macOS temporary paths can contain a system-managed symlink (/var).
+        // Resolve only the test fixture root, never a production path.
+        let canonical = root.path().canonicalize().unwrap();
+        let dir = open_absolute_root(&canonical).unwrap();
+        let mut file = create_new_file(&dir, "private.bin").unwrap();
+        file.write_all(b"sentinel").unwrap();
+        assert_eq!(file.metadata().unwrap().permissions().mode() & 0o077, 0);
+        drop(file);
+        assert_eq!(
+            create_new_file(&dir, "private.bin").unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(
+            fs::read(canonical.join("private.bin")).unwrap(),
+            b"sentinel"
+        );
     }
 
     #[test]

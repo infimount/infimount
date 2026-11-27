@@ -400,15 +400,25 @@ mod tests {
     #[test]
     fn invalid_json_or_cli_error_does_not_claim_success() {
         let temp = private_tempdir();
+        // Exercise parsing with a verified installed shell. Spawning scripts
+        // newly written in a temp directory can fail on coverage runners
+        // before any output reaches the parser (as in the timeout fixture).
+        let executable = fs::canonicalize("/bin/sh").unwrap();
+        let identity = ExecutableIdentity {
+            sha256: format!("{:x}", Sha256::digest(fs::read(&executable).unwrap())),
+            executable,
+            reported_version: "test-shell".into(),
+        };
         for output in ["not-json", r#"{"is_error":true}"#] {
-            // Each case needs a distinct executable inode. Rewriting the same
-            // script can race with shell script execution on Linux (ETXTBSY),
-            // making a valid fail-closed test nondeterministic in parallel CI.
-            let case = tempfile::tempdir_in(temp.path()).unwrap();
-            let identity = mock_cli(case.path(), &format!("printf '%s' '{output}'"));
+            let args = [
+                "-c".to_string(),
+                "printf '%s' \"$1\"".to_string(),
+                "mock-claude".to_string(),
+                output.to_string(),
+            ];
             let outcome = execute_verified_claude(
                 &identity,
-                &[],
+                &args,
                 temp.path(),
                 &AtomicBool::new(false),
                 Duration::from_secs(3),
