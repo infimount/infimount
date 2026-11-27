@@ -20,7 +20,7 @@ jobs:
     name: Rust Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Install cargo-audit
@@ -55,7 +55,7 @@ jobs:
     name: JavaScript Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install Node.js
         uses: actions/setup-node@v6
         with:
