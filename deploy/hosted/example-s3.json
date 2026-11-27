@@ -1,0 +1,130 @@
+{
+  "public_url": "https://storage.example.com",
+  "listen": "0.0.0.0:8080",
+  "allow_non_loopback": true,
+  "auth": {
+    "issuer": "https://identity.example.com",
+    "audience": "https://storage.example.com/mcp",
+    "jwks_url": "https://identity.example.com/.well-known/jwks.json",
+    "max_token_lifetime_seconds": 3600,
+    "jwks_cache_seconds": 300,
+    "jwks_refresh_min_seconds": 30
+  },
+  "storages": [
+    {
+      "record": {
+        "schema_version": 2,
+        "id": "hosted-artifacts",
+        "name": "Artifacts",
+        "backend": "s3",
+        "config": {
+          "bucket": "infimount-artifacts",
+          "region": "us-east-1",
+          "endpoint": "https://s3.example.com"
+        },
+        "enabled": true,
+        "mcp_exposed": true,
+        "read_only": false,
+        "mcp_policy": {
+          "version": 2,
+          "default_access": "none",
+          "rules": [
+            {
+              "id": "alice-artifacts",
+              "prefix": "tenants/alpha/users/alice",
+              "access": "read_write",
+              "source": {
+                "kind": "manual"
+              },
+              "confirmation_rules": {
+                "require_for_write": false,
+                "require_for_overwrite": true,
+                "require_for_delete": true,
+                "require_for_version_delete": true,
+                "require_for_presign": false,
+                "require_for_cross_storage_copy": true
+              }
+            },
+            {
+              "id": "bob-artifacts",
+              "prefix": "tenants/beta/users/bob",
+              "access": "read_write",
+              "source": {
+                "kind": "manual"
+              },
+              "confirmation_rules": {
+                "require_for_write": false,
+                "require_for_overwrite": true,
+                "require_for_delete": true,
+                "require_for_version_delete": true,
+                "require_for_presign": false,
+                "require_for_cross_storage_copy": true
+              }
+            }
+          ],
+          "denied_paths": [],
+          "confirmation_rules": {
+            "require_for_write": true,
+            "require_for_overwrite": true,
+            "require_for_delete": true,
+            "require_for_version_delete": true,
+            "require_for_presign": true,
+            "require_for_cross_storage_copy": true
+          }
+        },
+        "revision": 1,
+        "created_at": "2026-11-27T00:00:00Z",
+        "updated_at": "2026-11-27T00:00:00Z"
+      },
+      "credentials": {
+        "accessKeyId": {
+          "kind": "file",
+          "path": "/run/secrets/infimount/access-key"
+        },
+        "secretAccessKey": {
+          "kind": "file",
+          "path": "/run/secrets/infimount/secret-key"
+        }
+      },
+      "dedicated_local": false
+    }
+  ],
+  "grants": [
+    {
+      "issuer": "https://identity.example.com",
+      "subject": "alice",
+      "tenant": "alpha",
+      "client_id": "artifact-agent",
+      "storage_id": "hosted-artifacts",
+      "prefix": "tenants/alpha/users/alice",
+      "read": true,
+      "create": true,
+      "download": true
+    },
+    {
+      "issuer": "https://identity.example.com",
+      "subject": "bob",
+      "tenant": "beta",
+      "client_id": "artifact-agent",
+      "storage_id": "hosted-artifacts",
+      "prefix": "tenants/beta/users/bob",
+      "read": true,
+      "create": true,
+      "download": true
+    }
+  ],
+  "limits": {
+    "json_bytes": 6291456,
+    "inline_bytes": 4194304,
+    "transfer_bytes": 134217728,
+    "staging_bytes": 536870912,
+    "principal_staging_bytes": 134217728,
+    "chunk_bytes": 1048576,
+    "global_concurrency": 16,
+    "principal_concurrency": 4,
+    "max_grants": 256,
+    "max_grants_per_principal": 16,
+    "grant_ttl_seconds": 300,
+    "request_timeout_seconds": 60
+  }
+}

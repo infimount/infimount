@@ -12,6 +12,7 @@ on:
       - ".github/workflows/coverage.yml"
       - "apps/desktop/**"
       - "crates/core/**"
+      - "crates/hosted/**"
       - "crates/mcp/**"
       - "crates/control/**"
       - "Cargo.toml"

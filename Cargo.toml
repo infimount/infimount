@@ -2,6 +2,7 @@
 members = [
   "crates/control",
   "crates/core",
+  "crates/hosted",
   "crates/mcp",
   "apps/desktop/src-tauri",
 ]

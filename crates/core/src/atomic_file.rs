@@ -227,11 +227,13 @@ mod tests {
 
     #[test]
     fn atomic_write_fails_gracefully_on_bad_path() {
-        let result = atomic_write_file(
-            Path::new("/nonexistent/deep/path/file.json"),
-            b"data",
-            FILE_MODE,
-        );
+        let directory = tempfile::tempdir().expect("temp dir");
+        let parent = directory.path().join("regular-file");
+        fs::write(&parent, b"sentinel").expect("fixture file");
+        // A nonexistent absolute path can be created by a privileged process.
+        // A regular file can never be a directory, independent of permissions.
+        let result = atomic_write_file(&parent.join("file.json"), b"data", FILE_MODE);
         assert!(result.is_err());
+        assert_eq!(fs::read(&parent).expect("preserved fixture"), b"sentinel");
     }
 }

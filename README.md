@@ -213,6 +213,14 @@ Security model: [Security Model](docs/security.md)
 
 Operational guides: [Agent Workspaces](docs/agent-workspaces.md), [Agent Tasks](docs/agent-tasks.md), [Recovery](docs/recovery.md), [Privacy](docs/privacy.md), and [Troubleshooting](docs/troubleshooting.md)
 
+### Optional hosted artifact service
+
+The v0.8.2 feature train includes a separate `infimount-hosted` service for agent platforms that need governed artifact storage and authenticated downloads. It supports Linux deployments with a confined dedicated filesystem or explicitly configured S3-compatible storage, resource-specific OAuth access tokens, scoped create-only writes, and bounded streaming transfers.
+
+Start it explicitly with deployment-owned configuration. The desktop continues to work locally without this service. The initial deployment contract is one replica, with no administration, overwrite, delete, or anonymous sharing surface.
+
+Configuration, tools, limits, container and Kubernetes examples: [Hosted artifact service](docs/hosted-artifact-service.md). Product decision and boundaries: [ADR 0012](docs/adr/0012-hosted-artifact-data-plane.md).
+
 ---
 
 ## 🛠️ Building from Source

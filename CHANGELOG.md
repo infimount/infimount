@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - MCP `write_file` accepts `encoding: "base64"` for binary content. The 4 MiB cap applies to decoded bytes and is enforced by length before any copy or decode, invalid base64 fails with `ERR_TEXT_DECODE_FAILED` before any side effect, and policy, confirmation and audit behave as for text writes (#249).
+- Added an opt-in, single-replica `infimount-hosted` artifact service with per-request OAuth identity, server-owned storage grants, existing storage-policy enforcement, and structured audit.
+- Added authenticated, expiring, single-use downloads and staged streaming uploads with size and SHA-256 validation, create-only commits, bounded capacity, and cancellation cleanup.
+- Added Linux filesystem confinement and explicit S3 configuration, a non-root container build, Kubernetes deployment examples, and synthetic two-tenant filesystem/S3 qualification.
+
+### Fixed
+
+- Preserve Unicode paths and safely reject malformed percent escapes in shared MCP path decoding.
+- Make the atomic-write failure fixture independent of host filesystem permissions.
 
 ## [0.8.1] - 2026-10-05
 

@@ -8,6 +8,7 @@ on:
       - "apps/desktop/**"
       - "crates/control/**"
       - "crates/core/**"
+      - "crates/hosted/**"
       - "crates/mcp/**"
       - "Cargo.toml"
       - "Cargo.lock"

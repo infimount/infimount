@@ -223,6 +223,31 @@ pub fn build_operator(source: &Source) -> Result<Operator> {
     }
 }
 
+/// Build hosted S3 access from an explicit destination and static credentials.
+/// Desktop operators retain their existing ambient configuration behavior.
+pub fn build_hosted_s3_operator(source: &Source) -> Result<Operator> {
+    let explicit_string = |field: &str| {
+        source
+            .config
+            .get(field)
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+    };
+    if !matches!(source.kind, SourceKind::S3)
+        || !source.root.is_empty()
+        || source.config.get("root").is_some()
+        || !(explicit_string("bucket") || explicit_string("bucketName"))
+        || ["region", "endpoint", "accessKeyId", "secretAccessKey"]
+            .into_iter()
+            .any(|field| !explicit_string(field))
+    {
+        return Err(CoreError::Config(
+            "hosted S3 requires an explicit bucket, region, endpoint, and credentials".into(),
+        ));
+    }
+    build_s3_operator_with_mode(source, true)
+}
+
 fn validate_source(source: &Source) -> Result<()> {
     if matches!(source.kind, SourceKind::Local) {
         validate_local_root(&local_root(source))?;
@@ -720,7 +745,14 @@ fn home_dir() -> Option<String> {
 }
 
 fn build_s3_operator(source: &Source) -> Result<Operator> {
+    build_s3_operator_with_mode(source, false)
+}
+
+fn build_s3_operator_with_mode(source: &Source, hosted: bool) -> Result<Operator> {
     let mut builder = S3::default();
+    if hosted {
+        builder = builder.disable_config_load().disable_ec2_metadata();
+    }
 
     // root format: "bucket@region" or just "bucket"
     // Legacy support for root string
@@ -1357,6 +1389,69 @@ mod tests {
         let encoded = BASE64_STANDARD.encode(b"hello");
         let with_ws = format!("  {} \n", encoded);
         assert_eq!(normalize_gcs_credential(&with_ws).unwrap(), encoded);
+    }
+
+    #[test]
+    fn hosted_s3_requires_explicit_configuration_without_network_access() {
+        let source = Source {
+            id: "hosted-fixture".into(),
+            name: "Hosted fixture".into(),
+            kind: SourceKind::S3,
+            root: String::new(),
+            config: serde_json::json!({
+                "bucket": "hosted-fixture",
+                "region": "us-east-1",
+                "endpoint": "http://127.0.0.1:9",
+                "accessKeyId": "synthetic-access",
+                "secretAccessKey": "synthetic-secret"
+            }),
+        };
+        let operator = build_hosted_s3_operator(&source).unwrap();
+        assert!(operator.info().capability().write_with_if_not_exists);
+
+        for field in [
+            "bucket",
+            "region",
+            "endpoint",
+            "accessKeyId",
+            "secretAccessKey",
+        ] {
+            let mut missing = source.clone();
+            missing.config.as_object_mut().unwrap().remove(field);
+            assert!(matches!(
+                build_hosted_s3_operator(&missing),
+                Err(CoreError::Config(_))
+            ));
+            for invalid in [
+                Value::Null,
+                Value::String(String::new()),
+                Value::String(" ".into()),
+            ] {
+                missing.config[field] = invalid;
+                assert!(matches!(
+                    build_hosted_s3_operator(&missing),
+                    Err(CoreError::Config(_))
+                ));
+            }
+        }
+        let mut invalid = source.clone();
+        invalid.kind = SourceKind::Local;
+        assert!(matches!(
+            build_hosted_s3_operator(&invalid),
+            Err(CoreError::Config(_))
+        ));
+        invalid = source.clone();
+        invalid.root = "legacy-bucket@legacy-region".into();
+        assert!(matches!(
+            build_hosted_s3_operator(&invalid),
+            Err(CoreError::Config(_))
+        ));
+        invalid = source;
+        invalid.config["root"] = Value::String("ignored-prefix".into());
+        assert!(matches!(
+            build_hosted_s3_operator(&invalid),
+            Err(CoreError::Config(_))
+        ));
     }
 
     #[test]
