@@ -16,6 +16,8 @@ const status: McpRuntimeStatus = {
     bindAddress: "127.0.0.1",
     port: 7331,
     enabledTools: ["list_dir"],
+    maxReadBytes: 2097152,
+    maxWriteBytes: 4194304,
     securityBaselineVersion: 2,
     authTokenConfigured: false,
   },
@@ -125,6 +127,8 @@ describe("McpSettingsDialog integration", () => {
       />,
     );
 
+    fireEvent.change(screen.getByLabelText("Maximum read bytes"), { target: { value: "128" } });
+    fireEvent.change(screen.getByLabelText("Maximum write bytes"), { target: { value: "256" } });
     fireEvent.click(screen.getByRole("button", { name: "Save disabled state" }));
     expect(await screen.findByRole("button", { name: "Saving..." })).toBeDisabled();
 
@@ -134,6 +138,8 @@ describe("McpSettingsDialog integration", () => {
       bindAddress: "127.0.0.1",
       port: 7331,
       enabledTools: ["list_dir"],
+      maxReadBytes: 128,
+      maxWriteBytes: 256,
       authTokenMutation: { action: "keep" },
     });
 
@@ -186,6 +192,8 @@ describe("McpSettingsDialog integration", () => {
         bindAddress: "127.0.0.1",
         port: 7331,
         enabledTools: ["list_dir"],
+        maxReadBytes: 2097152,
+        maxWriteBytes: 4194304,
         authTokenMutation: { action: "keep" },
       });
       expect(onStartHttp).toHaveBeenCalled();
@@ -253,6 +261,8 @@ describe("McpSettingsDialog integration", () => {
         bindAddress: "0.0.0.0",
         port: 7331,
         enabledTools: ["list_dir"],
+        maxReadBytes: 2097152,
+        maxWriteBytes: 4194304,
         authTokenMutation: { action: "set", value: "test-token" },
       });
       expect(onStartHttp).toHaveBeenCalled();

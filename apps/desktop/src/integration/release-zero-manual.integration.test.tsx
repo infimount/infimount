@@ -150,6 +150,8 @@ const mcpStatus: McpRuntimeStatus = {
     bindAddress: "127.0.0.1",
     port: 7331,
     enabledTools: ["list_dir", "read_file"],
+    maxReadBytes: 2097152,
+    maxWriteBytes: 4194304,
     securityBaselineVersion: 2,
     authTokenConfigured: false,
   },
@@ -315,6 +317,8 @@ describe("release zero-manual smoke path", () => {
         bindAddress: "127.0.0.1",
         port: 7331,
         enabledTools: ["list_dir", "read_file"],
+        maxReadBytes: 2097152,
+        maxWriteBytes: 4194304,
         authTokenMutation: { action: "keep" },
       });
       expect(startMcpHttp).toHaveBeenCalled();

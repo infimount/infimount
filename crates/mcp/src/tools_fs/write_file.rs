@@ -10,8 +10,8 @@ use crate::path::{enforce_root_operation, parse_mcp_path, resolve_storage_path, 
 use crate::policy::McpOperation;
 
 use super::common::{
-    create_dir_chain, default_encoding, default_true, enforce_storage_policy,
-    missing_directory_paths, parent_path, FsToolsContext,
+    core_error_to_mcp_error, create_dir_chain, default_encoding, default_true,
+    enforce_storage_policy, missing_directory_paths, parent_path, FsToolsContext,
 };
 
 #[derive(Debug, Deserialize)]
@@ -31,6 +31,8 @@ pub struct WriteFileInput {
     pub confirmation_id: Option<String>,
     #[serde(default)]
     pub user_metadata: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pub content_type: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -40,7 +42,7 @@ pub struct WriteFileOutput {
 }
 
 /// Maximum number of bytes an MCP `write_file` request may write (after decoding).
-pub const MAX_MCP_WRITE_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_MCP_WRITE_BYTES: usize = crate::settings::MAX_MCP_WRITE_BYTES as usize;
 
 /// Longest padded base64 text whose decoded bytes can fit in
 /// [`MAX_MCP_WRITE_BYTES`]. Shared by the runtime pre-check and the schema
@@ -51,6 +53,13 @@ pub async fn write_file(
     ctx: &FsToolsContext,
     mut input: WriteFileInput,
 ) -> McpResult<WriteFileOutput> {
+    ctx.byte_limits.validate()?;
+    validate_content_type(input.content_type.as_deref())?;
+    validate_write_content_length(
+        &input.content,
+        &input.encoding,
+        ctx.byte_limits.max_write_bytes,
+    )?;
     let parsed = parse_mcp_path(&input.path)?;
     enforce_root_operation(FsOp::WriteFile, &parsed)?;
     let resolved = resolve_storage_path(&ctx.registry, &parsed.normalized)?;
@@ -91,7 +100,7 @@ pub async fn write_file(
     let bytes = decode_content(
         std::mem::take(&mut input.content),
         &input.encoding,
-        &parsed.normalized,
+        ctx.byte_limits.max_write_bytes,
     )?;
 
     let op = opendal_adapter::build_operator(&storage, &ctx.registry)?;
@@ -106,16 +115,15 @@ pub async fn write_file(
 
     let written_bytes = bytes.len() as u64;
 
-    // Capability gates must run before any side effect: an unsupported
-    // no-overwrite write must not leave freshly created parent directories
-    // behind when it is rejected.
-    if !input.overwrite && !supports_atomic_no_overwrite(&op.info().capability()) {
-        return Err(err_with_details(
-            McpErrorCode::ERR_BACKEND_UNSUPPORTED,
-            "storage backend cannot guarantee an atomic no-overwrite write",
-            json!({ "path": parsed.normalized, "storage_name": storage.name }),
-        ));
-    }
+    // All requested metadata and write guarantees must be supported before
+    // parent creation or opening a backend writer.
+    let user_metadata = sanitize_user_metadata(input.user_metadata);
+    validate_write_capabilities(
+        &op,
+        input.overwrite,
+        input.content_type.as_deref(),
+        user_metadata.is_some(),
+    )?;
 
     if input.overwrite {
         match op.stat(&parsed.backend_path).await {
@@ -173,49 +181,31 @@ pub async fn write_file(
         }
     }
 
-    let user_metadata = sanitize_user_metadata(input.user_metadata);
-    if user_metadata.is_some() && !op.info().capability().write_with_user_metadata {
-        return Err(err_with_details(
-            McpErrorCode::ERR_BACKEND_UNSUPPORTED,
-            "storage backend does not support user metadata writes",
-            json!({ "path": parsed.normalized, "storage_name": storage.name }),
-        ));
-    }
-
-    if !input.overwrite {
-        let write = op
-            .write_with(&parsed.backend_path, bytes)
-            .if_not_exists(true);
-        let write = match user_metadata {
-            Some(metadata) => write.user_metadata(metadata),
-            None => write,
-        };
-        write.await.map_err(|e| match e.kind() {
-            opendal::ErrorKind::AlreadyExists | opendal::ErrorKind::ConditionNotMatch => {
-                err_with_details(
-                    McpErrorCode::ERR_ALREADY_EXISTS,
-                    "path already exists",
-                    json!({ "path": parsed.normalized }),
-                )
-            }
-            _ => map_opendal_error(&e, McpErrorCode::ERR_INTERNAL),
-        })?;
-        return Ok(WriteFileOutput {
-            path: parsed.normalized,
-            written_bytes,
-        });
-    }
-
-    if let Some(metadata) = user_metadata {
-        op.write_with(&parsed.backend_path, bytes)
-            .user_metadata(metadata)
-            .await
-            .map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?;
-    } else {
-        op.write(&parsed.backend_path, bytes)
-            .await
-            .map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?;
-    }
+    infimount_core::operations::write_full_with_options(
+        &op,
+        &parsed.backend_path,
+        bytes,
+        input.overwrite,
+        input.content_type.as_deref(),
+        user_metadata,
+    )
+    .await
+    .map_err(|error| match error {
+        infimount_core::CoreError::Storage(error)
+            if !input.overwrite
+                && matches!(
+                    error.kind(),
+                    opendal::ErrorKind::AlreadyExists | opendal::ErrorKind::ConditionNotMatch
+                ) =>
+        {
+            err_with_details(
+                McpErrorCode::ERR_ALREADY_EXISTS,
+                "path already exists",
+                json!({ "path": parsed.normalized }),
+            )
+        }
+        error => core_error_to_mcp_error(error),
+    })?;
 
     Ok(WriteFileOutput {
         path: parsed.normalized,
@@ -226,6 +216,78 @@ pub async fn write_file(
 /// Whether the backend can guarantee an atomic create-if-absent write.
 pub(crate) fn supports_atomic_no_overwrite(capability: &opendal::Capability) -> bool {
     capability.write_with_if_not_exists
+}
+
+pub(crate) fn validate_content_type(content_type: Option<&str>) -> McpResult<()> {
+    if content_type.is_some_and(|value| !infimount_core::operations::valid_content_type(value)) {
+        return Err(err_with_details(
+            McpErrorCode::ERR_INVALID_PATH,
+            "content_type must be a valid media type of at most 255 ASCII bytes",
+            json!({}),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_write_capabilities(
+    op: &opendal::Operator,
+    overwrite: bool,
+    content_type: Option<&str>,
+    has_user_metadata: bool,
+) -> McpResult<()> {
+    if !overwrite && !supports_atomic_no_overwrite(&op.info().capability()) {
+        return Err(err_with_details(
+            McpErrorCode::ERR_BACKEND_UNSUPPORTED,
+            "storage backend cannot guarantee an atomic no-overwrite write",
+            json!({}),
+        ));
+    }
+    infimount_core::operations::validate_write_options(
+        op,
+        overwrite,
+        content_type,
+        has_user_metadata,
+    )
+    .map_err(|_| {
+        err_with_details(
+            McpErrorCode::ERR_BACKEND_UNSUPPORTED,
+            "storage backend does not support the requested write metadata",
+            json!({}),
+        )
+    })
+}
+
+/// Validate base64 before creating an approval. A fixed buffer avoids retaining
+/// a second copy of the payload while the human decides.
+pub(crate) fn validate_write_content(
+    content: &str,
+    encoding: &str,
+    max_bytes: u32,
+) -> McpResult<()> {
+    validate_write_content_length(content, encoding, max_bytes)?;
+    if encoding.eq_ignore_ascii_case("base64") {
+        use std::io::Read;
+        let mut decoder = base64::read::DecoderReader::new(content.as_bytes(), &BASE64_STANDARD);
+        let mut chunk = [0_u8; 4096];
+        let mut decoded = 0_usize;
+        loop {
+            let count = decoder.read(&mut chunk).map_err(|_| {
+                err_with_details(
+                    McpErrorCode::ERR_TEXT_DECODE_FAILED,
+                    "content is not valid base64",
+                    json!({ "encoding": "base64" }),
+                )
+            })?;
+            if count == 0 {
+                break;
+            }
+            decoded += count;
+            if decoded > max_bytes as usize {
+                return Err(content_too_large(max_bytes as usize));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn sanitize_user_metadata(
@@ -261,17 +323,18 @@ pub const SUPPORTED_WRITE_ENCODINGS: [&str; 2] = ["utf-8", "base64"];
 pub(crate) fn validate_write_content_length(
     content: &str,
     encoding: &str,
-    path: &str,
+    max_bytes: u32,
 ) -> McpResult<()> {
+    let max_bytes = max_bytes as usize;
     if encoding.eq_ignore_ascii_case("utf-8") {
-        if content.len() > MAX_MCP_WRITE_BYTES {
-            return Err(content_too_large(path));
+        if content.len() > max_bytes {
+            return Err(content_too_large(max_bytes));
         }
         return Ok(());
     }
     if encoding.eq_ignore_ascii_case("base64") {
-        if content.len() > MAX_MCP_WRITE_BASE64_LEN {
-            return Err(content_too_large(path));
+        if content.len() > max_bytes.div_ceil(3) * 4 {
+            return Err(content_too_large(max_bytes));
         }
         // For a potentially valid padded payload, account for the last
         // quartet. The encoded-length bound alone permits up to two extra bytes.
@@ -284,8 +347,8 @@ pub(crate) fn validate_write_content_length(
                 0
             };
             let decoded_len = (content.len() / 4 * 3).saturating_sub(padding);
-            if decoded_len > MAX_MCP_WRITE_BYTES {
-                return Err(content_too_large(path));
+            if decoded_len > max_bytes {
+                return Err(content_too_large(max_bytes));
             }
         }
         return Ok(());
@@ -294,42 +357,39 @@ pub(crate) fn validate_write_content_length(
         McpErrorCode::ERR_TEXT_DECODE_FAILED,
         "unsupported content encoding",
         json!({
-            "path": path,
-            "encoding": encoding,
-            "supported_encoding": "utf-8",
-            "supported_encodings": SUPPORTED_WRITE_ENCODINGS
+            "supported_encodings": SUPPORTED_WRITE_ENCODINGS,
+            "supported_encoding": "utf-8"
         }),
     ))
 }
 
-fn decode_content(content: String, encoding: &str, path: &str) -> McpResult<Vec<u8>> {
-    validate_write_content_length(&content, encoding, path)?;
+fn decode_content(content: String, encoding: &str, max_bytes: u32) -> McpResult<Vec<u8>> {
+    validate_write_content_length(&content, encoding, max_bytes)?;
+    let max_bytes = max_bytes as usize;
     if encoding.eq_ignore_ascii_case("utf-8") {
         return Ok(content.into_bytes());
     }
-    let bytes = BASE64_STANDARD.decode(content.as_bytes()).map_err(|err| {
+    let bytes = BASE64_STANDARD.decode(content.as_bytes()).map_err(|_| {
         err_with_details(
             McpErrorCode::ERR_TEXT_DECODE_FAILED,
             "content is not valid base64",
             json!({
-                "path": path,
                 "encoding": "base64",
-                "reason": err.to_string(),
                 "hint": "use standard base64 (RFC 4648) with padding"
             }),
         )
     })?;
     // Keep the decoded size check as defense in depth.
-    if bytes.len() > MAX_MCP_WRITE_BYTES {
-        return Err(content_too_large(path));
+    if bytes.len() > max_bytes {
+        return Err(content_too_large(max_bytes));
     }
     Ok(bytes)
 }
 
-fn content_too_large(path: &str) -> McpError {
+fn content_too_large(max_bytes: usize) -> McpError {
     err_with_details(
         McpErrorCode::ERR_INVALID_PATH,
-        "file content exceeds the 4 MiB write limit",
-        json!({ "path": path, "max_bytes": MAX_MCP_WRITE_BYTES }),
+        "file content exceeds the configured write limit",
+        json!({ "max_bytes": max_bytes }),
     )
 }

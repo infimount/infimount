@@ -27,6 +27,7 @@ const tools: McpToolDefinition[] = [
 ];
 const initialSettings: McpSettings = {
   enabled: true, transport: "stdio", bindAddress: "127.0.0.1", port: 7433,
+  maxReadBytes: 2097152, maxWriteBytes: 4194304,
   enabledTools: ["list_dir"], securityBaselineVersion: 2, authTokenConfigured: true,
 };
 

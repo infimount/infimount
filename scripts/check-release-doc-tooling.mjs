@@ -80,6 +80,28 @@ try {
 
   run("check-release-consistency.mjs", [`v${candidate}`]);
 
+  // Source preparation must be able to identify a candidate without claiming
+  // that publication or validation already happened. Keep the historical
+  // validated form above compatible, then exercise neutral candidate labels
+  // through both consistency checking and eventual stable promotion.
+  for (const file of ["README.md", "docs/index.html", "docs/llms.txt"]) {
+    const content = fs.readFileSync(path.join(temp, file), "utf8")
+      .replaceAll("Validated release candidate:", "Release candidate:")
+      .replaceAll("validated candidate", "release candidate");
+    write(file, content);
+  }
+  run("check-release-consistency.mjs", [`v${candidate}`]);
+  for (const file of ["README.md", "docs/index.html", "docs/llms.txt"]) {
+    const original = fs.readFileSync(path.join(temp, file), "utf8");
+    write(file, original.replaceAll(`v${candidate}`, `v${core}-rc.2`));
+    assert.throws(() => run("check-release-consistency.mjs", [`v${candidate}`]));
+    write(file, original);
+  }
+  const candidateReadme = fs.readFileSync(path.join(temp, "README.md"), "utf8");
+  write("README.md", candidateReadme.replaceAll(`v${stable}`, `v${core}`));
+  assert.throws(() => run("check-release-consistency.mjs", [`v${candidate}`]));
+  write("README.md", candidateReadme);
+
   write(
     `docs/release-notes-${candidate}.md`,
     `# Infimount ${candidate}: Fixture\n\nRelease: https://github.com/infimount/infimount/releases/tag/v${candidate}\n`,
@@ -116,13 +138,13 @@ try {
   assert.doesNotMatch(readme, /current v1\.2\.3 stable release does not include/i);
   assert.match(changelog, /## \[1\.3\.0\] - 2030-01-02/);
   assert.match(index, /"softwareVersion": "1\.3\.0"/);
-  assert.doesNotMatch(index, /validated candidate/);
+  assert.doesNotMatch(index, /(?:release|validated) candidate/);
   assert.doesNotMatch(index, /release-candidate:start/);
   assert.doesNotMatch(index, /rc\.1/);
   assert.match(index, /Agent Tasks in v1\.3\.0/);
   assert.match(index, /In v1\.3\.0, Agent Tasks are bounded\./);
   assert.match(llms, /Current stable release: v1\.3\.0/);
-  assert.doesNotMatch(llms, /Validated release candidate:/);
+  assert.doesNotMatch(llms, /(?:Release candidate|Validated release candidate):/);
   assert.doesNotMatch(llms, /v1\.3\.0-rc\.1/);
   assert.match(llms, /Agent Tasks in v1\.3\.0: fixture/);
   assert.doesNotMatch(llms, /targeted for v1\.3\.0/);

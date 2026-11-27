@@ -16,6 +16,50 @@ use std::time::{Duration, Instant};
 const SETTINGS_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 pub const DEFAULT_HTTP_BIND_ADDRESS: &str = "127.0.0.1";
 pub const DEFAULT_HTTP_PORT: u16 = 7331;
+pub const MAX_MCP_READ_BYTES: u32 = 2 * 1024 * 1024;
+pub const MAX_MCP_WRITE_BYTES: u32 = 4 * 1024 * 1024;
+
+pub const fn default_max_read_bytes() -> u32 {
+    MAX_MCP_READ_BYTES
+}
+
+pub const fn default_max_write_bytes() -> u32 {
+    MAX_MCP_WRITE_BYTES
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct McpByteLimits {
+    pub max_read_bytes: u32,
+    pub max_write_bytes: u32,
+}
+
+impl Default for McpByteLimits {
+    fn default() -> Self {
+        Self {
+            max_read_bytes: MAX_MCP_READ_BYTES,
+            max_write_bytes: MAX_MCP_WRITE_BYTES,
+        }
+    }
+}
+
+impl McpByteLimits {
+    pub fn validate(&self) -> McpResult<()> {
+        if !(1..=MAX_MCP_READ_BYTES).contains(&self.max_read_bytes)
+            || !(1..=MAX_MCP_WRITE_BYTES).contains(&self.max_write_bytes)
+        {
+            return Err(err_with_details(
+                McpErrorCode::ERR_INVALID_PATH,
+                "MCP byte limits must be positive and within the supported ceilings",
+                serde_json::json!({
+                    "maxReadBytes": MAX_MCP_READ_BYTES,
+                    "maxWriteBytes": MAX_MCP_WRITE_BYTES
+                }),
+            ));
+        }
+        Ok(())
+    }
+}
 
 pub const SECURITY_BASELINE_VERSION: u32 = 2;
 pub const MCP_SETTINGS_SCHEMA_VERSION: u32 = 2;
@@ -41,6 +85,10 @@ pub struct McpSettings {
     pub port: u16,
     #[serde(default = "default_enabled_tool_names")]
     pub enabled_tools: Vec<String>,
+    #[serde(default = "default_max_read_bytes")]
+    pub max_read_bytes: u32,
+    #[serde(default = "default_max_write_bytes")]
+    pub max_write_bytes: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_token_ref: Option<String>,
     #[serde(default, skip_serializing)]
@@ -58,9 +106,20 @@ impl Default for McpSettings {
             bind_address: DEFAULT_HTTP_BIND_ADDRESS.to_string(),
             port: DEFAULT_HTTP_PORT,
             enabled_tools: default_enabled_tool_names(),
+            max_read_bytes: MAX_MCP_READ_BYTES,
+            max_write_bytes: MAX_MCP_WRITE_BYTES,
             auth_token_ref: None,
             auth_token: None,
             security_baseline_version: SECURITY_BASELINE_VERSION,
+        }
+    }
+}
+
+impl McpSettings {
+    pub fn byte_limits(&self) -> McpByteLimits {
+        McpByteLimits {
+            max_read_bytes: self.max_read_bytes,
+            max_write_bytes: self.max_write_bytes,
         }
     }
 }
@@ -122,6 +181,7 @@ impl McpSettingsStore {
                 &e,
             )
         })?;
+        settings.byte_limits().validate()?;
         let legacy_token = settings
             .auth_token
             .clone()
@@ -218,6 +278,7 @@ impl McpSettingsStore {
     }
 
     fn save_atomic_unlocked(&self, settings: &McpSettings) -> McpResult<()> {
+        settings.byte_limits().validate()?;
         ensure_parent(&self.path)?;
 
         let mut to_save = settings.clone();
@@ -485,6 +546,8 @@ mod tests {
         assert_eq!(default_settings.transport, McpTransport::Stdio);
 
         let updated = McpSettings {
+            max_read_bytes: 128,
+            max_write_bytes: 256,
             schema_version: MCP_SETTINGS_SCHEMA_VERSION,
             enabled: true,
             transport: McpTransport::Http,
@@ -502,6 +565,8 @@ mod tests {
         assert_eq!(reloaded.transport, McpTransport::Http);
         assert_eq!(reloaded.bind_address, "127.0.0.1");
         assert_eq!(reloaded.port, 0);
+        assert_eq!(reloaded.max_read_bytes, 128);
+        assert_eq!(reloaded.max_write_bytes, 256);
         assert_eq!(
             reloaded.enabled_tools,
             vec!["list_dir".to_string(), "write_file".to_string()]
@@ -517,6 +582,44 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o077, 0);
+        }
+    }
+
+    #[test]
+    fn byte_limits_default_for_old_settings_and_reject_invalid_persistence() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("mcp_settings.json");
+        let store = McpSettingsStore::new(Some(path.clone()));
+        let mut legacy = serde_json::to_value(McpSettings::default()).unwrap();
+        legacy.as_object_mut().unwrap().remove("maxReadBytes");
+        legacy.as_object_mut().unwrap().remove("maxWriteBytes");
+        std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let defaults = store.load().unwrap();
+        assert_eq!(defaults.byte_limits(), McpByteLimits::default());
+
+        let before = std::fs::read(&path).unwrap();
+        for (read, write) in [
+            (0, 1),
+            (1, 0),
+            (MAX_MCP_READ_BYTES + 1, 1),
+            (1, MAX_MCP_WRITE_BYTES + 1),
+        ] {
+            let settings = McpSettings {
+                max_read_bytes: read,
+                max_write_bytes: write,
+                ..defaults.clone()
+            };
+            assert_eq!(
+                store.save_atomic(&settings).unwrap_err().code,
+                McpErrorCode::ERR_INVALID_PATH
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+            std::fs::write(&path, serde_json::to_vec(&settings).unwrap()).unwrap();
+            assert_eq!(
+                store.load().unwrap_err().code,
+                McpErrorCode::ERR_INVALID_PATH
+            );
+            std::fs::write(&path, &before).unwrap();
         }
     }
 

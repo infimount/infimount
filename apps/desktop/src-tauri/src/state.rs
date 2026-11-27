@@ -71,6 +71,8 @@ pub struct McpRuntimeSettings {
     pub bind_address: String,
     pub port: u16,
     pub enabled_tools: Vec<String>,
+    pub max_read_bytes: u32,
+    pub max_write_bytes: u32,
     pub security_baseline_version: u32,
     pub auth_token_configured: bool,
 }
@@ -508,6 +510,7 @@ impl AppState {
         let settings = self.settings_store.load()?;
         let auth_token = resolve_auth_token(&settings.auth_token_ref, self.secret_store.as_ref())?;
         Ok(FsToolsContext {
+            byte_limits: settings.byte_limits(),
             registry: self.registry.clone(),
             sessions: self.sessions.clone(),
             allow_insecure: auth_token.is_none()
@@ -584,16 +587,45 @@ impl AppState {
         Ok((operator, revision))
     }
 
+    #[cfg(test)]
     pub async fn apply_mcp_settings_with_auth(
         &self,
         settings: McpSettings,
         auth_mutation: AuthTokenMutation,
     ) -> McpResult<McpRuntimeStatus> {
+        let limits = settings.byte_limits();
+        self.apply_mcp_settings_update(
+            settings,
+            auth_mutation,
+            Some(limits.max_read_bytes),
+            Some(limits.max_write_bytes),
+        )
+        .await
+    }
+
+    pub async fn apply_mcp_settings_update(
+        &self,
+        mut settings: McpSettings,
+        auth_mutation: AuthTokenMutation,
+        max_read_bytes: Option<u32>,
+        max_write_bytes: Option<u32>,
+    ) -> McpResult<McpRuntimeStatus> {
         self.require_operational()?;
+        infimount_mcp::settings::McpByteLimits {
+            max_read_bytes: max_read_bytes.unwrap_or(infimount_mcp::settings::MAX_MCP_READ_BYTES),
+            max_write_bytes: max_write_bytes
+                .unwrap_or(infimount_mcp::settings::MAX_MCP_WRITE_BYTES),
+        }
+        .validate()?;
         let _lifecycle = self.lifecycle_mutation.lock().await;
         let _config_transaction = self.registry.acquire_configuration_transaction()?;
         self.recover_and_require_clean_configuration_locked()?;
         let existing = self.settings_store.load()?;
+        // Older desktop clients omit these fields. Preserve the current caps
+        // inside the configuration transaction instead of resetting them.
+        settings.max_read_bytes = max_read_bytes.unwrap_or(existing.max_read_bytes);
+        settings.max_write_bytes = max_write_bytes.unwrap_or(existing.max_write_bytes);
+        settings.byte_limits().validate()?;
         let old_was_running = self.http_runtime.lock().await.is_some();
         let previous_ref = existing.auth_token_ref.clone();
         let previous_secret = match previous_ref.as_deref() {
@@ -1162,6 +1194,8 @@ impl AppState {
             bind_address: settings.bind_address,
             port: settings.port,
             enabled_tools: settings.enabled_tools,
+            max_read_bytes: settings.max_read_bytes,
+            max_write_bytes: settings.max_write_bytes,
             security_baseline_version: settings.security_baseline_version,
             auth_token_configured,
         };
@@ -1614,6 +1648,58 @@ mod tests {
         record.revision += 1;
         state.registry.save_all_atomic(&[record.clone()]).unwrap();
         assert!(state.operator_for_storage_id(&record.id).is_err());
+    }
+
+    #[tokio::test]
+    async fn settings_updates_preserve_omitted_limits_and_reject_invalid_limits_before_auth_changes(
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let secrets: Arc<dyn SecretStore> =
+            Arc::new(infimount_core::secrets::MemorySecretStore::new());
+        secrets
+            .put_json(
+                MCP_AUTH_TOKEN_ACCOUNT,
+                &json!({ "token": "existing-token" }),
+            )
+            .unwrap();
+        let state = test_app_state(&dir, secrets.clone());
+        let settings = McpSettings {
+            max_read_bytes: 128,
+            max_write_bytes: 256,
+            auth_token_ref: Some(MCP_AUTH_TOKEN_ACCOUNT.into()),
+            ..McpSettings::default()
+        };
+        state.settings_store.save_atomic(&settings).unwrap();
+        let before = std::fs::read(dir.path().join("mcp_settings.json")).unwrap();
+        let error = state
+            .apply_mcp_settings_update(
+                McpSettings::default(),
+                AuthTokenMutation::Rotate,
+                Some(0),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, McpErrorCode::ERR_INVALID_PATH);
+        assert_eq!(
+            std::fs::read(dir.path().join("mcp_settings.json")).unwrap(),
+            before
+        );
+        assert_eq!(
+            secrets.get_json(MCP_AUTH_TOKEN_ACCOUNT).unwrap().unwrap()["token"],
+            "existing-token"
+        );
+
+        let status = state
+            .apply_mcp_settings_update(McpSettings::default(), AuthTokenMutation::Keep, None, None)
+            .await
+            .unwrap();
+        assert_eq!(status.settings.max_read_bytes, 128);
+        assert_eq!(status.settings.max_write_bytes, 256);
+        assert_eq!(
+            state.fs_context().unwrap().byte_limits,
+            settings.byte_limits()
+        );
     }
 
     #[tokio::test]

@@ -193,7 +193,39 @@ Current tool groups include:
 Version listing and write operations are bounded for safety:
 
 - `list_versions` scans at most 10,000 versions per path, returns at most 1,000 per page, and reports `truncated: true` when more versions may exist. Pagination uses a signed cursor bound to the storage, path, and storage revision.
-- `write_file` accepts at most 4 MiB of content and is disabled by default. Send UTF-8 text with the default `encoding: "utf-8"`, or binary files (images, spreadsheets, archives) as standard padded base64 with `encoding: "base64"`; the 4 MiB limit applies to the decoded bytes. `read_file` with `as_text: false` returns the same base64 form. No-overwrite writes require an atomic create-if-absent-capable backend; other backends return `ERR_BACKEND_UNSUPPORTED`.
+- `write_file` is disabled by default. Send UTF-8 text with the default `encoding: "utf-8"`, or binary files (images, spreadsheets, archives) as standard padded base64 with `encoding: "base64"`. Limits apply to decoded bytes. `read_file` with `as_text: false` returns the same base64 form. No-overwrite writes require an atomic create-if-absent-capable backend. Unsupported write guarantees or metadata return `ERR_BACKEND_UNSUPPORTED` before parent directories or files are created.
+
+### File byte limits and content type
+
+Advanced MCP settings exposes positive, whole-byte limits. The settings persist
+in `mcp_settings.json` and apply to ordinary stdio/HTTP MCP, resource reads and
+Agent Task MCP. Restart an existing server or Agent Task sidecar to pick up a
+change. Storage-only browsing and publication approval keep their existing
+contracts.
+
+| Settings field | Default and hard maximum | Tool behavior |
+| --- | --- | --- |
+| `maxReadBytes` | 2,097,152 bytes (2 MiB) | Bounds `read_file` and `read_file_version`. An omitted `max_bytes` uses the smaller of 262,144 bytes and this setting. Explicit values above the configured cap fail. |
+| `maxWriteBytes` | 4,194,304 bytes (4 MiB) | Bounds UTF-8 byte length and decoded base64 bytes for `write_file`. |
+
+These settings may lower the existing ceilings. Zero, fractional values and
+values above the ceilings are rejected. Old settings without the fields use
+the defaults. Tool discovery reports the effective limits. Size, encoding and
+content-type checks run before an approval is queued. An approval binds the
+exact request, including metadata, and the active limits, so changing either
+invalidates it.
+
+`write_file` accepts optional `content_type`, for example `image/png` or
+`text/plain; charset=utf-8`. It must be a valid ASCII media type of at most 255
+bytes. The backend must advertise OpenDAL `write_with_content_type`, and the
+value is passed to that writer. A local filesystem cannot persist this object
+metadata and rejects an explicit content type. Omitting the field preserves
+the existing write behavior.
+
+`read_file` and `read_file_version` include optional `content_type` when the
+backend returns a valid value in its metadata. The field is absent when the
+backend provides no usable content type. The value is not guessed from the
+filename or content. Binary content remains base64 regardless of media type.
 
 Storage-management operations are desktop-only and are never exposed as public MCP tools.
 For threat model details, see [Security Model](security.md).

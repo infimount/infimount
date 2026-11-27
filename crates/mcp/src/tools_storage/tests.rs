@@ -41,6 +41,7 @@ async fn list_storages_masks_secrets() {
     .unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -74,6 +75,7 @@ async fn list_storages_masks_secrets_inside_arrays_without_panicking() {
     .unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -94,6 +96,7 @@ async fn add_edit_remove_storage_round_trip() {
     let registry = registry_in(&dir);
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -151,6 +154,7 @@ async fn add_edit_remove_storage_round_trip() {
 async fn mcp_edit_revision_tracks_nonsecret_mutations_and_rejects_overflow() {
     let dir = TempDir::new().unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry: registry_in(&dir),
         sessions: sessions_in(),
         allow_insecure: true,
@@ -239,6 +243,7 @@ async fn add_storage_defaults_to_not_mcp_exposed_when_omitted() {
     let registry = registry_in(&dir);
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -262,6 +267,7 @@ async fn add_storage_rejects_unsupported_backend() {
     let registry = registry_in(&dir);
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -291,6 +297,7 @@ async fn storage_management_accepts_v0_7_and_remote_file_backends() {
     let registry = registry_in(&dir);
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -378,6 +385,7 @@ async fn storage_management_canonicalizes_backend_aliases() {
     let registry = registry_in(&dir);
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -435,6 +443,7 @@ async fn import_config_defaults_to_not_mcp_exposed() {
     let registry = registry_in(&dir);
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -483,6 +492,7 @@ async fn export_config_is_shareable() {
     .unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -518,6 +528,7 @@ async fn import_config_rename_conflict_appends_suffix() {
     registry.save_all_atomic(&[existing]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -571,6 +582,7 @@ async fn legacy_overwrite_increments_revision_without_bumping_untouched_records(
         .save_all_atomic(&[overwritten.clone(), untouched.clone()])
         .unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions: sessions_in(),
         allow_insecure: true,
@@ -637,6 +649,7 @@ async fn shareable_preview_and_apply_honor_policy_secrets_and_exposure() {
         .unwrap();
     let original_registry = std::fs::read(registry.path()).unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions: sessions_in(),
         allow_insecure: true,
@@ -753,6 +766,7 @@ async fn full_registry_change_invalidates_shareable_preview() {
         .save_all_atomic(std::slice::from_ref(&existing))
         .unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions: sessions_in(),
         allow_insecure: true,
@@ -798,6 +812,7 @@ async fn expired_shareable_preview_cannot_be_applied() {
     let _serial = serial_preview_store_guard().await;
     let dir = TempDir::new().unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry: registry_in(&dir),
         sessions: sessions_in(),
         allow_insecure: true,
@@ -834,6 +849,7 @@ async fn missing_import_credentials_block_apply_without_consuming_preview() {
     let _serial = serial_preview_store_guard().await;
     let dir = TempDir::new().unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry: registry_in(&dir),
         sessions: sessions_in(),
         allow_insecure: true,
@@ -884,6 +900,7 @@ async fn preview_is_bound_to_rename_strategy_and_replace_removals() {
     );
     registry.save_all_atomic(&[existing]).unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions: sessions_in(),
         allow_insecure: true,
@@ -935,6 +952,7 @@ async fn desktop_import_validator_runs_before_registry_or_secret_mutation() {
         .unwrap();
     let original_bytes = std::fs::read(registry.path()).unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions: sessions_in(),
         allow_insecure: true,
@@ -986,6 +1004,7 @@ async fn pre_import_backup_failure_preserves_registry() {
         .unwrap();
     let original_bytes = std::fs::read(registry.path()).unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions: sessions_in(),
         allow_insecure: true,
@@ -1031,6 +1050,7 @@ async fn import_readback_failure_restores_registry_and_keeps_preview_recoverable
         .save_all_atomic(std::slice::from_ref(&original))
         .unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions: sessions_in(),
         allow_insecure: true,
@@ -1129,6 +1149,7 @@ async fn server_requires_confirmation_for_merge_overwrite() {
     );
     registry.save_all_atomic(&[existing]).unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions: sessions_in(),
         allow_insecure: true,
@@ -1185,6 +1206,7 @@ async fn rename_only_import_does_not_require_destructive_confirmation() {
     );
     registry.save_all_atomic(&[existing]).unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions: sessions_in(),
         allow_insecure: true,
@@ -1222,6 +1244,7 @@ async fn import_preview_store_is_bounded() {
     super::import_config::clear_storage_import_previews_for_tests();
     let dir = TempDir::new().unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry: registry_in(&dir),
         sessions: sessions_in(),
         allow_insecure: true,
@@ -1256,6 +1279,7 @@ async fn expired_import_preview_is_removed_and_rejected() {
     super::import_config::clear_storage_import_previews_for_tests();
     let dir = TempDir::new().unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry: registry_in(&dir),
         sessions: sessions_in(),
         allow_insecure: true,
@@ -1299,6 +1323,7 @@ async fn applied_import_consumes_preview() {
     super::import_config::clear_storage_import_previews_for_tests();
     let dir = TempDir::new().unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry: registry_in(&dir),
         sessions: sessions_in(),
         allow_insecure: true,
@@ -1356,6 +1381,7 @@ fn zeroize_json_value_clears_strings() {
 async fn import_parse_errors_are_sanitized_without_value_echo() {
     let dir = TempDir::new().unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry: registry_in(&dir),
         sessions: sessions_in(),
         allow_insecure: true,
@@ -1381,6 +1407,7 @@ async fn import_parse_errors_are_sanitized_without_value_echo() {
 async fn import_entry_parse_errors_are_sanitized_without_value_echo() {
     let dir = TempDir::new().unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry: registry_in(&dir),
         sessions: sessions_in(),
         allow_insecure: true,
@@ -1421,6 +1448,7 @@ async fn validate_storage_local_root_succeeds() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1462,6 +1490,7 @@ async fn validate_storage_invalid_root_returns_valid_false() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1491,6 +1520,7 @@ async fn remove_storage_missing_returns_not_found() {
     let registry = registry_in(&dir);
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1577,6 +1607,7 @@ fn obsolete_account_ctx(
         .unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,

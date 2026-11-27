@@ -13,6 +13,7 @@ import { TransferQueueProvider } from "@/hooks/use-transfer-queue";
 import { toast } from "@/hooks/use-toast";
 import { prepareWorkspaceAgentAccess } from "@/lib/agentAccess";
 import { summarizeAgentAccess } from "@/lib/agentAccessStatus";
+import { MAX_MCP_READ_BYTES, MAX_MCP_WRITE_BYTES } from "@/lib/mcpByteLimits";
 import {
   addStorage as apiAddStorage,
   approveMcpConfirmation,
@@ -144,6 +145,8 @@ function mapStatusWire(status: McpRuntimeStatusWire): McpRuntimeStatus {
       bindAddress: status.settings.bindAddress,
       port: status.settings.port,
       enabledTools: status.settings.enabledTools ?? [],
+      maxReadBytes: status.settings.maxReadBytes ?? MAX_MCP_READ_BYTES,
+      maxWriteBytes: status.settings.maxWriteBytes ?? MAX_MCP_WRITE_BYTES,
       securityBaselineVersion: status.settings.securityBaselineVersion ?? 2,
       authTokenConfigured: status.authTokenConfigured,
     },
@@ -285,6 +288,8 @@ interface McpSettingsWire {
   bindAddress: string;
   port: number;
   enabledTools?: string[];
+  maxReadBytes?: number;
+  maxWriteBytes?: number;
   securityBaselineVersion?: number;
 }
 
@@ -730,6 +735,8 @@ const Index = () => {
       bindAddress: mcpStatus.settings.bindAddress,
       port: mcpStatus.settings.port,
       enabledTools: mcpStatus.settings.enabledTools,
+      maxReadBytes: mcpStatus.settings.maxReadBytes,
+      maxWriteBytes: mcpStatus.settings.maxWriteBytes,
       authTokenMutation: { action: "keep" },
     });
     await handleStartMcpHttp();
@@ -743,6 +750,8 @@ const Index = () => {
       bindAddress: mcpStatus.settings.bindAddress,
       port: mcpStatus.settings.port,
       enabledTools: mcpStatus.settings.enabledTools,
+      maxReadBytes: mcpStatus.settings.maxReadBytes,
+      maxWriteBytes: mcpStatus.settings.maxWriteBytes,
       authTokenMutation: { action: "keep" },
     });
     await handleStopMcpHttp();

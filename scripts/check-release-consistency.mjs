@@ -82,7 +82,7 @@ if (!stableMatch) {
   fail("README.md must declare one canonical Current stable release link");
 }
 const publicStableVersion = stableMatch[1];
-const candidateLine = readme.match(/\*\*Validated release candidate:\*\* \[v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\]\(https:\/\/github\.com\/infimount\/infimount\/releases\/tag\/v\1\)/);
+const candidateLine = readme.match(/\*\*(?:Release candidate|Validated release candidate):\*\* \[v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\]\(https:\/\/github\.com\/infimount\/infimount\/releases\/tag\/v\1\)/);
 const index = read("docs/index.html");
 const llms = read("docs/llms.txt");
 
@@ -94,18 +94,18 @@ if (candidateChannel) {
   contains("docs/llms.txt", `Current stable release: v${publicStableVersion}`);
 
   if (!candidateLine) {
-    fail("README.md must identify the exact validated prerelease candidate without replacing stable");
+    fail("README.md must identify the exact release candidate without replacing stable");
   }
   if (candidateLine[1] !== version) {
     fail(`README.md candidate ${candidateLine[1]} does not match ${version}`);
   }
-  const llmsCandidate = llms.match(/Validated release candidate: v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/);
+  const llmsCandidate = llms.match(/(?:Release candidate|Validated release candidate): v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/);
   if (!llmsCandidate || llmsCandidate[1] !== version) {
-    fail(`docs/llms.txt must identify validated release candidate v${version}`);
+    fail(`docs/llms.txt must identify release candidate v${version}`);
   }
-  const indexCandidate = index.match(/v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?) validated candidate/);
+  const indexCandidate = index.match(/v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?) (?:release|validated) candidate/);
   if (!indexCandidate || indexCandidate[1] !== version) {
-    fail(`docs/index.html must identify v${version} as the validated candidate`);
+    fail(`docs/index.html must identify v${version} as the release candidate`);
   }
 
   contains("CHANGELOG.md", `## [${coreVersion}] - Unreleased release candidate`);
@@ -123,6 +123,7 @@ if (candidateChannel) {
   excludes("docs/llms.txt", "not published yet");
   excludes("README.md", "<!-- release-candidate:start -->");
   excludes("docs/index.html", "<!-- release-candidate:start -->");
+  excludes("docs/llms.txt", "Release candidate:");
   excludes("docs/llms.txt", "Validated release candidate:");
 }
 

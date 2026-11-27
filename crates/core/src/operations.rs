@@ -262,6 +262,43 @@ pub async fn read_full(op: &Operator, path: &str) -> Result<Vec<u8>> {
     Ok(data.to_vec())
 }
 
+/// Read an exact bounded range, including when a backend ignores its Range
+/// request. Only the requested bytes plus one overflow sentinel are collected.
+pub async fn read_range_bounded(
+    op: &Operator,
+    path: &str,
+    offset: u64,
+    end: u64,
+    version: Option<&str>,
+) -> Result<Vec<u8>> {
+    let length = end
+        .checked_sub(offset)
+        .ok_or_else(|| crate::models::CoreError::Config("invalid read range".into()))?;
+    let capacity = usize::try_from(length)
+        .map_err(|_| crate::models::CoreError::Config("read range is too large".into()))?;
+    if length == 0 {
+        return Ok(Vec::new());
+    }
+    let path = normalize_opendal_path(path);
+    let request = op.reader_with(&path);
+    let request = match version {
+        Some(version) => request.version(version),
+        None => request,
+    };
+    let reader = request.await?.into_futures_async_read(offset..end).await?;
+    let mut bytes = Vec::with_capacity(capacity);
+    reader
+        .take(length.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .await?;
+    if bytes.len() as u64 != length {
+        return Err(crate::models::CoreError::Config(
+            "storage returned an unexpected read length".into(),
+        ));
+    }
+    Ok(bytes)
+}
+
 /// Read a range of a file. Respects max_bytes limits.
 /// Read a range of a file. Respects max_bytes limits.
 pub async fn read_file_range(
@@ -688,21 +725,109 @@ pub async fn write_full_with_user_metadata(
     data: &[u8],
     user_metadata: Option<HashMap<String, String>>,
 ) -> Result<()> {
-    let p = normalize_opendal_path(path);
-    let Some(metadata) = sanitize_user_metadata(user_metadata) else {
-        op.write(&p, data.to_vec()).await?;
-        return Ok(());
-    };
-
-    if !op.info().capability().write_with_user_metadata {
+    let user_metadata = sanitize_user_metadata(user_metadata);
+    if user_metadata.is_some() && !op.info().capability().write_with_user_metadata {
         return Err(crate::models::CoreError::Config(
-            "storage backend does not support user metadata writes".to_string(),
+            "storage backend does not support user metadata writes".into(),
         ));
     }
+    write_full_with_options(op, path, data.to_vec(), true, None, user_metadata).await
+}
 
-    op.write_with(&p, data.to_vec())
-        .user_metadata(metadata)
-        .await?;
+/// A bounded HTTP media type. Parameters use token or quoted-string values.
+/// Reject controls and malformed separators before a backend or approval call.
+pub fn valid_content_type(value: &str) -> bool {
+    fn token(value: &str) -> bool {
+        !value.is_empty()
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
+    }
+    if value.is_empty()
+        || value.len() > 255
+        || !value.is_ascii()
+        || value.trim() != value
+        || value.bytes().any(|byte| byte.is_ascii_control())
+    {
+        return false;
+    }
+    let mut parts = value.split(';');
+    let media = parts.next().unwrap_or_default().trim();
+    let Some((kind, subtype)) = media.split_once('/') else {
+        return false;
+    };
+    if !token(kind) || !token(subtype) || kind == "*" || subtype == "*" {
+        return false;
+    }
+    parts.all(|parameter| {
+        let Some((name, value)) = parameter.trim().split_once('=') else {
+            return false;
+        };
+        if !token(name.trim()) {
+            return false;
+        }
+        let value = value.trim();
+        token(value)
+            || value
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+                .is_some_and(|value| !value.contains(['"', '\\']))
+    })
+}
+
+pub fn validate_write_options(
+    op: &Operator,
+    overwrite: bool,
+    content_type: Option<&str>,
+    has_user_metadata: bool,
+) -> Result<()> {
+    if content_type.is_some_and(|value| !valid_content_type(value)) {
+        return Err(crate::models::CoreError::Config(
+            "invalid content type".into(),
+        ));
+    }
+    let capability = op.info().capability();
+    if (!overwrite && !capability.write_with_if_not_exists)
+        || (content_type.is_some() && !capability.write_with_content_type)
+        || (has_user_metadata && !capability.write_with_user_metadata)
+    {
+        return Err(opendal::Error::new(
+            ErrorKind::Unsupported,
+            "storage backend does not support the requested write options",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+/// Write bytes with explicit create/overwrite semantics and capability-checked
+/// metadata. Validation happens before the backend writer is opened.
+pub async fn write_full_with_options(
+    op: &Operator,
+    path: &str,
+    data: Vec<u8>,
+    overwrite: bool,
+    content_type: Option<&str>,
+    user_metadata: Option<HashMap<String, String>>,
+) -> Result<()> {
+    let metadata = sanitize_user_metadata(user_metadata);
+    validate_write_options(op, overwrite, content_type, metadata.is_some())?;
+    let path = normalize_opendal_path(path);
+    let request = op.write_with(&path, data);
+    let request = if overwrite {
+        request
+    } else {
+        request.if_not_exists(true)
+    };
+    let request = match content_type {
+        Some(content_type) => request.content_type(content_type),
+        None => request,
+    };
+    let request = match metadata {
+        Some(metadata) => request.user_metadata(metadata),
+        None => request,
+    };
+    request.await?;
     Ok(())
 }
 
@@ -3801,6 +3926,56 @@ mod tests {
         assert!(err
             .to_string()
             .contains("storage backend does not support user metadata writes"));
+    }
+
+    #[test]
+    fn content_type_validation_rejects_malformed_or_unbounded_values() {
+        for valid in [
+            "image/png",
+            "application/octet-stream",
+            "text/plain; charset=utf-8",
+            "application/example; label=\"a b\"",
+        ] {
+            assert!(valid_content_type(valid), "{valid}");
+        }
+        for invalid in [
+            "",
+            "*/*",
+            "image/",
+            "png",
+            " text/plain",
+            "text/plain\r\nX-Header: value",
+            "text/plain; bad",
+            "text/plain; a=\"unterminated",
+            "image/💾",
+        ] {
+            assert!(!valid_content_type(invalid), "{invalid:?}");
+        }
+        assert!(!valid_content_type(&format!("image/{}", "x".repeat(256))));
+    }
+
+    #[tokio::test]
+    async fn bounded_read_rejects_reversed_and_short_ranges() {
+        let op = create_test_operator().await;
+        op.write("range.bin", "abcdef").await.unwrap();
+        assert_eq!(
+            read_range_bounded(&op, "range.bin", 2, 4, None)
+                .await
+                .unwrap(),
+            b"cd"
+        );
+        assert!(read_range_bounded(&op, "range.bin", 4, 2, None)
+            .await
+            .is_err());
+        assert!(read_range_bounded(&op, "range.bin", 0, 9, None)
+            .await
+            .is_err());
+        assert_eq!(
+            read_range_bounded(&op, "range.bin", 1, 1, None)
+                .await
+                .unwrap(),
+            b""
+        );
     }
 
     #[tokio::test]

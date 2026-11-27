@@ -52,6 +52,8 @@ export function workspaceAgentSettings(
       bindAddress: "127.0.0.1",
       port: status.settings.port,
       enabledTools: uniqueSorted(required),
+      maxReadBytes: status.settings.maxReadBytes,
+      maxWriteBytes: status.settings.maxWriteBytes,
       authTokenMutation: { action: "keep" },
     };
   }
@@ -86,6 +88,8 @@ export function workspaceAgentSettings(
     bindAddress: status.settings.bindAddress,
     port: status.settings.port,
     enabledTools: uniqueSorted([...status.settings.enabledTools, ...required]),
+    maxReadBytes: status.settings.maxReadBytes,
+    maxWriteBytes: status.settings.maxWriteBytes,
     authTokenMutation: { action: "keep" },
   };
 }

@@ -543,28 +543,12 @@ fn deny_private_execution_path(
 ) -> McpResult<()> {
     let candidate = storage_root.join(backend_relative);
     #[cfg(windows)]
-    let is_inside = {
-        // Windows paths normally compare case-insensitively; Path::starts_with
-        // alone would not protect an alias differing only in case.
-        let normalize = |p: &Path| p.to_string_lossy().replace('\\', "/").to_ascii_lowercase();
-        let candidate = normalize(&candidate);
-        let protected = normalize(protected_root);
-        let protected = protected.trim_end_matches('/');
-        candidate == protected || candidate.starts_with(&format!("{protected}/"))
-    };
+    let (is_inside, is_ancestor) = windows_private_path_relation(&candidate, protected_root)?;
     #[cfg(not(windows))]
-    let is_inside = candidate.starts_with(protected_root);
-
-    #[cfg(windows)]
-    let is_ancestor = {
-        let normalize = |p: &Path| p.to_string_lossy().replace('\\', "/").to_ascii_lowercase();
-        let candidate = normalize(&candidate);
-        let protected = normalize(protected_root);
-        let candidate = candidate.trim_end_matches('/');
-        protected.starts_with(&format!("{candidate}/"))
-    };
-    #[cfg(not(windows))]
-    let is_ancestor = protected_root.starts_with(&candidate) && candidate != protected_root;
+    let (is_inside, is_ancestor) = (
+        candidate.starts_with(protected_root),
+        protected_root.starts_with(&candidate) && candidate != protected_root,
+    );
 
     if is_inside || (destructive && is_ancestor) {
         return Err(err(
@@ -573,6 +557,80 @@ fn deny_private_execution_path(
         ));
     }
     Ok(())
+}
+
+#[cfg(any(windows, test))]
+fn windows_private_path_relation(candidate: &Path, protected: &Path) -> McpResult<(bool, bool)> {
+    let candidate = normalize_windows_private_path(candidate)?;
+    let protected = normalize_windows_private_path(protected)?;
+    Ok((
+        candidate == protected || candidate.starts_with(&format!("{protected}/")),
+        protected.starts_with(&format!("{candidate}/")),
+    ))
+}
+
+#[cfg(any(windows, test))]
+fn normalize_windows_private_path(path: &Path) -> McpResult<String> {
+    let invalid = || {
+        err(
+            McpErrorCode::ERR_MCP_POLICY_DENIED,
+            "unable to establish the Windows private-state boundary",
+        )
+    };
+    let path = path
+        .to_str()
+        .ok_or_else(invalid)?
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    // canonicalize() uses extended-length paths on Windows, while APPDATA
+    // normally uses ordinary drive paths. Normalize both drive and UNC forms.
+    let path = if let Some(unc) = path.strip_prefix("//?/unc/") {
+        format!("//{unc}")
+    } else if let Some(drive) = path.strip_prefix("//?/") {
+        // Volume GUID, GLOBALROOT and other device namespaces cannot be
+        // compared safely with a drive/UNC protected root. Deny them.
+        if drive.as_bytes().get(1) != Some(&b':') {
+            return Err(invalid());
+        }
+        drive.to_owned()
+    } else {
+        path
+    };
+    let remainder = if let Some(unc) = path.strip_prefix("//") {
+        let mut parts = unc.split('/');
+        let server = parts.next().unwrap_or_default();
+        let share = parts.next().unwrap_or_default();
+        if [server, share]
+            .iter()
+            .any(|part| part.is_empty() || matches!(*part, "." | ".." | "?"))
+        {
+            return Err(invalid());
+        }
+        unc
+    } else {
+        let bytes = path.as_bytes();
+        if bytes.len() < 3
+            || !bytes[0].is_ascii_alphabetic()
+            || bytes[1] != b':'
+            || bytes[2] != b'/'
+        {
+            return Err(invalid());
+        }
+        &path[3..]
+    };
+    let remainder = remainder.trim_end_matches('/');
+    if !remainder.is_empty()
+        && remainder.split('/').any(|part| {
+            part.is_empty()
+                || part == "."
+                || part == ".."
+                || part.contains([':', '?'])
+                || part.chars().any(char::is_control)
+        })
+    {
+        return Err(invalid());
+    }
+    Ok(path.trim_end_matches('/').to_owned())
 }
 
 fn reject_link_component(path: &Path) -> McpResult<()> {
@@ -1027,5 +1085,62 @@ mod local_confinement_regression_tests {
                 .code,
             McpErrorCode::ERR_MCP_POLICY_DENIED
         );
+    }
+
+    #[test]
+    fn windows_private_execution_boundary_matches_drive_and_unc_prefix_forms() {
+        for (candidate, protected) in [
+            (
+                r"\\?\C:\Users\Example\infimount\agent-task-executions\task.json",
+                r"C:\Users\Example\infimount\agent-task-executions",
+            ),
+            (
+                r"c:\users\example\infimount\agent-task-executions\task.json",
+                r"\\?\C:\Users\Example\infimount\agent-task-executions",
+            ),
+            (
+                r"\\?\UNC\server\share\infimount\agent-task-executions\task.json",
+                r"\\server\share\infimount\agent-task-executions",
+            ),
+            (
+                r"\\server\share\infimount\agent-task-executions\task.json",
+                r"\\?\UNC\SERVER\SHARE\infimount\agent-task-executions",
+            ),
+        ] {
+            assert_eq!(
+                windows_private_path_relation(Path::new(candidate), Path::new(protected)).unwrap(),
+                (true, false)
+            );
+        }
+        let protected = Path::new(r"C:\Users\Example\infimount\agent-task-executions");
+        assert_eq!(
+            windows_private_path_relation(Path::new(r"\\?\C:\Users\Example\infimount"), protected)
+                .unwrap(),
+            (false, true)
+        );
+        assert_eq!(
+            windows_private_path_relation(
+                Path::new(r"\\?\C:\Users\Example\infimount\agent-task-executions-other"),
+                protected
+            )
+            .unwrap(),
+            (false, false)
+        );
+        for device in [
+            r"\\.\C:\Users\Example",
+            r"\\?\GLOBALROOT\Device\HarddiskVolume1",
+            r"\\?\Volume{00000000-0000-0000-0000-000000000000}\",
+            r"C:relative",
+            r"\\?\UNC\server",
+            r"C:\Users\\Example",
+            r"C:\Users\..\Example",
+        ] {
+            assert_eq!(
+                windows_private_path_relation(Path::new(device), protected)
+                    .unwrap_err()
+                    .code,
+                McpErrorCode::ERR_MCP_POLICY_DENIED
+            );
+        }
     }
 }

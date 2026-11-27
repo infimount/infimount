@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::auth::Principal;
+use crate::delegation::DelegatedIssuer;
 use crate::error::{HostedError, Result};
 use crate::storage::{
     map_core, map_storage, validate_content_type, AuthorizedObject, ObjectIdentity, StoragePlane,
@@ -27,6 +28,7 @@ pub struct TransferManager {
 
 struct Inner {
     storage: Arc<StoragePlane>,
+    issuer: Option<DelegatedIssuer>,
     entries: Mutex<HashMap<String, Arc<GrantEntry>>>,
     budget: Arc<Mutex<Budget>>,
 }
@@ -63,9 +65,46 @@ impl Drop for Reservation {
 struct GrantEntry {
     owner: String,
     expires: Instant,
+    expires_epoch: Option<u64>,
     object: AuthorizedObject,
     state: Mutex<GrantState>,
     _reservation: Arc<Reservation>,
+}
+
+impl GrantEntry {
+    fn active(&self) -> bool {
+        self.expires > Instant::now()
+            && self
+                .expires_epoch
+                .is_none_or(|expiry| crate::now_epoch_seconds() < expiry)
+    }
+}
+
+struct DelegationAudit<'a> {
+    principal: &'a Principal,
+    path: &'a str,
+    completed: bool,
+}
+
+impl DelegationAudit<'_> {
+    fn finish(&mut self, result: Result<()>) {
+        self.completed = true;
+        crate::audit::record(
+            Some(self.principal),
+            "delegate_download",
+            result,
+            Some(self.path),
+            0,
+        );
+    }
+}
+
+impl Drop for DelegationAudit<'_> {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.finish(Err(HostedError::Unavailable));
+        }
+    }
 }
 
 enum GrantState {
@@ -107,9 +146,14 @@ impl Drop for UploadClaim {
 
 impl TransferManager {
     pub fn new(storage: Arc<StoragePlane>) -> Self {
+        Self::with_issuer(storage, None)
+    }
+
+    pub fn with_issuer(storage: Arc<StoragePlane>, issuer: Option<DelegatedIssuer>) -> Self {
         let manager = Self {
             inner: Arc::new(Inner {
                 storage,
+                issuer,
                 entries: Mutex::new(HashMap::new()),
                 budget: Arc::new(Mutex::new(Budget::default())),
             }),
@@ -124,7 +168,7 @@ impl TransferManager {
                         break;
                     };
                     if let Ok(mut entries) = inner.entries.lock() {
-                        entries.retain(|_, entry| entry.expires > Instant::now());
+                        entries.retain(|_, entry| entry.active());
                     };
                 }
             });
@@ -192,7 +236,7 @@ impl TransferManager {
                 .entries
                 .lock()
                 .map_err(|_| HostedError::Internal)?;
-            entries.retain(|_, entry| entry.expires > Instant::now());
+            entries.retain(|_, entry| entry.active());
         }
         let owner = principal.owner_key();
         let mut budget = self
@@ -248,7 +292,7 @@ impl TransferManager {
             .entries
             .lock()
             .map_err(|_| HostedError::Internal)?;
-        entries.retain(|_, entry| entry.expires > Instant::now());
+        entries.retain(|_, entry| entry.active());
         let entry = entries.get(id).ok_or(HostedError::NotFound)?;
         if entry.owner != principal.owner_key() {
             return Err(HostedError::NotFound);
@@ -258,12 +302,26 @@ impl TransferManager {
 
     fn insert(&self, entry: GrantEntry) -> Result<String> {
         let id = Uuid::new_v4().to_string();
-        self.inner
+        self.insert_with_id(id.clone(), entry)?;
+        Ok(id)
+    }
+
+    fn insert_with_id(&self, id: String, entry: GrantEntry) -> Result<()> {
+        if !entry.active() {
+            return Err(HostedError::NotFound);
+        }
+        let mut entries = self
+            .inner
             .entries
             .lock()
-            .map_err(|_| HostedError::Internal)?
-            .insert(id.clone(), Arc::new(entry));
-        Ok(id)
+            .map_err(|_| HostedError::Internal)?;
+        match entries.entry(id) {
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                slot.insert(Arc::new(entry));
+                Ok(())
+            }
+            std::collections::hash_map::Entry::Occupied(_) => Err(HostedError::Internal),
+        }
     }
 
     pub async fn create_upload(
@@ -296,6 +354,7 @@ impl TransferManager {
         let id = self.insert(GrantEntry {
             owner: principal.owner_key(),
             expires,
+            expires_epoch: None,
             object,
             state: Mutex::new(GrantState::Upload {
                 stage: Some(stage),
@@ -534,7 +593,19 @@ impl TransferManager {
         path: &str,
         ttl_seconds: Option<u64>,
     ) -> Result<Value> {
-        let (expires, ttl) = self.expiry(principal, ttl_seconds)?;
+        let (mut expires, ttl) = self.expiry(principal, ttl_seconds)?;
+        let expires_epoch = if self.inner.issuer.is_some() {
+            let epoch = crate::now_epoch_seconds()
+                .saturating_add(ttl)
+                .min(principal.expires_at);
+            let remaining = (std::time::UNIX_EPOCH + Duration::from_secs(epoch))
+                .duration_since(std::time::SystemTime::now())
+                .map_err(|_| HostedError::NotFound)?;
+            expires = expires.min(Instant::now() + remaining);
+            Some(epoch)
+        } else {
+            None
+        };
         let source = self
             .inner
             .storage
@@ -586,20 +657,67 @@ impl TransferManager {
         let sha256 = stage.sha256().ok_or(HostedError::Internal)?.to_owned();
         let size = stage.size();
         stage.set_resource_retention(Some(reservation.clone()));
-        let id = self.insert(GrantEntry {
-            owner: principal.owner_key(),
-            expires,
-            object: source.object,
-            state: Mutex::new(GrantState::Download {
-                stage: Some(stage),
-                identity: source.identity,
-            }),
-            _reservation: reservation,
-        })?;
-        Ok(
-            json!({"download_id":id,"url":format!("{}/downloads/{id}",self.inner.storage.config().public_url.trim_end_matches('/')),
-            "requires_authorization":true,"single_use":true,"expires_seconds":ttl,"size_bytes":size,"sha256":sha256,"content_type":"application/octet-stream"}),
-        )
+        let id = Uuid::new_v4().to_string();
+        let redeem_url = format!("{}/downloads/{id}", self.inner.storage.config().public_url);
+        let (url, delivery) = if let Some(issuer) = &self.inner.issuer {
+            // All state remains local to this future until validation ends.
+            // A failed/cancelled request drops its snapshot and quota without
+            // ever publishing a redeemable ID, even if the issuer saw the ID.
+            let mut audit = DelegationAudit {
+                principal,
+                path,
+                completed: false,
+            };
+            let result = async {
+                let url = issuer
+                    .issue(
+                        &id,
+                        &redeem_url,
+                        expires_epoch.ok_or(HostedError::Internal)?,
+                        expires,
+                    )
+                    .await?;
+                self.inner
+                    .storage
+                    .check_identity(principal, &source.object, &source.identity, true)
+                    .await?;
+                principal.ensure_live()?;
+                if Instant::now() >= expires
+                    || expires_epoch.is_some_and(|epoch| crate::now_epoch_seconds() >= epoch)
+                {
+                    return Err(HostedError::NotFound);
+                }
+                Ok(url)
+            }
+            .await;
+            audit.finish(result.as_ref().map(|_| ()).map_err(|error| *error));
+            (result?, "delegated")
+        } else {
+            (redeem_url.clone(), "proxy")
+        };
+        self.insert_with_id(
+            id.clone(),
+            GrantEntry {
+                owner: principal.owner_key(),
+                expires,
+                expires_epoch,
+                object: source.object,
+                state: Mutex::new(GrantState::Download {
+                    stage: Some(stage),
+                    identity: source.identity,
+                }),
+                _reservation: reservation,
+            },
+        )?;
+        let mut result = json!({"download_id":id,"url":url,"delivery":delivery,
+            "requires_authorization":true,"single_use":true,"expires_seconds":ttl,"size_bytes":size,"sha256":sha256,"content_type":"application/octet-stream"});
+        if let Some(epoch) = expires_epoch {
+            result["redeem_url"] = json!(redeem_url);
+            result["authorization_audience"] = json!(self.inner.storage.config().auth.audience);
+            result["expires_at_unix_seconds"] = json!(epoch);
+            result["expires_seconds"] = json!(epoch.saturating_sub(crate::now_epoch_seconds()));
+        }
+        Ok(result)
     }
 
     pub async fn download(
@@ -677,7 +795,7 @@ impl TransferManager {
                 return Ok::<_, io::Error>(None);
             }
             state.principal.ensure_live().map_err(public_io_error)?;
-            if Instant::now() >= state.entry.expires || Instant::now() >= state.deadline {
+            if !state.entry.active() || Instant::now() >= state.deadline {
                 return Err(public_io_error(HostedError::NotFound));
             }
             state
@@ -831,6 +949,23 @@ mod tests {
     use sha2::{Digest, Sha256};
     use std::collections::{BTreeMap, BTreeSet};
 
+    async fn delegated_fixture(
+        mode: crate::delegation::fixture::Mode,
+        timeout: Duration,
+    ) -> (
+        tempfile::TempDir,
+        TransferManager,
+        Principal,
+        Principal,
+        crate::delegation::fixture::MockIssuer,
+    ) {
+        let (root, storage, original, alice, bob) = fixture();
+        drop(original);
+        let issuer = crate::delegation::fixture::MockIssuer::start(mode, timeout).await;
+        let manager = TransferManager::with_issuer(storage, Some(issuer.issuer.clone()));
+        (root, manager, alice, bob, issuer)
+    }
+
     fn fixture_with(
         mut limits: Limits,
         confirm: bool,
@@ -901,6 +1036,8 @@ mod tests {
             }],
             grants,
             limits,
+            delivery: Default::default(),
+            telemetry: Default::default(),
         });
         let storage = Arc::new(StoragePlane::new(config).unwrap());
         let manager = TransferManager::new(storage.clone());
@@ -1444,6 +1581,303 @@ mod tests {
         );
         assert!(!root.path().join("users/alice/new-parent").exists());
         assert_eq!(manager.inner.budget.lock().unwrap().bytes, 0);
+    }
+
+    #[tokio::test]
+    async fn delegated_platform_url_retains_full_identity_object_and_single_use_redemption() {
+        use crate::delegation::fixture::{Mode, ORIGIN, TOKEN};
+        let (root, manager, alice, bob, issuer) =
+            delegated_fixture(Mode::Valid, Duration::from_secs(1)).await;
+        let path = "/artifacts/users/alice/private-report.pdf";
+        let bytes = [0, 255, 127, 4, 13, 10];
+        std::fs::write(root.path().join("users/alice/private-report.pdf"), bytes).unwrap();
+        let link = manager
+            .create_download(&alice, path, Some(30))
+            .await
+            .unwrap();
+        let download_id = id(&link, "download_id");
+        assert_eq!(link["delivery"], "delegated");
+        assert_eq!(link["url"], format!("{ORIGIN}/artifacts/{download_id}"));
+        assert_eq!(
+            link["redeem_url"],
+            format!("https://artifacts.example/downloads/{download_id}")
+        );
+        assert_eq!(
+            link["authorization_audience"],
+            "https://artifacts.example/mcp"
+        );
+        assert_eq!(link["requires_authorization"], true);
+        assert_eq!(link["single_use"], true);
+        assert!(link["expires_at_unix_seconds"].as_u64().unwrap() <= alice.expires_at);
+        let request = issuer.requests.lock().unwrap()[0].clone();
+        assert_eq!(request.authorization, format!("Bearer {TOKEN}"));
+        assert_eq!(request.body.as_object().unwrap().len(), 6);
+        for private in [
+            path,
+            "private-report.pdf",
+            "tenant-a",
+            "client-a",
+            "alice",
+            "sha256",
+            "access_token",
+        ] {
+            assert!(!request.body.to_string().contains(private));
+        }
+        for stranger in [
+            bob,
+            Principal {
+                client_id: "another-client".into(),
+                ..alice.clone()
+            },
+            Principal {
+                tenant: "another-tenant".into(),
+                ..alice.clone()
+            },
+            Principal {
+                issuer: "https://another-issuer.example".into(),
+                ..alice.clone()
+            },
+        ] {
+            assert_eq!(
+                manager
+                    .download(&stranger, &download_id, None)
+                    .await
+                    .unwrap_err(),
+                HostedError::NotFound
+            );
+        }
+        let mut missing_scope = alice.clone();
+        missing_scope.scopes.remove("infimount:download");
+        assert_eq!(
+            manager
+                .download(&missing_scope, &download_id, None)
+                .await
+                .unwrap_err(),
+            HostedError::Forbidden
+        );
+        let response = manager.download(&alice, &download_id, None).await.unwrap();
+        assert_eq!(
+            axum::body::to_bytes(response.into_body(), 100)
+                .await
+                .unwrap()
+                .as_ref(),
+            bytes
+        );
+        assert_eq!(
+            manager
+                .download(&alice, &download_id, None)
+                .await
+                .unwrap_err(),
+            HostedError::NotFound
+        );
+        assert_eq!(manager.inner.budget.lock().unwrap().bytes, 0);
+
+        let link = manager
+            .create_download(&alice, path, Some(30))
+            .await
+            .unwrap();
+        std::fs::write(
+            root.path().join("users/alice/private-report.pdf"),
+            b"different object",
+        )
+        .unwrap();
+        assert_eq!(
+            manager
+                .download(&alice, &id(&link, "download_id"), None)
+                .await
+                .unwrap_err(),
+            HostedError::Conflict
+        );
+    }
+
+    #[tokio::test]
+    async fn issuer_failure_timeout_and_invalid_response_drop_every_provisional_grant() {
+        use crate::delegation::fixture::Mode;
+        for mode in [
+            Mode::Failure,
+            Mode::WrongOrigin,
+            Mode::WrongGrant,
+            Mode::ChangedExpiry,
+            Mode::UnknownField,
+            Mode::Paused,
+        ] {
+            let (root, manager, alice, _, issuer) =
+                delegated_fixture(mode, Duration::from_millis(100)).await;
+            let path = "/artifacts/users/alice/private.bin";
+            std::fs::write(
+                root.path().join("users/alice/private.bin"),
+                b"private bytes",
+            )
+            .unwrap();
+            assert_eq!(
+                manager
+                    .create_download(&alice, path, Some(30))
+                    .await
+                    .unwrap_err(),
+                HostedError::Unavailable
+            );
+            assert!(manager.inner.entries.lock().unwrap().is_empty());
+            {
+                let budget = manager.inner.budget.lock().unwrap();
+                assert_eq!(budget.bytes, 0);
+                assert_eq!(budget.count, 0);
+                assert!(budget.owners.is_empty());
+            }
+            let grant_id = issuer.requests.lock().unwrap()[0].body["grant_id"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            assert_eq!(
+                manager.download(&alice, &grant_id, None).await.unwrap_err(),
+                HostedError::NotFound
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelled_issuer_call_never_publishes_a_grant_and_releases_snapshot_quota() {
+        use crate::delegation::fixture::Mode;
+        let (root, manager, alice, _, issuer) =
+            delegated_fixture(Mode::Paused, Duration::from_secs(5)).await;
+        let path = "/artifacts/users/alice/cancel-link.bin";
+        std::fs::write(
+            root.path().join("users/alice/cancel-link.bin"),
+            vec![7; 128 * 1024],
+        )
+        .unwrap();
+        let pending_manager = manager.clone();
+        let pending_principal = alice.clone();
+        let pending = tokio::spawn(async move {
+            pending_manager
+                .create_download(&pending_principal, path, Some(30))
+                .await
+        });
+        issuer.wait_started().await;
+        assert!(manager.inner.entries.lock().unwrap().is_empty());
+        assert_eq!(manager.inner.budget.lock().unwrap().bytes, 128 * 1024);
+        let grant_id = issuer.requests.lock().unwrap()[0].body["grant_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(
+            manager.download(&alice, &grant_id, None).await.unwrap_err(),
+            HostedError::NotFound
+        );
+        pending.abort();
+        assert!(pending.await.unwrap_err().is_cancelled());
+        assert!(manager.inner.entries.lock().unwrap().is_empty());
+        assert_eq!(manager.inner.budget.lock().unwrap().bytes, 0);
+        assert_eq!(manager.inner.budget.lock().unwrap().count, 0);
+        issuer.release.notify_one();
+        assert_eq!(
+            manager.download(&alice, &grant_id, None).await.unwrap_err(),
+            HostedError::NotFound
+        );
+    }
+
+    #[tokio::test]
+    async fn object_change_during_issuance_and_expired_delegated_grants_fail_closed() {
+        use crate::delegation::fixture::Mode;
+        let (root, manager, alice, _, issuer) =
+            delegated_fixture(Mode::Paused, Duration::from_secs(5)).await;
+        let path = "/artifacts/users/alice/changed.bin";
+        std::fs::write(root.path().join("users/alice/changed.bin"), b"original").unwrap();
+        let task_manager = manager.clone();
+        let task_principal = alice.clone();
+        let pending = tokio::spawn(async move {
+            task_manager
+                .create_download(&task_principal, path, Some(30))
+                .await
+        });
+        issuer.wait_started().await;
+        std::fs::write(root.path().join("users/alice/changed.bin"), b"replacement").unwrap();
+        issuer.release.notify_one();
+        assert_eq!(pending.await.unwrap().unwrap_err(), HostedError::Conflict);
+        assert!(manager.inner.entries.lock().unwrap().is_empty());
+        assert_eq!(manager.inner.budget.lock().unwrap().bytes, 0);
+
+        let (root, manager, alice, _, _issuer) =
+            delegated_fixture(Mode::Valid, Duration::from_secs(1)).await;
+        std::fs::write(root.path().join("users/alice/expiry.bin"), b"expired").unwrap();
+        let link = manager
+            .create_download(&alice, "/artifacts/users/alice/expiry.bin", Some(1))
+            .await
+            .unwrap();
+        let epoch = link["expires_at_unix_seconds"].as_u64().unwrap();
+        let remaining = (std::time::UNIX_EPOCH + Duration::from_secs(epoch))
+            .duration_since(std::time::SystemTime::now())
+            .unwrap_or_default();
+        tokio::time::sleep(remaining + Duration::from_millis(25)).await;
+        assert_eq!(
+            manager
+                .download(&alice, &id(&link, "download_id"), None)
+                .await
+                .unwrap_err(),
+            HostedError::NotFound
+        );
+        assert_eq!(manager.inner.budget.lock().unwrap().bytes, 0);
+    }
+
+    #[tokio::test]
+    async fn delegated_failure_audit_redacts_issuer_payloads_urls_grants_and_paths() {
+        use crate::delegation::fixture::{Mode, ORIGIN, TOKEN};
+        #[derive(Clone)]
+        struct Capture(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Capture {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let (root, manager, alice, _, issuer) =
+            delegated_fixture(Mode::Failure, Duration::from_secs(1)).await;
+        let path = "/artifacts/users/alice/never-log-private-filename.bin";
+        std::fs::write(
+            root.path()
+                .join("users/alice/never-log-private-filename.bin"),
+            b"never-log-file-content",
+        )
+        .unwrap();
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let writer = Capture(captured.clone());
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        // This is the only test installing a global subscriber. A temporary
+        // future-scoped subscriber races shared callsite registration from
+        // parallel tests that emit the same audit callsite without one.
+        // Production main also installs a global subscriber once.
+        tracing::subscriber::set_global_default(subscriber).unwrap();
+        assert_eq!(
+            manager
+                .create_download(&alice, path, Some(30))
+                .await
+                .unwrap_err(),
+            HostedError::Unavailable
+        );
+        let text = String::from_utf8(captured.lock().unwrap().clone()).unwrap();
+        assert!(text.contains("delegate_download"));
+        assert!(text.contains(&sha(path.as_bytes())));
+        let grant = issuer.requests.lock().unwrap()[0].body["grant_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        for private in [
+            path,
+            "never-log-private-filename.bin",
+            "never-log-file-content",
+            "never-log-issuer-response",
+            TOKEN,
+            ORIGIN,
+            &grant,
+        ] {
+            assert!(!text.contains(private));
+        }
     }
 
     #[tokio::test]

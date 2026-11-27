@@ -10,6 +10,8 @@ const baseSettings: McpSettings = {
   bindAddress: "127.0.0.1",
   port: 7331,
   enabledTools: ["list_dir"],
+  maxReadBytes: 2097152,
+  maxWriteBytes: 4194304,
   securityBaselineVersion: 2,
   authTokenConfigured: false,
 };
@@ -60,6 +62,28 @@ function renderSection(
 }
 
 describe("McpRuntimeSection", () => {
+  it.each([
+    { maxReadBytes: 0, maxWriteBytes: 1 },
+    { maxReadBytes: 2097153, maxWriteBytes: 1 },
+    { maxReadBytes: 1, maxWriteBytes: 4194305 },
+    { maxReadBytes: 1, maxWriteBytes: 1.5 },
+  ])("blocks saving invalid byte limits %o", (limits) => {
+    const { onSave } = renderSection({ ...baseSettings, ...limits });
+    const save = screen.getByRole("button", { name: "Save stdio Agent Access" });
+    expect(save).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("positive whole bytes");
+    fireEvent.click(save);
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("keeps stopping a running server available when draft byte limits are invalid", () => {
+    const { onHttpToggle } = renderSection({ ...baseSettings, transport: "http", maxReadBytes: 0 }, true);
+    const stop = screen.getByRole("button", { name: "Save & Start HTTP Server" });
+    expect(stop).toBeEnabled();
+    fireEvent.click(stop);
+    expect(onHttpToggle).toHaveBeenCalledOnce();
+  });
+
   it("shows enabled stdio as on demand rather than stopped", () => {
     renderSection(baseSettings);
     expect(screen.getByText("On demand")).toBeInTheDocument();

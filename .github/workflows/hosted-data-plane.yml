@@ -1,6 +1,12 @@
 name: Hosted Data Plane Qualification
 
 on:
+  workflow_call:
+    inputs:
+      release_tag:
+        required: false
+        default: ""
+        type: string
   pull_request:
     branches: ["main"]
     paths:
@@ -12,6 +18,8 @@ on:
       - "Cargo.lock"
       - "deploy/hosted/**"
       - "scripts/qualify-hosted-data-plane.py"
+      - "scripts/publish-hosted-images.sh"
+      - "scripts/test-publish-hosted-images.py"
       - "docs/hosted-artifact-service.md"
   push:
     branches: ["main"]
@@ -24,6 +32,8 @@ on:
       - "Cargo.lock"
       - "deploy/hosted/**"
       - "scripts/qualify-hosted-data-plane.py"
+      - "scripts/publish-hosted-images.sh"
+      - "scripts/test-publish-hosted-images.py"
       - "docs/hosted-artifact-service.md"
   workflow_dispatch:
 
@@ -59,6 +69,8 @@ jobs:
         run: bash scripts/ci-apt-install.sh pkg-config libssl-dev
       - name: Check formatting
         run: cargo +1.94.0 fmt --all -- --check
+      - name: Verify container publication refuses unsafe mutations
+        run: python3 scripts/test-publish-hosted-images.py
       - name: Strict hosted Clippy
         run: cargo +1.94.0 clippy -p infimount_hosted --all-targets --locked -- -D warnings
       - name: Test confinement and hosted authority
@@ -78,16 +90,57 @@ jobs:
           cargo +1.94.0 run -p infimount_hosted --locked -- check --config deploy/hosted/example-s3.json
 
   container:
-    name: Build and validate non-root container
-    runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    name: Native container (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
+      - name: Apply release version to locked manifests
+        if: inputs.release_tag != ''
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: node scripts/sync-release-version.mjs "$RELEASE_TAG"
       - name: Build standalone service image
-        run: docker build -f deploy/hosted/Dockerfile -t infimount-hosted:qualification .
-      - name: Validate configuration with no network or writable root
+        env:
+          IMAGE_ARCH: ${{ matrix.arch }}
         run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
+          docker build -f deploy/hosted/Dockerfile -t "infimount-hosted:qualification-$IMAGE_ARCH" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.version=$version" .
+      - name: Validate configuration with no network or writable root
+        env:
+          IMAGE_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect "infimount-hosted:qualification-$IMAGE_ARCH" --format '{{.Architecture}}')" = "$IMAGE_ARCH"
+          test "$(docker image inspect "infimount-hosted:qualification-$IMAGE_ARCH" --format '{{.Config.User}}')" = "65532:65532"
           docker run --rm --network=none --read-only --cap-drop=ALL \
             --security-opt=no-new-privileges \
             --mount type=bind,src="$PWD/deploy/hosted/example-local.json",dst=/run/hosted.json,readonly \
-            infimount-hosted:qualification check --config /run/hosted.json
+            "infimount-hosted:qualification-$IMAGE_ARCH" check --config /run/hosted.json
+      - name: Preserve the exact qualified release image
+        if: inputs.release_tag != ''
+        env:
+          IMAGE_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          mkdir -p hosted-image
+          docker save "infimount-hosted:qualification-$IMAGE_ARCH" | gzip -n > "hosted-image/$IMAGE_ARCH.tar.gz"
+          docker image inspect "infimount-hosted:qualification-$IMAGE_ARCH" > "hosted-image/$IMAGE_ARCH.inspect.json"
+      - uses: actions/upload-artifact@v6
+        if: inputs.release_tag != ''
+        with:
+          name: hosted-image-${{ matrix.arch }}
+          path: hosted-image/*
+          if-no-files-found: error
+          compression-level: 0

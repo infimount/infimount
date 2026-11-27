@@ -11,6 +11,8 @@ ENV CARGO_PROFILE_RELEASE_DEBUG=0
 RUN cargo +1.94.0 build --locked --release -p infimount_hosted
 
 FROM debian:bookworm-slim AS runtime
+LABEL org.opencontainers.image.source="https://github.com/infimount/infimount" \
+      org.opencontainers.image.title="Infimount hosted artifact service"
 RUN apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
     && apt-get install -y --no-install-recommends ca-certificates libssl3 \
     && rm -rf /var/lib/apt/lists/* \

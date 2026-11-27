@@ -130,6 +130,8 @@ export interface McpSettings {
   bindAddress: string;
   port: number;
   enabledTools: string[];
+  maxReadBytes: number;
+  maxWriteBytes: number;
   securityBaselineVersion: number;
   authTokenConfigured: boolean;
 }
@@ -140,6 +142,8 @@ export interface McpSettingsUpdate {
   bindAddress: string;
   port: number;
   enabledTools: string[];
+  maxReadBytes: number;
+  maxWriteBytes: number;
   authTokenMutation: AuthTokenMutation;
 }
 

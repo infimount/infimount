@@ -72,6 +72,8 @@ function status(
       bindAddress: "127.0.0.1",
       port: 7331,
       enabledTools: ["list_dir", "stat_path", "read_file", "search_paths"],
+      maxReadBytes: 2097152,
+      maxWriteBytes: 4194304,
       securityBaselineVersion: 2,
       authTokenConfigured: false,
     },

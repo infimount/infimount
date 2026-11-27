@@ -23,6 +23,13 @@ try {
     '{"version":"0.0.0","bundle":{}}\n',
   );
   fs.writeFileSync(path.join(temp, "Cargo.toml"), '[workspace.package]\nversion = "0.0.0"\n');
+  fs.writeFileSync(path.join(temp, "Cargo.lock"), [
+    'version = 4',
+    '[[package]]\nname = "infimount_hosted"\nversion = "0.0.0"',
+    '[[package]]\nname = "infimount_python"\nversion = "0.0.0"',
+    '[[package]]\nname = "serde"\nversion = "1.0.228"\nsource = "registry+https://github.com/rust-lang/crates.io-index"',
+    '',
+  ].join('\n\n'));
 
   const env = { ...process.env, GITHUB_REF_NAME: "v0.8.0-rc.1" };
   execFileSync("node", [path.join(root, "scripts/sync-release-version.mjs")], { cwd: temp, env });
@@ -48,6 +55,10 @@ try {
   tauri = JSON.parse(fs.readFileSync(path.join(temp, "apps/desktop/src-tauri/tauri.conf.json")));
   assert.equal(tauri.version, "0.8.1-rc.3");
   assert.match(fs.readFileSync(path.join(temp, "Cargo.toml"), "utf8"), /0\.8\.1-rc\.3/);
+  const lock = fs.readFileSync(path.join(temp, "Cargo.lock"), "utf8");
+  assert.match(lock, /name = "infimount_hosted"\nversion = "0\.8\.1-rc\.3"/);
+  assert.match(lock, /name = "infimount_python"\nversion = "0\.8\.1-rc\.3"/);
+  assert.match(lock, /name = "serde"\nversion = "1\.0\.228"/);
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }

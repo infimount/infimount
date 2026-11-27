@@ -153,7 +153,7 @@ impl HostedMcpServer {
             ),
             tool(
                 "create_download",
-                "Create a short-lived authenticated download grant for an immutable object version. The same identity must authenticate the download.",
+                "Create a short-lived single-use download grant bound to the original identity and object. With delegated delivery, url uses the platform's own login and redeem_url is the Infimount endpoint. Send the Infimount OAuth token only to redeem_url, never to the delegated platform URL.",
                 json!({"path":path,"ttl_seconds":ttl}),
                 &["path"],
                 true,
@@ -197,7 +197,7 @@ impl ServerHandler for HostedMcpServer {
                 .with_title("Infimount hosted storage"),
         )
         .with_instructions(
-            "Every request requires an audience-bound OAuth access token. Paths use configured storage names. Writes are create-only. Download and upload URLs require the same authenticated identity. There are no sessions, administrative tools, overwrite operations or approval bypasses.",
+            "Every request requires an audience-bound OAuth access token. Paths use configured storage names. Writes are create-only. Artifact redemption requires the same authenticated identity. A delegated platform URL uses its own login; send the Infimount token only to its redeem_url. There are no sessions, administrative tools, overwrite operations or approval bypasses.",
         )
     }
 
@@ -432,4 +432,27 @@ struct UploadInput {
 #[serde(deny_unknown_fields)]
 struct TransferInput {
     id: String,
+}
+
+#[cfg(test)]
+mod delegation_tests {
+    use super::*;
+
+    #[test]
+    fn caller_cannot_choose_an_issuer_or_override_delivery_authority() {
+        for extra in [
+            "issuer_url",
+            "delivery",
+            "returned_url_origin",
+            "access_token",
+            "subject",
+        ] {
+            let mut input = json!({"path":"/artifacts/users/alice/report.bin"});
+            input[extra] = json!("caller controlled");
+            assert!(matches!(
+                decode::<DownloadInput>(input),
+                Err(HostedError::InvalidRequest)
+            ));
+        }
+    }
 }

@@ -24,6 +24,7 @@ use crate::prompts;
 use crate::resources;
 use crate::schemas;
 use crate::session::{SessionCreateInput, SessionCreateOutput, SessionEndInput, SessionEndOutput};
+use crate::settings::McpByteLimits;
 use crate::telemetry::TelemetryState;
 #[allow(unused_imports)]
 use crate::tools_fs::{
@@ -89,6 +90,10 @@ const ADMIN_TOOL_NAMES: &[&str] = &[
 ];
 
 pub fn tool_definitions() -> Vec<ToolDefinition> {
+    tool_definitions_with_limits(McpByteLimits::default())
+}
+
+pub fn tool_definitions_with_limits(limits: McpByteLimits) -> Vec<ToolDefinition> {
     vec![
         ToolDefinition {
             name: "list_dir",
@@ -109,7 +114,7 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             name: "read_file",
             description: "Read a file as UTF-8 text or base64 bytes with bounded size.",
-            input_schema: schemas::schema_read_file(),
+            input_schema: schemas::schema_read_file_with_limit(limits.max_read_bytes),
             category: McpToolCategory::Read,
             risk: McpToolRisk::Low,
             default_enabled: true,
@@ -125,7 +130,7 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             name: "write_file",
             description: "Write UTF-8 text, or base64-encoded binary content, to a file path.",
-            input_schema: schemas::schema_write_file(),
+            input_schema: schemas::schema_write_file_with_limit(limits.max_write_bytes),
             category: McpToolCategory::Write,
             risk: McpToolRisk::Medium,
             default_enabled: false,
@@ -198,7 +203,7 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             name: "read_file_version",
             description: "Read a specific version of a file.",
-            input_schema: schemas::schema_read_file_version(),
+            input_schema: schemas::schema_read_file_version_with_limit(limits.max_read_bytes),
             category: McpToolCategory::Read,
             risk: McpToolRisk::Low,
             default_enabled: true,
@@ -215,7 +220,11 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
 }
 
 pub fn rmcp_tools() -> Vec<Tool> {
-    tool_definitions()
+    rmcp_tools_with_limits(McpByteLimits::default())
+}
+
+pub fn rmcp_tools_with_limits(limits: McpByteLimits) -> Vec<Tool> {
+    tool_definitions_with_limits(limits)
         .into_iter()
         .map(|definition| {
             Tool::new(
@@ -251,15 +260,18 @@ pub fn admin_tool_names() -> Vec<String> {
         .collect()
 }
 
-fn filtered_tool_definitions(enabled_tools: &HashSet<String>) -> Vec<ToolDefinition> {
-    tool_definitions()
+fn filtered_tool_definitions(
+    enabled_tools: &HashSet<String>,
+    limits: McpByteLimits,
+) -> Vec<ToolDefinition> {
+    tool_definitions_with_limits(limits)
         .into_iter()
         .filter(|definition| enabled_tools.contains(definition.name))
         .collect()
 }
 
-fn rmcp_tools_for(enabled_tools: &HashSet<String>) -> Vec<Tool> {
-    filtered_tool_definitions(enabled_tools)
+fn rmcp_tools_for(enabled_tools: &HashSet<String>, limits: McpByteLimits) -> Vec<Tool> {
+    filtered_tool_definitions(enabled_tools, limits)
         .into_iter()
         .map(|definition| {
             Tool::new(
@@ -375,7 +387,8 @@ impl InfimountMcpServer {
             return Ok(None);
         };
 
-        let fingerprint = request_fingerprint(tool_name, arguments).map_err(mcp_to_rmcp_error)?;
+        let fingerprint = request_fingerprint(tool_name, arguments, self.ctx.byte_limits)
+            .map_err(mcp_to_rmcp_error)?;
         if let Some(confirmation_id) = arguments
             .get("confirmation_id")
             .and_then(|value| value.as_str())
@@ -453,6 +466,7 @@ impl ServerHandler for InfimountMcpServer {
     ) -> Result<ListToolsResult, ErrorData> {
         Ok(ListToolsResult::with_all_items(rmcp_tools_for(
             &self.enabled_tools,
+            self.ctx.byte_limits,
         )))
     }
 
@@ -461,7 +475,7 @@ impl ServerHandler for InfimountMcpServer {
             return None;
         }
 
-        rmcp_tools_for(&self.enabled_tools)
+        rmcp_tools_for(&self.enabled_tools, self.ctx.byte_limits)
             .into_iter()
             .find(|tool| tool.name == name)
     }
@@ -1325,12 +1339,51 @@ async fn confirmation_check(
 ) -> McpResult<Option<ConfirmationCheck>> {
     match tool_name {
         "write_file" => {
+            ctx.byte_limits.validate()?;
             let schema_error = || {
                 err_with_details(
                     McpErrorCode::ERR_INVALID_PATH,
                     "input does not match write_file schema",
                     json!({}),
                 )
+            };
+            if arguments.keys().any(|key| {
+                ![
+                    "path",
+                    "content",
+                    "encoding",
+                    "overwrite",
+                    "create_parents",
+                    "session_id",
+                    "confirmation_id",
+                    "user_metadata",
+                    "content_type",
+                ]
+                .contains(&key.as_str())
+            }) {
+                return Err(schema_error());
+            }
+            for name in ["overwrite", "create_parents"] {
+                if arguments.get(name).is_some_and(|value| !value.is_boolean()) {
+                    return Err(schema_error());
+                }
+            }
+            for name in ["session_id", "confirmation_id", "content_type"] {
+                if arguments
+                    .get(name)
+                    .is_some_and(|value| !value.is_null() && !value.is_string())
+                {
+                    return Err(schema_error());
+                }
+            }
+            let has_user_metadata = match arguments.get("user_metadata") {
+                None | Some(serde_json::Value::Null) => false,
+                Some(serde_json::Value::Object(metadata))
+                    if metadata.values().all(serde_json::Value::is_string) =>
+                {
+                    metadata.keys().any(|key| !key.trim().is_empty())
+                }
+                _ => return Err(schema_error()),
             };
             let path = arguments
                 .get("path")
@@ -1344,17 +1397,26 @@ async fn confirmation_check(
                 Some(value) => value.as_str().ok_or_else(schema_error)?,
                 None => "utf-8",
             };
-            tools_fs::validate_write_content_length(content, encoding, path)?;
-            check_single_path_confirmation(
+            let content_type = arguments
+                .get("content_type")
+                .and_then(|value| value.as_str());
+            tools_fs::validate_content_type(content_type)?;
+            tools_fs::validate_write_content(content, encoding, ctx.byte_limits.max_write_bytes)?;
+            let overwrite = bool_arg(arguments, "overwrite", true);
+            let check = check_single_path_confirmation(
                 ctx,
                 tool_name,
                 arguments,
                 "path",
                 McpOperation::Write,
-                bool_arg(arguments, "overwrite", true),
+                overwrite,
                 false,
             )
-            .await
+            .await?;
+            let resolved = crate::path::resolve_storage_path(&ctx.registry, path)?;
+            let op = crate::opendal_adapter::build_operator(&resolved.storage, &ctx.registry)?;
+            tools_fs::validate_write_capabilities(&op, overwrite, content_type, has_user_metadata)?;
+            Ok(check)
         }
         "mkdir" => {
             check_single_path_confirmation(
@@ -1646,7 +1708,11 @@ fn is_confirmation_required_response(result: &serde_json::Value) -> bool {
         == Some("requires_confirmation")
 }
 
-fn request_fingerprint(tool_name: &str, arguments: &JsonObject) -> McpResult<String> {
+fn request_fingerprint(
+    tool_name: &str,
+    arguments: &JsonObject,
+    limits: McpByteLimits,
+) -> McpResult<String> {
     // The old fingerprint stored the complete serialized request in the
     // pending/approved queue (including write_file content). Hash a borrowed,
     // deterministically ordered representation instead. Exclude only the
@@ -1656,7 +1722,7 @@ fn request_fingerprint(tool_name: &str, arguments: &JsonObject) -> McpResult<Str
         .filter(|(key, _)| key.as_str() != "confirmation_id")
         .collect();
     let mut digest = Sha256::new();
-    serde_json::to_writer(&mut digest, &(tool_name, filtered)).map_err(|_| {
+    serde_json::to_writer(&mut digest, &(tool_name, filtered, limits)).map_err(|_| {
         err_with_details(
             McpErrorCode::ERR_INTERNAL,
             "failed to fingerprint confirmation request",
@@ -1699,6 +1765,7 @@ mod tests {
 
     fn test_context(temp_dir: &TempDir) -> FsToolsContext {
         FsToolsContext {
+            byte_limits: Default::default(),
             registry: StorageRegistry::new(Some(temp_dir.path().join("storages.json"))),
             sessions: SessionManager::new(),
             allow_insecure: true,
@@ -1833,7 +1900,7 @@ mod tests {
     #[test]
     fn filtered_tool_definitions_hides_disabled_tools() {
         let enabled = normalize_enabled_tools(vec!["list_dir".to_string()]);
-        let definitions = filtered_tool_definitions(&enabled);
+        let definitions = filtered_tool_definitions(&enabled, McpByteLimits::default());
         let names = definitions
             .into_iter()
             .map(|definition| definition.name)
@@ -2275,14 +2342,266 @@ mod tests {
         let mut args = JsonObject::new();
         args.insert("path".into(), json!("/Local/file.bin"));
         args.insert("content".into(), json!("private-payload"));
-        let original = request_fingerprint("write_file", &args).unwrap();
+        let original = request_fingerprint("write_file", &args, McpByteLimits::default()).unwrap();
         assert_eq!(original.len(), "sha256:".len() + 64);
         assert!(!original.contains("private-payload"));
         args.insert("confirmation_id".into(), json!("approval-id"));
-        assert_eq!(request_fingerprint("write_file", &args).unwrap(), original);
+        assert_eq!(
+            request_fingerprint("write_file", &args, McpByteLimits::default()).unwrap(),
+            original
+        );
         args.insert("content".into(), json!("different-payload"));
-        assert_ne!(request_fingerprint("write_file", &args).unwrap(), original);
-        assert_ne!(request_fingerprint("mkdir", &args).unwrap(), original);
+        assert_ne!(
+            request_fingerprint("write_file", &args, McpByteLimits::default()).unwrap(),
+            original
+        );
+        assert_ne!(
+            request_fingerprint("mkdir", &args, McpByteLimits::default()).unwrap(),
+            original
+        );
+        let lowered = McpByteLimits {
+            max_read_bytes: 1,
+            max_write_bytes: 1,
+        };
+        assert_ne!(
+            request_fingerprint("write_file", &args, lowered).unwrap(),
+            request_fingerprint("write_file", &args, McpByteLimits::default()).unwrap()
+        );
+        let before_metadata = request_fingerprint("write_file", &args, lowered).unwrap();
+        args.insert("content_type".into(), json!("image/png"));
+        assert_ne!(
+            request_fingerprint("write_file", &args, lowered).unwrap(),
+            before_metadata
+        );
+    }
+
+    #[tokio::test]
+    async fn configured_limits_and_metadata_fail_before_confirmation_and_invalidate_approvals() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let mut ctx = test_context(&dir);
+        ctx.byte_limits = McpByteLimits {
+            max_read_bytes: 2,
+            max_write_bytes: 3,
+        };
+        let mut storage =
+            StorageRecord::new("Local".into(), "local".into(), json!({ "root": root }));
+        storage.mcp_exposed = true;
+        storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
+        ctx.registry.save_all_atomic(&[storage]).unwrap();
+        let confirmations = ConfirmationManager::new();
+        let mut server = InfimountMcpServer::with_confirmation_manager(
+            ctx,
+            all_tool_names(),
+            confirmations.clone(),
+        );
+        let schema = server.get_tool("read_file").unwrap();
+        assert_eq!(schema.input_schema["properties"]["max_bytes"]["maximum"], 2);
+        assert_eq!(schema.input_schema["properties"]["max_bytes"]["default"], 2);
+        for extra in [
+            json!({ "content": "éé" }),
+            json!({ "content": "AAAAAA==", "encoding": "base64" }),
+            json!({ "content": "%%%", "encoding": "base64" }),
+            json!({ "content_type": "image/png" }),
+            json!({ "content_type": "bad\r\nheader" }),
+            json!({ "content_type": 123 }),
+            json!({ "unexpected": "secret" }),
+        ] {
+            let mut args =
+                json!({"path":"/Local/missing/a.bin", "content":"x", "create_parents":true})
+                    .as_object()
+                    .unwrap()
+                    .clone();
+            args.extend(extra.as_object().unwrap().clone());
+            assert!(server
+                .dispatch_tool_json("write_file", Some(args))
+                .await
+                .is_err());
+            assert!(confirmations.list_pending().await.is_empty());
+            assert!(!root.join("missing").exists());
+        }
+
+        let mut args = json!({ "path": "/Local/a.bin", "content": "x" })
+            .as_object()
+            .unwrap()
+            .clone();
+        let pending = server
+            .dispatch_tool_json("write_file", Some(args.clone()))
+            .await
+            .unwrap();
+        let id = pending["data"]["operation_id"].as_str().unwrap();
+        confirmations.approve(id).await.unwrap();
+        args.insert("confirmation_id".into(), json!(id));
+        // The payload still fits. Changing the effective cap invalidates the
+        // exact approval, so an approval from another configuration cannot run.
+        server.ctx.byte_limits.max_write_bytes = 2;
+        assert!(server
+            .dispatch_tool_json("write_file", Some(args))
+            .await
+            .is_err());
+        assert!(!root.join("a.bin").exists());
+    }
+
+    #[tokio::test]
+    async fn binary_content_type_persists_through_opendal_and_optional_read_metadata() {
+        use axum::body::{to_bytes, Body};
+        use axum::extract::{Request, State};
+        use axum::http::{header, Method, Response, StatusCode};
+        use axum::{routing::any, Router};
+        use infimount_core::secrets::{MemorySecretStore, SecretStore};
+        use std::sync::Mutex;
+
+        #[derive(Clone)]
+        struct Object {
+            bytes: Vec<u8>,
+            content_type: String,
+        }
+        type ObjectState = Arc<Mutex<Option<Object>>>;
+        async fn object(State(stored): State<ObjectState>, request: Request) -> Response<Body> {
+            if request.method() == Method::PUT {
+                let content_type = request
+                    .headers()
+                    .get(header::CONTENT_TYPE)
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_owned();
+                let bytes = to_bytes(request.into_body(), 16).await.unwrap().to_vec();
+                *stored.lock().unwrap() = Some(Object {
+                    bytes,
+                    content_type,
+                });
+                return Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::ETAG, "\"test-etag\"")
+                    .body(Body::empty())
+                    .unwrap();
+            }
+            let Some(object) = stored.lock().unwrap().clone() else {
+                return Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Body::empty())
+                    .unwrap();
+            };
+            let mut response = Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, &object.content_type)
+                .header(header::ETAG, "\"test-etag\"");
+            if request.method() == Method::HEAD {
+                return response
+                    .header(header::CONTENT_LENGTH, object.bytes.len())
+                    .body(Body::empty())
+                    .unwrap();
+            }
+            let mut bytes = object.bytes;
+            if let Some(range) = request.headers().get(header::RANGE) {
+                let (start, end) = range
+                    .to_str()
+                    .unwrap()
+                    .strip_prefix("bytes=")
+                    .unwrap()
+                    .split_once('-')
+                    .unwrap();
+                let start = start.parse::<usize>().unwrap();
+                let end = end
+                    .parse::<usize>()
+                    .unwrap_or(bytes.len() - 1)
+                    .min(bytes.len() - 1);
+                response = response.status(StatusCode::PARTIAL_CONTENT).header(
+                    header::CONTENT_RANGE,
+                    format!("bytes {start}-{end}/{}", bytes.len()),
+                );
+                bytes = bytes[start..=end].to_vec();
+            }
+            response
+                .header(header::CONTENT_LENGTH, bytes.len())
+                .body(Body::from(bytes))
+                .unwrap()
+        }
+
+        let stored: ObjectState = Arc::new(Mutex::new(None));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let router = Router::new()
+            .fallback(any(object))
+            .with_state(stored.clone());
+        let mock = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let dir = TempDir::new().unwrap();
+        let mut ctx = test_context(&dir);
+        let secrets = Arc::new(MemorySecretStore::new());
+        ctx.registry = StorageRegistry::with_secret_store(
+            Some(dir.path().join("storages.json")),
+            secrets.clone(),
+        );
+        ctx.byte_limits = McpByteLimits {
+            max_read_bytes: 2,
+            max_write_bytes: 3,
+        };
+        let mut storage = StorageRecord::new(
+            "Test".into(),
+            "s3".into(),
+            json!({
+                "bucket": "test", "region": "us-east-1", "endpoint": endpoint,
+            }),
+        );
+        let account = format!("storage/{}", storage.id);
+        secrets
+            .put_json(
+                &account,
+                &json!({
+                    "accessKeyId": "synthetic-test-key", "secretAccessKey": "synthetic-test-secret",
+                }),
+            )
+            .unwrap();
+        storage.secret_ref = Some(account);
+        storage.mcp_exposed = true;
+        storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
+        ctx.registry.save_all_atomic(&[storage]).unwrap();
+        let confirmations = ConfirmationManager::new();
+        let server = InfimountMcpServer::with_confirmation_manager(
+            ctx,
+            all_tool_names(),
+            confirmations.clone(),
+        );
+        let mut args = json!({ "path":"/Test/image.bin", "content":"/wAB", "encoding":"base64", "content_type":"image/png", "overwrite":false }).as_object().unwrap().clone();
+        let pending = server
+            .dispatch_tool_json("write_file", Some(args.clone()))
+            .await
+            .unwrap();
+        let id = pending["data"]["operation_id"].as_str().unwrap();
+        assert!(stored.lock().unwrap().is_none());
+        confirmations.approve(id).await.unwrap();
+        args.insert("confirmation_id".into(), json!(id));
+        let written = server
+            .dispatch_tool_json("write_file", Some(args))
+            .await
+            .unwrap();
+        assert_eq!(written["ok"], true, "{written}");
+        assert_eq!(
+            stored.lock().unwrap().as_ref().unwrap().content_type,
+            "image/png"
+        );
+        assert_eq!(
+            stored.lock().unwrap().as_ref().unwrap().bytes,
+            [0xff, 0x00, 0x01]
+        );
+        for tool in ["read_file", "read_file_version"] {
+            let mut args = json!({"path":"/Test/image.bin", "as_text":false})
+                .as_object()
+                .unwrap()
+                .clone();
+            if tool == "read_file_version" {
+                args.insert("version".into(), json!("fixture-version"));
+            }
+            let read = server.dispatch_tool_json(tool, Some(args)).await.unwrap();
+            assert_eq!(read["ok"], true, "{read}");
+            assert_eq!(read["data"]["content_type"], "image/png");
+            assert_eq!(read["data"]["read_bytes"], 2);
+            assert_eq!(read["data"]["content"], "/wA=");
+            assert_eq!(read["data"]["truncated"], true);
+        }
+        mock.abort();
     }
 
     #[tokio::test]

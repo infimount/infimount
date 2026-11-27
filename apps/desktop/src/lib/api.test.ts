@@ -98,6 +98,8 @@ const settingsUpdate: McpSettingsUpdate = {
   bindAddress: "127.0.0.1",
   port: 7331,
   enabledTools: ["list_dir"],
+  maxReadBytes: 2097152,
+  maxWriteBytes: 4194304,
   authTokenMutation: { action: "set", value: "test-token" },
 };
 

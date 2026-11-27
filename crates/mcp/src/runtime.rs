@@ -19,7 +19,7 @@ use crate::confirmation::ConfirmationManager;
 use crate::registry::StorageRegistry;
 use crate::server::InfimountMcpServer;
 use crate::session::SessionManager;
-use crate::settings::{normalize_auth_token, McpSettings};
+use crate::settings::{normalize_auth_token, McpByteLimits, McpSettings};
 use crate::tools_fs::FsToolsContext;
 
 pub const HTTP_ENDPOINT_PATH: &str = "/mcp";
@@ -94,8 +94,20 @@ pub async fn serve_stdio(
     registry: StorageRegistry,
     enabled_tools: Vec<String>,
 ) -> Result<(), Box<rmcp::RmcpError>> {
+    serve_stdio_with_limits(registry, enabled_tools, McpByteLimits::default()).await
+}
+
+pub async fn serve_stdio_with_limits(
+    registry: StorageRegistry,
+    enabled_tools: Vec<String>,
+    byte_limits: McpByteLimits,
+) -> Result<(), Box<rmcp::RmcpError>> {
+    byte_limits
+        .validate()
+        .map_err(|error| Box::new(rmcp::RmcpError::TaskError(error.message)))?;
     let sessions = SessionManager::new();
     let ctx = FsToolsContext {
+        byte_limits,
         registry,
         sessions,
         allow_insecure: true,
@@ -127,6 +139,35 @@ pub async fn start_http_server(
     confirmations: ConfirmationManager,
     sessions: SessionManager,
 ) -> io::Result<McpHttpServerHandle> {
+    start_http_server_with_limits(
+        registry,
+        bind_address,
+        port,
+        enabled_tools,
+        allow_insecure,
+        auth_token,
+        confirmations,
+        sessions,
+        McpByteLimits::default(),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn start_http_server_with_limits(
+    registry: StorageRegistry,
+    bind_address: &str,
+    port: u16,
+    enabled_tools: Vec<String>,
+    allow_insecure: bool,
+    auth_token: Option<String>,
+    confirmations: ConfirmationManager,
+    sessions: SessionManager,
+    byte_limits: McpByteLimits,
+) -> io::Result<McpHttpServerHandle> {
+    byte_limits
+        .validate()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.message))?;
     let auth_token = normalize_auth_token(auth_token);
 
     if !is_loopback_bind_address(bind_address) {
@@ -161,6 +202,7 @@ pub async fn start_http_server(
             move || {
                 Ok(InfimountMcpServer::with_confirmation_manager(
                     FsToolsContext {
+                        byte_limits,
                         registry: registry_for_factory.clone(),
                         sessions: sessions_for_factory.clone(),
                         allow_insecure: allow_insecure_for_factory,
@@ -218,7 +260,7 @@ pub async fn start_http_server_from_settings(
     let effective_auth_token = settings.auth_token.clone();
     let require_auth = effective_auth_token.is_some();
     let allow = allow_insecure && !require_auth;
-    start_http_server(
+    start_http_server_with_limits(
         registry,
         &settings.bind_address,
         settings.port,
@@ -227,6 +269,7 @@ pub async fn start_http_server_from_settings(
         effective_auth_token,
         confirmations,
         sessions,
+        settings.byte_limits(),
     )
     .await
 }
