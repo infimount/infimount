@@ -179,6 +179,7 @@ pub(crate) async fn ask_native_hosted_scope_confirmation(
 
 /// A separate native confirmation is required before deleting a pinned
 /// remote session, even though cleanup never starts or uploads a new run.
+#[cfg(feature = "hosted-live-pilot")]
 pub(crate) async fn ask_native_hosted_cleanup_confirmation(
     app: &tauri::AppHandle,
     execution_id: &str,
