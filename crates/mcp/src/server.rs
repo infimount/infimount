@@ -13,6 +13,7 @@ use rmcp::ServerHandler;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use tracing::info;
 
 use crate::audit::{AuditDecision, AuditEvent, AuditStore};
@@ -327,13 +328,15 @@ impl InfimountMcpServer {
             return Err(ErrorData::method_not_found::<CallToolRequestMethod>());
         }
 
-        let raw_input = serde_json::Value::Object(arguments.clone().unwrap_or_default());
         if let Some(arguments) = arguments.as_ref() {
             if let Some(response) = self.confirmation_gate(name, arguments).await? {
                 return Ok(wrap_json(Ok(response)));
             }
         }
 
+        // Move the arguments after confirmation rather than copying a large
+        // write payload before its preflight.
+        let raw_input = serde_json::Value::Object(arguments.unwrap_or_default());
         let result = match name {
             "list_dir" => invoke_list_dir_json(&self.ctx, raw_input).await,
             "stat_path" => invoke_stat_path_json(&self.ctx, raw_input).await,
@@ -372,7 +375,7 @@ impl InfimountMcpServer {
             return Ok(None);
         };
 
-        let fingerprint = request_fingerprint(tool_name, arguments);
+        let fingerprint = request_fingerprint(tool_name, arguments).map_err(mcp_to_rmcp_error)?;
         if let Some(confirmation_id) = arguments
             .get("confirmation_id")
             .and_then(|value| value.as_str())
@@ -1322,6 +1325,26 @@ async fn confirmation_check(
 ) -> McpResult<Option<ConfirmationCheck>> {
     match tool_name {
         "write_file" => {
+            let schema_error = || {
+                err_with_details(
+                    McpErrorCode::ERR_INVALID_PATH,
+                    "input does not match write_file schema",
+                    json!({}),
+                )
+            };
+            let path = arguments
+                .get("path")
+                .and_then(|value| value.as_str())
+                .ok_or_else(schema_error)?;
+            let content = arguments
+                .get("content")
+                .and_then(|value| value.as_str())
+                .ok_or_else(schema_error)?;
+            let encoding = match arguments.get("encoding") {
+                Some(value) => value.as_str().ok_or_else(schema_error)?,
+                None => "utf-8",
+            };
+            tools_fs::validate_write_content_length(content, encoding, path)?;
             check_single_path_confirmation(
                 ctx,
                 tool_name,
@@ -1623,14 +1646,24 @@ fn is_confirmation_required_response(result: &serde_json::Value) -> bool {
         == Some("requires_confirmation")
 }
 
-fn request_fingerprint(tool_name: &str, arguments: &JsonObject) -> String {
-    let mut cloned = arguments.clone();
-    cloned.remove("confirmation_id");
-    let payload = serde_json::json!({
-        "tool": tool_name,
-        "arguments": cloned
-    });
-    serde_json::to_string(&payload).unwrap_or_else(|_| tool_name.to_string())
+fn request_fingerprint(tool_name: &str, arguments: &JsonObject) -> McpResult<String> {
+    // The old fingerprint stored the complete serialized request in the
+    // pending/approved queue (including write_file content). Hash a borrowed,
+    // deterministically ordered representation instead. Exclude only the
+    // approval ID so a changed payload or tool still fails exact binding.
+    let filtered: std::collections::BTreeMap<_, _> = arguments
+        .iter()
+        .filter(|(key, _)| key.as_str() != "confirmation_id")
+        .collect();
+    let mut digest = Sha256::new();
+    serde_json::to_writer(&mut digest, &(tool_name, filtered)).map_err(|_| {
+        err_with_details(
+            McpErrorCode::ERR_INTERNAL,
+            "failed to fingerprint confirmation request",
+            json!({}),
+        )
+    })?;
+    Ok(format!("sha256:{:x}", digest.finalize()))
 }
 
 fn operation_for_tool(tool_name: &str) -> McpOperation {
@@ -2235,6 +2268,67 @@ mod tests {
 
         let replay = server.dispatch_tool_json("delete_path", Some(args)).await;
         assert!(replay.is_err());
+    }
+
+    #[test]
+    fn confirmation_fingerprint_is_fixed_size_and_binds_exact_request() {
+        let mut args = JsonObject::new();
+        args.insert("path".into(), json!("/Local/file.bin"));
+        args.insert("content".into(), json!("private-payload"));
+        let original = request_fingerprint("write_file", &args).unwrap();
+        assert_eq!(original.len(), "sha256:".len() + 64);
+        assert!(!original.contains("private-payload"));
+        args.insert("confirmation_id".into(), json!("approval-id"));
+        assert_eq!(request_fingerprint("write_file", &args).unwrap(), original);
+        args.insert("content".into(), json!("different-payload"));
+        assert_ne!(request_fingerprint("write_file", &args).unwrap(), original);
+        assert_ne!(request_fingerprint("mkdir", &args).unwrap(), original);
+    }
+
+    #[tokio::test]
+    async fn oversized_write_never_enters_confirmation_queue() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let root = temp_dir.path().join("local");
+        std::fs::create_dir_all(&root).unwrap();
+        let ctx = test_context(&temp_dir);
+        let mut storage = StorageRecord::new(
+            "Local".to_string(),
+            "local".to_string(),
+            json!({ "root": root.clone() }),
+        );
+        storage.mcp_exposed = true;
+        storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
+        ctx.registry.save_all_atomic(&[storage]).unwrap();
+        let confirmations = ConfirmationManager::new();
+        let server = InfimountMcpServer::with_confirmation_manager(
+            ctx,
+            all_tool_names(),
+            confirmations.clone(),
+        );
+        for (encoding, content) in [
+            ("utf-8", "x".repeat(tools_fs::MAX_MCP_WRITE_BYTES + 1)),
+            (
+                "base64",
+                "A".repeat(tools_fs::MAX_MCP_WRITE_BASE64_LEN + 4),
+            ),
+            // Exactly the maximum encoded length, but no padding. It
+            // represents two more decoded bytes than allowed.
+            ("base64", "A".repeat(tools_fs::MAX_MCP_WRITE_BASE64_LEN)),
+        ] {
+            let mut args = JsonObject::new();
+            args.insert("path".into(), json!("/Local/missing/file.bin"));
+            args.insert("content".into(), json!(content));
+            args.insert("encoding".into(), json!(encoding));
+            args.insert("create_parents".into(), json!(true));
+            args.insert("overwrite".into(), json!(false));
+            let error = server
+                .dispatch_tool_json("write_file", Some(args))
+                .await
+                .expect_err("must fail before confirmation");
+            assert_eq!(error_code_from_error_data(&error), "ERR_INVALID_PATH");
+            assert!(confirmations.list_pending().await.is_empty());
+            assert!(!root.join("missing").exists());
+        }
     }
 
     /// #249: a binary write through the main MCP dispatch path is gated by

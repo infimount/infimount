@@ -256,39 +256,39 @@ fn sanitize_user_metadata(
 /// agents can store binary output such as images, spreadsheets or archives.
 pub const SUPPORTED_WRITE_ENCODINGS: [&str; 2] = ["utf-8", "base64"];
 
-fn decode_content(content: String, encoding: &str, path: &str) -> McpResult<Vec<u8>> {
+/// Cheap preflight, also used by the MCP confirmation path before it hashes
+/// or queues a write. The actual decoder remains authoritative for validity.
+pub(crate) fn validate_write_content_length(
+    content: &str,
+    encoding: &str,
+    path: &str,
+) -> McpResult<()> {
     if encoding.eq_ignore_ascii_case("utf-8") {
-        // UTF-8 bytes are the content itself: check the length, then take
-        // ownership without copying.
         if content.len() > MAX_MCP_WRITE_BYTES {
             return Err(content_too_large(path));
         }
-        return Ok(content.into_bytes());
+        return Ok(());
     }
     if encoding.eq_ignore_ascii_case("base64") {
-        // Bound the decoder's input first; base64 never decodes to more bytes
-        // than its text length, so this caps the allocation too.
         if content.len() > MAX_MCP_WRITE_BASE64_LEN {
             return Err(content_too_large(path));
         }
-        let bytes = BASE64_STANDARD.decode(content.as_bytes()).map_err(|err| {
-            err_with_details(
-                McpErrorCode::ERR_TEXT_DECODE_FAILED,
-                "content is not valid base64",
-                json!({
-                    "path": path,
-                    "encoding": "base64",
-                    "reason": err.to_string(),
-                    "hint": "use standard base64 (RFC 4648) with padding"
-                }),
-            )
-        })?;
-        // A maximal-length payload can still decode to up to 2 bytes over the
-        // cap, so the decoded size is checked as well.
-        if bytes.len() > MAX_MCP_WRITE_BYTES {
-            return Err(content_too_large(path));
+        // For a potentially valid padded payload, account for the last
+        // quartet. The encoded-length bound alone permits up to two extra bytes.
+        if content.len().is_multiple_of(4) {
+            let padding = if content.ends_with("==") {
+                2
+            } else if content.ends_with('=') {
+                1
+            } else {
+                0
+            };
+            let decoded_len = (content.len() / 4 * 3).saturating_sub(padding);
+            if decoded_len > MAX_MCP_WRITE_BYTES {
+                return Err(content_too_large(path));
+            }
         }
-        return Ok(bytes);
+        return Ok(());
     }
     Err(err_with_details(
         McpErrorCode::ERR_TEXT_DECODE_FAILED,
@@ -300,6 +300,30 @@ fn decode_content(content: String, encoding: &str, path: &str) -> McpResult<Vec<
             "supported_encodings": SUPPORTED_WRITE_ENCODINGS
         }),
     ))
+}
+
+fn decode_content(content: String, encoding: &str, path: &str) -> McpResult<Vec<u8>> {
+    validate_write_content_length(&content, encoding, path)?;
+    if encoding.eq_ignore_ascii_case("utf-8") {
+        return Ok(content.into_bytes());
+    }
+    let bytes = BASE64_STANDARD.decode(content.as_bytes()).map_err(|err| {
+        err_with_details(
+            McpErrorCode::ERR_TEXT_DECODE_FAILED,
+            "content is not valid base64",
+            json!({
+                "path": path,
+                "encoding": "base64",
+                "reason": err.to_string(),
+                "hint": "use standard base64 (RFC 4648) with padding"
+            }),
+        )
+    })?;
+    // Keep the decoded size check as defense in depth.
+    if bytes.len() > MAX_MCP_WRITE_BYTES {
+        return Err(content_too_large(path));
+    }
+    Ok(bytes)
 }
 
 fn content_too_large(path: &str) -> McpError {
