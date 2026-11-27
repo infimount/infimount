@@ -134,6 +134,12 @@ Approved optional agent directions remain:
 Browser regressions block release. Experimental agent work must never silently
 enable agent access or require a workspace to use the file browser.
 
+The optional, single-replica hosted artifact data plane is approved for v0.8.2
+implementation under [ADR 0012](docs/adr/0012-hosted-artifact-data-plane.md).
+It is a separate explicitly started service with verified request identity,
+server-owned scopes, create-only artifacts and authenticated transfers. This
+decision does not approve public deployment or the separate live-provider pilot.
+
 No v0.9 release is planned for roughly the next year.
 
 ## Brand personality
