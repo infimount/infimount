@@ -22,6 +22,9 @@ const AGENT_TASK_SOURCE_CONTENT = "release pilot source bytes must remain unchan
 const AGENT_TASK_OUTPUT_V1 = "deterministic agent output v1\n";
 const AGENT_TASK_OUTPUT_V2 = "deterministic agent output v2\n";
 const AGENT_TASK_DESTINATION_DIR = "publish-destination";
+const PAGINATION_FILES = new Set(
+  Array.from({ length: 260 }, (_, index) => `page-${String(index).padStart(4, "0")}.txt`),
+);
 
 function fail(message) {
   throw new Error(`Release pilot WebDriver failed: ${message}`);
@@ -393,6 +396,74 @@ class WebDriver {
       [{ [ELEMENT_KEY]: listbox }],
     );
   }
+
+  async paginationSnapshot() {
+    return this.execute(
+      `const list = document.querySelector('[role="listbox"]');
+       const options = Array.from(list?.querySelectorAll('[data-infimount-file-item="true"][role="option"]') || []);
+       const more = Array.from(document.querySelectorAll("button"))
+         .find((button) => button.textContent.trim() === "Load more");
+       const body = document.body.textContent || "";
+       return {
+         path: document.querySelector('button[title="Click to edit path"]')?.textContent?.trim(),
+         names: options.map((option) => option.getAttribute("aria-label")),
+         sample: options.slice(0, 3).map((option) => ({
+           label: option.getAttribute("aria-label"),
+           title: option.querySelector("[title]")?.getAttribute("title"),
+           text: option.textContent,
+         })),
+         hasMore: Boolean(more),
+         moreClass: more?.className,
+         loading: body.includes("Loading files...") || body.includes("Loading more files…"),
+         error: body.includes("More files could not be loaded") || body.includes("Listing reached the backend safety limit"),
+         scrollTop: list?.scrollTop,
+         scrollHeight: list?.scrollHeight,
+         clientHeight: list?.clientHeight,
+       };`,
+    );
+  }
+
+  async assertCompletePagination() {
+    const observed = new Set();
+    // Revisit the whole virtualized list only after the backend cursor is
+    // exhausted. Sorting newly appended pages can move earlier cards.
+    await this.execute(
+      `const list = document.querySelector('[role="listbox"]');
+       list.scrollTop = 0;
+       list.dispatchEvent(new Event("scroll", { bubbles: false }));`,
+    );
+    let snapshot;
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      await sleep(200);
+      snapshot = await this.paginationSnapshot();
+      if (snapshot.path?.replace(/^\/+|\/+$/g, "") !== "pagination"
+        || snapshot.hasMore || snapshot.loading || snapshot.error) {
+        fail(`pagination changed during complete-list verification: ${JSON.stringify(snapshot)}`);
+      }
+      if (new Set(snapshot.names).size !== snapshot.names.length) {
+        fail(`pagination rendered duplicate fixture cards: ${JSON.stringify(snapshot)}`);
+      }
+      for (const name of snapshot.names) {
+        if (!PAGINATION_FILES.has(name)) {
+          fail(`pagination rendered an unexpected fixture: ${JSON.stringify(snapshot)}`);
+        }
+        observed.add(name);
+      }
+      if (observed.size === PAGINATION_FILES.size) break;
+      if (snapshot.scrollTop + snapshot.clientHeight >= snapshot.scrollHeight - 1
+        && snapshot.names.includes("page-0259.txt")) break;
+      await this.execute(
+        `const list = document.querySelector('[role="listbox"]');
+         list.scrollTop += Math.max(1, Math.floor(list.clientHeight / 2));
+         list.dispatchEvent(new Event("scroll", { bubbles: false }));`,
+      );
+    }
+    const missing = [...PAGINATION_FILES].filter((name) => !observed.has(name));
+    if (missing.length) {
+      fail(`pagination omitted ${missing.length} fixtures after cursor exhaustion: ${missing.join(", ")}; listing: ${JSON.stringify(snapshot)}`);
+    }
+    console.log(`pagination_fixture_observed_count=${observed.size}`);
+  }
 }
 
 function sha256Bytes(bytes) {
@@ -745,7 +816,17 @@ async function readOnlyAgentAccessSession(driver) {
         const events = await driver.execute("return window.__infimountPilotEnterEvents;");
         return Array.isArray(events) && events.some((event) => event.trusted && event.onPagination);
       }, 5000, "trusted Enter keydown on pagination card");
-      await driver.waitElement("css selector", '[aria-label="page-0000.txt"]', 20000);
+      // OpenDAL's filesystem pages preserve native directory enumeration order.
+      // The UI sorts only entries already loaded, so lexical zero may be on a
+      // later page. Require the entered folder, real fixture cards and an
+      // outstanding continuation before intentionally making its cursor stale.
+      await driver.waitFor(async () => {
+        const listing = await driver.paginationSnapshot();
+        return listing.path?.replace(/^\/+|\/+$/g, "") === "pagination"
+          && !listing.loading && !listing.error && listing.hasMore
+          && listing.names.length > 0
+          && listing.names.every((name) => PAGINATION_FILES.has(name));
+      }, 20000, "pagination folder with fixture cards and a pending continuation");
     } catch (error) {
       const diagnostic = await driver.execute(
         `const active = document.activeElement;
@@ -756,12 +837,13 @@ async function readOnlyAgentAccessSession(driver) {
            activeTabIndex: active?.tabIndex,
            enterEvents: window.__infimountPilotEnterEvents,
            folderPresent: Boolean(document.querySelector(arguments[0])),
-           pageOnePresent: Boolean(document.querySelector('[aria-label="page-0000.txt"]')),
+           pageZeroPresent: Boolean(document.querySelector('[aria-label="page-0000.txt"]')),
          };`,
         [paginationSelector],
       ).catch(() => null);
+      const listing = await driver.paginationSnapshot().catch(() => null);
       const snapshot = await driver.bodySnapshot(1500).catch(() => "<DOM snapshot unavailable>");
-      fail(`Enter did not open pagination or load page one: ${error.message}; input: ${JSON.stringify(diagnostic)}; DOM: ${snapshot}`);
+      fail(`Enter did not open pagination or load page one: ${error.message}; input: ${JSON.stringify(diagnostic)}; listing: ${JSON.stringify(listing)}; DOM: ${snapshot}`);
     }
     const hiddenLoadMore = await driver.waitElement(
       "xpath",
@@ -795,8 +877,12 @@ async function readOnlyAgentAccessSession(driver) {
     for (let attempt = 0; attempt < 8; attempt += 1) {
       await driver.scrollFileListToEnd();
       await sleep(800);
+      const listing = await driver.paginationSnapshot();
+      if (listing.error) {
+        fail(`pagination surfaced a continuation error after stale cursor recovery: ${JSON.stringify(listing)}`);
+      }
       const last = await driver.find("css selector", '[aria-label="page-0259.txt"]', true);
-      if (last && await driver.displayed(last)) {
+      if (!listing.hasMore && !listing.loading && last && await driver.displayed(last)) {
         reachedLast = true;
         break;
       }
@@ -806,7 +892,8 @@ async function readOnlyAgentAccessSession(driver) {
       }
     }
     if (!reachedLast) {
-      fail("pagination did not auto-continue to page-0259.txt after stale cursor recovery");
+      const listing = await driver.paginationSnapshot().catch(() => null);
+      fail(`pagination did not exhaust its cursor and reach page-0259.txt after stale cursor recovery: ${JSON.stringify(listing)}`);
     }
     const remainingLoadMore = await driver.find(
       "xpath",
@@ -819,6 +906,7 @@ async function readOnlyAgentAccessSession(driver) {
         fail(`pagination Load more fallback became visible after continuation: ${remainingClass}`);
       }
     }
+    await driver.assertCompletePagination();
     console.log("pagination_auto_continuation=passed");
     console.log("stale_cursor_recovery=passed");
   } finally {

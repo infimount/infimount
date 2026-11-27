@@ -193,7 +193,7 @@ Current tool groups include:
 Version listing and write operations are bounded for safety:
 
 - `list_versions` scans at most 10,000 versions per path, returns at most 1,000 per page, and reports `truncated: true` when more versions may exist. Pagination uses a signed cursor bound to the storage, path, and storage revision.
-- `write_file` accepts at most 4 MiB of content and is disabled by default. No-overwrite writes require an atomic create-if-absent-capable backend; other backends return `ERR_BACKEND_UNSUPPORTED`.
+- `write_file` accepts at most 4 MiB of content and is disabled by default. Send UTF-8 text with the default `encoding: "utf-8"`, or binary files (images, spreadsheets, archives) as standard padded base64 with `encoding: "base64"`; the 4 MiB limit applies to the decoded bytes. `read_file` with `as_text: false` returns the same base64 form. No-overwrite writes require an atomic create-if-absent-capable backend; other backends return `ERR_BACKEND_UNSUPPORTED`.
 
 Storage-management operations are desktop-only and are never exposed as public MCP tools.
 For threat model details, see [Security Model](security.md).
