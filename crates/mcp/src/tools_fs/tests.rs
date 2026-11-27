@@ -2956,3 +2956,70 @@ fn write_file_schema_allows_base64_content_up_to_the_byte_cap() {
         .collect();
     assert_eq!(allowed, vec!["utf-8", "base64"]);
 }
+
+#[tokio::test]
+async fn write_file_rejects_oversized_base64_before_decoding() {
+    let dir = TempDir::new().unwrap();
+    let (ctx, local_root) = binary_write_ctx(&dir);
+    let max_encoded = super::write_file::MAX_MCP_WRITE_BASE64_LEN;
+
+    // Not valid base64 at all: if the decoder ran first this would be a
+    // decode error. The length pre-check must reject it as too large instead.
+    let oversized = "!".repeat(max_encoded + 1);
+    let err = write_file(&ctx, base64_write("/Local/huge.bin", oversized))
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.code, McpErrorCode::ERR_INVALID_PATH);
+    assert_eq!(err.message, "file content exceeds the 4 MiB write limit");
+    assert!(!local_root.join("huge.bin").exists());
+}
+
+#[tokio::test]
+async fn write_file_utf8_cap_counts_bytes_not_characters() {
+    let dir = TempDir::new().unwrap();
+    let (ctx, local_root) = binary_write_ctx(&dir);
+    let max = super::write_file::MAX_MCP_WRITE_BYTES;
+    let text_write = |path: &str, content: String| WriteFileInput {
+        encoding: "utf-8".to_string(),
+        ..base64_write(path, content)
+    };
+
+    // "é" is 2 bytes in UTF-8: max/2 characters is exactly the byte cap.
+    let at_limit = "é".repeat(max / 2);
+    let ok = write_file(&ctx, text_write("/Local/at-limit.txt", at_limit))
+        .await
+        .unwrap();
+    assert_eq!(ok.written_bytes as usize, max);
+
+    // One more character is far fewer than `max` characters but 2 bytes over.
+    let over = "é".repeat(max / 2 + 1);
+    assert!(over.chars().count() < max);
+    let err = write_file(&ctx, text_write("/Local/over.txt", over))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, McpErrorCode::ERR_INVALID_PATH);
+    assert!(!local_root.join("over.txt").exists());
+}
+
+#[tokio::test]
+async fn write_file_invalid_base64_with_create_parents_creates_nothing() {
+    let dir = TempDir::new().unwrap();
+    let (ctx, local_root) = binary_write_ctx(&dir);
+
+    let err = write_file(
+        &ctx,
+        WriteFileInput {
+            create_parents: true,
+            ..base64_write("/Local/new/nested/bad.bin", "not base64!!".to_string())
+        },
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code, McpErrorCode::ERR_TEXT_DECODE_FAILED);
+    assert!(
+        !local_root.join("new").exists(),
+        "a rejected payload must not create parent directories"
+    );
+}

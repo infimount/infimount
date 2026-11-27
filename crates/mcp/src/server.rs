@@ -2237,6 +2237,86 @@ mod tests {
         assert!(replay.is_err());
     }
 
+    /// #249: a binary write through the main MCP dispatch path is gated by
+    /// confirmation, and the approval is bound to the exact base64 payload.
+    #[tokio::test]
+    async fn binary_write_requires_confirmation_bound_to_payload() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let root = temp_dir.path().join("local");
+        std::fs::create_dir_all(&root).expect("create local root");
+
+        let ctx = test_context(&temp_dir);
+        let mut storage = StorageRecord::new(
+            "Local".to_string(),
+            "local".to_string(),
+            json!({ "root": root.clone() }),
+        );
+        storage.mcp_exposed = true;
+        storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
+        ctx.registry
+            .save_all_atomic(&[storage])
+            .expect("save registry");
+
+        let confirmations = ConfirmationManager::new();
+        let server = InfimountMcpServer::with_confirmation_manager(
+            ctx,
+            all_tool_names(),
+            confirmations.clone(),
+        );
+        let write_args = |path: &str, content: &str| {
+            let mut args = JsonObject::new();
+            args.insert("path".to_string(), json!(path));
+            args.insert("content".to_string(), json!(content));
+            args.insert("encoding".to_string(), json!("base64"));
+            args.insert("overwrite".to_string(), json!(false));
+            args
+        };
+
+        // Approved binary write executes once with the exact bytes.
+        let mut args = write_args("/Local/a.bin", "/wAB");
+        let pending = server
+            .dispatch_tool_json("write_file", Some(args.clone()))
+            .await
+            .expect("confirmation response");
+        assert_eq!(pending["data"]["status"], "requires_confirmation");
+        assert!(!root.join("a.bin").exists());
+        let operation_id = pending["data"]["operation_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        confirmations.approve(&operation_id).await.expect("approve");
+        args.insert("confirmation_id".to_string(), json!(operation_id));
+        let written = server
+            .dispatch_tool_json("write_file", Some(args))
+            .await
+            .expect("write response");
+        assert_eq!(written["ok"], true, "{written}");
+        assert_eq!(written["data"]["written_bytes"], 3);
+        assert_eq!(
+            std::fs::read(root.join("a.bin")).unwrap(),
+            vec![0xff, 0x00, 0x01]
+        );
+
+        // An approval for one payload cannot be replayed with different bytes.
+        let pending = server
+            .dispatch_tool_json("write_file", Some(write_args("/Local/b.bin", "/wAB")))
+            .await
+            .expect("confirmation response");
+        let operation_id = pending["data"]["operation_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        confirmations.approve(&operation_id).await.expect("approve");
+        let mut swapped = write_args("/Local/b.bin", "AAAA");
+        swapped.insert("confirmation_id".to_string(), json!(operation_id));
+        let result = server.dispatch_tool_json("write_file", Some(swapped)).await;
+        assert!(
+            result.is_err(),
+            "approval must not cover a different payload"
+        );
+        assert!(!root.join("b.bin").exists());
+    }
+
     #[tokio::test]
     async fn approved_confirmation_cannot_be_used_for_modified_request() {
         let temp_dir = TempDir::new().expect("create temp dir");
