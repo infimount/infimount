@@ -30,6 +30,25 @@
 
 **Current stable release:** [v0.8.1](https://github.com/infimount/infimount/releases/tag/v0.8.1)
 
+<!-- release-candidate:start -->
+**Release candidate:** [v0.8.2-rc.1](https://github.com/infimount/infimount/releases/tag/v0.8.2-rc.1)
+
+The v0.8.2-rc.1 source candidate is prepared for automated qualification. It adds bounded binary MCP operations, an optional authenticated artifact service, delegated download links, opt-in hosted counters, and governed native Python bindings. The [candidate notes](docs/release-notes-0.8.2-rc.1.md) describe its scope and required checks. v0.8.1 remains the stable channel. Candidate packages become available after the release workflow publishes them.
+
+Once the candidate is published, select it explicitly:
+
+```bash
+curl -fsSL https://github.com/infimount/infimount/releases/download/v0.8.2-rc.1/install.sh | INFIMOUNT_VERSION=v0.8.2-rc.1 sh
+```
+
+Windows PowerShell:
+
+```powershell
+$env:INFIMOUNT_VERSION='v0.8.2-rc.1'
+irm https://github.com/infimount/infimount/releases/download/v0.8.2-rc.1/install.ps1 | iex
+```
+<!-- release-candidate:end -->
+
 
 ### Linux
 
@@ -215,11 +234,19 @@ Operational guides: [Agent Workspaces](docs/agent-workspaces.md), [Agent Tasks](
 
 ### Optional hosted artifact service
 
-The v0.8.2 feature train includes a separate `infimount-hosted` service for agent platforms that need governed artifact storage and authenticated downloads. It supports Linux deployments with a confined dedicated filesystem or explicitly configured S3-compatible storage, resource-specific OAuth access tokens, scoped create-only writes, and bounded streaming transfers.
+The v0.8.2-rc.1 release candidate includes a separate `infimount-hosted` service for agent platforms that need governed artifact storage and authenticated downloads. It supports Linux deployments with a confined dedicated filesystem or explicitly configured S3-compatible storage, resource-specific OAuth access tokens, scoped create-only writes, and bounded streaming transfers.
 
 Start it explicitly with deployment-owned configuration. The desktop continues to work locally without this service. The initial deployment contract is one replica, with no administration, overwrite, delete, or anonymous sharing surface.
 
 Configuration, tools, limits, container and Kubernetes examples: [Hosted artifact service](docs/hosted-artifact-service.md). Product decision and boundaries: [ADR 0012](docs/adr/0012-hosted-artifact-data-plane.md).
+
+Optional [delegated links](docs/delegated-links.md) preserve authenticated storage redemption.
+Hosted telemetry exports fixed counters only when explicitly configured. The
+[distribution pipeline](docs/artifact-distribution.md) qualifies native Linux amd64/arm64
+containers and five CPython ABI3 wheel platforms. [Python bindings](docs/python-bindings.md)
+provide explicit local/S3 access through the same storage policies and reject operations
+requiring human confirmation. Integration scope is recorded in
+[ADR 0013](docs/adr/0013-artifact-integrations-and-distribution.md).
 
 ---
 

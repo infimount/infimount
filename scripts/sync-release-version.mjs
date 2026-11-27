@@ -26,4 +26,21 @@ const updatedWorkspaceCargo = workspaceCargo.replace(
 );
 fs.writeFileSync(workspaceCargoPath, updatedWorkspaceCargo, "utf8");
 
+// Keep locked release builds on the already-qualified dependency graph. Only
+// workspace package versions change when the tag is applied.
+const lockPath = "Cargo.lock";
+if (fs.existsSync(lockPath)) {
+  const workspacePackages = new Set([
+    "infimount", "infimount_control", "infimount_core", "infimount_hosted",
+    "infimount_mcp", "infimount_python",
+  ]);
+  const lock = fs.readFileSync(lockPath, "utf8").replace(
+    /\[\[package\]\]\nname = "([^"]+)"\nversion = "[^"]+"/g,
+    (block, name) => workspacePackages.has(name)
+      ? block.replace(/^version = "[^"]+"/m, `version = "${version}"`)
+      : block,
+  );
+  fs.writeFileSync(lockPath, lock, "utf8");
+}
+
 console.log(`Release version synchronized from tag ${tag} -> ${version}`);

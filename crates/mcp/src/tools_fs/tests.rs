@@ -37,6 +37,7 @@ async fn path_policy_denies_reads_and_writes_before_backend_operation() {
     registry.save_all_atomic(&[storage]).unwrap();
 
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions: sessions_in(),
         allow_insecure: true,
@@ -48,7 +49,7 @@ async fn path_policy_denies_reads_and_writes_before_backend_operation() {
         ReadFileInput {
             path: "/Local/private/secret.txt".to_string(),
             offset_bytes: 0,
-            max_bytes: 1024,
+            max_bytes: Some(1024),
             as_text: true,
             encoding: "utf-8".to_string(),
             session_id: None,
@@ -61,6 +62,7 @@ async fn path_policy_denies_reads_and_writes_before_backend_operation() {
     let write_error = write_file(
         &ctx,
         WriteFileInput {
+            content_type: None,
             path: "/Local/private/new.txt".to_string(),
             content: "nope".to_string(),
             encoding: "utf-8".to_string(),
@@ -120,6 +122,7 @@ async fn recursive_operations_enforce_denied_descendant_policy() {
     dst.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[src, dst]).unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions: sessions_in(),
         allow_insecure: true,
@@ -262,6 +265,7 @@ async fn copy_path_recursive_enforces_destination_descendant_policy_before_mutat
     };
     registry.save_all_atomic(&[src, dst]).unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions: sessions_in(),
         allow_insecure: true,
@@ -321,6 +325,7 @@ async fn list_dir_root_is_sorted_and_filtered() {
 
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -367,6 +372,7 @@ async fn list_dir_storage_dirs_first_then_files() {
 
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -414,6 +420,7 @@ async fn list_dir_recursive_is_flat_and_sorted_by_full_path() {
 
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -473,6 +480,7 @@ async fn list_dir_recursive_pages_are_bounded_and_filter_denied_nested_paths() {
     storage.mcp_policy.denied_paths = vec!["private".to_string()];
     registry.save_all_atomic(&[storage]).unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions: sessions_in(),
         allow_insecure: true,
@@ -542,6 +550,7 @@ async fn list_dir_cursor_offset_applies_after_sorting() {
     registry.save_all_atomic(&[s1, s2, s3]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -584,6 +593,7 @@ async fn malformed_cursor_returns_invalid_path() {
     let registry = registry_in(&dir);
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -612,6 +622,7 @@ async fn stat_path_root_special_case() {
     let registry = registry_in(&dir);
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -639,6 +650,7 @@ async fn read_file_root_is_rejected() {
     let registry = registry_in(&dir);
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -651,7 +663,7 @@ async fn read_file_root_is_rejected() {
             session_id: None,
             path: "/".to_string(),
             offset_bytes: 0,
-            max_bytes: 262_144,
+            max_bytes: Some(262_144),
             as_text: true,
             encoding: "utf-8".to_string(),
         },
@@ -679,6 +691,7 @@ async fn read_file_stat_checks_missing_and_directory() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -691,7 +704,7 @@ async fn read_file_stat_checks_missing_and_directory() {
             session_id: None,
             path: "/Local/missing.txt".to_string(),
             offset_bytes: 0,
-            max_bytes: 262_144,
+            max_bytes: Some(262_144),
             as_text: true,
             encoding: "utf-8".to_string(),
         },
@@ -706,7 +719,7 @@ async fn read_file_stat_checks_missing_and_directory() {
             session_id: None,
             path: "/Local/docs".to_string(),
             offset_bytes: 0,
-            max_bytes: 262_144,
+            max_bytes: Some(262_144),
             as_text: true,
             encoding: "utf-8".to_string(),
         },
@@ -734,6 +747,7 @@ async fn read_file_caps_bytes_and_sets_truncated() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -746,7 +760,7 @@ async fn read_file_caps_bytes_and_sets_truncated() {
             session_id: None,
             path: "/Local/hello.txt".to_string(),
             offset_bytes: 0,
-            max_bytes: 5,
+            max_bytes: Some(5),
             as_text: true,
             encoding: "utf-8".to_string(),
         },
@@ -777,6 +791,7 @@ async fn read_file_binary_base64_mode() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -789,7 +804,7 @@ async fn read_file_binary_base64_mode() {
             session_id: None,
             path: "/Local/bin.dat".to_string(),
             offset_bytes: 0,
-            max_bytes: 262_144,
+            max_bytes: Some(262_144),
             as_text: false,
             encoding: "utf-8".to_string(),
         },
@@ -820,6 +835,7 @@ async fn read_file_text_decode_failure_has_hint() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -832,7 +848,7 @@ async fn read_file_text_decode_failure_has_hint() {
             session_id: None,
             path: "/Local/bad.txt".to_string(),
             offset_bytes: 0,
-            max_bytes: 262_144,
+            max_bytes: Some(262_144),
             as_text: true,
             encoding: "utf-8".to_string(),
         },
@@ -850,6 +866,7 @@ async fn read_file_rejects_invalid_max_bytes() {
     let registry = registry_in(&dir);
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -862,7 +879,7 @@ async fn read_file_rejects_invalid_max_bytes() {
             session_id: None,
             path: "/Local/file.txt".to_string(),
             offset_bytes: 0,
-            max_bytes: 2_097_153,
+            max_bytes: Some(2_097_153),
             as_text: true,
             encoding: "utf-8".to_string(),
         },
@@ -881,7 +898,9 @@ fn read_file_input_defaults_are_applied() {
     .unwrap();
 
     assert_eq!(input.offset_bytes, 0);
-    assert_eq!(input.max_bytes, 262_144);
+    // Omission is preserved until runtime so a lower configured cap can set
+    // the default without treating an explicit excessive value as implicit.
+    assert_eq!(input.max_bytes, None);
     assert!(input.as_text);
     assert_eq!(input.encoding, "utf-8");
 }
@@ -904,6 +923,7 @@ async fn mkdir_rejects_read_only_storage() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -943,6 +963,7 @@ async fn mkdir_requires_parent_when_parents_false() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -982,6 +1003,7 @@ async fn mkdir_creates_nested_directories_when_parents_true() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1022,6 +1044,7 @@ async fn mkdir_exist_ok_false_returns_already_exists() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1061,6 +1084,7 @@ async fn mkdir_existing_dir_with_exist_ok_true_returns_not_created() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1101,6 +1125,7 @@ async fn write_file_rejects_read_only_storage() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1110,6 +1135,7 @@ async fn write_file_rejects_read_only_storage() {
     let err = write_file(
         &ctx,
         WriteFileInput {
+            content_type: None,
             session_id: None,
             user_metadata: None,
             confirmation_id: None,
@@ -1143,6 +1169,7 @@ async fn write_file_requires_parent_when_create_parents_false() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1152,6 +1179,7 @@ async fn write_file_requires_parent_when_create_parents_false() {
     let err = write_file(
         &ctx,
         WriteFileInput {
+            content_type: None,
             session_id: None,
             user_metadata: None,
             confirmation_id: None,
@@ -1185,6 +1213,7 @@ async fn write_file_creates_parents_when_requested() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1194,6 +1223,7 @@ async fn write_file_creates_parents_when_requested() {
     let out = write_file(
         &ctx,
         WriteFileInput {
+            content_type: None,
             session_id: None,
             user_metadata: None,
             confirmation_id: None,
@@ -1232,6 +1262,7 @@ async fn write_file_respects_overwrite_flag() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1241,6 +1272,7 @@ async fn write_file_respects_overwrite_flag() {
     let err = write_file(
         &ctx,
         WriteFileInput {
+            content_type: None,
             session_id: None,
             user_metadata: None,
             confirmation_id: None,
@@ -1258,6 +1290,7 @@ async fn write_file_respects_overwrite_flag() {
     let out = write_file(
         &ctx,
         WriteFileInput {
+            content_type: None,
             session_id: None,
             user_metadata: None,
             confirmation_id: None,
@@ -1294,6 +1327,7 @@ async fn write_file_rejects_directory_target_and_non_utf8_encoding() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1303,6 +1337,7 @@ async fn write_file_rejects_directory_target_and_non_utf8_encoding() {
     let dir_err = write_file(
         &ctx,
         WriteFileInput {
+            content_type: None,
             session_id: None,
             user_metadata: None,
             confirmation_id: None,
@@ -1320,6 +1355,7 @@ async fn write_file_rejects_directory_target_and_non_utf8_encoding() {
     let encoding_err = write_file(
         &ctx,
         WriteFileInput {
+            content_type: None,
             session_id: None,
             user_metadata: None,
             confirmation_id: None,
@@ -1366,6 +1402,7 @@ async fn write_file_accepts_user_metadata_when_backend_reports_support() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1375,6 +1412,7 @@ async fn write_file_accepts_user_metadata_when_backend_reports_support() {
     let out = write_file(
         &ctx,
         WriteFileInput {
+            content_type: None,
             session_id: None,
             confirmation_id: None,
             path: "/Local/file.txt".to_string(),
@@ -1400,6 +1438,7 @@ async fn delete_path_root_is_rejected() {
     let registry = registry_in(&dir);
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1440,6 +1479,7 @@ async fn delete_path_rejects_read_only_storage() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1479,6 +1519,7 @@ async fn delete_path_file_success_and_missing_returns_not_found() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1530,6 +1571,7 @@ async fn delete_path_directory_requires_recursive() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1570,6 +1612,7 @@ async fn delete_path_recursive_deletes_nested_structure() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1620,6 +1663,7 @@ async fn copy_path_rejects_read_only_destination() {
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1669,6 +1713,7 @@ async fn copy_path_rejects_directory_without_recursive() {
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1720,6 +1765,7 @@ async fn copy_path_overwrite_false_rejects_existing_destination() {
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1759,6 +1805,7 @@ async fn copy_path_requires_existing_parent_for_file_destination() {
     storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions: sessions_in(),
         allow_insecure: true,
@@ -1801,6 +1848,7 @@ async fn copy_path_same_storage_file_success() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1856,6 +1904,7 @@ async fn copy_path_cross_storage_streams_large_file() {
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -1904,6 +1953,7 @@ async fn copy_path_rejects_alias_copy_into_own_child() {
     b.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[a, b]).unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions: sessions_in(),
         allow_insecure: true,
@@ -1951,6 +2001,7 @@ async fn copy_path_rejects_alias_into_nested_root() {
     b.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[a, b]).unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions: sessions_in(),
         allow_insecure: true,
@@ -1990,6 +2041,7 @@ async fn copy_path_rejects_copy_into_own_subdirectory_same_storage() {
     storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions: sessions_in(),
         allow_insecure: true,
@@ -2041,6 +2093,7 @@ async fn copy_path_recursive_preserves_structure() {
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -2088,6 +2141,7 @@ async fn move_path_requires_existing_parent_for_file_destination() {
     storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions: sessions_in(),
         allow_insecure: true,
@@ -2130,6 +2184,7 @@ async fn move_path_same_storage_file_success() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -2184,6 +2239,7 @@ async fn move_path_cross_storage_success() {
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -2239,6 +2295,7 @@ async fn move_path_overwrite_false_rejects_existing_destination() {
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -2289,6 +2346,7 @@ async fn move_path_overwrite_true_replaces_existing_destination() {
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -2342,6 +2400,7 @@ async fn move_path_missing_source_returns_not_found() {
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -2392,6 +2451,7 @@ async fn move_path_rejects_read_only_source_or_destination() {
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -2431,6 +2491,7 @@ async fn move_path_rejects_read_only_source_or_destination() {
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -2478,6 +2539,7 @@ async fn move_path_rejects_directory_source() {
     registry.save_all_atomic(&[src, dst]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -2524,6 +2586,7 @@ async fn search_paths_returns_lexicographic_matches() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -2569,6 +2632,7 @@ async fn generate_download_link_local_backend_returns_presign_not_supported() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -2608,6 +2672,7 @@ async fn list_versions_local_backend_returns_not_supported() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -2646,6 +2711,7 @@ async fn write_file_enforces_four_mib_cap() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -2656,6 +2722,7 @@ async fn write_file_enforces_four_mib_cap() {
     let ok = write_file(
         &ctx,
         WriteFileInput {
+            content_type: None,
             session_id: None,
             user_metadata: None,
             confirmation_id: None,
@@ -2673,6 +2740,7 @@ async fn write_file_enforces_four_mib_cap() {
     let err = write_file(
         &ctx,
         WriteFileInput {
+            content_type: None,
             session_id: None,
             user_metadata: None,
             confirmation_id: None,
@@ -2707,6 +2775,7 @@ async fn write_file_atomic_create_succeeds_and_never_overwrites() {
     registry.save_all_atomic(&[storage]).unwrap();
     let sessions = sessions_in();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions,
         allow_insecure: true,
@@ -2716,6 +2785,7 @@ async fn write_file_atomic_create_succeeds_and_never_overwrites() {
     let fresh = write_file(
         &ctx,
         WriteFileInput {
+            content_type: None,
             session_id: None,
             user_metadata: None,
             confirmation_id: None,
@@ -2734,6 +2804,7 @@ async fn write_file_atomic_create_succeeds_and_never_overwrites() {
     let err = write_file(
         &ctx,
         WriteFileInput {
+            content_type: None,
             session_id: None,
             user_metadata: None,
             confirmation_id: None,
@@ -2787,6 +2858,7 @@ async fn write_file_no_overwrite_gate_fires_before_parent_creation() {
     storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions: sessions_in(),
         allow_insecure: true,
@@ -2796,6 +2868,7 @@ async fn write_file_no_overwrite_gate_fires_before_parent_creation() {
     let err = write_file(
         &ctx,
         WriteFileInput {
+            content_type: None,
             session_id: None,
             user_metadata: None,
             confirmation_id: None,
@@ -2829,6 +2902,7 @@ fn binary_write_ctx(dir: &TempDir) -> (FsToolsContext, std::path::PathBuf) {
     storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
     registry.save_all_atomic(&[storage]).unwrap();
     let ctx = FsToolsContext {
+        byte_limits: Default::default(),
         registry,
         sessions: sessions_in(),
         allow_insecure: true,
@@ -2839,6 +2913,7 @@ fn binary_write_ctx(dir: &TempDir) -> (FsToolsContext, std::path::PathBuf) {
 
 fn base64_write(path: &str, content: String) -> WriteFileInput {
     WriteFileInput {
+        content_type: None,
         session_id: None,
         user_metadata: None,
         confirmation_id: None,
@@ -2848,6 +2923,109 @@ fn base64_write(path: &str, content: String) -> WriteFileInput {
         overwrite: false,
         create_parents: false,
     }
+}
+
+#[tokio::test]
+async fn configured_byte_limits_bound_reads_and_decoded_writes() {
+    let dir = TempDir::new().unwrap();
+    let (mut ctx, local_root) = binary_write_ctx(&dir);
+    ctx.byte_limits = crate::settings::McpByteLimits {
+        max_read_bytes: 2,
+        max_write_bytes: 3,
+    };
+    write_file(&ctx, base64_write("/Local/bin.dat", "/wAB".into()))
+        .await
+        .unwrap();
+    let read = |max_bytes| ReadFileInput {
+        path: "/Local/bin.dat".into(),
+        offset_bytes: 0,
+        max_bytes,
+        as_text: false,
+        encoding: "utf-8".into(),
+        session_id: None,
+    };
+    let out = read_file(&ctx, read(None)).await.unwrap();
+    assert_eq!(out.read_bytes, 2);
+    assert_eq!(out.content, "/wA=");
+    assert!(out.truncated);
+    assert!(out.content_type.is_none());
+    assert!(serde_json::to_value(out)
+        .unwrap()
+        .get("content_type")
+        .is_none());
+    for invalid in [0, 3, u32::MAX] {
+        assert_eq!(
+            read_file(&ctx, read(Some(invalid))).await.unwrap_err().code,
+            McpErrorCode::ERR_INVALID_PATH
+        );
+    }
+    for (encoding, content) in [("base64", "AAAAAA=="), ("utf-8", "éé")] {
+        let mut request = base64_write("/Local/missing/rejected.dat", content.into());
+        request.encoding = encoding.into();
+        request.create_parents = true;
+        assert_eq!(
+            write_file(&ctx, request).await.unwrap_err().code,
+            McpErrorCode::ERR_INVALID_PATH
+        );
+        assert!(!local_root.join("missing").exists());
+    }
+}
+
+#[tokio::test]
+async fn content_type_is_validated_and_capability_gated_before_parent_creation() {
+    let dir = TempDir::new().unwrap();
+    let (ctx, local_root) = binary_write_ctx(&dir);
+    for (content_type, expected) in [
+        ("image/png", McpErrorCode::ERR_BACKEND_UNSUPPORTED),
+        (
+            "text/plain\r\nX-Secret: test",
+            McpErrorCode::ERR_INVALID_PATH,
+        ),
+        ("not a media type", McpErrorCode::ERR_INVALID_PATH),
+    ] {
+        let mut request = base64_write("/Local/missing/file.bin", "/wAB".into());
+        request.content_type = Some(content_type.into());
+        request.create_parents = true;
+        let error = write_file(&ctx, request).await.unwrap_err();
+        assert_eq!(error.code, expected);
+        assert!(!error.message.contains(content_type));
+        assert!(!local_root.join("missing").exists());
+    }
+    // Unix FS and WebDAV both support user metadata. Google Drive advertises
+    // writes without user metadata. Synthetic credentials make the builder
+    // valid, while the capability gate must fire before any provider I/O.
+    use infimount_core::secrets::{MemorySecretStore, SecretStore};
+    let secrets = std::sync::Arc::new(MemorySecretStore::new());
+    let registry = crate::registry::StorageRegistry::with_secret_store(
+        Some(dir.path().join("unsupported.json")),
+        secrets.clone(),
+    );
+    let mut unsupported =
+        StorageRecord::new("Drive".into(), "gdrive".into(), json!({ "rootPath": "/" }));
+    let account = format!("storage/{}", unsupported.id);
+    secrets
+        .put_json(
+            &account,
+            &json!({ "clientId": "synthetic-client", "accessToken": "synthetic-token" }),
+        )
+        .unwrap();
+    unsupported.secret_ref = Some(account);
+    unsupported.mcp_exposed = true;
+    unsupported.mcp_policy.default_access = McpAccessMode::ReadWrite;
+    registry.save_all_atomic(&[unsupported]).unwrap();
+    let unsupported_ctx = FsToolsContext { registry, ..ctx };
+    let mut metadata = base64_write("/Drive/missing/file.bin", "/wAB".into());
+    metadata.overwrite = true;
+    metadata.user_metadata = Some(HashMap::from([("name".into(), "value".into())]));
+    metadata.create_parents = true;
+    assert_eq!(
+        write_file(&unsupported_ctx, metadata)
+            .await
+            .unwrap_err()
+            .code,
+        McpErrorCode::ERR_BACKEND_UNSUPPORTED
+    );
+    assert!(!local_root.join("missing").exists());
 }
 
 #[tokio::test]
@@ -2884,7 +3062,7 @@ async fn write_file_base64_round_trips_with_read_file_binary_mode() {
             session_id: None,
             path: "/Local/all.bin".to_string(),
             offset_bytes: 0,
-            max_bytes: 262_144,
+            max_bytes: Some(262_144),
             as_text: false,
             encoding: "utf-8".to_string(),
         },
@@ -2971,7 +3149,10 @@ async fn write_file_rejects_oversized_base64_before_decoding() {
         .unwrap_err();
 
     assert_eq!(err.code, McpErrorCode::ERR_INVALID_PATH);
-    assert_eq!(err.message, "file content exceeds the 4 MiB write limit");
+    assert_eq!(
+        err.message,
+        "file content exceeds the configured write limit"
+    );
     assert!(!local_root.join("huge.bin").exists());
 }
 
@@ -2981,6 +3162,7 @@ async fn write_file_utf8_cap_counts_bytes_not_characters() {
     let (ctx, local_root) = binary_write_ctx(&dir);
     let max = super::write_file::MAX_MCP_WRITE_BYTES;
     let text_write = |path: &str, content: String| WriteFileInput {
+        content_type: None,
         encoding: "utf-8".to_string(),
         ..base64_write(path, content)
     };
@@ -3010,6 +3192,7 @@ async fn write_file_invalid_base64_with_create_parents_creates_nothing() {
     let err = write_file(
         &ctx,
         WriteFileInput {
+            content_type: None,
             create_parents: true,
             ..base64_write("/Local/new/nested/bad.bin", "not base64!!".to_string())
         },

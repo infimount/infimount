@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -71,6 +72,10 @@ jobs:
       - name: Install exact release MSRV (Rust 1.94)
         uses: dtolnay/rust-toolchain@1.94
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
       - name: Re-download and validate published assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -83,6 +88,7 @@ jobs:
           ./scripts/check-release-assets.sh published-release-assets
           ./scripts/check-updater-assets.sh published-release-assets "${RELEASE_TAG#v}"
           node scripts/check-upgrade-fixtures.mjs published-release-assets
+          python scripts/check-distribution-assets.py published-release-assets "$RELEASE_TAG" --revision "$(git rev-parse HEAD)"
 
           public_key="$(jq -r '.plugins.updater.pubkey' apps/desktop/src-tauri/tauri.conf.json)"
           while IFS= read -r signature; do
@@ -99,6 +105,38 @@ jobs:
             esac
             curl --fail --silent --show-error --location --head --retry 5 "$url" >/dev/null
           done < <(jq -r '.platforms[].url' published-release-assets/latest.json)
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify published image provenance and digest-pinned execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          image="$(jq -er .image published-release-assets/hosted-image.json)"
+          digest="$(jq -er .digest published-release-assets/hosted-image.json)"
+          gh attestation verify "oci://$image@$digest" --repo "$GITHUB_REPOSITORY"
+          docker buildx imagetools inspect "$image@$digest" --format '{{json .Manifest}}' > image-manifest.json
+          python - <<'PY'
+          import json
+          expected = json.load(open("published-release-assets/hosted-image.json"))
+          actual = json.load(open("image-manifest.json"))
+          assert actual["digest"] == expected["digest"]
+          assert len(actual["manifests"]) == 2
+          observed = {f'{row["platform"]["os"]}/{row["platform"]["architecture"]}': row["digest"] for row in actual["manifests"]}
+          assert observed == {row["platform"]: row["digest"] for row in expected["platforms"]}
+          PY
+          docker pull --platform linux/amd64 "$image@$digest"
+          docker run --rm --platform linux/amd64 --network=none --read-only --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            --mount type=bind,src="$PWD/deploy/hosted/example-local.json",dst=/run/hosted.json,readonly \
+            "$image@$digest" check --config /run/hosted.json
 
       - name: Install Linux installer-upgrade dependencies
         run: bash scripts/ci-apt-install.sh xvfb gnome-keyring dbus-x11 libsecret-tools

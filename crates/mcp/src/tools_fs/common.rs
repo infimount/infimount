@@ -35,6 +35,7 @@ pub fn take_last_policy_eval() -> Option<(Option<String>, Option<String>)> {
 
 #[derive(Debug)]
 pub struct FsToolsContext {
+    pub byte_limits: crate::settings::McpByteLimits,
     pub registry: StorageRegistry,
     pub sessions: SessionManager,
     pub allow_insecure: bool,
@@ -118,6 +119,23 @@ pub(super) fn default_limit() -> u32 {
 
 pub(super) fn default_read_max_bytes() -> u32 {
     262_144
+}
+
+pub(super) fn resolve_read_max_bytes(
+    ctx: &FsToolsContext,
+    requested: Option<u32>,
+) -> McpResult<u32> {
+    ctx.byte_limits.validate()?;
+    let limit = ctx.byte_limits.max_read_bytes;
+    let requested = requested.unwrap_or_else(|| default_read_max_bytes().min(limit));
+    if requested == 0 || requested > limit {
+        return Err(err_with_details(
+            McpErrorCode::ERR_INVALID_PATH,
+            "max_bytes exceeds the configured read limit or is zero",
+            json!({ "max_bytes": limit }),
+        ));
+    }
+    Ok(requested)
 }
 
 pub(super) fn default_as_text() -> bool {

@@ -1,0 +1,69 @@
+name: Prepare Release Candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_tag:
+        description: "Exact prepared rc tag, for example v0.8.2-rc.1"
+        required: true
+        type: string
+      expected_sha:
+        description: "Full 40-character merged main commit SHA"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-release-candidate
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  validate:
+    name: Validate prepared candidate without writes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Check candidate automation regressions
+        run: node --test scripts/test-prepare-release-candidate.mjs
+      - name: Require exact main commit and prepared release identity
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: node scripts/prepare-release-candidate.mjs validate
+
+  create-tag-and-dispatch:
+    name: Create immutable candidate tag and dispatch Release
+    needs: [validate]
+    if: github.repository == 'infimount/infimount' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Revalidate source, create tag and dispatch canonical Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: node scripts/prepare-release-candidate.mjs publish

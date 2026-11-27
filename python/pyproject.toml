@@ -1,0 +1,24 @@
+[build-system]
+requires = ["maturin==1.16.0"]
+build-backend = "maturin"
+
+[project]
+name = "infimount"
+dynamic = ["version"]
+description = "Explicitly configured, governed native storage access for Python"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Rust",
+]
+
+[tool.maturin]
+manifest-path = "../crates/python/Cargo.toml"
+python-source = "."
+module-name = "infimount._native"
+bindings = "pyo3"
+strip = true

@@ -1,9 +1,13 @@
 # Hosted artifact service
 
-The v0.8.2 feature train adds the optional `infimount-hosted` executable for an authenticated storage
+Release status: included in the [v0.8.2-rc.1 source candidate](release-notes-0.8.2-rc.1.md),
+prepared for automated qualification. v0.8.1 remains the stable release.
+
+The candidate adds the optional `infimount-hosted` executable for an authenticated storage
 data plane for agent platforms. It runs independently of the desktop browser and
 its loopback MCP sidecar. The accepted scope is recorded in
-[ADR 0012](adr/0012-hosted-artifact-data-plane.md).
+[ADR 0012](adr/0012-hosted-artifact-data-plane.md) and the integration extension in
+[ADR 0013](adr/0013-artifact-integrations-and-distribution.md).
 
 The initial service supports **one Linux replica**, dedicated local storage and
 S3-compatible storage. It provides scoped browsing, binary reads, create-only
@@ -67,6 +71,13 @@ do not create a public ingress or provision an identity provider. The image
 must be available in the deployment's registry, and the trusted issuer, public
 origin, TLS ingress and storage configuration must agree before deployment.
 Rendering the manifests performs no cluster mutation.
+
+The canonical release workflow qualifies native Linux amd64 and arm64 images,
+then publishes a combined image at `ghcr.io/infimount/infimount-hosted:<release-tag>`.
+The release's `hosted-image.json` contains the immutable image digest, both
+platform digests and the exact source commit. Pin deployments to that digest.
+The [distribution guide](artifact-distribution.md) explains verification and the
+separate stable/prerelease tags. Source builds remain available without a registry.
 
 If `public_url` changes, update the Host header in the startup, liveness and
 readiness probes to match its authority. The sample NetworkPolicy permits
@@ -279,6 +290,13 @@ Call `create_download` for an authorized path. It returns `download_id`, `url`,
 `single_use: true`. The server captures a verified private snapshot and rechecks
 the object's identity and current authority before redemption.
 
+The default delivery mode returns the direct authenticated service URL.
+An optional [delegated link issuer](delegated-links.md) can supply a platform URL
+on a separately pinned HTTPS origin. That response also contains `redeem_url`
+on the hosted service's own origin. Send the storage OAuth token only to
+`redeem_url`. Open the external platform URL using that platform's own session.
+Delegation does not create anonymous storage authority or forward user tokens.
+
 `GET /downloads/{id}` requires the same authenticated identity. There is no
 backend redirect and no anonymous bearer link. An authenticated application
 backend can fetch the bytes and relay them to its browser session. A plain
@@ -342,11 +360,65 @@ transfer or protocol stages, and reported bytes can occur at more than one stage
 The deployment's log or metrics collector handles export and retention. There is
 no separate metrics HTTP endpoint.
 
+### Optional OTLP export
+
+Hosted network telemetry is disabled by default and is separate from desktop
+telemetry consent. The trusted service configuration can opt in to a single
+HTTPS OTLP/HTTP JSON metrics endpoint:
+
+```json
+{
+  "telemetry": {
+    "mode": "otlp_http",
+    "endpoint": "https://collector.example.com/v1/metrics",
+    "bearer_token": {
+      "kind": "file",
+      "path": "/run/secrets/infimount/collector-token"
+    },
+    "interval_seconds": 30,
+    "timeout_milliseconds": 2000
+  }
+}
+```
+
+This is a section to add to a complete hosted configuration. `bearer_token` is
+optional. When present, it is a dedicated collector credential. It is never an
+artifact user's OAuth token or a storage credential. `check` validates references
+without resolving them. `serve` resolves the configured secret before listening.
+Omitting `telemetry`, or setting `{"mode":"disabled"}`, exports nothing.
+Ambient `OTEL_*` variables and HTTP proxy variables do not enable or redirect
+hosted export. Changing the destination or disabling export requires a restart.
+
+| Metric | Unit | Attributes |
+| --- | --- | --- |
+| `infimount.hosted.audit.events` | `1` | Fixed operation and allowed/denied outcome |
+| `infimount.hosted.reported.bytes` | `By` | The same fixed attributes |
+
+Both sums are monotonic and cumulative, with the process-lifetime start timestamp
+required by the [OTLP data model](https://opentelemetry.io/docs/specs/otel/metrics/data-model/).
+There are 21 operation categories and two outcomes, so each metric has at most
+42 series. Unknown operations use `other`. The resource contains only the static
+service name and build version. User, tenant, client, storage, path, token, grant,
+URL, error text and file-content attributes are absent. Reported byte totals can
+include multiple stages for the same bytes and must not be used as a billing meter.
+
+The export interval is 5–300 seconds and the total request deadline is 100–5000 ms.
+One worker sends one current snapshot at a time, with no event queue or retries.
+Requests are capped at 64 KiB and collector responses at 16 KiB. Redirects,
+credentials in URLs, query strings and insecure HTTP endpoints are rejected.
+Collector failures and partial rejections produce static error codes in local logs.
+Arbitrary collector text and URLs are never logged. Failures do not block artifact
+requests. A later cumulative snapshot carries the current totals. Shutdown can
+discard the final unsent interval.
+
 Keep one replica. In-memory cursors, transfer grants, budgets and replay state are
 not shared between replicas. Restart makes existing grants unusable. The
 deployment must preserve create-only destination behavior while the client obtains
 new grants. Distributed coordination, anonymous sharing, dynamic administration,
-additional storage backends and Python native bindings require separate work.
+and additional storage backends require separate work. Optional
+[delegated links](delegated-links.md) preserve authenticated storage redemption.
+The separate [Python binding](python-bindings.md) embeds governed operations in a
+trusted Python process and does not share this service's grants or cursors.
 
 ## Qualification
 

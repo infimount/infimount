@@ -12,6 +12,16 @@ For UI work, every newly added or changed visible action must be covered by an a
 
 Real-world pilot evidence may inform promotion, positioning, and follow-on product work, but it is not a substitute for these automated release gates. Release tooling must never infer or claim that a pilot was completed merely because a stable version is being prepared.
 
+The hosted artifact service and native Python package have additional mandatory
+release gates. Both Linux container architectures run natively. Five platform
+wheels install and execute their policy/binary suite on CPython 3.10 and 3.14.
+The Python source archive must rebuild outside the checkout. The publisher loads
+the exact qualified container archives, publishes the versioned multiarch image,
+attests its digest, and includes both container and Python inventories in the
+checksummed release. See [artifact distribution](artifact-distribution.md).
+These gates qualify packages and service behavior without deploying a cluster or
+running a paid live-provider pilot.
+
 Optional local dry run before tagging:
 
 ```bash
@@ -48,6 +58,7 @@ Required release preparation:
      - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
 4. Prepare public release identity:
    - For a prerelease tag `vX.Y.Z-rc.N`, add the matching `docs/release-notes-X.Y.Z-rc.N.md` with the deterministic future release URL `https://github.com/infimount/infimount/releases/tag/vX.Y.Z-rc.N`, then update README, Pages, llms, and feature status copy to identify that exact candidate **without replacing the previous stable release**. The URL is known before publication and must be committed before the immutable tag so Post Release Validation can verify the tagged documentation. Candidate public docs must keep stable install links on the stable channel and link the prerelease explicitly.
+   - During source preparation, use neutral `Release candidate` labels and describe packages as available after publication. Reserve claims that a candidate is published or validated for observed workflow results. The consistency checker accepts both neutral labels and historical validated-candidate labels while enforcing the same stable-channel separation.
    - Before a stable tag, run `node scripts/prepare-stable-release-docs.mjs vX.Y.Z`, review and commit its README, CHANGELOG, Pages, llms, and feature release-state changes, then tag that prepared commit. Stable consistency validation rejects `not published yet` language.
    - Release jobs derive manifest versions from the exact tag before running consistency checks. SemVer `+build` metadata is rejected.
 5. Confirm no secrets or local artifacts are staged:
@@ -71,6 +82,42 @@ This uses only temporary updater keys and deterministic local fixtures. It valid
 The rehearsal proves signing **integrity** only. It does not prove Apple notarization/stapling or Gatekeeper trust, trusted Windows Authenticode/SmartScreen reputation, production updater-key correspondence, GitHub publication permissions, or real provider behavior. Those external checks remain required for the production prerelease/stable workflow.
 
 ## 3. Create and push tag
+
+### Guarded candidate preparation
+
+After the exact candidate PR passes all required workflows, merge it and verify
+that the merged tree matches the reviewed source. The
+[`Prepare Release Candidate`](../.github/workflows/prepare-release-candidate.yml)
+workflow provides a GitHub Actions entry point for `vX.Y.Z-rc.N` tags:
+
+1. Select **Run workflow** on `main`.
+2. Enter the exact prepared `candidate_tag`, such as `v0.8.2-rc.1`.
+3. Enter the full 40-character merged `main` commit in `expected_sha`.
+
+The first job has read-only repository permissions. It validates the canonical
+repository and workflow, the exact workflow and checkout SHA, the current main
+head, the prepared version, and the public release-state documents. A separate
+job repeats these checks before using its limited contents/actions write
+permissions to create an annotated tag and dispatch the existing Release
+workflow. It never updates or deletes a tag. An existing tag must identify the
+same commit, and an existing release must still be a draft. Failed draft runs
+can be retried only while the same exact-source checks pass.
+
+The dispatch carries both the tag and approved SHA. Release verifies the actual
+tag, source SHA and current main head before signing, then retains that approved
+commit through publication even if main advances during the builds. It rejects
+published releases before signing and again before registry, draft and final
+publication writes. All existing build, signing, validation, provenance and
+draft re-download gates still apply. Manual dispatch supports RC tags only.
+
+The explicit dispatch is required because
+[events created by `GITHUB_TOKEN`](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow#triggering-a-workflow-from-a-workflow)
+normally do not start another workflow. `workflow_dispatch` is an explicit
+exception. The preparation workflow creates no deployment or stable release.
+
+### Tag from an authenticated checkout
+
+Stable releases and authenticated candidate tagging can continue to use:
 
 ```bash
 git checkout main

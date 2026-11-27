@@ -16,8 +16,9 @@ use crate::policy::{
     evaluate_storage_policy, normalize_policy_path, McpAccessMode, McpOperation, McpRuleSource,
 };
 use crate::registry::{StorageRecord, StorageRegistry};
-use crate::server::{self, rmcp_tools};
+use crate::server::{self, rmcp_tools_with_limits};
 use crate::session::SessionManager;
+use crate::settings::McpByteLimits;
 use crate::storage_namespace::storage_namespace_fingerprint;
 use crate::tools_fs::FsToolsContext;
 
@@ -283,6 +284,16 @@ impl AgentTaskMcpServer {
         enabled_tools: Vec<String>,
         scope: AgentTaskScope,
     ) -> McpResult<Self> {
+        Self::with_byte_limits(registry, enabled_tools, scope, McpByteLimits::default())
+    }
+
+    pub fn with_byte_limits(
+        registry: StorageRegistry,
+        enabled_tools: Vec<String>,
+        scope: AgentTaskScope,
+        byte_limits: McpByteLimits,
+    ) -> McpResult<Self> {
+        byte_limits.validate()?;
         scope.validate_current_binding(&registry)?;
         let allowed = AGENT_TASK_TOOL_NAMES
             .iter()
@@ -308,6 +319,7 @@ impl AgentTaskMcpServer {
         }
         Ok(Self {
             ctx: FsToolsContext {
+                byte_limits,
                 registry,
                 sessions: SessionManager::new(),
                 allow_insecure: true,
@@ -332,7 +344,7 @@ impl AgentTaskMcpServer {
     }
 
     fn tools(&self) -> Vec<Tool> {
-        rmcp_tools()
+        rmcp_tools_with_limits(self.ctx.byte_limits)
             .into_iter()
             .filter(|tool| self.enabled_tools.contains(tool.name.as_ref()))
             .collect()
@@ -546,7 +558,17 @@ pub async fn serve_agent_task_stdio(
     enabled_tools: Vec<String>,
     scope: AgentTaskScope,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let service = AgentTaskMcpServer::new(registry, enabled_tools, scope)
+    serve_agent_task_stdio_with_limits(registry, enabled_tools, scope, McpByteLimits::default())
+        .await
+}
+
+pub async fn serve_agent_task_stdio_with_limits(
+    registry: StorageRegistry,
+    enabled_tools: Vec<String>,
+    scope: AgentTaskScope,
+    byte_limits: McpByteLimits,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let service = AgentTaskMcpServer::with_byte_limits(registry, enabled_tools, scope, byte_limits)
         .map_err(|error| std::io::Error::other(error.message))?;
     let (stdin, stdout) = rmcp::transport::stdio();
     let running = service
@@ -574,7 +596,9 @@ mod tests {
             "local".to_string(),
             json!({ "root": root }),
         );
-        storage.id = "storage-1".to_string();
+        // Independent registries must not share a process-wide operator cache
+        // identity when these dispatch fixtures run concurrently.
+        let storage_id = storage.id.clone();
         storage.mcp_exposed = true;
         storage.mcp_policy = McpStoragePolicy {
             default_access: McpAccessMode::None,
@@ -593,7 +617,7 @@ mod tests {
         registry.save_all_atomic(&[storage]).unwrap();
         let scope = AgentTaskScope::new(
             "task-1".to_string(),
-            "storage-1".to_string(),
+            storage_id,
             "Workspace storage".to_string(),
             "workspace-1".to_string(),
             "workspace:workspace-1".to_string(),
@@ -728,6 +752,72 @@ mod tests {
             .into_iter()
             .filter(|event| event.tool_name == "write_file" && event.path.as_deref() == Some(path))
             .collect()
+    }
+
+    #[tokio::test]
+    async fn task_dispatch_enforces_configured_limits_and_metadata_capability() {
+        let (dir, registry, scope) = fixture();
+        let tools = ["list_dir", "stat_path", "read_file", "write_file"]
+            .map(str::to_owned)
+            .to_vec();
+        let server = AgentTaskMcpServer::with_byte_limits(
+            registry,
+            tools,
+            scope,
+            McpByteLimits {
+                max_read_bytes: 2,
+                max_write_bytes: 3,
+            },
+        )
+        .unwrap()
+        .with_audit_store(AuditStore::new(Some(dir.path().join("audit.json"))));
+        let path = "/Workspace storage/workspace/tasks/task-1/outputs/file.bin";
+        let result = server
+            .dispatch_tool("write_file", base64_write_args(path, "/wAB"))
+            .await;
+        assert_eq!(result["ok"], true, "{result}");
+        let read_args = json!({ "path": path, "as_text": false })
+            .as_object()
+            .unwrap()
+            .clone();
+        let read = server.dispatch_tool("read_file", read_args.clone()).await;
+        assert_eq!(read["data"]["read_bytes"], 2);
+        assert_eq!(read["data"]["content"], "/wA=");
+        assert_eq!(read["data"]["truncated"], true);
+        assert!(read["data"].get("content_type").is_none());
+        let mut too_big_read = read_args;
+        too_big_read.insert("max_bytes".into(), json!(3));
+        assert_eq!(
+            server.dispatch_tool("read_file", too_big_read).await["error"]["code"],
+            "ERR_INVALID_PATH"
+        );
+
+        let rejected = "/Workspace storage/workspace/tasks/task-1/outputs/rejected.bin";
+        assert_eq!(
+            server
+                .dispatch_tool("write_file", base64_write_args(rejected, "AAAAAA=="))
+                .await["error"]["code"],
+            "ERR_INVALID_PATH"
+        );
+        let mut metadata = base64_write_args(rejected, "/wAB");
+        metadata.insert("content_type".into(), json!("image/png"));
+        assert_eq!(
+            server.dispatch_tool("write_file", metadata).await["error"]["code"],
+            "ERR_BACKEND_UNSUPPORTED"
+        );
+        assert!(!dir
+            .path()
+            .join("root/workspace/tasks/task-1/outputs/rejected.bin")
+            .exists());
+        let read_tool = server
+            .tools()
+            .into_iter()
+            .find(|tool| tool.name == "read_file")
+            .unwrap();
+        assert_eq!(
+            read_tool.input_schema["properties"]["max_bytes"]["maximum"],
+            2
+        );
     }
 
     /// #249: binary writes through the real Agent Task dispatch path keep the

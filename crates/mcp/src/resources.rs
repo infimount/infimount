@@ -121,7 +121,7 @@ pub async fn read_resource(ctx: &FsToolsContext, uri: &str) -> McpResult<ReadRes
             ReadFileInput {
                 path: path.clone(),
                 offset_bytes: 0,
-                max_bytes: RESOURCE_FILE_MAX_BYTES,
+                max_bytes: Some(RESOURCE_FILE_MAX_BYTES.min(ctx.byte_limits.max_read_bytes)),
                 as_text: true,
                 encoding: "utf-8".to_string(),
                 session_id: None,
@@ -143,7 +143,9 @@ pub async fn read_resource(ctx: &FsToolsContext, uri: &str) -> McpResult<ReadRes
                     ReadFileInput {
                         path: path.clone(),
                         offset_bytes: 0,
-                        max_bytes: RESOURCE_FILE_MAX_BYTES,
+                        max_bytes: Some(
+                            RESOURCE_FILE_MAX_BYTES.min(ctx.byte_limits.max_read_bytes),
+                        ),
                         as_text: false,
                         encoding: "utf-8".to_string(),
                         session_id: None,
@@ -208,6 +210,7 @@ mod tests {
         registry.save_all_atomic(&[storage]).unwrap();
         let sessions = sessions_in();
         let ctx = FsToolsContext {
+            byte_limits: Default::default(),
             registry,
             sessions,
             allow_insecure: true,

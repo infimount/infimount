@@ -32,6 +32,7 @@ import type {
 } from "@/types/storage";
 import type { McpNotificationPermission } from "@/lib/mcpNotifications";
 import { toast } from "@/hooks/use-toast";
+import { MAX_MCP_READ_BYTES, MAX_MCP_WRITE_BYTES, validMcpByteLimits } from "@/lib/mcpByteLimits";
 
 import { McpRuntimeSection } from "./McpRuntimeSection";
 import { McpToolSection } from "./McpToolSection";
@@ -91,6 +92,8 @@ export function McpSettingsDialog({
     bindAddress: "127.0.0.1",
     port: 7331,
     enabledTools: [],
+    maxReadBytes: MAX_MCP_READ_BYTES,
+    maxWriteBytes: MAX_MCP_WRITE_BYTES,
     securityBaselineVersion: 2,
     authTokenConfigured: false,
   });
@@ -116,6 +119,8 @@ export function McpSettingsDialog({
     settings.transport === "http" &&
     (settings.bindAddress !== status.settings.bindAddress ||
       settings.port !== status.settings.port ||
+      settings.maxReadBytes !== status.settings.maxReadBytes ||
+      settings.maxWriteBytes !== status.settings.maxWriteBytes ||
       authTokenDraft !== undefined ||
       !sameToolSet(settings.enabledTools, status.settings.enabledTools)),
   );
@@ -143,7 +148,18 @@ export function McpSettingsDialog({
     });
   };
 
+  const requireValidByteLimits = () => {
+    if (validMcpByteLimits(settings)) return true;
+    toast({
+      title: "Invalid file byte limits",
+      description: "Use whole bytes from 1 to 2,097,152 for reads and 1 to 4,194,304 for writes.",
+      variant: "destructive",
+    });
+    return false;
+  };
+
   const handleSave = async () => {
+    if (!requireValidByteLimits()) return;
     setIsSaving(true);
     try {
       // Saving advanced stdio settings must preserve the explicit Agent Access gate.
@@ -156,6 +172,7 @@ export function McpSettingsDialog({
   };
 
   const handleRotateAuthToken = async () => {
+    if (!requireValidByteLimits()) return;
     setIsSaving(true);
     try {
       await onSave({
@@ -229,6 +246,7 @@ export function McpSettingsDialog({
   };
 
   const handleApplyPreset = async (preset: { id: string; title: string; enabledTools: string[]; accessMode: McpStoragePolicy["default_access"]; confirmationRules: McpConfirmationRules }) => {
+    if (!requireValidByteLimits()) return;
     const nextSettings: McpSettings = {
       ...settings,
       // Presets change tools and policies. Only the explicit Lock down preset disables
@@ -301,10 +319,16 @@ export function McpSettingsDialog({
   };
 
   const toggleHttpServer = async () => {
+    if (!status?.runningHttp && !requireValidByteLimits()) return;
     setIsTogglingHttp(true);
     try {
       if (status?.runningHttp) {
-        await onSave(toSettingsUpdate(settings, authTokenDraft, false));
+        const stoppingSettings = validMcpByteLimits(settings) ? settings : {
+          ...settings,
+          maxReadBytes: status.settings.maxReadBytes,
+          maxWriteBytes: status.settings.maxWriteBytes,
+        };
+        await onSave(toSettingsUpdate(stoppingSettings, authTokenDraft, false));
         setSettings((current) => ({ ...current, enabled: false }));
         setAuthTokenDraft(undefined);
         await onStopHttp();
@@ -530,6 +554,8 @@ function toSettingsUpdate(
     bindAddress: settings.bindAddress,
     port: settings.port,
     enabledTools: settings.enabledTools,
+    maxReadBytes: settings.maxReadBytes,
+    maxWriteBytes: settings.maxWriteBytes,
     authTokenMutation:
       authTokenDraft === undefined
         ? { action: "keep" }

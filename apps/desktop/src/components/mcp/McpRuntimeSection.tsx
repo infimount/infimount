@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type { McpRuntimeStatus, McpSettings } from "@/types/storage";
+import { MAX_MCP_READ_BYTES, MAX_MCP_WRITE_BYTES, validMcpByteLimits } from "@/lib/mcpByteLimits";
 
 const FIELD_FOCUS_CLASS =
   "focus-visible:border-ring focus-visible:ring-0 focus-visible:ring-offset-0";
@@ -57,6 +58,7 @@ export function McpRuntimeSection({
   const [dismissedNetworkWarningKey, setDismissedNetworkWarningKey] = useState<string | null>(null);
   const [dismissedRestartWarningKey, setDismissedRestartWarningKey] = useState<string | null>(null);
   const isStdio = settings.transport === "stdio";
+  const byteLimitsValid = validMcpByteLimits(settings);
   const stdioReady = isStdio && settings.enabled;
   const runtimeLabel = isStdio
     ? stdioReady
@@ -72,6 +74,8 @@ export function McpRuntimeSection({
         settings.bindAddress,
         settings.port,
         settings.enabledTools,
+        settings.maxReadBytes,
+        settings.maxWriteBytes,
         authTokenDraft ?? null,
       ])
     : null;
@@ -239,6 +243,29 @@ export function McpRuntimeSection({
             ) : null}
           </div>
         )}
+        <fieldset className="space-y-2" disabled={isBusy}>
+          <legend className="text-xs font-medium text-foreground">File byte limits</legend>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="space-y-1">
+              <Label htmlFor="mcp-max-read-bytes" className="text-xs text-muted-foreground">Maximum read bytes</Label>
+              <Input id="mcp-max-read-bytes" type="number" min={1} max={MAX_MCP_READ_BYTES} step={1}
+                value={settings.maxReadBytes}
+                onChange={(event) => onSettingsChange((current) => ({ ...current, maxReadBytes: Number(event.target.value) }))}
+                className={FIELD_FOCUS_CLASS} />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="mcp-max-write-bytes" className="text-xs text-muted-foreground">Maximum write bytes</Label>
+              <Input id="mcp-max-write-bytes" type="number" min={1} max={MAX_MCP_WRITE_BYTES} step={1}
+                value={settings.maxWriteBytes}
+                onChange={(event) => onSettingsChange((current) => ({ ...current, maxWriteBytes: Number(event.target.value) }))}
+                className={FIELD_FOCUS_CLASS} />
+            </div>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Per call, after decoding. Maximum 2 MiB for reads and 4 MiB for writes. Applies to MCP and Agent Tasks after their server restarts.
+          </p>
+          {!byteLimitsValid ? <p role="alert" className="text-xs text-destructive">Enter positive whole bytes within the supported maximums.</p> : null}
+        </fieldset>
       </div>
 
       <div className="space-y-3 rounded-lg border border-border/80 bg-card p-4 shadow-sm">
@@ -286,7 +313,7 @@ export function McpRuntimeSection({
             type="button"
             className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={onSave}
-            disabled={isBusy}
+            disabled={isBusy || !byteLimitsValid}
           >
             {isSaving ? "Saving..." : primaryActionLabel}
           </Button>
@@ -295,7 +322,7 @@ export function McpRuntimeSection({
             type="button"
             className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={onHttpToggle}
-            disabled={isBusy || (!status?.runningHttp && nonLoopbackMissingAuth)}
+            disabled={isBusy || (!status?.runningHttp && (nonLoopbackMissingAuth || !byteLimitsValid))}
           >
             {status?.runningHttp ? (
               <Square className="mr-2 h-4 w-4" />

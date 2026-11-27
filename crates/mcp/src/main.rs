@@ -1,6 +1,6 @@
 use infimount_mcp::confirmation::ConfirmationManager;
 use infimount_mcp::registry::StorageRegistry;
-use infimount_mcp::runtime::{serve_stdio, start_http_server};
+use infimount_mcp::runtime::{serve_stdio_with_limits, start_http_server_with_limits};
 use infimount_mcp::session::SessionManager;
 use infimount_mcp::settings::{
     resolve_auth_token, McpSettings, McpSettingsStore, DEFAULT_HTTP_BIND_ADDRESS, DEFAULT_HTTP_PORT,
@@ -312,11 +312,15 @@ async fn run_server(serve: ServeArgs) -> Result<(), Box<dyn std::error::Error>> 
     let allow_insecure = serve.allow_insecure && !require_auth;
 
     match serve.transport.as_str() {
-        "stdio" => serve_stdio(registry, settings.enabled_tools.clone())
-            .await
-            .map_err(|err| err as Box<dyn std::error::Error>),
+        "stdio" => serve_stdio_with_limits(
+            registry,
+            settings.enabled_tools.clone(),
+            settings.byte_limits(),
+        )
+        .await
+        .map_err(|err| err as Box<dyn std::error::Error>),
         "http" => {
-            let server = start_http_server(
+            let server = start_http_server_with_limits(
                 registry,
                 &serve.bind,
                 serve.port,
@@ -325,6 +329,7 @@ async fn run_server(serve: ServeArgs) -> Result<(), Box<dyn std::error::Error>> 
                 effective_auth_token,
                 ConfirmationManager::new(),
                 SessionManager::new(),
+                settings.byte_limits(),
             )
             .await?;
             eprintln!(
@@ -352,7 +357,7 @@ async fn run_agent_task_server(args: AgentTaskServeArgs) -> Result<(), Box<dyn s
     // loads settings so transaction recovery can identify the active auth ref,
     // but it does not resolve or require the HTTP bearer-token secret itself.
     // The general Agent Access gate is intentionally not applied to this separately scoped path.
-    let (registry, _settings, _) = load_runtime_state(false)?;
+    let (registry, settings, _) = load_runtime_state(false)?;
     let storage_name = registry
         .load_all()
         .map_err(|error| std::io::Error::other(error.message))?
@@ -384,7 +389,13 @@ async fn run_agent_task_server(args: AgentTaskServeArgs) -> Result<(), Box<dyn s
     .map(str::to_string)
     .collect();
 
-    infimount_mcp::serve_agent_task_stdio(registry, task_tools, scope).await
+    infimount_mcp::agent_task_server::serve_agent_task_stdio_with_limits(
+        registry,
+        task_tools,
+        scope,
+        settings.byte_limits(),
+    )
+    .await
 }
 
 fn doctor_report() -> serde_json::Value {

@@ -118,7 +118,7 @@ replaceRequired(
 );
 replaceOptional(
   "docs/llms.txt",
-  /\n- Validated release candidate: v[^\n]+\n- Candidate release: [^\n]+\n- Candidate status: [^\n]+/,
+  /\n- (?:Release candidate|Validated release candidate): v[^\n]+\n- Candidate release: [^\n]+\n- Candidate status: [^\n]+/,
   "",
 );
 replaceOptional(

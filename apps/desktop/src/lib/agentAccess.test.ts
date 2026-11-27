@@ -19,6 +19,8 @@ function status(overrides: Partial<McpRuntimeStatus["settings"]> = {}): McpRunti
       bindAddress: "0.0.0.0",
       port: 7331,
       enabledTools: [],
+      maxReadBytes: 2097152,
+      maxWriteBytes: 4194304,
       securityBaselineVersion: 2,
       authTokenConfigured: false,
       ...overrides,
@@ -38,7 +40,9 @@ describe("workspace agent access", () => {
   });
 
   it("uses local stdio and only read tools for first-time read-only setup", () => {
-    const update = workspaceAgentSettings(status(), "read_only");
+    const update = workspaceAgentSettings(status({ maxReadBytes: 128, maxWriteBytes: 256 }), "read_only");
+    expect(update.maxReadBytes).toBe(128);
+    expect(update.maxWriteBytes).toBe(256);
     expect(update.enabled).toBe(true);
     expect(update.transport).toBe("stdio");
     expect(update.bindAddress).toBe("127.0.0.1");

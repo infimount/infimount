@@ -7,12 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - Unreleased release candidate
+
 ### Added
 
 - MCP `write_file` accepts `encoding: "base64"` for binary content. The 4 MiB cap applies to decoded bytes and is enforced by length before any copy or decode, invalid base64 fails with `ERR_TEXT_DECODE_FAILED` before any side effect, and policy, confirmation and audit behave as for text writes (#249).
 - Added an opt-in, single-replica `infimount-hosted` artifact service with per-request OAuth identity, server-owned storage grants, existing storage-policy enforcement, and structured audit.
 - Added authenticated, expiring, single-use downloads and staged streaming uploads with size and SHA-256 validation, create-only commits, bounded capacity, and cancellation cleanup.
 - Added Linux filesystem confinement and explicit S3 configuration, a non-root container build, Kubernetes deployment examples, and synthetic two-tenant filesystem/S3 qualification.
+- Completed configurable downward-only desktop read/write byte limits, capability-gated content types, and confirmation binding across ordinary and Agent Task MCP calls (#249).
+- Added opt-in bounded OTLP/HTTP JSON export of fixed-cardinality hosted counters and native Linux amd64/arm64 container release qualification, publication and digest provenance (#251).
+- Added an optional HTTPS delegated download-link issuer with a pinned platform origin, dedicated service credential, provisional grants and authenticated owner-bound redemption (#252).
+- Added a governed PyO3 package with explicit local/S3 configuration, policy and scope checks, binary operations, fail-closed confirmations, bounded audits, and native ABI3 wheel/source release qualification (#254).
 
 ### Fixed
 
@@ -269,7 +275,8 @@ First stable release of Infimount — a unified desktop storage browser powered 
 
 ---
 
-[Unreleased]: https://github.com/infimount/infimount/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/infimount/infimount/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/infimount/infimount/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/infimount/infimount/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/infimount/infimount/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/infimount/infimount/compare/v0.7.0...v0.7.1

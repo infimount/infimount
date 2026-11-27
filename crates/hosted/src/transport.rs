@@ -200,7 +200,8 @@ pub async fn router(config: Arc<HostedConfig>) -> Result<Router> {
     config.validate()?;
     let auth = Authenticator::new(&config.auth).await?;
     let storage = Arc::new(StoragePlane::new(config.clone())?);
-    let transfers = Arc::new(TransferManager::new(storage.clone()));
+    let issuer = crate::delegation::DelegatedIssuer::from_config(&config.delivery)?;
+    let transfers = Arc::new(TransferManager::with_issuer(storage.clone(), issuer));
     build_router(config, auth, storage, transfers)
 }
 
@@ -278,6 +279,7 @@ fn build_router(
 /// TLS ingress. Host and Origin checks do not replace that network boundary.
 pub async fn serve(config: HostedConfig) -> Result<()> {
     let listen = config.listen;
+    let exporter = crate::telemetry::OtlpExporter::from_config(&config.telemetry)?;
     let app = router(Arc::new(config)).await?;
     let listener = tokio::net::TcpListener::bind(listen)
         .await
@@ -285,7 +287,7 @@ pub async fn serve(config: HostedConfig) -> Result<()> {
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .map_err(|_| HostedError::Unavailable)?;
-    crate::metrics::start_reporting();
+    let _reporter = crate::metrics::start_reporting(exporter);
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             #[cfg(unix)]
@@ -891,6 +893,8 @@ mod tests {
                 principal_concurrency: owner_limit,
                 ..Default::default()
             },
+            delivery: Default::default(),
+            telemetry: Default::default(),
         });
         config.validate().unwrap();
         let storage = Arc::new(StoragePlane::new(config.clone()).unwrap());

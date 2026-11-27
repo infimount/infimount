@@ -28,12 +28,17 @@ pub fn schema_stat_path() -> serde_json::Value {
 }
 
 pub fn schema_read_file() -> serde_json::Value {
+    schema_read_file_with_limit(crate::settings::MAX_MCP_READ_BYTES)
+}
+
+pub fn schema_read_file_with_limit(max_bytes: u32) -> serde_json::Value {
+    let max_bytes = max_bytes.clamp(1, crate::settings::MAX_MCP_READ_BYTES);
     json!({
       "type": "object",
       "properties": {
         "path": { "type": "string", "description": "Absolute file path." },
         "offset_bytes": { "type": "integer", "default": 0, "minimum": 0 },
-        "max_bytes": { "type": "integer", "default": 262144, "minimum": 1, "maximum": 2097152 },
+        "max_bytes": { "type": "integer", "default": 262144_u32.min(max_bytes), "minimum": 1, "maximum": max_bytes },
         "as_text": { "type": "boolean", "default": true },
         "encoding": { "type": "string", "default": "utf-8", "description": "Text encoding. Only utf-8 is supported in v1." },
         "session_id": { "type": "string", "description": "Session ID for scoped access." }
@@ -59,14 +64,20 @@ pub fn schema_mkdir() -> serde_json::Value {
 }
 
 pub fn schema_write_file() -> serde_json::Value {
+    schema_write_file_with_limit(crate::settings::MAX_MCP_WRITE_BYTES)
+}
+
+pub fn schema_write_file_with_limit(max_bytes: u32) -> serde_json::Value {
+    let max_bytes = max_bytes.clamp(1, crate::settings::MAX_MCP_WRITE_BYTES);
     json!({
       "type": "object",
       "properties": {
         "path": { "type": "string", "description": "Absolute file path." },
-        "content": { "type": "string", "description": "File content: UTF-8 text when encoding is utf-8, or standard padded base64 of the raw bytes when encoding is base64. At most 4 MiB after decoding.", "maxLength": crate::tools_fs::MAX_MCP_WRITE_BASE64_LEN },
+        "content": { "type": "string", "description": format!("File content: UTF-8 text when encoding is utf-8, or standard padded base64 of the raw bytes when encoding is base64. At most {max_bytes} bytes after decoding."), "maxLength": max_bytes.div_ceil(3) * 4 },
         "encoding": { "type": "string", "enum": ["utf-8", "base64"], "default": "utf-8", "description": "How content is encoded. Use base64 for binary files (images, spreadsheets, archives)." },
         "overwrite": { "type": "boolean", "default": true },
         "create_parents": { "type": "boolean", "default": false },
+        "content_type": { "type": "string", "maxLength": 255, "description": "Optional ASCII media type, such as image/png. Rejected before writing when the backend cannot persist content type." },
         "user_metadata": {
           "type": "object",
           "description": "Optional user metadata to attach during writes when the backend advertises write_with_user_metadata.",
@@ -283,13 +294,18 @@ pub fn schema_list_versions() -> serde_json::Value {
 }
 
 pub fn schema_read_file_version() -> serde_json::Value {
+    schema_read_file_version_with_limit(crate::settings::MAX_MCP_READ_BYTES)
+}
+
+pub fn schema_read_file_version_with_limit(max_bytes: u32) -> serde_json::Value {
+    let max_bytes = max_bytes.clamp(1, crate::settings::MAX_MCP_READ_BYTES);
     json!({
       "type": "object",
       "properties": {
         "path": { "type": "string", "description": "Absolute file path." },
         "version": { "type": "string", "description": "Version identifier to read." },
         "offset_bytes": { "type": "integer", "default": 0, "minimum": 0 },
-        "max_bytes": { "type": "integer", "default": 262144, "minimum": 1, "maximum": 2097152 },
+        "max_bytes": { "type": "integer", "default": 262144_u32.min(max_bytes), "minimum": 1, "maximum": max_bytes },
         "as_text": { "type": "boolean", "default": true },
         "encoding": { "type": "string", "default": "utf-8", "description": "Text encoding. Only utf-8 is supported in v1." },
         "session_id": { "type": "string", "description": "Session ID for scoped access." }

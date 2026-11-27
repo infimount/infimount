@@ -3,10 +3,12 @@
 pub mod audit;
 pub mod auth;
 pub mod config;
+pub mod delegation;
 pub mod error;
 pub mod mcp;
 pub mod metrics;
 pub mod storage;
+pub mod telemetry;
 pub mod transfers;
 pub mod transport;
 

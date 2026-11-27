@@ -49,6 +49,10 @@ pub struct McpSettingsUpdate {
     pub bind_address: String,
     pub port: u16,
     pub enabled_tools: Vec<String>,
+    #[serde(default)]
+    pub max_read_bytes: Option<u32>,
+    #[serde(default)]
+    pub max_write_bytes: Option<u32>,
     pub auth_token_mutation: AuthTokenMutation,
 }
 
@@ -64,13 +68,20 @@ pub async fn update_mcp_settings_with_auth(
         bind_address: update.bind_address,
         port: update.port,
         enabled_tools: update.enabled_tools,
+        max_read_bytes: infimount_mcp::settings::MAX_MCP_READ_BYTES,
+        max_write_bytes: infimount_mcp::settings::MAX_MCP_WRITE_BYTES,
         auth_token_ref: None,
         auth_token: None,
         security_baseline_version: infimount_mcp::settings::SECURITY_BASELINE_VERSION,
     };
 
     state
-        .apply_mcp_settings_with_auth(settings, update.auth_token_mutation)
+        .apply_mcp_settings_update(
+            settings,
+            update.auth_token_mutation,
+            update.max_read_bytes,
+            update.max_write_bytes,
+        )
         .await
 }
 

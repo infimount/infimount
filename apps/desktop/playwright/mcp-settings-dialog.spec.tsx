@@ -4,6 +4,7 @@ import { McpSettingsDialog } from "@/components/McpSettingsDialog";
 import type {
   McpClientSnippets,
   McpRuntimeStatus,
+  McpSettingsUpdate,
   McpStoragePolicy,
   McpToolDefinition,
   StorageConfig,
@@ -16,11 +17,15 @@ const status: McpRuntimeStatus = {
     bindAddress: "127.0.0.1",
     port: 7331,
     enabledTools: ["list_dir"],
+    maxReadBytes: 2097152,
+    maxWriteBytes: 4194304,
     securityBaselineVersion: 2,
+    authTokenConfigured: false,
   },
   runningHttp: false,
   endpoint: null,
   endpointDisplay: "http://127.0.0.1:7331/mcp",
+  authTokenConfigured: false,
 };
 
 const snippets: McpClientSnippets = {
@@ -146,4 +151,56 @@ test("renders the MCP settings dialog", async ({ mount, page }) => {
   await page.getByRole("button", { name: /Manual Approval/i }).click();
   await expect(page.getByText("Apply Manual Approval?")).toBeVisible();
   await page.getByRole("button", { name: "Cancel" }).click();
+});
+
+test("saves lower file byte limits without enabling Agent Access", async ({ mount, page }, testInfo) => {
+  let saved: McpSettingsUpdate | undefined;
+  await mount(
+    <div className="min-h-screen bg-background p-8">
+      <McpSettingsDialog
+        open
+        onOpenChange={() => undefined}
+        status={{ ...status, settings: { ...status.settings, transport: "stdio" } }}
+        snippets={snippets}
+        tools={tools}
+        storages={storages}
+        auditEvents={[]}
+        pendingConfirmations={[]}
+        activeSessions={[]}
+        notificationPermission="default"
+        onSave={async (update) => { saved = update; }}
+        onStartHttp={async () => undefined}
+        onStopHttp={async () => undefined}
+        onTestServer={async () => undefined}
+        onRefreshAudit={async () => undefined}
+        onClearAudit={async () => undefined}
+        onExportAuditBundle={async () => undefined}
+        onApproveConfirmation={async () => undefined}
+        onDenyConfirmation={async () => undefined}
+        onEnableNotifications={async () => undefined}
+        onUpdateStoragePolicy={async () => undefined}
+      />
+    </div>,
+  );
+  await page.getByLabel("Maximum read bytes").fill("131072");
+  await page.getByLabel("Maximum write bytes").fill("262144");
+  await page.getByRole("button", { name: "Save disabled state" }).click();
+  await expect.poll(() => saved).toEqual({
+    enabled: false,
+    transport: "stdio",
+    bindAddress: "127.0.0.1",
+    port: 7331,
+    enabledTools: ["list_dir"],
+    maxReadBytes: 131072,
+    maxWriteBytes: 262144,
+    authTokenMutation: { action: "keep" },
+  });
+  await expect(page.getByRole("button", { name: "Save disabled state" })).toBeEnabled();
+  await expect(page.getByRole("switch", { name: "Enable general Agent Access" })).not.toBeChecked();
+  await expect(page.getByLabel("Maximum read bytes")).toHaveValue("131072");
+  await expect(page.getByLabel("Maximum write bytes")).toHaveValue("262144");
+  const screenshot = testInfo.outputPath("__snapshots__/mcp-byte-limits-saved.png");
+  await page.screenshot({ path: screenshot, animations: "disabled" });
+  await testInfo.attach("mcp-byte-limits-saved", { path: screenshot, contentType: "image/png" });
+  await expect(page).toHaveScreenshot("mcp-byte-limits-saved.png");
 });

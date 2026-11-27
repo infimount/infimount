@@ -9,8 +9,8 @@ use crate::path::{enforce_root_operation, parse_mcp_path, resolve_storage_path, 
 use crate::policy::McpOperation;
 
 use super::common::{
-    default_as_text, default_encoding, default_read_max_bytes, enforce_storage_policy,
-    FsToolsContext,
+    core_error_to_mcp_error, default_as_text, default_encoding, enforce_storage_policy,
+    resolve_read_max_bytes, FsToolsContext,
 };
 
 #[derive(Debug, Deserialize)]
@@ -20,8 +20,8 @@ pub struct ReadFileVersionInput {
     pub version: String,
     #[serde(default)]
     pub offset_bytes: u64,
-    #[serde(default = "default_read_max_bytes")]
-    pub max_bytes: u32,
+    #[serde(default)]
+    pub max_bytes: Option<u32>,
     #[serde(default = "default_as_text")]
     pub as_text: bool,
     #[serde(default = "default_encoding")]
@@ -37,19 +37,15 @@ pub struct ReadFileVersionOutput {
     pub content: String,
     pub truncated: bool,
     pub read_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
 }
 
 pub async fn read_file_version(
     ctx: &FsToolsContext,
     input: ReadFileVersionInput,
 ) -> McpResult<ReadFileVersionOutput> {
-    if input.max_bytes == 0 || input.max_bytes > 2_097_152 {
-        return Err(err_with_details(
-            McpErrorCode::ERR_INVALID_PATH,
-            "max_bytes must be between 1 and 2097152",
-            json!({ "max_bytes": input.max_bytes }),
-        ));
-    }
+    let max_bytes = resolve_read_max_bytes(ctx, input.max_bytes)?;
 
     let parsed = parse_mcp_path(&input.path)?;
     enforce_root_operation(FsOp::ReadFileVersion, &parsed)?;
@@ -123,6 +119,10 @@ pub async fn read_file_version(
         ));
     }
 
+    let content_type = meta
+        .content_type()
+        .filter(|value| infimount_core::operations::valid_content_type(value))
+        .map(str::to_owned);
     let size = meta.content_length();
     if input.offset_bytes >= size {
         return Ok(ReadFileVersionOutput {
@@ -131,20 +131,23 @@ pub async fn read_file_version(
             content: String::new(),
             truncated: false,
             read_bytes: 0,
+            content_type,
         });
     }
 
-    let requested_end = input.offset_bytes.saturating_add(input.max_bytes as u64);
+    let requested_end = input.offset_bytes.saturating_add(max_bytes as u64);
     let truncated = size > requested_end;
     let read_end = requested_end.min(size);
 
-    let bytes = op
-        .read_with(&parsed.backend_path)
-        .version(&input.version)
-        .range(input.offset_bytes..read_end)
-        .await
-        .map_err(|e| map_opendal_error(&e, McpErrorCode::ERR_INTERNAL))?
-        .to_vec();
+    let bytes = infimount_core::operations::read_range_bounded(
+        &op,
+        &parsed.backend_path,
+        input.offset_bytes,
+        read_end,
+        Some(&input.version),
+    )
+    .await
+    .map_err(core_error_to_mcp_error)?;
 
     let read_bytes = bytes.len() as u64;
     let content = if input.as_text {
@@ -181,5 +184,6 @@ pub async fn read_file_version(
         content,
         truncated,
         read_bytes,
+        content_type,
     })
 }

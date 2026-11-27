@@ -35,6 +35,10 @@ pub struct HostedConfig {
     pub grants: Vec<Grant>,
     #[serde(default)]
     pub limits: Limits,
+    #[serde(default)]
+    pub delivery: crate::delegation::DeliveryConfig,
+    #[serde(default)]
+    pub telemetry: crate::telemetry::TelemetryConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,6 +166,8 @@ impl HostedConfig {
             ));
         }
         self.limits.validate()?;
+        self.delivery.validate()?;
+        self.telemetry.validate()?;
         if self.storages.is_empty() || self.storages.len() > MAX_CONFIG_STORAGES {
             return Err(HostedError::Config(
                 "storage count is outside the supported range",
@@ -425,7 +431,7 @@ impl StorageConfig {
 }
 
 impl SecretRef {
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         match self {
             Self::Env { name }
                 if !name.is_empty()
@@ -441,7 +447,7 @@ impl SecretRef {
         }
     }
 
-    fn resolve(&self) -> Result<String> {
+    pub(crate) fn resolve(&self) -> Result<String> {
         self.validate()?;
         let bytes = match self {
             Self::Env { name } => std::env::var(name)
@@ -505,7 +511,7 @@ pub(crate) fn canonical_prefix(value: &str) -> bool {
         })
 }
 
-fn https_url(value: &str) -> Result<reqwest::Url> {
+pub(crate) fn https_url(value: &str) -> Result<reqwest::Url> {
     let url = reqwest::Url::parse(value)
         .map_err(|_| HostedError::Config("absolute HTTPS URL required"))?;
     if value.len() > 2048
@@ -657,6 +663,8 @@ mod tests {
                 download: false,
             }],
             limits: Limits::default(),
+            delivery: Default::default(),
+            telemetry: Default::default(),
         }
     }
 

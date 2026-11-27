@@ -1,6 +1,12 @@
 name: Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: "Approved merged main SHA for this rc tag"
+        required: true
+        type: string
   push:
     tags:
       - 'v*'
@@ -13,6 +19,10 @@ env:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release-signing-preflight:
     name: Release Gate / Signing Policy
@@ -23,6 +33,14 @@ jobs:
       windows_signed: ${{ steps.policy.outputs.windows_signed }}
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Require exact release tag before signing
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: node scripts/prepare-release-candidate.mjs check-release-ref
       - name: Require updater signing and report platform signing status
         id: policy
         env:
@@ -298,6 +316,11 @@ jobs:
 
       - name: Verify packaged-sidecar checksum smoke fixtures
         run: ./scripts/test-packaged-sidecar-checksum.sh
+
+      - name: Verify distribution inventory and staged image promotion
+        run: |
+          python3 scripts/test-distribution-assets.py
+          python3 scripts/test-publish-hosted-images.py
 
   build-linux:
     name: Build Linux
@@ -1010,17 +1033,35 @@ jobs:
           path: out/windows/*
           if-no-files-found: warn
 
+  release-hosted-gate:
+    name: Release Gate / Hosted Service
+    needs: release-signing-preflight
+    uses: ./.github/workflows/hosted-data-plane.yml
+    with:
+      release_tag: ${{ github.ref_name }}
+
+  release-python-gate:
+    name: Release Gate / Native Python
+    needs: release-signing-preflight
+    uses: ./.github/workflows/python-bindings.yml
+    with:
+      release_tag: ${{ github.ref_name }}
+
   create-release:
     name: Validate and Publish Release
-    needs: [build-linux, build-macos, build-windows, release-signing-preflight]
+    needs: [build-linux, build-macos, build-windows, release-signing-preflight, release-hosted-gate, release-python-gate]
     runs-on: ubuntu-latest
     permissions:
       contents: write
       id-token: write
       attestations: write
+      packages: write
 
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
 
       - name: Download platform build artifacts only
         uses: actions/download-artifact@v8
@@ -1030,6 +1071,17 @@ jobs:
 
       - name: Display structure of downloaded files
         run: ls -R artifacts
+
+      - name: Download exact qualified hosted images
+        uses: actions/download-artifact@v8
+        with:
+          pattern: hosted-image-*
+          merge-multiple: true
+          path: hosted-images
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
 
       - name: Install jq
         run: bash scripts/ci-apt-install.sh jq
@@ -1053,12 +1105,17 @@ jobs:
           cp artifacts/windows-artifacts/Infimount-setup.exe release-assets/
           cp scripts/install.sh release-assets/
           cp scripts/install.ps1 release-assets/
+          cp artifacts/python-*-artifacts/*.whl release-assets/
+          cp artifacts/python-source-artifacts/*.tar.gz release-assets/
 
           for dir in artifacts/linux-artifacts/updater artifacts/macos-artifacts/updater artifacts/windows-artifacts/updater; do
             if [ -d "$dir" ]; then
               cp "$dir"/* release-assets/
             fi
           done
+
+      - name: Validate native Python release coverage
+        run: python scripts/check-distribution-assets.py release-assets "$GITHUB_REF_NAME" --python-only
 
       - name: Cryptographically verify updater signatures
         run: |
@@ -1135,6 +1192,38 @@ jobs:
             ] | length >= 3)
           ' release-assets/SBOM.spdx.json >/dev/null
 
+      - name: Set up manifest tooling for qualified container publication
+        uses: docker/setup-buildx-action@v3
+
+      - name: Authenticate the repository container publisher
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Require unpublished release before registry writes
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: node scripts/prepare-release-candidate.mjs check-publish-ref
+
+      - name: Stage the exact qualified native images and combined digest
+        id: hosted_image
+        run: bash scripts/publish-hosted-images.sh stage hosted-images release-assets
+
+      - name: Attest the hosted image digest
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ steps.hosted_image.outputs.image }}
+          subject-digest: ${{ steps.hosted_image.outputs.digest }}
+          push-to-registry: true
+
+      - name: Validate all distribution identities and record Python inventory
+        run: |
+          python scripts/check-distribution-assets.py release-assets "$GITHUB_REF_NAME" \
+            --revision "$GITHUB_SHA" --write-inventory
+
       - name: Generate checksums for every published payload
         run: |
           set -euo pipefail
@@ -1160,6 +1249,12 @@ jobs:
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: release-assets/*
+
+      - name: Require unpublished release before draft writes
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: node scripts/prepare-release-candidate.mjs check-publish-ref
 
       - name: Create validated draft release
         uses: softprops/action-gh-release@v2
@@ -1203,6 +1298,21 @@ jobs:
             | macOS | `.dmg` |
             | Windows | `.msi` or `.exe` |
 
+            ### Hosted service and native Python
+
+            This release also contains five CPython ABI3 wheels (Linux amd64/arm64,
+            macOS Intel/Apple silicon and Windows amd64), a rebuildable Python source
+            archive, and `python-distribution.json` with their source revision and hashes.
+
+            `hosted-image.json` records the digest-pinned Linux amd64/arm64 image at
+            `ghcr.io/infimount/infimount-hosted:${{ github.ref_name }}`. Both architectures
+            are tested natively. Image provenance is attached to the registry digest.
+            Version tags are distinct for stable and prerelease builds. There is no
+            floating `latest` alias. Registry access follows the package visibility.
+
+            See [the hosted service guide](https://github.com/infimount/infimount/blob/${{ github.ref_name }}/docs/hosted-artifact-service.md)
+            and [the Python binding guide](https://github.com/infimount/infimount/blob/${{ github.ref_name }}/docs/python-bindings.md).
+
             ### Integrity
 
             This release includes `SHA256SUMS.txt` and per-file `.sha256` checksum files.
@@ -1239,6 +1349,7 @@ jobs:
           ./scripts/check-release-assets.sh downloaded-release-assets
           ./scripts/check-updater-assets.sh downloaded-release-assets "${GITHUB_REF#refs/tags/v}"
           node scripts/check-upgrade-fixtures.mjs downloaded-release-assets
+          python scripts/check-distribution-assets.py downloaded-release-assets "$GITHUB_REF_NAME" --revision "$GITHUB_SHA"
           (cd downloaded-release-assets && sha256sum --check SHA256SUMS.txt)
 
           public_key="$(jq -r '.plugins.updater.pubkey' apps/desktop/src-tauri/tauri.conf.json)"
@@ -1261,6 +1372,15 @@ jobs:
               exit 1
             }
           done < <(jq -r '.platforms[].url' downloaded-release-assets/latest.json)
+
+      - name: Require the same unpublished release before final promotion
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: node scripts/prepare-release-candidate.mjs check-publish-ref
+
+      - name: Promote the validated hosted image to its release version
+        run: bash scripts/publish-hosted-images.sh promote hosted-images downloaded-release-assets
 
       - name: Publish validated release
         env:
@@ -1292,6 +1412,7 @@ jobs:
           ./scripts/check-release-assets.sh published-release-assets
           ./scripts/check-updater-assets.sh published-release-assets "${GITHUB_REF#refs/tags/v}"
           node scripts/check-upgrade-fixtures.mjs published-release-assets
+          python scripts/check-distribution-assets.py published-release-assets "$GITHUB_REF_NAME" --revision "$GITHUB_SHA"
 
           public_key="$(jq -r '.plugins.updater.pubkey' apps/desktop/src-tauri/tauri.conf.json)"
           while IFS= read -r signature; do

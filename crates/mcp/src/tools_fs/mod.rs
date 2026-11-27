@@ -33,7 +33,9 @@ pub use read_file::{read_file, ReadFileInput, ReadFileOutput};
 pub use read_file_version::{read_file_version, ReadFileVersionInput, ReadFileVersionOutput};
 pub use search_paths::{search_paths, SearchPathsInput, SearchPathsOutput};
 pub use stat_path::{stat_path, StatPathInput, StatPathOutput};
-pub(crate) use write_file::validate_write_content_length;
+pub(crate) use write_file::{
+    validate_content_type, validate_write_capabilities, validate_write_content,
+};
 pub use write_file::{
     write_file, WriteFileInput, WriteFileOutput, MAX_MCP_WRITE_BASE64_LEN, MAX_MCP_WRITE_BYTES,
 };

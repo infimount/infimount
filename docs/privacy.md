@@ -25,6 +25,29 @@ Eligible network events use fixed schemas. Product events contain an event name,
 
 The local product-event JSONL file and MCP audit log have independent size/rotation limits. The product-event log retains at most 5,000 events and 5 MiB, dropping the oldest records when either bound is exceeded.
 
+## Hosted service and native Python
+
+The independently configured hosted service has a separate privacy boundary.
+Its local structured audit stream includes verified identity and hashed paths for
+access accountability. Optional hosted OTLP export includes only fixed operation
+and outcome counters, reported byte totals, service name and build version. It
+never exports audit identity fields, paths, tokens, grant identifiers, URLs or
+file contents. It is disabled unless the trusted service configuration selects a
+specific HTTPS collector. Desktop consent and ambient `OTEL_*` variables do not
+enable it. See [hosted telemetry](hosted-artifact-service.md#optional-otlp-export).
+
+A delegated link issuer receives only opaque grant metadata and an authenticated
+redemption URL. Its dedicated service credential is separate from the user's
+OAuth token and storage credentials. The hosted service sends neither those
+credentials nor raw object paths to the issuer. See the
+[delegation contract](delegated-links.md).
+
+The Python library keeps a bounded in-memory audit buffer for its embedding
+application and emits sanitized tracing events only through an application-owned
+subscriber. It does not initialize desktop event persistence or telemetry.
+Configuration, process isolation and audit retention belong to the trusted
+embedding application. See [Python bindings](python-bindings.md).
+
 ## Diagnostics view
 
 A diagnostics export performs a bounded same-version sidecar version/doctor check and reports its actual status. The summary also includes application version, platform category, native secret-store availability, configuration-file state, schema versions, storage/backend counts without names, enabled MCP tools, HTTP bind category, port state, and sanitized recent errors. Status is intended for troubleshooting, not as proof that a remote storage backend is healthy.
