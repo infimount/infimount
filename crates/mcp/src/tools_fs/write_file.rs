@@ -1,8 +1,10 @@
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 
-use crate::errors::{err_with_details, map_opendal_error, McpErrorCode, McpResult};
+use crate::errors::{err_with_details, map_opendal_error, McpError, McpErrorCode, McpResult};
 use crate::opendal_adapter;
 use crate::path::{enforce_root_operation, parse_mcp_path, resolve_storage_path, FsOp};
 use crate::policy::McpOperation;
@@ -37,10 +39,18 @@ pub struct WriteFileOutput {
     pub written_bytes: u64,
 }
 
-/// Maximum number of bytes an MCP `write_file` request may write.
+/// Maximum number of bytes an MCP `write_file` request may write (after decoding).
 pub const MAX_MCP_WRITE_BYTES: usize = 4 * 1024 * 1024;
 
-pub async fn write_file(ctx: &FsToolsContext, input: WriteFileInput) -> McpResult<WriteFileOutput> {
+/// Longest padded base64 text whose decoded bytes can fit in
+/// [`MAX_MCP_WRITE_BYTES`]. Shared by the runtime pre-check and the schema
+/// `maxLength`, so the two cannot drift.
+pub const MAX_MCP_WRITE_BASE64_LEN: usize = MAX_MCP_WRITE_BYTES.div_ceil(3) * 4;
+
+pub async fn write_file(
+    ctx: &FsToolsContext,
+    mut input: WriteFileInput,
+) -> McpResult<WriteFileOutput> {
     let parsed = parse_mcp_path(&input.path)?;
     enforce_root_operation(FsOp::WriteFile, &parsed)?;
     let resolved = resolve_storage_path(&ctx.registry, &parsed.normalized)?;
@@ -75,17 +85,14 @@ pub async fn write_file(ctx: &FsToolsContext, input: WriteFileInput) -> McpResul
         false,
     )?;
 
-    if !input.encoding.eq_ignore_ascii_case("utf-8") {
-        return Err(err_with_details(
-            McpErrorCode::ERR_TEXT_DECODE_FAILED,
-            "failed to encode file content as text",
-            json!({
-                "path": parsed.normalized,
-                "encoding": input.encoding,
-                "supported_encoding": "utf-8"
-            }),
-        ));
-    }
+    // Size-check and decode before building the operator or any side effect,
+    // so an oversized or malformed payload never creates parents or reaches
+    // the backend. The content String is consumed, not copied.
+    let bytes = decode_content(
+        std::mem::take(&mut input.content),
+        &input.encoding,
+        &parsed.normalized,
+    )?;
 
     let op = opendal_adapter::build_operator(&storage, &ctx.registry)?;
 
@@ -97,14 +104,7 @@ pub async fn write_file(ctx: &FsToolsContext, input: WriteFileInput) -> McpResul
         ));
     }
 
-    let written_bytes = input.content.len() as u64;
-    if written_bytes as usize > MAX_MCP_WRITE_BYTES {
-        return Err(err_with_details(
-            McpErrorCode::ERR_INVALID_PATH,
-            "file content exceeds the 4 MiB write limit",
-            json!({ "path": parsed.normalized, "max_bytes": MAX_MCP_WRITE_BYTES }),
-        ));
-    }
+    let written_bytes = bytes.len() as u64;
 
     // Capability gates must run before any side effect: an unsupported
     // no-overwrite write must not leave freshly created parent directories
@@ -182,7 +182,6 @@ pub async fn write_file(ctx: &FsToolsContext, input: WriteFileInput) -> McpResul
         ));
     }
 
-    let bytes = input.content.into_bytes();
     if !input.overwrite {
         let write = op
             .write_with(&parsed.backend_path, bytes)
@@ -250,4 +249,87 @@ fn sanitize_user_metadata(
     } else {
         Some(sanitized)
     }
+}
+
+/// Content encodings `write_file` accepts. `utf-8` writes the text as-is;
+/// `base64` (RFC 4648, standard alphabet, padded) writes the decoded bytes so
+/// agents can store binary output such as images, spreadsheets or archives.
+pub const SUPPORTED_WRITE_ENCODINGS: [&str; 2] = ["utf-8", "base64"];
+
+/// Cheap preflight, also used by the MCP confirmation path before it hashes
+/// or queues a write. The actual decoder remains authoritative for validity.
+pub(crate) fn validate_write_content_length(
+    content: &str,
+    encoding: &str,
+    path: &str,
+) -> McpResult<()> {
+    if encoding.eq_ignore_ascii_case("utf-8") {
+        if content.len() > MAX_MCP_WRITE_BYTES {
+            return Err(content_too_large(path));
+        }
+        return Ok(());
+    }
+    if encoding.eq_ignore_ascii_case("base64") {
+        if content.len() > MAX_MCP_WRITE_BASE64_LEN {
+            return Err(content_too_large(path));
+        }
+        // For a potentially valid padded payload, account for the last
+        // quartet. The encoded-length bound alone permits up to two extra bytes.
+        if content.len().is_multiple_of(4) {
+            let padding = if content.ends_with("==") {
+                2
+            } else if content.ends_with('=') {
+                1
+            } else {
+                0
+            };
+            let decoded_len = (content.len() / 4 * 3).saturating_sub(padding);
+            if decoded_len > MAX_MCP_WRITE_BYTES {
+                return Err(content_too_large(path));
+            }
+        }
+        return Ok(());
+    }
+    Err(err_with_details(
+        McpErrorCode::ERR_TEXT_DECODE_FAILED,
+        "unsupported content encoding",
+        json!({
+            "path": path,
+            "encoding": encoding,
+            "supported_encoding": "utf-8",
+            "supported_encodings": SUPPORTED_WRITE_ENCODINGS
+        }),
+    ))
+}
+
+fn decode_content(content: String, encoding: &str, path: &str) -> McpResult<Vec<u8>> {
+    validate_write_content_length(&content, encoding, path)?;
+    if encoding.eq_ignore_ascii_case("utf-8") {
+        return Ok(content.into_bytes());
+    }
+    let bytes = BASE64_STANDARD.decode(content.as_bytes()).map_err(|err| {
+        err_with_details(
+            McpErrorCode::ERR_TEXT_DECODE_FAILED,
+            "content is not valid base64",
+            json!({
+                "path": path,
+                "encoding": "base64",
+                "reason": err.to_string(),
+                "hint": "use standard base64 (RFC 4648) with padding"
+            }),
+        )
+    })?;
+    // Keep the decoded size check as defense in depth.
+    if bytes.len() > MAX_MCP_WRITE_BYTES {
+        return Err(content_too_large(path));
+    }
+    Ok(bytes)
+}
+
+fn content_too_large(path: &str) -> McpError {
+    err_with_details(
+        McpErrorCode::ERR_INVALID_PATH,
+        "file content exceeds the 4 MiB write limit",
+        json!({ "path": path, "max_bytes": MAX_MCP_WRITE_BYTES }),
+    )
 }

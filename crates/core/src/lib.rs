@@ -4,6 +4,7 @@ pub mod agent_tasks;
 pub mod atomic_file;
 pub mod backup;
 pub mod config;
+pub mod hosted_io;
 pub mod models;
 pub mod operations;
 pub mod registry;

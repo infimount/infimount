@@ -68,14 +68,17 @@ fn decode_path_controls(path: &str) -> String {
 
     while index < bytes.len() {
         if bytes[index] == b'%' && index + 2 < bytes.len() {
-            let code = &path[index + 1..index + 3].to_ascii_lowercase();
-            match code.as_str() {
-                "2f" | "5c" => {
+            // Inspect ASCII bytes without slicing through a Unicode code point.
+            match (
+                bytes[index + 1].to_ascii_lowercase(),
+                bytes[index + 2].to_ascii_lowercase(),
+            ) {
+                (b'2', b'f') | (b'5', b'c') => {
                     out.push('/');
                     index += 3;
                     continue;
                 }
-                "2e" => {
+                (b'2', b'e') => {
                     out.push('.');
                     index += 3;
                     continue;
@@ -84,12 +87,13 @@ fn decode_path_controls(path: &str) -> String {
             }
         }
 
-        if bytes[index] == b'\\' {
+        let character = path[index..].chars().next().expect("valid UTF-8 boundary");
+        if character == '\\' {
             out.push('/');
         } else {
-            out.push(bytes[index] as char);
+            out.push(character);
         }
-        index += 1;
+        index += character.len_utf8();
     }
 
     out
@@ -189,6 +193,23 @@ mod tests {
         assert_eq!(parsed.storage_name.as_deref(), Some("PhotosS3"));
         assert_eq!(parsed.backend_path, "");
         assert!(!parsed.is_root);
+    }
+
+    #[test]
+    fn unicode_paths_and_partial_percent_sequences_keep_their_exact_identity() {
+        for path in [
+            "/写真/报告😀.pdf",
+            "/Local/%😀",
+            "/Local/%é",
+            "/Local/%2😀",
+            "/Local/末尾%",
+            "/Local/末尾%2",
+        ] {
+            assert_eq!(normalize_absolute_path(path).unwrap(), path);
+        }
+        let parsed = parse_mcp_path("/写真/报告%2F../結果😀.pdf").unwrap();
+        assert_eq!(parsed.storage_name.as_deref(), Some("写真"));
+        assert_eq!(parsed.backend_path, "結果😀.pdf");
     }
 
     #[test]

@@ -319,6 +319,14 @@ impl AgentTaskMcpServer {
         })
     }
 
+    /// Test-only: point the audit log at a temporary file so tests can read
+    /// it back without touching the user's real audit store.
+    #[cfg(test)]
+    fn with_audit_store(mut self, audit: AuditStore) -> Self {
+        self.audit = audit;
+        self
+    }
+
     fn is_tool_enabled(&self, name: &str) -> bool {
         self.enabled_tools.contains(name)
     }
@@ -702,5 +710,84 @@ mod tests {
         assert!(!server.is_tool_enabled("delete_path"));
         assert!(!server.is_tool_enabled("move_path"));
         assert!(!server.is_tool_enabled("generate_download_link"));
+    }
+
+    fn base64_write_args(path: &str, content: &str) -> Map<String, Value> {
+        let mut args = Map::new();
+        args.insert("path".to_string(), json!(path));
+        args.insert("content".to_string(), json!(content));
+        args.insert("encoding".to_string(), json!("base64"));
+        args.insert("overwrite".to_string(), json!(false));
+        args
+    }
+
+    fn audit_events_for(audit: &AuditStore, path: &str) -> Vec<AuditEvent> {
+        audit
+            .list_recent(100)
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.tool_name == "write_file" && event.path.as_deref() == Some(path))
+            .collect()
+    }
+
+    /// #249: binary writes through the real Agent Task dispatch path keep the
+    /// task scope, the no-overwrite guarantee and a decoded-size audit record.
+    #[tokio::test]
+    async fn task_server_binary_write_is_scoped_no_overwrite_and_audits_decoded_size() {
+        let (dir, registry, scope) = fixture();
+        let root = dir.path().join("root");
+        let audit = AuditStore::new(Some(dir.path().join("audit.json")));
+        let tools = ["list_dir", "stat_path", "read_file", "write_file"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let server = AgentTaskMcpServer::new(registry, tools, scope)
+            .unwrap()
+            .with_audit_store(audit.clone());
+
+        let output_path = "/Workspace storage/workspace/tasks/task-1/outputs/chart.bin";
+        let output_file = root.join("workspace/tasks/task-1/outputs/chart.bin");
+
+        // 1. Allowed: base64 inside outputs/ writes the exact bytes ("/wAB" -> ff 00 01).
+        let written = server
+            .dispatch_tool("write_file", base64_write_args(output_path, "/wAB"))
+            .await;
+        assert_eq!(written["ok"], true, "{written}");
+        assert_eq!(written["data"]["written_bytes"], 3);
+        assert_eq!(std::fs::read(&output_file).unwrap(), vec![0xff, 0x00, 0x01]);
+
+        let allowed = audit_events_for(&audit, output_path);
+        assert!(
+            allowed
+                .iter()
+                .any(|e| e.decision == AuditDecision::Allowed && e.bytes_written == Some(3)),
+            "expected an Allowed audit event with the decoded size (3 bytes): {allowed:?}"
+        );
+
+        // 2. No-overwrite still holds for binary writes.
+        let again = server
+            .dispatch_tool("write_file", base64_write_args(output_path, "AAAA"))
+            .await;
+        assert_eq!(again["ok"], false);
+        assert_eq!(again["error"]["code"], "ERR_ALREADY_EXISTS");
+        assert_eq!(std::fs::read(&output_file).unwrap(), vec![0xff, 0x00, 0x01]);
+
+        // 3. Outside outputs/ the task scope denies the write before any decode or write.
+        let outside_path = "/Workspace storage/workspace/tasks/task-1/escape.bin";
+        let denied = server
+            .dispatch_tool("write_file", base64_write_args(outside_path, "/wAB"))
+            .await;
+        assert_eq!(denied["ok"], false);
+        assert!(!root.join("workspace/tasks/task-1/escape.bin").exists());
+        let denied_events = audit
+            .list_recent(100)
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.tool_name == "write_file" && e.decision == AuditDecision::Denied)
+            .count();
+        assert!(
+            denied_events >= 1,
+            "out-of-scope binary write must be audited as Denied"
+        );
     }
 }

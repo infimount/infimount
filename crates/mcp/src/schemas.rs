@@ -63,8 +63,8 @@ pub fn schema_write_file() -> serde_json::Value {
       "type": "object",
       "properties": {
         "path": { "type": "string", "description": "Absolute file path." },
-        "content": { "type": "string", "description": "Text content. Only utf-8 encoding is supported in v1.", "maxLength": 4194304 },
-        "encoding": { "type": "string", "default": "utf-8", "description": "Text encoding. Only utf-8 is supported in v1." },
+        "content": { "type": "string", "description": "File content: UTF-8 text when encoding is utf-8, or standard padded base64 of the raw bytes when encoding is base64. At most 4 MiB after decoding.", "maxLength": crate::tools_fs::MAX_MCP_WRITE_BASE64_LEN },
+        "encoding": { "type": "string", "enum": ["utf-8", "base64"], "default": "utf-8", "description": "How content is encoded. Use base64 for binary files (images, spreadsheets, archives)." },
         "overwrite": { "type": "boolean", "default": true },
         "create_parents": { "type": "boolean", "default": false },
         "user_metadata": {

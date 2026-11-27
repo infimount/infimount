@@ -1,0 +1,93 @@
+name: Hosted Data Plane Qualification
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/hosted-data-plane.yml"
+      - "crates/hosted/**"
+      - "crates/core/**"
+      - "crates/mcp/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "deploy/hosted/**"
+      - "scripts/qualify-hosted-data-plane.py"
+      - "docs/hosted-artifact-service.md"
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/hosted-data-plane.yml"
+      - "crates/hosted/**"
+      - "crates/core/**"
+      - "crates/mcp/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "deploy/hosted/**"
+      - "scripts/qualify-hosted-data-plane.py"
+      - "docs/hosted-artifact-service.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-data-plane-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  CARGO_BUILD_JOBS: "4"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  AWS_EC2_METADATA_DISABLED: "true"
+
+jobs:
+  qualify:
+    name: Identity, confined filesystem and synthetic S3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install pinned Rust and Clippy
+        uses: dtolnay/rust-toolchain@1.94.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: hosted-data-plane-msrv
+      - name: Install build dependencies
+        run: bash scripts/ci-apt-install.sh pkg-config libssl-dev
+      - name: Check formatting
+        run: cargo +1.94.0 fmt --all -- --check
+      - name: Strict hosted Clippy
+        run: cargo +1.94.0 clippy -p infimount_hosted --all-targets --locked -- -D warnings
+      - name: Test confinement and hosted authority
+        run: |
+          cargo +1.94.0 test -p infimount_core --locked hosted_io::tests
+          cargo +1.94.0 test -p infimount_hosted --locked
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install pinned disposable S3 emulator
+        run: pip install 'moto[server,s3]==5.2.6'
+      - name: Qualify S3 without cloud credentials
+        run: python scripts/qualify-hosted-data-plane.py
+      - name: Check example configurations without starting a listener
+        run: |
+          cargo +1.94.0 run -p infimount_hosted --locked -- check --config deploy/hosted/example-local.json
+          cargo +1.94.0 run -p infimount_hosted --locked -- check --config deploy/hosted/example-s3.json
+
+  container:
+    name: Build and validate non-root container
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build standalone service image
+        run: docker build -f deploy/hosted/Dockerfile -t infimount-hosted:qualification .
+      - name: Validate configuration with no network or writable root
+        run: |
+          docker run --rm --network=none --read-only --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            --mount type=bind,src="$PWD/deploy/hosted/example-local.json",dst=/run/hosted.json,readonly \
+            infimount-hosted:qualification check --config /run/hosted.json
