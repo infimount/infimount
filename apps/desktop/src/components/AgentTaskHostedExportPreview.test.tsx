@@ -139,6 +139,61 @@ describe("AgentTaskHostedExportPreview", () => {
     expect(screen.queryByTestId("hosted-export-verified")).not.toBeInTheDocument();
   });
 
+  it("releases a pending pilot after switching tasks without showing another task's result", async () => {
+    vi.mocked(hostedPilotBuildInfo).mockResolvedValueOnce({
+      enabled: true, syntheticOnly: true, provider: "openai_agents_api", maxSpendUsdCents: 100,
+    });
+    let finish!: (value: Awaited<ReturnType<typeof runHostedTaskPilot>>) => void;
+    const pending = new Promise<Awaited<ReturnType<typeof runHostedTaskPilot>>>((resolve) => {
+      finish = resolve;
+    });
+    vi.mocked(runHostedTaskPilot).mockReturnValueOnce(pending);
+    const view = render(<AgentTaskHostedExportPreview workspaceId="workspace" taskId="task-1" />);
+    fill();
+    fireEvent.click(screen.getByRole("button", { name: /Preview export scope/i }));
+    await screen.findByTestId("hosted-export-preview");
+    fireEvent.click(screen.getByRole("button", { name: /Verify actual prepared bytes/i }));
+    await screen.findByTestId("hosted-export-verified");
+    fireEvent.click(await screen.findByRole("button", { name: /Review natively and run synthetic pilot/i }));
+    expect(runHostedTaskPilot).toHaveBeenCalledTimes(1);
+    view.rerender(<AgentTaskHostedExportPreview workspaceId="workspace" taskId="task-2" />);
+    expect(screen.getByRole("button", { name: /Review remote sandbox export/i })).toBeDisabled();
+    expect(screen.getByText(/Changing tasks does not cancel it/i)).toBeInTheDocument();
+    await act(async () => {
+      finish({ executionId: "old-attempt", outputFileCount: 1, outputTotalBytes: 25 });
+      await pending;
+    });
+    expect(screen.getByRole("button", { name: /Review remote sandbox export/i })).toBeEnabled();
+    expect(screen.queryByText(/Imported 1 verified output/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("hosted-export-verified")).not.toBeInTheDocument();
+    expect(runHostedTaskPilot).toHaveBeenCalledTimes(1);
+    fill();
+    fireEvent.click(screen.getByRole("button", { name: /Preview export scope/i }));
+    await waitFor(() => expect(previewHostedTaskExport).toHaveBeenLastCalledWith(
+      expect.objectContaining({ taskId: "task-2" }),
+    ));
+  });
+
+  it("does not claim that no transfer or charge happened when a native run fails", async () => {
+    vi.mocked(hostedPilotBuildInfo).mockResolvedValueOnce({
+      enabled: true, syntheticOnly: true, provider: "openai_agents_api", maxSpendUsdCents: 100,
+    });
+    vi.mocked(runHostedTaskPilot).mockRejectedValueOnce(new Error("sess_private_provider_error"));
+    render(<AgentTaskHostedExportPreview workspaceId="workspace" taskId="task-1" />);
+    fill();
+    fireEvent.click(screen.getByRole("button", { name: /Preview export scope/i }));
+    await screen.findByTestId("hosted-export-preview");
+    fireEvent.click(screen.getByRole("button", { name: /Verify actual prepared bytes/i }));
+    await screen.findByTestId("hosted-export-verified");
+    fireEvent.click(await screen.findByRole("button", { name: /Review natively and run synthetic pilot/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/may have been transferred or charged/i);
+    expect(screen.getByText(/No data transferred by preview or byte verification/i)).toBeInTheDocument();
+    expect(screen.queryByText(/^No data transferred\. No spending/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId("hosted-export-review")).not.toHaveTextContent("sess_private_provider_error");
+    expect(screen.queryByTestId("hosted-export-verified")).not.toBeInTheDocument();
+    expect(runHostedTaskPilot).toHaveBeenCalledTimes(1);
+  });
+
   it("hides the previous digest as soon as the reviewed instructions change", async () => {
     render(<AgentTaskHostedExportPreview workspaceId="workspace" taskId="task-1" />);
     fill();

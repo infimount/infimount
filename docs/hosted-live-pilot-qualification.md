@@ -81,18 +81,113 @@ Official API references:
 - <https://developers.openai.com/api/reference/resources/beta/subresources/agents/subresources/sessions/methods/delete>
 - <https://developers.openai.com/api/reference/resources/beta/subresources/agents/subresources/sessions/subresources/events/methods/create>
 
+## Reproducible operator preparation (offline)
+
+Use an isolated Linux test account with its own native keyring and local
+storage. Do not run the pilot build against a user's existing configuration
+or publish it as a normal update. The ordinary build still rejects the
+hosted execution command.
+
+Start with the exact fully qualified source tree. The #255 correction
+restored the private module boundary and made main match the eight-workflow
+qualified #246 source tree on 27 November 2026. Verify any subsequent
+candidate independently before live use.
+
+From the repository root, with the project's Node.js 24, pnpm 10, Rust
+1.94.0 and Linux Tauri prerequisites installed:
+
+```bash
+pnpm install --frozen-lockfile
+node scripts/prepare-mcp-sidecar.mjs
+cargo +1.94.0 check -p infimount --all-targets --features hosted-live-pilot --locked
+cargo +1.94.0 test -p infimount --features hosted-live-pilot --locked
+node --test scripts/qualify-openai-hosted-synthetic.test.mjs
+```
+
+These checks do not use a provider credential or make a paid request.
+Create the sole public fixture in a fresh directory:
+
+```bash
+fixture_dir="$(mktemp -d)"
+printf '%s\n' 'Infimount synthetic hosted pilot v1' > "$fixture_dir/synthetic.txt"
+wc -c "$fixture_dir/synthetic.txt"
+sha256sum "$fixture_dir/synthetic.txt"
+printf 'Local source directory: %s\n' "$fixture_dir"
+```
+
+The file must contain exactly **36 bytes**, including the terminating LF,
+with SHA-256
+`96d1e197e24dfadde8ede461f4933f3a53dbc37618f3616951a6f86bf94fa5ef`.
+Do not add other inputs, edit the task manifest or use real source data.
+
+Launch the opt-in development build following the normal Tauri setup in
+[Building from Source](../README.md#-building-from-source). Run the
+frontend dev server separately if it is not already running:
+
+```bash
+pnpm --dir apps/desktop dev
+# In a second terminal, from the same checkout:
+pnpm --dir apps/desktop tauri dev --features hosted-live-pilot
+```
+
+1. Register the fresh fixture directory as Local Filesystem storage. Create
+   a separate read-write Agent Workspace on local storage for the prepared
+   task. Do not broaden source MCP access.
+2. Select only `synthetic.txt` and use **Prepare Agent Task**. Use the exact
+   title, objective and requested output listed above. Commit through
+   Infimount's normal preparation flow. Do not handcraft a manifest, launch
+   another agent, or modify the copied bytes.
+3. Reopen the committed task in Agent Workspace Tasks. Open **Review remote
+   sandbox export**, enter the same exact reviewed title, objective and
+   output, then select **Preview export scope (no upload)** and **Verify
+   actual prepared bytes (no upload)**. Check the input path, 36-byte size,
+   SHA-256, sole requested output and provider disclosures. Both actions
+   are local-only. In a normal build there must be no run action.
+
+Stop here unless the live pilot has been separately authorized. A saved
+credential, a successful build, or a verified preview is not permission
+to transfer data or spend money.
+
+## Authorized live qualification and evidence
+
+Only an operator who has independently accepted the current provider terms,
+U.S.-only residency, non-ZDR retention and potentially more than US$1 in
+actual charges may continue. Use a dedicated project with independently
+configured billing controls and a restricted key. Keep the key out of the
+shell history, repository, task files and evidence.
+
+- Save the key through **Optional hosted compute credentials** in Agent
+  Workspace Tasks. The native keyring is the only credential source.
+- After fresh byte verification, select **Review natively and run synthetic
+  pilot**. Inspect the native dialog's complete scope, model, small
+  container, provider terms and best-effort spending request. Only explicit
+  approval there may submit one session. Cancel is not execution.
+- On completion, refresh private execution history and review the task
+  outputs. Require a succeeded attempt, matching API-level session deletion
+  receipt, exactly one imported `outputs/report.md`, and a successful
+  independent output-byte review. Verify the original synthetic source is
+  unchanged and that no publication occurred.
+- Record the exact build commit, input and output SHA-256 and byte counts,
+  local attempt identifier, terminal status, API deletion result, whether
+  the report meets the task, provider project activity and observed billing
+  if available. Keep provider session IDs, credentials and raw provider
+  responses private. Do not invent missing cost or retention evidence.
+- If interrupted, follow the recovery contract above. Never repeat a
+  possibly charged create automatically. Unknown-session-ID attempts
+  require manual project reconciliation. Preserve partial local outputs.
+
+A successful synthetic run is only an interoperability observation. It
+does not qualify arbitrary user data, repeated production workloads, other
+operating systems, or original-storage publication.
+
 ## Remaining qualification gates
 
-- CI for the component PRs and the combined feature-gated pilot must pass,
-  including the new `Hosted Pilot Qualification` workflow.
-- Independent review of the complete native approval and transport flow.
-- One **separately authorized**, synthetic-only API interoperability pilot
-  with explicit acceptance of provider billing, U.S. data residency and
-  non-ZDR retention. The US$1 limit is a best-effort provider control, not
-  a guarantee. This is **not** permission to run the pilot.
-- A pinned-session recovery path for crashes occurring before deletion and
-  independently qualified macOS/Windows safety semantics before enabling
-  those operating systems.
+- The combined opt-in desktop implementation and restored merge tree
+  passed eight offline workflows. Subsequent changes must requalify.
+- The actual separately authorized synthetic-only live API pilot remains
+  pending. No paid request or real-data upload is claimed.
+- macOS and Windows require independent safety qualification before hosted
+  execution is enabled there. Original-storage publication remains separate.
 
 No remote inference, paid session or upload is run in CI. The purpose of
 this document is qualification of the dormant opt-in implementation, not

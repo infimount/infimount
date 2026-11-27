@@ -30,15 +30,20 @@ provider execution records.
   other desktop secrets, it exists transiently in app memory during entry.
   Status `configured:true` is **not** a test of provider access or privileges.
 
-## Deliberately not enabled
+## Execution remains explicitly gated
 
-No code fetches this key to construct an HTTP header or start a paid session.
-The existing C2.6 operator-only synthetic CLI continues using the operator's
+Ordinary desktop builds do not fetch this key to construct a hosted HTTP
+request or start a paid session. The operator-only Linux
+`hosted-live-pilot` feature uses the native keyring for the exact synthetic
+fixture under separate per-execution native approval. See the
+[hosted pilot qualification protocol](hosted-live-pilot-qualification.md).
+A configured key is not approval, and successful offline qualification is
+not live provider verification.
+
+The separate C2.6 operator-only synthetic CLI uses the operator's
 `OPENAI_API_KEY` environment variable only after explicit authorization.
-A future trusted desktop execution flow must retrieve the key solely inside
-the native control process and require **separate per-execution**:
-reviewed/exported prepared input bytes, provider U.S.-residency and non-ZDR
-disclosure, spending consent, bounded session lifecycle and cleanup.
+Both routes retain the U.S.-residency/non-ZDR disclosure, separate spending
+consent, bounded session lifecycle and cleanup requirements.
 The user must provide a key with project scopes `api.agents.read`,
 `api.agents.write` and `api.responses.write`; these permissions cannot
 be validated offline.
