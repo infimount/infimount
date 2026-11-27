@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install pinned Rust MSRV and Clippy
-        uses: dtolnay/rust-toolchain@1.94.0
+        uses: dtolnay/rust-toolchain@1.120
         with:
           components: rustfmt, clippy
       - name: Rust cache
