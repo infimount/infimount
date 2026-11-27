@@ -33,7 +33,7 @@ no-follow handles before and after native approval.
 3. The control-plane coordinator builds a bounded request from actual
    prepared file bytes. Native GTK review displays the complete redacted
    instructions, every input file, size and SHA-256, output names, fixed model
-   `gpt-6-astra`, U.S.-only/non-ZDR disclosure and the US$1 best-effort
+   `gpt-6-astra`, a fixed small hosted container, U.S.-only/non-ZDR disclosure and the US$1 best-effort
    spending request. Cancel and window closure fail closed.
 4. Only an explicit response from the native in-process dialog creates an
    uncloneable, one-use consent capability. The coordinator pins and rehashes

@@ -76,6 +76,7 @@ struct HostedInlineFile {
 struct HostedEnvironment {
     #[serde(rename = "type")]
     environment_type: &'static str,
+    container_size: &'static str,
     network: HostedNetwork,
     files: Vec<HostedInlineFile>,
 }
@@ -173,6 +174,7 @@ pub fn build_openai_hosted_offline_request(
         },
         environment: HostedEnvironment {
             environment_type: "openai_hosted",
+            container_size: "small",
             network: HostedNetwork { access: "disabled" },
             files,
         },
@@ -243,6 +245,7 @@ mod tests {
         let json = serde_json::to_value(&request).unwrap();
         assert_eq!(json["agent"]["model"], "gpt-6-astra");
         assert_eq!(json["environment"]["type"], "openai_hosted");
+        assert_eq!(json["environment"]["container_size"], "small");
         assert_eq!(json["environment"]["network"]["access"], "disabled");
         assert_eq!(json["environment"]["files"][0]["type"], "inline");
         assert_eq!(

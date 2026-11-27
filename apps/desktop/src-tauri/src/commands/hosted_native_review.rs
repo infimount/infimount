@@ -103,6 +103,7 @@ pub(crate) fn reviewed_native_message(
         "\nVerified review digest:\n{}\n\n\
          Provider: OpenAI Agents API, U.S. only, non-ZDR.\n\
          Pilot model: {}\n\
+         Hosted container tier: small.\n\
          Contents and instructions may be retained by the provider.\n\
          External network in hosted compute: DISABLED.\n\
          Remote charges: US$1 best-effort limit, NOT a guaranteed cap.\n\
