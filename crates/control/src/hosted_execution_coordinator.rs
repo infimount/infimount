@@ -35,7 +35,9 @@ use crate::sandbox_import::{
     validate_sandbox_output_listing, SandboxOutputCandidatePlan, SandboxRemoteEntryKind,
     SandboxRemoteOutputEntry, SandboxRemoteOutputListing, SANDBOX_IMPORT_SCHEMA_VERSION,
 };
-use crate::sandbox_local_export::build_verified_hosted_request_from_pinned_task;
+use crate::sandbox_local_export::{
+    build_verified_hosted_request_from_pinned_task, VerifiedHostedInputScope,
+};
 use crate::sandbox_local_ingest::{
     ingest_reviewed_outputs_to_pinned_directory, open_absolute_root,
     require_empty_pinned_output_directory, require_existing_chain, VerifiedStagedOutput,
@@ -70,7 +72,7 @@ fn check_deadline(deadline: Instant) -> Result<(), CoreError> {
 }
 
 /// Only trusted native state may supply this context. No user-chosen OS path.
-pub(crate) struct HostedRunContext<'a> {
+pub struct HostedRunContext<'a> {
     pub workspace_root: &'a Path,
     pub manifest: &'a AgentTaskManifest,
     pub reviewed_brief: &'a AgentTaskBrief,
@@ -81,7 +83,7 @@ pub(crate) struct HostedRunContext<'a> {
 }
 
 /// Native clock, never timestamps received from the model or provider.
-pub(crate) trait HostedClock {
+pub trait HostedClock {
     fn unix_ms(&self) -> u64;
     fn rfc3339(&self) -> String;
 }
@@ -120,7 +122,7 @@ impl HostedExportConsent {
 
 /// Typed resources prevent a transport caller from supplying arbitrary URLs.
 /// There is intentionally no production implementation of this trait.
-pub(crate) enum HostedRead<'a> {
+pub enum HostedRead<'a> {
     Session {
         session_id: &'a str,
     },
@@ -139,13 +141,13 @@ pub(crate) enum HostedRead<'a> {
     },
 }
 
-pub(crate) type Receive<'a> = dyn FnMut(&[u8]) -> Result<(), CoreError> + 'a;
+pub type Receive<'a> = dyn FnMut(&[u8]) -> Result<(), CoreError> + 'a;
 
 /// Every implementation must stop on callback errors, enforce its deadline
 /// during blocking I/O and bind authenticated responses to the requested IDs.
 /// The coordinator additionally checks chunk sizes before growing any buffer.
 /// Unit tests exercise this contract without networking or credentials.
-pub(crate) trait HostedTransport {
+pub trait HostedTransport {
     fn create_once(
         &mut self,
         request: &[u8],
@@ -571,7 +573,7 @@ fn record_failed(
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct HostedRunSummary {
+pub struct HostedRunSummary {
     pub execution_id: String,
     pub output_file_count: usize,
     pub output_total_bytes: u64,
@@ -699,6 +701,56 @@ pub(crate) fn run_hosted_execution(
         output_file_count: summary.file_count,
         output_total_bytes: summary.total_bytes,
     })
+}
+
+/// Trusted native caller approval bridge. The callback MUST be implemented
+/// by a native modal review running in the trusted desktop process, never by
+/// a renderer-provided boolean or a model-facing tool. No consent constructor
+/// is public. The control plane rehashes actual prepared bytes before review
+/// and AGAIN after review before any one-shot create request.
+///
+/// All lifecycle/configuration/workspace locks must remain held by the caller
+/// across this synchronous function, including while native review runs.
+pub fn run_hosted_with_native_review(
+    context: &HostedRunContext<'_>,
+    transport: &mut impl HostedTransport,
+    clock: &impl HostedClock,
+    native_review: impl FnOnce(
+        &crate::sandbox_bundle::SandboxTaskBundle,
+        &VerifiedHostedInputScope,
+    ) -> Result<bool, CoreError>,
+) -> Result<HostedRunSummary, CoreError> {
+    // This materializes the actual reviewed inline request under pinned,
+    // no-follow handles, including an empty-output preflight. The request
+    // and bytes never enter the native UI or renderer.
+    let pinned = pin_request(context).map_err(|_| fail("ERR_HOSTED_INPUT_SCOPE"))?;
+    let bundle = build_sandbox_task_bundle(context.manifest, context.reviewed_brief)
+        .map_err(|_| fail("ERR_HOSTED_INPUT_SCOPE"))?;
+    let verified = VerifiedHostedInputScope {
+        input_file_count: bundle.inputs.len(),
+        input_total_bytes: bundle.input_total_bytes,
+        bundle_metadata_sha256: bundle.bundle_metadata_sha256.clone(),
+        verified_bytes: true,
+        export_authorized: false,
+    };
+    let approved = native_review(&bundle, &verified)
+        .map_err(|_| fail("ERR_HOSTED_NATIVE_REVIEW_UNAVAILABLE"))?;
+    if !approved {
+        return Err(fail("ERR_HOSTED_CONSENT"));
+    }
+    let now = clock.unix_ms();
+    let expires_at_ms = now
+        .checked_add(MAX_CONSENT_LIFETIME_MS)
+        .ok_or_else(|| fail("ERR_HOSTED_CONSENT"))?;
+    // A private, non-cloneable one-use capability is minted only after the
+    // trusted native callback returned explicit consent. The internal run
+    // independently re-pins files and matches the exact snapshot digest.
+    let consent = HostedExportConsent {
+        snapshot_digest: pinned.snapshot_digest,
+        issued_at_ms: now,
+        expires_at_ms,
+    };
+    run_hosted_execution(context, Some(consent), transport, clock)
 }
 
 #[cfg(test)]
@@ -1066,6 +1118,78 @@ mod tests {
         )
         .is_err());
         assert!(!public_deletion_confirmed(&fixture.records, &fixture.record()).unwrap());
+    }
+
+    #[test]
+    fn native_review_denial_never_creates_or_records_a_charged_attempt() {
+        let fixture = Fixture::new();
+        let mut provider = MockProvider::new(&fixture, Fault::None);
+        assert!(run_hosted_with_native_review(
+            &fixture.context(),
+            &mut provider,
+            &Clock,
+            |bundle, verified| {
+                assert_eq!(bundle.inputs.len(), 1);
+                assert!(verified.verified_bytes);
+                assert!(!verified.export_authorized);
+                Ok(false)
+            }
+        )
+        .is_err());
+        assert!(provider.calls.is_empty());
+        assert!(fixture
+            .records
+            .list_for_task(WORKSPACE, TASK)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn native_review_grants_exact_scope_and_rehashes_before_one_create() {
+        let fixture = Fixture::new();
+        let mut provider = MockProvider::new(&fixture, Fault::None);
+        let summary = run_hosted_with_native_review(
+            &fixture.context(),
+            &mut provider,
+            &Clock,
+            |bundle, verified| {
+                assert_eq!(bundle.instructions, "Write the approved report.");
+                assert_eq!(bundle.inputs[0].task_path, "inputs/data.txt");
+                assert_eq!(verified.input_total_bytes, 5);
+                assert_eq!(
+                    verified.bundle_metadata_sha256,
+                    bundle.bundle_metadata_sha256
+                );
+                Ok(true)
+            },
+        )
+        .unwrap();
+        assert_eq!(summary.output_file_count, 1);
+        assert_eq!(fixture.record().status, ExecutionStatus::Succeeded);
+        assert_eq!(fs::read(fixture.output()).unwrap(), OUTPUT);
+    }
+
+    #[test]
+    fn changing_actual_input_during_native_review_never_calls_provider() {
+        let fixture = Fixture::new();
+        let mut provider = MockProvider::new(&fixture, Fault::None);
+        let task = fixture.task();
+        assert!(run_hosted_with_native_review(
+            &fixture.context(),
+            &mut provider,
+            &Clock,
+            |_, _| {
+                fs::write(task.join("inputs/data.txt"), b"omega").unwrap();
+                Ok(true)
+            }
+        )
+        .is_err());
+        assert!(provider.calls.is_empty());
+        assert!(fixture
+            .records
+            .list_for_task(WORKSPACE, TASK)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

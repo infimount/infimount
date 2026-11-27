@@ -22,7 +22,7 @@ mod hosted_http_transport;
 // Private, mocked-provider Linux lifecycle. No live transport or consent issuer.
 #[cfg(target_os = "linux")]
 #[allow(dead_code)]
-mod hosted_execution_coordinator;
+pub mod hosted_execution_coordinator;
 pub mod openai_hosted_request;
 pub mod publication;
 pub mod publication_apply;
