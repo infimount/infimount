@@ -14,6 +14,14 @@ vi.mock("./AgentTaskOutputReview", () => ({
   ),
 }));
 
+// Hosted export has independent opt-in feature and native-review tests.
+// Parent task-list tests should not accidentally exercise that feature.
+vi.mock("./AgentTaskHostedExportPreview", () => ({
+  AgentTaskHostedExportPreview: ({ workspaceId, taskId }: { workspaceId: string; taskId: string }) => (
+    <div data-testid="hosted-export-stub">{workspaceId}:{taskId}</div>
+  ),
+}));
+
 vi.mock("./HostedProviderCredentialPanel", () => ({
   HostedProviderCredentialPanel: () => <div data-testid="hosted-provider-credentials-mock" />,
 }));

@@ -7,6 +7,9 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   previewHostedTaskExport,
   verifyHostedTaskExport,
+  hostedPilotBuildInfo,
+  runHostedTaskPilot,
+  type HostedPilotBuildInfo,
   type HostedTaskExportPreview,
   type PreviewHostedTaskExportRequest,
   type VerifiedHostedInputScope,
@@ -32,8 +35,9 @@ function formatBytes(bytes: number): string {
 }
 
 /**
- * A read-only scope preview. Never calls a provider, uploads files, stores
- * credentials, mints an approval, or initiates a paid session.
+ * A read-only scope preview in ordinary builds. An explicitly compiled,
+ * operator-only synthetic pilot adds a separate native-reviewed run action.
+ * No webview boolean can approve spending or outbound file transfer.
  */
 export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
   const [opened, setOpened] = useState(false);
@@ -44,10 +48,22 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
   const [verified, setVerified] = useState<VerifiedHostedInputScope | null>(null);
   const [loading, setLoading] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [pilotInfo, setPilotInfo] = useState<HostedPilotBuildInfo | null>(null);
+  const [executing, setExecuting] = useState(false);
+  const [pilotResult, setPilotResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // A monotonic generation also rejects ABA edits (A -> B -> A) while an
   // older preview is in flight. A matching text key alone is not sufficient.
   const generation = useRef(0);
+  useEffect(() => {
+    let active = true;
+    setPilotInfo(null);
+    void hostedPilotBuildInfo().then((info) => {
+      if (active && info.enabled && info.syntheticOnly) setPilotInfo(info);
+    });
+    return () => { active = false; };
+  }, []);
+
 
   const invalidateReview = () => {
     generation.current += 1;
@@ -56,6 +72,7 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
     setError(null);
     setLoading(false);
     setVerifying(false);
+    setPilotResult(null);
   };
 
   useEffect(() => {
@@ -68,6 +85,7 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
     setVerified(null);
     setLoading(false);
     setVerifying(false);
+    setPilotResult(null);
     setError(null);
   }, [workspaceId, taskId]);
 
@@ -75,7 +93,7 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
   const valid = reviewedTitle.trim().length > 0 && objective.trim().length > 0 && reviewedOutputs.length > 0;
 
   const showScope = async () => {
-    if (!valid || loading || verifying) return;
+    if (!valid || loading || verifying || executing) return;
     const currentGeneration = ++generation.current;
     const request: PreviewHostedTaskExportRequest = {
       workspaceId,
@@ -103,7 +121,7 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
   };
 
   const verifyPreparedBytes = async () => {
-    if (!preview || loading || verifying) return;
+    if (!preview || loading || verifying || executing) return;
     const currentGeneration = generation.current;
     const request: PreviewHostedTaskExportRequest = {
       workspaceId,
@@ -135,13 +153,46 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
     }
   };
 
+  const runSyntheticPilot = async () => {
+    if (!pilotInfo?.enabled || !verified || !preview || executing || loading || verifying) return;
+    const request: PreviewHostedTaskExportRequest = {
+      workspaceId,
+      taskId,
+      reviewedExportBrief: {
+        title: reviewedTitle.trim(),
+        objective: objective.trim(),
+        requestedOutputs: reviewedOutputs,
+      },
+    };
+    const currentGeneration = generation.current;
+    setExecuting(true);
+    setError(null);
+    setPilotResult(null);
+    try {
+      const result = await runHostedTaskPilot(request);
+      if (generation.current !== currentGeneration) return;
+      setPilotResult(`Imported ${result.outputFileCount} verified output file(s), ${formatBytes(result.outputTotalBytes)}. Review the task outputs separately before publishing.`);
+      // Results cannot be reused as a second export approval.
+      setVerified(null);
+      setPreview(null);
+    } catch {
+      if (generation.current !== currentGeneration) return;
+      setError("Hosted synthetic pilot did not complete. Inspect private execution history before attempting another run. No automatic retry.");
+      setVerified(null);
+    } finally {
+      if (generation.current === currentGeneration) setExecuting(false);
+    }
+  };
+
   return (
     <section className="mt-3 rounded-xl border bg-muted/15 p-4" data-testid="hosted-export-review">
       <button
         type="button"
         className="flex w-full items-center justify-between text-left text-sm font-medium"
         aria-expanded={opened}
+        disabled={executing}
         onClick={() => {
+          if (executing) return;
           if (opened) invalidateReview();
           setOpened(!opened);
         }}
@@ -175,6 +226,7 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
                 setReviewedTitle(event.target.value);
               }}
               maxLength={120}
+              disabled={executing}
               placeholder="Example: Summarize approved sample data"
             />
           </label>
@@ -189,6 +241,7 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
               }}
               rows={3}
               maxLength={32768}
+              disabled={executing}
               placeholder="Describe only what the remote agent may do with the reviewed input copies."
             />
           </label>
@@ -202,18 +255,20 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
                 setOutputsText(event.target.value);
               }}
               rows={3}
+              disabled={executing}
               placeholder="outputs/summary.md"
             />
           </label>
-          <Button variant="outline" size="sm" onClick={() => void showScope()} disabled={!valid || loading || verifying}>
+          <Button variant="outline" size="sm" onClick={() => void showScope()} disabled={!valid || loading || verifying || executing}>
             {loading ? "Checking scope…" : "Preview export scope (no upload)"}
           </Button>
           {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+          {pilotResult ? <p role="status" className="text-sm font-medium">{pilotResult}</p> : null}
           {preview ? (
             <div className="space-y-3 rounded-md border bg-background p-3 text-xs" data-testid="hosted-export-preview">
               <div className="font-medium">
                 {preview.inputFileCount} declared input file{preview.inputFileCount === 1 ? "" : "s"}
-                {" · "}{formatBytes(preview.inputTotalBytes)} · ${(preview.pilotSpendLimitUsdCents / 100).toFixed(2)} USD ceiling
+                {" · "}{formatBytes(preview.inputTotalBytes)} · ${(preview.pilotSpendLimitUsdCents / 100).toFixed(2)} USD requested best-effort limit (not guaranteed)
               </div>
               <p className="text-muted-foreground">
                 Sandbox outbound network: disabled. Provider data residency: United States.
@@ -232,7 +287,7 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
               <div className="break-all font-mono text-[10px]">
                 Manifest-only export digest: {preview.bundleMetadataSha256}
               </div>
-              <Button variant="outline" size="sm" disabled={loading || verifying} onClick={() => void verifyPreparedBytes()}>
+              <Button variant="outline" size="sm" disabled={loading || verifying || executing} onClick={() => void verifyPreparedBytes()}>
                 {verifying ? "Verifying prepared files…" : "Verify actual prepared bytes (no upload)"}
               </Button>
               {verified ? (
@@ -240,6 +295,23 @@ export function AgentTaskHostedExportPreview({ workspaceId, taskId }: Props) {
                   Actual prepared bytes matched the reviewed manifest at the time of this check.
                   This is not export or spending approval. Any future execution must reverify bytes.
                 </p>
+              ) : null}
+              {pilotInfo?.enabled && verified ? (
+                <div className="space-y-2 rounded-md border p-3" data-testid="hosted-synthetic-pilot">
+                  <p className="font-medium">
+                    Operator-only synthetic pilot. Only Infimount's exact public fixture is permitted.
+                    A separate native dialog will show the upload scope and request explicit approval.
+                    OpenAI U.S.-only/non-ZDR terms apply and the US$1 best-effort limit is not guaranteed.
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void runSyntheticPilot()}
+                    disabled={executing || loading || verifying}
+                  >
+                    {executing ? "Running hosted synthetic pilot…" : "Review natively and run synthetic pilot"}
+                  </Button>
+                </div>
               ) : null}
               <p className="font-medium">
                 No data transferred. No spending or publication authorized. A future execution must rehash input bytes and obtain separate consent.

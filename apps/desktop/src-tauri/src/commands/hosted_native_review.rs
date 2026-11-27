@@ -8,6 +8,7 @@
 use std::cell::RefCell;
 
 use gtk::prelude::*;
+use infimount_control::openai_hosted_request::OPENAI_HOSTED_PILOT_MODEL;
 use infimount_control::sandbox_bundle::SandboxTaskBundle;
 use infimount_control::sandbox_local_export::VerifiedHostedInputScope;
 use infimount_core::CoreError;
@@ -101,12 +102,14 @@ pub(crate) fn reviewed_native_message(
     message.push_str(&format!(
         "\nVerified review digest:\n{}\n\n\
          Provider: OpenAI Agents API, U.S. only, non-ZDR.\n\
+         Pilot model: {}\n\
+         Hosted container tier: small.\n\
          Contents and instructions may be retained by the provider.\n\
          External network in hosted compute: DISABLED.\n\
          Remote charges: US$1 best-effort limit, NOT a guaranteed cap.\n\
          Credential configured is NOT authorization to spend.\n\n\
          Approve this exact export and one hosted execution?",
-        verified.bundle_metadata_sha256,
+        verified.bundle_metadata_sha256, OPENAI_HOSTED_PILOT_MODEL,
     ));
     if message.len() > MAX_DIALOG_CHARS {
         return Err(reject());
@@ -166,6 +169,58 @@ pub(crate) async fn ask_native_hosted_scope_confirmation(
             }
             // SAFETY: this is the final use of the live GTK dialog in the
             // response callback. The dialog is not accessed after destruction.
+            unsafe { dialog.destroy() };
+        });
+        dialog.show_all();
+    })
+    .map_err(|_| reject())?;
+    receiver.await.map_err(|_| reject())
+}
+
+/// A separate native confirmation is required before deleting a pinned
+/// remote session, even though cleanup never starts or uploads a new run.
+#[cfg(feature = "hosted-live-pilot")]
+pub(crate) async fn ask_native_hosted_cleanup_confirmation(
+    app: &tauri::AppHandle,
+    execution_id: &str,
+) -> Result<bool, CoreError> {
+    if uuid::Uuid::parse_str(execution_id).is_err() || execution_id.len() > 64 {
+        return Err(reject());
+    }
+    let message = format!(
+        "Cancel any active turn and delete the existing hosted provider session for local attempt {execution_id}?\n\n\
+         Cancellation will be accepted first and checked for an idle session.\n\
+         This may interrupt or end unfinished remote work. No new run will be created,\
+         and no task input files will be uploaded.\n\n\
+         A successful API deletion does not guarantee immediate physical erasure.\n\
+         Local output cleanup and publication are separate actions."
+    );
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let parent = handle
+            .get_webview_window("main")
+            .and_then(|window| window.gtk_window().ok());
+        let Some(parent) = parent else {
+            let _ = sender.send(false);
+            return;
+        };
+        let dialog = gtk::MessageDialog::new(
+            Some(&parent),
+            gtk::DialogFlags::MODAL | gtk::DialogFlags::DESTROY_WITH_PARENT,
+            gtk::MessageType::Warning,
+            gtk::ButtonsType::None,
+            &message,
+        );
+        dialog.add_button("Cancel", gtk::ResponseType::Cancel);
+        dialog.add_button("Delete pinned provider session", gtk::ResponseType::Ok);
+        dialog.set_default_response(gtk::ResponseType::Cancel);
+        let once = RefCell::new(Some(sender));
+        dialog.connect_response(move |dialog, response| {
+            if let Some(sender) = once.borrow_mut().take() {
+                let _ = sender.send(response == gtk::ResponseType::Ok);
+            }
+            // SAFETY: final access in the GTK response callback.
             unsafe { dialog.destroy() };
         });
         dialog.show_all();

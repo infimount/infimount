@@ -22,6 +22,8 @@ pub const OPENAI_HOSTED_INLINE_MAX_BYTES: usize = 8 * 1024 * 1024;
 pub const OPENAI_HOSTED_REQUEST_MAX_JSON_BYTES: usize = 12 * 1024 * 1024;
 /// Fixed USD-cent ceiling for synthetic C2 hosted pilot sessions, not user consent.
 pub const OPENAI_HOSTED_PILOT_SESSION_SPEND_CENTS: u32 = 100;
+/// Fixed documented model for the synthetic-only, build-gated live pilot.
+pub const OPENAI_HOSTED_PILOT_MODEL: &str = "gpt-6-astra";
 
 const FIXED_AGENT_INSTRUCTIONS: &str =
     "Use only the provided workspace inputs. Write deliverables under /workspace/outputs/. Do not seek source storage credentials or change the destination.";
@@ -74,6 +76,7 @@ struct HostedInlineFile {
 struct HostedEnvironment {
     #[serde(rename = "type")]
     environment_type: &'static str,
+    container_size: &'static str,
     network: HostedNetwork,
     files: Vec<HostedInlineFile>,
 }
@@ -171,6 +174,7 @@ pub fn build_openai_hosted_offline_request(
         },
         environment: HostedEnvironment {
             environment_type: "openai_hosted",
+            container_size: "small",
             network: HostedNetwork { access: "disabled" },
             files,
         },
@@ -241,6 +245,7 @@ mod tests {
         let json = serde_json::to_value(&request).unwrap();
         assert_eq!(json["agent"]["model"], "gpt-6-astra");
         assert_eq!(json["environment"]["type"], "openai_hosted");
+        assert_eq!(json["environment"]["container_size"], "small");
         assert_eq!(json["environment"]["network"]["access"], "disabled");
         assert_eq!(json["environment"]["files"][0]["type"], "inline");
         assert_eq!(

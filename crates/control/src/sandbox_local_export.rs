@@ -165,6 +165,18 @@ fn open_prepared_task_directory(
     require_existing_chain(&root, &components)
 }
 
+/// Read only the manifest, through no-follow pinned native descriptors,
+/// for a trusted desktop run. This is not an export authorization and does
+/// not return input file contents to the renderer or any MCP tool.
+pub fn read_trusted_prepared_hosted_manifest(
+    trusted_workspace_root: &Path,
+    expected_workspace_id: &str,
+    expected_task_id: &str,
+) -> Result<AgentTaskManifest, CoreError> {
+    let task_dir = open_prepared_task_directory(trusted_workspace_root, expected_task_id)?;
+    read_prepared_task_manifest(&task_dir, expected_workspace_id, expected_task_id)
+}
+
 /// A sanitized, bounded result of an actual native no-follow read.
 /// This is a *fresh observation*, not a stable authorization, proof of user
 /// presence, provider connection or permission to transfer those bytes.

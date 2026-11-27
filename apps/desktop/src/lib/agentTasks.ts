@@ -28,6 +28,19 @@ export interface PreviewHostedTaskExportRequest extends AgentTaskIdentityRequest
   };
 }
 
+export interface HostedPilotBuildInfo {
+  enabled: boolean;
+  syntheticOnly: true;
+  provider: "openai_agents_api";
+  maxSpendUsdCents: number;
+}
+
+export interface HostedPilotRunOutput {
+  executionId: string;
+  outputFileCount: number;
+  outputTotalBytes: number;
+}
+
 export interface VerifiedHostedInputScope {
   inputFileCount: number;
   inputTotalBytes: number;
@@ -338,6 +351,13 @@ export function listHostedTaskExecutionStatus(
   return invokeTask<HostedExecutionHistory>("list_hosted_task_execution_status", request);
 }
 
+/** Explicit recovery of the *existing* stored session, never another create. */
+export function cleanupPinnedHostedSession(
+  request: ReconcileDeletedHostedAttemptRequest,
+): Promise<boolean> {
+  return invokeTask<boolean>("cleanup_pinned_hosted_session", request);
+}
+
 export function reconcileDeletedHostedAttempt(
   request: ReconcileDeletedHostedAttemptRequest,
 ): Promise<boolean> {
@@ -354,6 +374,22 @@ export function previewHostedTaskExport(
   request: PreviewHostedTaskExportRequest,
 ): Promise<HostedTaskExportPreview> {
   return invokeTask<HostedTaskExportPreview>("preview_hosted_task_export", request);
+}
+
+/** Build-time guard only. It never grants spending or export approval. */
+export async function hostedPilotBuildInfo(): Promise<HostedPilotBuildInfo> {
+  try {
+    return await tauriInvoke<HostedPilotBuildInfo>("hosted_pilot_build_info");
+  } catch {
+    return { enabled: false, syntheticOnly: true, provider: "openai_agents_api", maxSpendUsdCents: 100 };
+  }
+}
+
+/** Native-only approval. No renderer boolean, secret or consent token is sent. */
+export function runHostedTaskPilot(
+  request: PreviewHostedTaskExportRequest,
+): Promise<HostedPilotRunOutput> {
+  return invokeTask<HostedPilotRunOutput>("run_hosted_task_pilot", request);
 }
 
 export function verifyHostedTaskExport(

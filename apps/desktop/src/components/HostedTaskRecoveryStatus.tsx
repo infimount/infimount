@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import {
   listHostedTaskExecutionStatus,
   reconcileDeletedHostedAttempt,
+  cleanupPinnedHostedSession,
+  hostedPilotBuildInfo,
   type HostedExecutionHistory,
   type HostedExecutionHistoryItem,
 } from "@/lib/agentTasks";
@@ -36,6 +38,8 @@ export function HostedTaskRecoveryStatus({ workspaceId, taskId }: Props) {
   const [history, setHistory] = useState<HostedExecutionHistory | null>(null);
   const [loading, setLoading] = useState(false);
   const [reconciling, setReconciling] = useState<string | null>(null);
+  const [cleaning, setCleaning] = useState<string | null>(null);
+  const [nativePilotEnabled, setNativePilotEnabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
 
@@ -55,6 +59,15 @@ export function HostedTaskRecoveryStatus({ workspaceId, taskId }: Props) {
       if (id === generation.current) setLoading(false);
     }
   }, [taskId, workspaceId]);
+
+  useEffect(() => {
+    let alive = true;
+    setNativePilotEnabled(false);
+    void hostedPilotBuildInfo().then((info) => {
+      if (alive) setNativePilotEnabled(info.enabled && info.syntheticOnly);
+    });
+    return () => { alive = false; };
+  }, []);
 
   useEffect(() => {
     setHistory(null);
@@ -82,6 +95,24 @@ export function HostedTaskRecoveryStatus({ workspaceId, taskId }: Props) {
       if (generation.current === current) setReconciling(null);
     }
   }, [loading, reconciling, refresh, taskId, workspaceId]);
+
+  const cleanup = useCallback(async (executionId: string) => {
+    if (!nativePilotEnabled || loading || cleaning || reconciling) return;
+    const current = generation.current;
+    setCleaning(executionId);
+    setError(null);
+    try {
+      await cleanupPinnedHostedSession({ workspaceId, taskId, executionId });
+      if (generation.current !== current) return;
+      setCleaning(null);
+      await refresh();
+    } catch {
+      if (generation.current !== current) return;
+      setError("Authenticated cleanup was not confirmed. The same session remains unresolved. Do not start another run.");
+    } finally {
+      if (generation.current === current) setCleaning(null);
+    }
+  }, [nativePilotEnabled, loading, cleaning, reconciling, refresh, workspaceId, taskId]);
 
   return (
     <section className="mt-3 rounded-xl border bg-muted/15 p-4" data-testid="hosted-execution-status">
@@ -118,12 +149,34 @@ export function HostedTaskRecoveryStatus({ workspaceId, taskId }: Props) {
           <div className="mt-2 truncate font-mono text-[10px] text-muted-foreground">
             Attempt {attempt.executionId}
           </div>
+          {attempt.recovery === "inspect_pinned_session" && nativePilotEnabled ? (
+            <Button
+              className="mt-2"
+              variant="outline"
+              size="sm"
+              disabled={loading || cleaning !== null || reconciling !== null}
+              onClick={() => void cleanup(attempt.executionId)}
+            >
+              {cleaning === attempt.executionId ? "Cleaning provider session…" : "Clean up pinned provider session"}
+            </Button>
+          ) : null}
+          {attempt.recovery === "requires_fresh_approval" ? (
+            <Button
+              className="mt-2"
+              variant="outline"
+              size="sm"
+              disabled={loading || reconciling !== null || cleaning !== null}
+              onClick={() => void reconcile(attempt.executionId)}
+            >
+              {reconciling === attempt.executionId ? "Checking local state…" : "Discard unsubmitted attempt"}
+            </Button>
+          ) : null}
           {attempt.recovery === "public_session_deleted_needs_local_review" ? (
             <Button
               className="mt-2"
               variant="outline"
               size="sm"
-              disabled={loading || reconciling !== null}
+              disabled={loading || reconciling !== null || cleaning !== null}
               onClick={() => void reconcile(attempt.executionId)}
             >
               {reconciling === attempt.executionId ? "Checking local state…" : "Resolve local attempt"}

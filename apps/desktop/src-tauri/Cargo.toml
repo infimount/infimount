@@ -8,6 +8,8 @@ rust-version.workspace = true
 # Experimental, operator-invoked Claude Code qualification only.
 # Never enable in published stable build profiles without a reviewed pilot.
 claude-pilot = []
+# Operator-only synthetic live pilot. Disabled in stable builds and CI by default.
+hosted-live-pilot = ["infimount_control/hosted-live-pilot"]
 
 [dependencies]
 tauri = { version = "2.11.1", features = ["macos-private-api", "tray-icon"] }

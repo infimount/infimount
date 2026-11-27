@@ -1,0 +1,50 @@
+name: Hosted Pilot Qualification
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/hosted-pilot-qualification.yml"
+      - "apps/desktop/**"
+      - "crates/control/**"
+      - "crates/core/**"
+      - "crates/mcp/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  # CI must not make an actual paid provider request.
+  OPENAI_API_KEY: ""
+
+jobs:
+  linux-opt-in-pilot:
+    name: Linux synthetic-only compile and offline tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install pinned Rust MSRV and Clippy
+        uses: dtolnay/rust-toolchain@1.94.0
+        with:
+          components: rustfmt, clippy
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: hosted-live-pilot
+      - name: Install Linux dependencies
+        run: bash scripts/ci-apt-install.sh libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Prepare verified MCP sidecar
+        run: node scripts/prepare-mcp-sidecar.mjs
+      - name: Check source formatting
+        run: cargo +1.94.0 fmt --all -- --check
+      - name: Compile opt-in pilot with exact MSRV
+        run: cargo +1.94.0 check -p infimount --all-targets --features hosted-live-pilot --locked
+      - name: Strict Clippy with opt-in feature
+        run: cargo +1.94.0 clippy -p infimount --all-targets --features hosted-live-pilot --locked -- -D warnings -A clippy::result_large_err -A clippy::needless_borrows_for_generic_args
+      - name: Run offline native pilot tests only
+        run: cargo +1.94.0 test -p infimount --features hosted-live-pilot --locked
