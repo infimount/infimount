@@ -31,14 +31,19 @@ jobs:
     steps:
       - name: Resolve release tag
         id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUBLISHED_TAG: ${{ github.event.release.tag_name }}
+          WORKFLOW_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          REQUESTED_TAG: ${{ github.event.inputs.tag }}
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "release" ]]; then
-            tag="${{ github.event.release.tag_name }}"
-          elif [[ "${{ github.event_name }}" == "workflow_run" ]]; then
-            tag="${{ github.event.workflow_run.head_branch }}"
+          if [[ "$EVENT_NAME" == "release" ]]; then
+            tag="$PUBLISHED_TAG"
+          elif [[ "$EVENT_NAME" == "workflow_run" ]]; then
+            tag="$WORKFLOW_BRANCH"
           else
-            tag="${{ github.event.inputs.tag }}"
+            tag="$REQUESTED_TAG"
           fi
 
           if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then

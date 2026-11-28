@@ -5,10 +5,13 @@
 //! publishes a completed staging inode with an atomic create-only hard link.
 //! A pathname check followed by an ordinary OpenDAL open would be racy.
 use std::fs::File;
+use std::future::Future;
 use std::io;
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use futures::io::AsyncReadExt;
 use opendal::Operator;
@@ -60,7 +63,7 @@ pub struct ConfinedRoot {
 }
 
 pub struct PinnedFile {
-    file: File,
+    file: Arc<File>,
     operator: Operator,
     key: String,
 }
@@ -76,6 +79,223 @@ impl PinnedFile {
 
     pub fn identity(&self) -> io::Result<FileIdentity> {
         platform::identity(&self.file)
+    }
+
+    pub async fn metadata_with_retention(
+        &self,
+        retention: Option<Arc<dyn Send + Sync>>,
+    ) -> Result<opendal::Metadata> {
+        descriptor_metadata(
+            self.operator.clone(),
+            self.key.clone(),
+            self.file.clone(),
+            retention,
+        )
+        .await
+    }
+
+    pub fn reader_with_retention(
+        &self,
+        offset: u64,
+        end: u64,
+        retention: Option<Arc<dyn Send + Sync>>,
+    ) -> Result<PinnedReader> {
+        PinnedReader::new(
+            self.operator.clone(),
+            self.key.clone(),
+            self.file.clone(),
+            offset,
+            end,
+            retention,
+        )
+    }
+}
+
+/// Tokio filesystem operations cannot be cancelled after their blocking work
+/// starts. A separate owner keeps the exact /proc descriptor and request
+/// resources alive until OpenDAL actually finishes, without occupying the
+/// Tokio blocking pool needed by OpenDAL's underlying filesystem jobs.
+async fn descriptor_metadata(
+    operator: Operator,
+    key: String,
+    file: Arc<File>,
+    retention: Option<Arc<dyn Send + Sync>>,
+) -> Result<opendal::Metadata> {
+    let runtime = tokio::runtime::Handle::try_current()
+        .map_err(|_| io::Error::other("metadata requires an async runtime"))?;
+    let (reply, result) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("infimount-file-metadata".into())
+        .spawn(move || {
+            let result = runtime.block_on(async { operator.stat(&key).await });
+            drop(file);
+            drop(retention);
+            let _ = reply.send(result);
+        })?;
+    result
+        .await
+        .map_err(|_| io::Error::other("metadata worker stopped"))?
+        .map_err(CoreError::from)
+}
+
+struct ReadCommand {
+    size: usize,
+    reply: tokio::sync::oneshot::Sender<io::Result<Vec<u8>>>,
+}
+
+/// One bounded read can finish after cancellation. Its owner retains the
+/// pinned descriptor, quota and request permits until that read settles.
+/// No next chunk is scheduled unless the caller polls again. The owner has a
+/// separate thread so even a single-thread Tokio filesystem pool can progress.
+pub struct PinnedReader {
+    commands: tokio::sync::mpsc::Sender<ReadCommand>,
+    pending: Option<tokio::sync::oneshot::Receiver<io::Result<Vec<u8>>>>,
+    buffer: Vec<u8>,
+    position: usize,
+    eof: bool,
+    remaining: u64,
+}
+
+impl PinnedReader {
+    fn new(
+        operator: Operator,
+        key: String,
+        file: Arc<File>,
+        offset: u64,
+        end: u64,
+        retention: Option<Arc<dyn Send + Sync>>,
+    ) -> Result<Self> {
+        if offset > end {
+            return Err(CoreError::Config("invalid read range".into()));
+        }
+        let runtime = tokio::runtime::Handle::try_current()
+            .map_err(|_| io::Error::other("read requires an async runtime"))?;
+        let (commands, mut receiver) = tokio::sync::mpsc::channel::<ReadCommand>(1);
+        std::thread::Builder::new()
+            .name("infimount-file-read".into())
+            .spawn(move || {
+                let mut file = Some(file);
+                let mut retention = retention;
+                runtime.block_on(async {
+                    let mut reader: Option<opendal::FuturesAsyncReader> = None;
+                    let mut remaining = end - offset;
+                    while let Some(command) = receiver.recv().await {
+                        let mut result: io::Result<Vec<u8>> = async {
+                            if reader.is_none() {
+                                reader = Some(
+                                    operator
+                                        .reader_with(&key)
+                                        .concurrent(1)
+                                        .chunk(STREAM_BUFFER_BYTES)
+                                        .await?
+                                        .into_futures_async_read(offset..end)
+                                        .await?,
+                                );
+                            }
+                            let mut bytes = vec![0_u8; command.size.min(STREAM_BUFFER_BYTES)];
+                            let count = reader
+                                .as_mut()
+                                .expect("reader initialized")
+                                .read(&mut bytes)
+                                .await?;
+                            bytes.truncate(count);
+                            Ok(bytes)
+                        }
+                        .await;
+                        if let Ok(bytes) = &result {
+                            match remaining.checked_sub(bytes.len() as u64) {
+                                Some(left) => remaining = left,
+                                None => result = Err(io::Error::other("read exceeded range")),
+                            }
+                        }
+                        let finished = remaining == 0
+                            || match &result {
+                                Ok(bytes) => bytes.is_empty(),
+                                Err(_) => true,
+                            };
+                        if finished {
+                            drop(reader.take());
+                            drop(file.take());
+                            drop(retention.take());
+                            let _ = command.reply.send(result);
+                            break;
+                        }
+                        if command.reply.send(result).is_err() {
+                            break;
+                        }
+                    }
+                });
+                drop(file);
+                drop(retention);
+            })?;
+        Ok(Self {
+            commands,
+            pending: None,
+            buffer: Vec::new(),
+            position: 0,
+            eof: offset == end,
+            remaining: end - offset,
+        })
+    }
+}
+
+impl futures::io::AsyncRead for PinnedReader {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        output: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        if output.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
+        loop {
+            if this.position < this.buffer.len() {
+                let count = output.len().min(this.buffer.len() - this.position);
+                output[..count].copy_from_slice(&this.buffer[this.position..this.position + count]);
+                this.position += count;
+                return Poll::Ready(Ok(count));
+            }
+            if this.eof {
+                return Poll::Ready(Ok(0));
+            }
+            if this.pending.is_none() {
+                let (reply, result) = tokio::sync::oneshot::channel();
+                if this
+                    .commands
+                    .try_send(ReadCommand {
+                        size: output.len().min(STREAM_BUFFER_BYTES),
+                        reply,
+                    })
+                    .is_err()
+                {
+                    this.eof = true;
+                    return Poll::Ready(Err(io::Error::other("read worker stopped")));
+                }
+                this.pending = Some(result);
+            }
+            let result = std::task::ready!(Pin::new(
+                this.pending.as_mut().expect("read worker started")
+            )
+            .poll(context));
+            this.pending = None;
+            match result {
+                Ok(Ok(bytes)) => {
+                    this.position = 0;
+                    this.remaining = this.remaining.saturating_sub(bytes.len() as u64);
+                    this.eof = bytes.is_empty() || this.remaining == 0;
+                    this.buffer = bytes;
+                }
+                Ok(Err(error)) => {
+                    this.eof = true;
+                    return Poll::Ready(Err(error));
+                }
+                Err(_) => {
+                    this.eof = true;
+                    return Poll::Ready(Err(io::Error::other("read worker stopped")));
+                }
+            }
+        }
     }
 }
 
@@ -114,13 +334,21 @@ impl ConfinedRoot {
         let file = platform::open_regular(&parent, leaf)?;
         let (operator, key) = descriptor_operator(&file)?;
         Ok(PinnedFile {
-            file,
+            file: Arc::new(file),
             operator,
             key,
         })
     }
 
     pub async fn stat(&self, relative: &str) -> Result<Entry> {
+        self.stat_with_retention(relative, None).await
+    }
+
+    pub async fn stat_with_retention(
+        &self,
+        relative: &str,
+        retention: Option<Arc<dyn Send + Sync>>,
+    ) -> Result<Entry> {
         validate_relative_path(relative, true)?;
         let (file, is_dir) = if relative.is_empty() {
             (self.directory.try_clone()?, true)
@@ -129,7 +357,7 @@ impl ConfinedRoot {
             platform::open_entry(&self.directory(parent, false)?, leaf)?
         };
         let (op, key) = descriptor_operator(&file)?;
-        let metadata = op.stat(&key).await?;
+        let metadata = descriptor_metadata(op, key, Arc::new(file), retention).await?;
         Ok(Entry {
             path: relative.to_owned(),
             name: relative.rsplit('/').next().unwrap_or_default().to_owned(),
@@ -161,7 +389,22 @@ impl ConfinedRoot {
         relative: &str,
         offset: usize,
         limit: usize,
+        include: F,
+    ) -> Result<(Vec<Entry>, Option<usize>)>
+    where
+        F: FnMut(&str) -> bool,
+    {
+        self.list_page_with_filter_and_retention(relative, offset, limit, include, None)
+            .await
+    }
+
+    pub async fn list_page_with_filter_and_retention<F>(
+        &self,
+        relative: &str,
+        offset: usize,
+        limit: usize,
         mut include: F,
+        retention: Option<Arc<dyn Send + Sync>>,
     ) -> Result<(Vec<Entry>, Option<usize>)>
     where
         F: FnMut(&str) -> bool,
@@ -219,7 +462,8 @@ impl ConfinedRoot {
                 Err(error) => return Err(error.into()),
             };
             let (child_op, key) = descriptor_operator(&child)?;
-            let metadata = child_op.stat(&key).await?;
+            let metadata =
+                descriptor_metadata(child_op, key, Arc::new(child), retention.clone()).await?;
             entries.push(Entry {
                 path: child_path,
                 name: name.to_owned(),
@@ -285,7 +529,7 @@ enum StageCommand {
 /// chunk and final close complete. The one-command queue bounds detached work.
 struct StageWriter {
     commands: tokio::sync::mpsc::Sender<StageCommand>,
-    worker: tokio::task::JoinHandle<()>,
+    worker: tokio::sync::oneshot::Receiver<()>,
 }
 
 impl StageWriter {
@@ -298,54 +542,58 @@ impl StageWriter {
         let runtime = tokio::runtime::Handle::try_current()
             .map_err(|_| io::Error::other("staging requires an async runtime"))?;
         let (commands, mut receiver) = tokio::sync::mpsc::channel(1);
-        let worker_runtime = runtime.clone();
-        // A blocking task itself is not cancelled during runtime shutdown.
-        // Holding the descriptor in an ordinary async task would still permit
-        // queued filesystem operations to outlive that task's cancellation.
-        let worker = runtime.spawn_blocking(move || {
-            worker_runtime.block_on(async {
-                let mut writer: Option<opendal::Writer> = None;
-                while let Some(command) = receiver.recv().await {
-                    match command {
-                        StageCommand::Write(bytes, reply) => {
-                            let result = async {
-                                if writer.is_none() {
-                                    writer = Some(operator.writer_with(&key).concurrent(1).await?);
+        let (finished, worker) = tokio::sync::oneshot::channel();
+        // The owner must not consume a Tokio blocking-pool slot while waiting
+        // for OpenDAL's own filesystem jobs on that pool. Its separate thread
+        // also survives cancellation of the async request that created it.
+        std::thread::Builder::new()
+            .name("infimount-file-write".into())
+            .spawn(move || {
+                runtime.block_on(async {
+                    let mut writer: Option<opendal::Writer> = None;
+                    while let Some(command) = receiver.recv().await {
+                        match command {
+                            StageCommand::Write(bytes, reply) => {
+                                let result = async {
+                                    if writer.is_none() {
+                                        writer =
+                                            Some(operator.writer_with(&key).concurrent(1).await?);
+                                    }
+                                    writer
+                                        .as_mut()
+                                        .expect("writer initialized")
+                                        .write(bytes)
+                                        .await?;
+                                    Ok(())
                                 }
-                                writer
-                                    .as_mut()
-                                    .expect("writer initialized")
-                                    .write(bytes)
-                                    .await?;
-                                Ok(())
-                            }
-                            .await;
-                            let failed = result.is_err();
-                            if reply.send(result).is_err() || failed {
-                                break;
-                            }
-                        }
-                        StageCommand::Close(reply) => {
-                            let result = match writer.take() {
-                                Some(mut writer) => {
-                                    writer.close().await.map(|_| ()).map_err(CoreError::from)
+                                .await;
+                                let failed = result.is_err();
+                                if reply.send(result).is_err() || failed {
+                                    break;
                                 }
-                                None => Ok(()),
-                            };
-                            let _ = reply.send(result);
-                            return;
+                            }
+                            StageCommand::Close(reply) => {
+                                let result = match writer.take() {
+                                    Some(mut writer) => {
+                                        writer.close().await.map(|_| ()).map_err(CoreError::from)
+                                    }
+                                    None => Ok(()),
+                                };
+                                let _ = reply.send(result);
+                                return;
+                            }
                         }
                     }
-                }
-                // OpenDAL FS can buffer one chunk. Drain it before releasing
-                // the descriptor and reservation even when the caller left.
-                if let Some(mut writer) = writer {
-                    let _ = writer.close().await;
-                }
-            });
-            drop(file);
-            drop(retention);
-        });
+                    // OpenDAL FS can buffer one chunk. Drain it before releasing
+                    // the descriptor and reservation even when the caller left.
+                    if let Some(mut writer) = writer {
+                        let _ = writer.close().await;
+                    }
+                });
+                drop(file);
+                drop(retention);
+                let _ = finished.send(());
+            })?;
         Ok(Self { commands, worker })
     }
 
@@ -441,6 +689,22 @@ impl StagedFile {
         self.retention = retention;
     }
 
+    pub fn reader_with_retention(
+        &self,
+        offset: u64,
+        end: u64,
+        retention: Option<Arc<dyn Send + Sync>>,
+    ) -> Result<PinnedReader> {
+        PinnedReader::new(
+            self.operator.clone(),
+            self.key.clone(),
+            self.file.clone(),
+            offset,
+            end,
+            Some(Arc::new((self.retention.clone(), retention))),
+        )
+    }
+
     pub async fn write_chunk(&mut self, bytes: &[u8]) -> Result<()> {
         if self.finished
             || self.written_bytes.saturating_add(bytes.len() as u64) > self.expected_bytes
@@ -479,7 +743,13 @@ impl StagedFile {
         if let Some(writer) = self.writer.take() {
             writer.close().await?;
         }
-        let metadata = self.operator.stat(&self.key).await?;
+        let metadata = descriptor_metadata(
+            self.operator.clone(),
+            self.key.clone(),
+            self.file.clone(),
+            self.retention.clone(),
+        )
+        .await?;
         if metadata.content_length() != self.expected_bytes {
             return Err(CoreError::Config("staging size mismatch".into()));
         }
@@ -595,12 +865,13 @@ where
         ));
     }
     check()?;
-    let mut reader = stage
-        .operator
-        .reader(&stage.key)
-        .await?
-        .into_futures_async_read(0..stage.written_bytes)
-        .await?;
+    let mut reader = stage.reader_with_retention(
+        0,
+        stage.written_bytes,
+        cleanup
+            .as_ref()
+            .and_then(|cleanup| cleanup.retention.clone()),
+    )?;
     let request = destination.writer_with(path).if_not_exists(true);
     let request = match content_type {
         Some(value) => request.content_type(value),
@@ -1371,5 +1642,133 @@ mod tests {
     #[tokio::test]
     async fn failed_cancellation_cleanup_marks_storage_unavailable() {
         cancellation_case(true).await;
+    }
+
+    async fn cancelled_descriptor_io_keeps_resources(metadata: bool) {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::MetadataExt;
+
+        let mut stage = StagedFile::temporary(if metadata { 0 } else { 3 }).unwrap();
+        if !metadata {
+            stage.write_chunk(b"abc").await.unwrap();
+            stage.finish(None).await.unwrap();
+        }
+        let descriptor = stage.file.as_raw_fd();
+        let inode = stage.file.metadata().unwrap().ino();
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(1));
+        let lease = Arc::new(semaphore.clone().acquire_owned().await.unwrap());
+        let weak = Arc::downgrade(&lease);
+        stage.set_resource_retention(Some(lease));
+
+        // Occupy the real Tokio filesystem pool. A queued /proc/self/fd open
+        // or stat must retain its exact descriptor even when its caller leaves.
+        let mut releases = Vec::new();
+        let mut workers = Vec::new();
+        for _ in 0..2 {
+            let (release, wait) = std::sync::mpsc::channel();
+            let (started, ready) = tokio::sync::oneshot::channel();
+            workers.push(tokio::task::spawn_blocking(move || {
+                let _ = started.send(());
+                let _ = wait.recv();
+            }));
+            releases.push(release);
+            ready.await.unwrap();
+        }
+        let mut pending = Box::pin(async move {
+            if metadata {
+                stage.finish(None).await
+            } else {
+                let destination = Operator::new(opendal::services::Memory::default()).unwrap();
+                publish_stage(&stage, &destination, "output.bin").await
+            }
+        });
+        assert!(futures::poll!(pending.as_mut()).is_pending());
+        drop(pending);
+        let retained = weak.upgrade().is_some();
+        let permits = semaphore.available_permits();
+        let pinned_inode = std::fs::metadata(format!("/proc/self/fd/{descriptor}"))
+            .ok()
+            .map(|metadata| metadata.ino());
+        // Always unblock workers before asserting so a deliberately failing
+        // regression does not strand the runtime during shutdown.
+        for release in releases {
+            release.send(()).unwrap();
+        }
+        for worker in workers {
+            worker.await.unwrap();
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while weak.upgrade().is_some() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            retained,
+            "queued filesystem work released its resource lease"
+        );
+        assert_eq!(permits, 0);
+        assert_eq!(pinned_inode, Some(inode));
+        assert_eq!(semaphore.available_permits(), 1);
+    }
+
+    #[test]
+    fn cancelled_descriptor_metadata_retains_exact_fd_and_capacity() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(2)
+            .build()
+            .unwrap()
+            .block_on(cancelled_descriptor_io_keeps_resources(true));
+    }
+
+    #[test]
+    fn cancelled_descriptor_read_retains_exact_fd_and_capacity() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(2)
+            .build()
+            .unwrap()
+            .block_on(cancelled_descriptor_io_keeps_resources(false));
+    }
+
+    #[test]
+    fn concurrent_descriptor_workers_progress_with_one_tokio_filesystem_thread() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        let result = runtime.block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                let mut first = StagedFile::temporary(3).unwrap();
+                let mut second = StagedFile::temporary(3).unwrap();
+                let (left, right) =
+                    tokio::join!(first.write_chunk(b"abc"), second.write_chunk(b"xyz"));
+                left.unwrap();
+                right.unwrap();
+                let (left, right) = tokio::join!(first.finish(None), second.finish(None));
+                left.unwrap();
+                right.unwrap();
+                let mut first_reader = first.reader_with_retention(0, 3, None).unwrap();
+                let mut second_reader = second.reader_with_retention(0, 3, None).unwrap();
+                let mut left = Vec::new();
+                let mut right = Vec::new();
+                let (first_read, second_read) = tokio::join!(
+                    first_reader.read_to_end(&mut left),
+                    second_reader.read_to_end(&mut right)
+                );
+                first_read.unwrap();
+                second_read.unwrap();
+                assert_eq!(left, b"abc");
+                assert_eq!(right, b"xyz");
+            })
+            .await
+        });
+        // If a future regression reintroduces nested pool starvation, fail
+        // promptly instead of hanging the entire test process during Drop.
+        runtime.shutdown_timeout(std::time::Duration::from_millis(100));
+        result.expect("descriptor owners must leave the Tokio filesystem worker available");
     }
 }

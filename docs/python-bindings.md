@@ -36,6 +36,18 @@ operating-system authority can bypass any in-process library using another
 library or a system call. Use the authenticated hosted service or an independent
 sandbox when the Python code itself is untrusted.
 
+The package is an embedded storage API, not a drop-in Deep Agents
+`BackendProtocol` implementation. An embedding application can route an
+agent-facing `/outputs/` namespace to a configured storage prefix, but that
+adapter must translate paths, byte or text results, pagination and typed errors
+to the runtime's own contract. No Deep Agents version or sandbox adapter is
+qualified by the package tests in this release. In particular, there is no
+`edit`, overwrite, append, glob, grep, directory-creation or streaming-write API.
+Writes are create-only and bounded to 4 MiB. A runtime requiring those additional
+operations must explicitly reject them or use a separately qualified integration.
+The native S3 bearer link also does not substitute for the hosted service's
+authenticated, backend-neutral download route.
+
 ## Install and platform qualification
 
 Release wheels and the source archive are attached to the canonical GitHub
@@ -137,7 +149,10 @@ ambiguous trailing dots or spaces. They must use the spelling stored in the
 directory. Case or Unicode decomposition aliases of grants and exclusions are
 denied, including aliases of exclusions that do not exist yet. Each component's
 spelling check scans at most 16,384 directory names and fails if that bound is
-exhausted.
+exhausted. The hosted path contract reserves both `.infimount-hosted-stage`
+and `.infimount-hosted-staging`. The latter is the current hosted private staging
+directory. Both namespaces remain unavailable through the Python API even under
+a broad policy.
 
 These portable checks assume the application owns the configured root and
 prevents hostile concurrent changes to its directories. They do not provide
@@ -204,8 +219,11 @@ trailing whitespace are rejected instead of being silently reinterpreted.
 
 List pages contain at most 200 entries. Hidden children are filtered before
 their metadata is fetched. Continue while `next_cursor` is present, even if a
-page is empty. Cursors are signed and bound to this client's immutable revision,
-path and listing mode. They cannot move between clients. If a page has
+page is empty. Cursor state is encrypted and authenticated, including backend
+positions that may refer to a hidden child. Cursors are bound to this client's
+immutable revision, query path and listing mode, with a shared 16 KiB encoded
+limit. They cannot move between clients and do not survive process restart.
+If a page has
 `truncated: true` and no continuation cursor, the backend scan bound was reached
 and the result is incomplete. Directory order and concurrent changes can affect
 pages. No lexical ordering or snapshot listing is promised.
@@ -249,6 +267,7 @@ session, proxy server or public bucket ACL.
 | Concurrent operations per client | 4 | 16 |
 | S3 I/O timeout | 30 seconds | 60 seconds |
 | Entries requested per list page | 200 | 200 |
+| Encoded list cursor | 16 KiB | 16 KiB |
 | In-memory audit events | 256 | 256 |
 | Trusted configuration JSON | 1 MiB | 1 MiB |
 | Rules or exclusions | 128 each | 128 each |
@@ -298,9 +317,11 @@ Run the tests from the repository root, not from `python/`, so the source
 package does not shadow the installed extension. The native wheel tests perform
 real local I/O and cover binary bytes, conditional collisions, policy/scope
 denial, required confirmations, bounded ranges, cursor binding, symlinks,
-case/Unicode aliases, file-only deletion, credential redaction and bounded audit.
+case/Unicode aliases, hidden cursor contents, reserved staging paths, file-only
+deletion, credential redaction and bounded audit.
 The symlink case is skipped only when Windows denies fixture-creation privilege.
-The fork case is skipped on platforms without `fork`.
+The fork case is skipped on platforms without `fork`. The long-path cursor
+regression runs on Linux, where the fixture fits the filesystem path limit.
 
 Qualify S3 separately against a disposable emulator:
 

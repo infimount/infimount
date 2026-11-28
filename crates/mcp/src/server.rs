@@ -340,6 +340,37 @@ impl InfimountMcpServer {
             return Err(ErrorData::method_not_found::<CallToolRequestMethod>());
         }
 
+        // Keep the storage/policy snapshot used for confirmation stable until
+        // the operation finishes. Desktop mutations use this same cross-process
+        // transaction boundary. Acquire it off the async executor because the
+        // filesystem lock may wait for another configuration transaction.
+        let _configuration = if matches!(
+            name,
+            "mkdir"
+                | "write_file"
+                | "delete_path"
+                | "copy_path"
+                | "move_path"
+                | "generate_download_link"
+                | "delete_version"
+        ) {
+            let registry = self.ctx.registry.clone();
+            Some(
+                tokio::task::spawn_blocking(move || registry.acquire_configuration_transaction())
+                    .await
+                    .map_err(|_| {
+                        mcp_to_rmcp_error(err_with_details(
+                            McpErrorCode::ERR_INTERNAL,
+                            "failed to acquire configuration transaction",
+                            json!({}),
+                        ))
+                    })?
+                    .map_err(mcp_to_rmcp_error)?,
+            )
+        } else {
+            None
+        };
+
         if let Some(arguments) = arguments.as_ref() {
             if let Some(response) = self.confirmation_gate(name, arguments).await? {
                 return Ok(wrap_json(Ok(response)));
@@ -380,26 +411,32 @@ impl InfimountMcpServer {
         tool_name: &str,
         arguments: &JsonObject,
     ) -> Result<Option<ConfirmationRequiredResponse>, ErrorData> {
-        let Some(check) = confirmation_check(&self.ctx, tool_name, arguments)
+        let check = confirmation_check(&self.ctx, tool_name, arguments)
             .await
-            .map_err(mcp_to_rmcp_error)?
-        else {
-            return Ok(None);
-        };
-
-        let fingerprint = request_fingerprint(tool_name, arguments, self.ctx.byte_limits)
             .map_err(mcp_to_rmcp_error)?;
+
         if let Some(confirmation_id) = arguments
             .get("confirmation_id")
             .and_then(|value| value.as_str())
             .filter(|value| !value.trim().is_empty())
         {
+            // A supplied approval must be verified even if the current policy
+            // now allows the operation. Otherwise a stale or fabricated ID
+            // would execute and be recorded as a confirmed operation.
+            let fingerprint = bound_request_fingerprint(&self.ctx, tool_name, arguments)
+                .map_err(mcp_to_rmcp_error)?;
             self.confirmations
                 .consume_approved(confirmation_id, &fingerprint)
                 .await
                 .map_err(mcp_to_rmcp_error)?;
             return Ok(None);
         }
+
+        let Some(check) = check else {
+            return Ok(None);
+        };
+        let fingerprint = bound_request_fingerprint(&self.ctx, tool_name, arguments)
+            .map_err(mcp_to_rmcp_error)?;
 
         let pending = self
             .confirmations
@@ -1732,6 +1769,56 @@ fn request_fingerprint(
     Ok(format!("sha256:{:x}", digest.finalize()))
 }
 
+fn bound_request_fingerprint(
+    ctx: &FsToolsContext,
+    tool_name: &str,
+    arguments: &JsonObject,
+) -> McpResult<String> {
+    let path_keys: &[&str] = match tool_name {
+        "copy_path" | "move_path" => &["src", "dst"],
+        _ => &["path"],
+    };
+    let mut bindings = Vec::with_capacity(path_keys.len());
+    for key in path_keys {
+        let path = arguments
+            .get(*key)
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                err_with_details(
+                    McpErrorCode::ERR_INVALID_PATH,
+                    "confirmation requires a path",
+                    json!({}),
+                )
+            })?;
+        let resolved = crate::path::resolve_storage_path(&ctx.registry, path)?;
+        let storage = resolved.storage;
+        let namespace = crate::storage_namespace::storage_namespace_fingerprint(&storage)?;
+        bindings.push(json!({
+            "storage_id": storage.id,
+            "revision": storage.revision,
+            "namespace": namespace,
+            "enabled": storage.enabled,
+            "exposed": storage.mcp_exposed,
+            "read_only": storage.read_only,
+            "policy": storage.mcp_policy,
+        }));
+    }
+    let request = request_fingerprint(tool_name, arguments, ctx.byte_limits)?;
+    let mut digest = Sha256::new();
+    serde_json::to_writer(
+        &mut digest,
+        &("infimount.confirmation.v2", request, bindings),
+    )
+    .map_err(|_| {
+        err_with_details(
+            McpErrorCode::ERR_INTERNAL,
+            "failed to bind confirmation to storage configuration",
+            json!({}),
+        )
+    })?;
+    Ok(format!("sha256:{:x}", digest.finalize()))
+}
+
 fn operation_for_tool(tool_name: &str) -> McpOperation {
     match tool_name {
         "list_dir" => McpOperation::List,
@@ -2444,11 +2531,176 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn approved_write_cannot_follow_storage_identity_namespace_or_policy_changes() {
+        for change in [
+            "namespace",
+            "identity",
+            "policy",
+            "confirmation_no_longer_required",
+        ] {
+            let dir = TempDir::new().unwrap();
+            let original_root = dir.path().join("original");
+            let replacement_root = dir.path().join("replacement");
+            std::fs::create_dir_all(&original_root).unwrap();
+            std::fs::create_dir_all(&replacement_root).unwrap();
+            let ctx = test_context(&dir);
+            let registry = ctx.registry.clone();
+            let mut storage = StorageRecord::new(
+                "Local".into(),
+                "local".into(),
+                json!({"root": original_root}),
+            );
+            storage.mcp_exposed = true;
+            storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
+            registry.save_all_atomic(&[storage.clone()]).unwrap();
+            let confirmations = ConfirmationManager::new();
+            let server = InfimountMcpServer::with_confirmation_manager(
+                ctx,
+                all_tool_names(),
+                confirmations.clone(),
+            );
+            let mut args = json!({"path": "/Local/file.bin", "content": "/wAB", "encoding": "base64", "overwrite": false})
+                .as_object().unwrap().clone();
+            let pending = server
+                .dispatch_tool_json("write_file", Some(args.clone()))
+                .await
+                .unwrap();
+            let id = pending["data"]["operation_id"].as_str().unwrap();
+            confirmations.approve(id).await.unwrap();
+            args.insert("confirmation_id".into(), json!(id));
+            match change {
+                "namespace" => storage.config = json!({"root": replacement_root}),
+                "identity" => storage.id = uuid::Uuid::new_v4().to_string(),
+                "policy" => storage.mcp_policy.confirmation_rules.require_for_delete = false,
+                "confirmation_no_longer_required" => {
+                    storage.mcp_policy.confirmation_rules.require_for_write = false
+                }
+                _ => unreachable!(),
+            }
+            // Preserve the revision deliberately: identity and policy binding
+            // must protect against replacement/import records too.
+            registry.save_all_atomic(&[storage]).unwrap();
+            let error = server
+                .dispatch_tool_json("write_file", Some(args))
+                .await
+                .expect_err(change);
+            assert_eq!(
+                error_code_from_error_data(&error),
+                "ERR_CONFIRMATION_REQUIRED",
+                "{change}: {error:?}"
+            );
+            assert!(!original_root.join("file.bin").exists(), "{change}");
+            assert!(!replacement_root.join("file.bin").exists(), "{change}");
+        }
+    }
+
+    #[tokio::test]
+    async fn approved_copy_binds_the_source_when_destination_policy_requires_confirmation() {
+        let dir = TempDir::new().unwrap();
+        let source_root = dir.path().join("source");
+        let destination_root = dir.path().join("destination");
+        let replacement_root = dir.path().join("replacement");
+        for root in [&source_root, &destination_root, &replacement_root] {
+            std::fs::create_dir_all(root).unwrap();
+        }
+        std::fs::write(source_root.join("source.bin"), [0xff, 0, 1]).unwrap();
+        std::fs::write(replacement_root.join("source.bin"), [0, 0, 0]).unwrap();
+        let ctx = test_context(&dir);
+        let registry = ctx.registry.clone();
+        let mut source = StorageRecord::new(
+            "Source".into(),
+            "local".into(),
+            json!({"root": source_root}),
+        );
+        source.mcp_exposed = true;
+        source.mcp_policy.default_access = McpAccessMode::ReadWrite;
+        let mut destination = StorageRecord::new(
+            "Destination".into(),
+            "local".into(),
+            json!({"root": destination_root}),
+        );
+        destination.mcp_exposed = true;
+        destination.mcp_policy.default_access = McpAccessMode::ReadWrite;
+        registry
+            .save_all_atomic(&[source.clone(), destination.clone()])
+            .unwrap();
+        let confirmations = ConfirmationManager::new();
+        let server = InfimountMcpServer::with_confirmation_manager(
+            ctx,
+            all_tool_names(),
+            confirmations.clone(),
+        );
+        let mut args = json!({"src": "/Source/source.bin", "dst": "/Destination/copied.bin", "overwrite": false})
+            .as_object().unwrap().clone();
+        let pending = server
+            .dispatch_tool_json("copy_path", Some(args.clone()))
+            .await
+            .unwrap();
+        let id = pending["data"]["operation_id"].as_str().unwrap();
+        confirmations.approve(id).await.unwrap();
+        source.config = json!({"root": replacement_root});
+        registry.save_all_atomic(&[source, destination]).unwrap();
+        args.insert("confirmation_id".into(), json!(id));
+        let error = server
+            .dispatch_tool_json("copy_path", Some(args))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error_code_from_error_data(&error),
+            "ERR_CONFIRMATION_REQUIRED"
+        );
+        assert!(!destination_root.join("copied.bin").exists());
+        assert_eq!(
+            std::fs::read(source_root.join("source.bin")).unwrap(),
+            [0xff, 0, 1]
+        );
+        assert_eq!(
+            std::fs::read(replacement_root.join("source.bin")).unwrap(),
+            [0, 0, 0]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_caller_cannot_claim_confirmation_when_policy_allows_without_one() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let ctx = test_context(&dir);
+        let mut storage = StorageRecord::new("Local".into(), "local".into(), json!({"root": root}));
+        storage.mcp_exposed = true;
+        storage.mcp_policy.default_access = McpAccessMode::ReadWrite;
+        storage.mcp_policy.confirmation_rules.require_for_write = false;
+        ctx.registry.save_all_atomic(&[storage]).unwrap();
+        let server = InfimountMcpServer::new(ctx, all_tool_names());
+        let mut args = json!({"path": "/Local/file.bin", "content": "/wAB", "encoding": "base64", "overwrite": false, "confirmation_id": "unapproved-id"})
+            .as_object().unwrap().clone();
+        let error = server
+            .dispatch_tool_json("write_file", Some(args.clone()))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error_code_from_error_data(&error),
+            "ERR_CONFIRMATION_REQUIRED"
+        );
+        assert!(!root.join("file.bin").exists());
+        args.remove("confirmation_id");
+        assert_eq!(
+            server
+                .dispatch_tool_json("write_file", Some(args))
+                .await
+                .unwrap()["ok"],
+            true
+        );
+        assert_eq!(std::fs::read(root.join("file.bin")).unwrap(), [0xff, 0, 1]);
+    }
+
+    #[tokio::test]
     async fn binary_content_type_persists_through_opendal_and_optional_read_metadata() {
         use axum::body::{to_bytes, Body};
         use axum::extract::{Request, State};
         use axum::http::{header, Method, Response, StatusCode};
         use axum::{routing::any, Router};
+        use base64::Engine;
         use infimount_core::secrets::{MemorySecretStore, SecretStore};
         use std::sync::Mutex;
 
@@ -2460,6 +2712,13 @@ mod tests {
         type ObjectState = Arc<Mutex<Option<Object>>>;
         async fn object(State(stored): State<ObjectState>, request: Request) -> Response<Body> {
             if request.method() == Method::PUT {
+                assert_eq!(request.headers().get(header::IF_NONE_MATCH).unwrap(), "*");
+                if stored.lock().unwrap().is_some() {
+                    return Response::builder()
+                        .status(StatusCode::PRECONDITION_FAILED)
+                        .body(Body::empty())
+                        .unwrap();
+                }
                 let content_type = request
                     .headers()
                     .get(header::CONTENT_TYPE)
@@ -2467,7 +2726,7 @@ mod tests {
                     .to_str()
                     .unwrap()
                     .to_owned();
-                let bytes = to_bytes(request.into_body(), 16).await.unwrap().to_vec();
+                let bytes = to_bytes(request.into_body(), 1024).await.unwrap().to_vec();
                 *stored.lock().unwrap() = Some(Object {
                     bytes,
                     content_type,
@@ -2529,6 +2788,12 @@ mod tests {
         let mock = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         let dir = TempDir::new().unwrap();
         let mut ctx = test_context(&dir);
+        // A complete one-pixel PNG, so link redemption exercises an actual
+        // binary artifact as well as MIME metadata and exact byte identity.
+        let png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+        let png_bytes = base64::engine::general_purpose::STANDARD
+            .decode(png_base64)
+            .unwrap();
         let secrets = Arc::new(MemorySecretStore::new());
         ctx.registry = StorageRegistry::with_secret_store(
             Some(dir.path().join("storages.json")),
@@ -2536,7 +2801,7 @@ mod tests {
         );
         ctx.byte_limits = McpByteLimits {
             max_read_bytes: 2,
-            max_write_bytes: 3,
+            max_write_bytes: png_bytes.len() as u32,
         };
         let mut storage = StorageRecord::new(
             "Test".into(),
@@ -2564,7 +2829,8 @@ mod tests {
             all_tool_names(),
             confirmations.clone(),
         );
-        let mut args = json!({ "path":"/Test/image.bin", "content":"/wAB", "encoding":"base64", "content_type":"image/png", "overwrite":false }).as_object().unwrap().clone();
+        let mut args = json!({ "path":"/Test/image.png", "content":png_base64, "encoding":"base64", "content_type":"image/png", "overwrite":false }).as_object().unwrap().clone();
+        let create_args = args.clone();
         let pending = server
             .dispatch_tool_json("write_file", Some(args.clone()))
             .await
@@ -2582,12 +2848,9 @@ mod tests {
             stored.lock().unwrap().as_ref().unwrap().content_type,
             "image/png"
         );
-        assert_eq!(
-            stored.lock().unwrap().as_ref().unwrap().bytes,
-            [0xff, 0x00, 0x01]
-        );
+        assert_eq!(stored.lock().unwrap().as_ref().unwrap().bytes, png_bytes);
         for tool in ["read_file", "read_file_version"] {
-            let mut args = json!({"path":"/Test/image.bin", "as_text":false})
+            let mut args = json!({"path":"/Test/image.png", "as_text":false})
                 .as_object()
                 .unwrap()
                 .clone();
@@ -2598,9 +2861,74 @@ mod tests {
             assert_eq!(read["ok"], true, "{read}");
             assert_eq!(read["data"]["content_type"], "image/png");
             assert_eq!(read["data"]["read_bytes"], 2);
-            assert_eq!(read["data"]["content"], "/wA=");
+            assert_eq!(read["data"]["content"], "iVA=");
             assert_eq!(read["data"]["truncated"], true);
         }
+
+        // A fresh human approval cannot change a create-only request into an
+        // overwrite. The provider fixture enforces the conditional write.
+        let mut collision_args = create_args;
+        let pending = server
+            .dispatch_tool_json("write_file", Some(collision_args.clone()))
+            .await
+            .unwrap();
+        let id = pending["data"]["operation_id"].as_str().unwrap();
+        confirmations.approve(id).await.unwrap();
+        collision_args.insert("confirmation_id".into(), json!(id));
+        let collision = server
+            .dispatch_tool_json("write_file", Some(collision_args))
+            .await
+            .unwrap();
+        assert_eq!(
+            collision["error"]["code"], "ERR_ALREADY_EXISTS",
+            "{collision}"
+        );
+        assert_eq!(stored.lock().unwrap().as_ref().unwrap().bytes, png_bytes);
+
+        let mut link_args = json!({"path": "/Test/image.png", "expires_seconds": 90})
+            .as_object()
+            .unwrap()
+            .clone();
+        let pending = server
+            .dispatch_tool_json("generate_download_link", Some(link_args.clone()))
+            .await
+            .unwrap();
+        assert_eq!(pending["data"]["status"], "requires_confirmation");
+        assert!(pending["data"].get("url").is_none());
+        let id = pending["data"]["operation_id"].as_str().unwrap();
+        confirmations.approve(id).await.unwrap();
+        link_args.insert("confirmation_id".into(), json!(id));
+        let link = server
+            .dispatch_tool_json("generate_download_link", Some(link_args))
+            .await
+            .unwrap();
+        assert_eq!(link["ok"], true, "{link}");
+        let url = link["data"]["url"].as_str().unwrap();
+        let parsed = reqwest::Url::parse(url).unwrap();
+        assert!(parsed
+            .query_pairs()
+            .any(|(key, value)| key == "X-Amz-Signature" && !value.is_empty()));
+        assert!(parsed
+            .query_pairs()
+            .any(|(key, value)| key == "X-Amz-Expires" && value == "90"));
+        let downloaded = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap()
+            .get(url)
+            .send()
+            .await
+            .unwrap();
+        assert!(downloaded.status().is_success());
+        assert_eq!(
+            downloaded.headers().get(header::CONTENT_TYPE).unwrap(),
+            "image/png"
+        );
+        assert_eq!(
+            downloaded.bytes().await.unwrap().as_ref(),
+            png_bytes.as_slice()
+        );
         mock.abort();
     }
 

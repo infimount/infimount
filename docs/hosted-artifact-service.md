@@ -79,6 +79,14 @@ platform digests and the exact source commit. Pin deployments to that digest.
 The [distribution guide](artifact-distribution.md) explains verification and the
 separate stable/prerelease tags. Source builds remain available without a registry.
 
+Qualification includes starting the production executable and each native image,
+then exercising real TLS/OAuth requests against a dedicated filesystem and a
+disposable S3 emulator. The process harness covers exact artifact bytes, two-user
+isolation, grant lifecycle, delegated platform login and telemetry. The offline
+`check` command remains a configuration assertion only. See the
+[acceptance review](artifact-acceptance-review.md) for the requirements matrix,
+regressions and limits of this evidence.
+
 If `public_url` changes, update the Host header in the startup, liveness and
 readiness probes to match its authority. The sample NetworkPolicy permits
 ingress from pods labeled `app.kubernetes.io/component: controller` in the

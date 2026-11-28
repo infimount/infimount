@@ -1,4 +1,8 @@
 use base64::Engine;
+use chacha20poly1305::{
+    aead::{Aead, AeadCore, KeyInit, OsRng, Payload},
+    XChaCha20Poly1305, XNonce,
+};
 use futures::io::{AsyncReadExt, AsyncWriteExt};
 use futures::{StreamExt, TryStreamExt};
 use opendal::{ErrorKind, Metadata, Operator};
@@ -338,11 +342,9 @@ pub async fn read_file_range(
         });
     }
 
-    use futures::AsyncReadExt;
-    let reader = op.reader(&p).await?;
-    let mut async_reader = reader.into_futures_async_read(offset..end).await?;
-    let mut bytes = Vec::with_capacity(actual_bytes as usize);
-    async_reader.read_to_end(&mut bytes).await?;
+    // A backend can ignore Range and return the entire object. Enforce the
+    // preview bound while collecting, then reject excess or incomplete bytes.
+    let bytes = read_range_bounded(op, &p, offset, end, None).await?;
 
     Ok(ReadFileRangeResult {
         total_size,
@@ -362,6 +364,20 @@ struct PageCursor {
     position: Option<String>,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PageCursorState {
+    version: u8,
+    scanned: usize,
+    position: Option<String>,
+}
+
+/// Maximum encoded list cursor accepted by every adapter. A cursor can contain
+/// a 4 KiB backend position, JSON escaping, a nonce and an authentication tag.
+/// The query path is authenticated separately instead of duplicated in it.
+pub const MAX_LIST_CURSOR_BYTES: usize = 16 * 1024;
+const LIST_CURSOR_VERSION: u8 = 3;
+const LIST_CURSOR_PREFIX: &str = "v3.";
 const MAX_CURSOR_BYTES: usize = 8 * 1024;
 const MIN_PAGE_SCAN_BUDGET: usize = 256;
 const MAX_PAGE_SCAN_BUDGET: usize = 4_096;
@@ -425,13 +441,51 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 }
 
 fn encode_page_cursor(cursor: &PageCursor) -> Result<String> {
-    let bytes = serde_json::to_vec(cursor)?;
-    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&bytes);
-    let signature = hmac_sha256(cursor_signing_key(), payload.as_bytes());
-    Ok(format!(
-        "{payload}.{}",
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(signature)
-    ))
+    // The last examined position may be a policy-hidden child. A signature
+    // protects integrity but leaves that name readable in the encoded payload.
+    // Seal it and authenticate the complete query as associated data instead.
+    let bytes = serde_json::to_vec(&PageCursorState {
+        version: cursor.version,
+        scanned: cursor.scanned,
+        position: cursor.position.clone(),
+    })?;
+    let aad = page_cursor_aad(&cursor.path, cursor.recursive, cursor.revision)?;
+    let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
+    let encrypted = page_cursor_cipher()
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: &bytes,
+                aad: &aad,
+            },
+        )
+        .map_err(|_| crate::models::CoreError::Config("unable to encode list cursor".into()))?;
+    let mut sealed = nonce.to_vec();
+    sealed.extend_from_slice(&encrypted);
+    let encoded = format!(
+        "{LIST_CURSOR_PREFIX}{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sealed)
+    );
+    if encoded.len() > MAX_LIST_CURSOR_BYTES {
+        return Err(crate::models::CoreError::Config(
+            "list cursor is too large".into(),
+        ));
+    }
+    Ok(encoded)
+}
+
+fn page_cursor_cipher() -> &'static XChaCha20Poly1305 {
+    static CIPHER: OnceLock<XChaCha20Poly1305> = OnceLock::new();
+    CIPHER.get_or_init(|| XChaCha20Poly1305::new(&XChaCha20Poly1305::generate_key(&mut OsRng)))
+}
+
+fn page_cursor_aad(path: &str, recursive: bool, revision: u64) -> Result<Vec<u8>> {
+    Ok(serde_json::to_vec(&(
+        "infimount:list:v3",
+        normalize_list_path(path),
+        recursive,
+        revision,
+    ))?)
 }
 
 fn decode_page_cursor(
@@ -441,29 +495,45 @@ fn decode_page_cursor(
     revision: u64,
     max_scanned: usize,
 ) -> Result<PageCursor> {
-    if encoded.len() > MAX_CURSOR_BYTES {
+    if encoded.len() > MAX_LIST_CURSOR_BYTES {
         return Err(crate::models::CoreError::Config(
             "invalid list cursor".to_string(),
         ));
     }
-    let (payload, encoded_signature) = encoded
-        .split_once('.')
+    let payload = encoded
+        .strip_prefix(LIST_CURSOR_PREFIX)
         .ok_or_else(|| crate::models::CoreError::Config("invalid list cursor".to_string()))?;
-    let signature = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(encoded_signature)
-        .map_err(|_| crate::models::CoreError::Config("invalid list cursor".to_string()))?;
-    let expected = hmac_sha256(cursor_signing_key(), payload.as_bytes());
-    if !constant_time_eq(&signature, &expected) {
-        return Err(crate::models::CoreError::Config(
-            "invalid list cursor".to_string(),
-        ));
-    }
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+    let sealed = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(payload)
         .map_err(|_| crate::models::CoreError::Config("invalid list cursor".to_string()))?;
-    let cursor: PageCursor = serde_json::from_slice(&bytes)
+    // XChaCha20 uses a 24-byte nonce and a 16-byte authentication tag.
+    if sealed.len() < 40 {
+        return Err(crate::models::CoreError::Config(
+            "invalid list cursor".to_string(),
+        ));
+    }
+    let (nonce, encrypted) = sealed.split_at(24);
+    let aad = page_cursor_aad(path, recursive, revision)?;
+    let bytes = page_cursor_cipher()
+        .decrypt(
+            XNonce::from_slice(nonce),
+            Payload {
+                msg: encrypted,
+                aad: &aad,
+            },
+        )
+        .map_err(|_| crate::models::CoreError::Config("invalid list cursor".to_string()))?;
+    let state: PageCursorState = serde_json::from_slice(&bytes)
         .map_err(|_| crate::models::CoreError::Config("invalid list cursor".to_string()))?;
     let normalized_path = normalize_list_path(path);
+    let cursor = PageCursor {
+        version: state.version,
+        path: normalized_path.clone(),
+        recursive,
+        revision,
+        scanned: state.scanned,
+        position: state.position,
+    };
     let valid_position = cursor.position.as_ref().is_none_or(|position| {
         position.len() <= 4096
             && (normalized_path.is_empty() || position.starts_with(&normalized_path))
@@ -473,7 +543,7 @@ fn decode_page_cursor(
                     .trim_end_matches('/')
                     .contains('/'))
     });
-    if cursor.version != 2
+    if cursor.version != LIST_CURSOR_VERSION
         || cursor.path != normalized_path
         || cursor.recursive != recursive
         || cursor.revision != revision
@@ -495,7 +565,7 @@ fn next_page_cursor(
     position: Option<String>,
 ) -> Result<String> {
     encode_page_cursor(&PageCursor {
-        version: 2,
+        version: LIST_CURSOR_VERSION,
         path: normalize_list_path(path),
         recursive,
         revision,
@@ -604,7 +674,7 @@ where
     let cursor = match encoded_cursor.as_deref() {
         Some(cursor) => decode_page_cursor(cursor, path, recursive, revision, max_scanned)?,
         None => PageCursor {
-            version: 2,
+            version: LIST_CURSOR_VERSION,
             path: normalize_list_path(path),
             recursive,
             revision,
@@ -3429,6 +3499,11 @@ mod tests {
                 .await
                 .is_err()
         );
+        assert!(
+            list_entries_page(&op, "/", 2, Some(cursor.clone()), true, 4)
+                .await
+                .is_err()
+        );
         assert!(list_entries_page(&op, "/", 2, Some(cursor), false, 5)
             .await
             .is_err());
@@ -3527,24 +3602,43 @@ mod tests {
             .unwrap()
             .next_cursor
             .unwrap();
-        let (payload, signature) = cursor.split_once('.').unwrap();
-        let mut value: serde_json::Value = serde_json::from_slice(
-            &base64::engine::general_purpose::URL_SAFE_NO_PAD
-                .decode(payload)
-                .unwrap(),
-        )
+        let sealed = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(cursor.strip_prefix(LIST_CURSOR_PREFIX).unwrap())
+            .unwrap();
+        for index in [0, 24, sealed.len() - 1] {
+            let mut changed = sealed.clone();
+            changed[index] ^= 1;
+            let forged = format!(
+                "{LIST_CURSOR_PREFIX}{}",
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(changed)
+            );
+            assert!(list_entries_page(&op, "/", 1, Some(forged), false, 9)
+                .await
+                .is_err());
+        }
+
+        // Even an authentic old MAC-only token cannot re-enable readable state.
+        let legacy = serde_json::to_vec(&PageCursor {
+            version: 2,
+            path: String::new(),
+            recursive: false,
+            revision: 9,
+            scanned: 1,
+            position: Some("a.txt".into()),
+        })
         .unwrap();
-        value["scanned"] = serde_json::json!(50_000);
-        value["position"] = serde_json::json!("outside/forged.txt");
-        let forged_payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(serde_json::to_vec(&value).unwrap());
-        let forged = format!("{forged_payload}.{signature}");
-        assert!(list_entries_page(&op, "/", 1, Some(forged), false, 9)
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(legacy);
+        let signature = hmac_sha256(cursor_signing_key(), payload.as_bytes());
+        let legacy = format!(
+            "{payload}.{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(signature)
+        );
+        assert!(list_entries_page(&op, "/", 1, Some(legacy), false, 9)
             .await
             .is_err());
 
         let over_ceiling = encode_page_cursor(&PageCursor {
-            version: 2,
+            version: LIST_CURSOR_VERSION,
             path: String::new(),
             recursive: true,
             revision: 9,
@@ -3553,6 +3647,77 @@ mod tests {
         })
         .unwrap();
         assert!(decode_page_cursor(&over_ceiling, "/", true, 9, MAX_PAGE_TOTAL_SCANNED).is_err());
+    }
+
+    fn assert_cursor_hides_name(cursor: &str, hidden: &str) {
+        assert!(!cursor.contains(hidden));
+        for part in cursor.split('.') {
+            if let Ok(decoded) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(part) {
+                assert!(serde_json::from_slice::<serde_json::Value>(&decoded).is_err());
+                assert!(!String::from_utf8_lossy(&decoded).contains(hidden));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn filtered_cursor_encrypts_denied_lookahead_and_preserves_progress() {
+        let op = create_test_operator().await;
+        for name in ["a-allowed.txt", "b-confidential-child.txt", "c-allowed.txt"] {
+            op.write(name, b"fixture".as_slice()).await.unwrap();
+        }
+        let hidden = "b-confidential-child.txt";
+        for recursive in [false, true] {
+            let first = list_entries_page_with_filter(&op, "/", 1, None, recursive, 51, |path| {
+                Ok(path != hidden)
+            })
+            .await
+            .unwrap();
+            assert_eq!(first.entries.len(), 1);
+            assert_eq!(first.entries[0].path, "a-allowed.txt");
+            let cursor = first.next_cursor.unwrap();
+            let state = decode_page_cursor(&cursor, "/", recursive, 51, usize::MAX).unwrap();
+            assert_eq!(state.position.as_deref(), Some(hidden));
+            assert_cursor_hides_name(&cursor, hidden);
+            let another = encode_page_cursor(&state).unwrap();
+            assert_ne!(cursor, another, "each cursor must receive a fresh nonce");
+            assert_cursor_hides_name(&another, hidden);
+            let second =
+                list_entries_page_with_filter(&op, "/", 1, Some(cursor), recursive, 51, |path| {
+                    Ok(path != hidden)
+                })
+                .await
+                .unwrap();
+            assert_eq!(second.entries.len(), 1);
+            assert_eq!(second.entries[0].path, "c-allowed.txt");
+            assert!(second.next_cursor.is_none());
+        }
+    }
+
+    #[test]
+    fn encrypted_cursor_accepts_long_escaped_positions_and_rejects_excess() {
+        let path = format!("{}/", "\"".repeat(3900));
+        let position = format!("{path}file.txt");
+        let encoded = encode_page_cursor(&PageCursor {
+            version: LIST_CURSOR_VERSION,
+            path: path.clone(),
+            recursive: false,
+            revision: 4,
+            scanned: 1,
+            position: Some(position.clone()),
+        })
+        .unwrap();
+        assert!(encoded.len() > 4096);
+        assert!(encoded.len() <= MAX_LIST_CURSOR_BYTES);
+        let decoded = decode_page_cursor(&encoded, &path, false, 4, usize::MAX).unwrap();
+        assert_eq!(decoded.position.as_deref(), Some(position.as_str()));
+        assert!(decode_page_cursor(
+            &"x".repeat(MAX_LIST_CURSOR_BYTES + 1),
+            &path,
+            false,
+            4,
+            usize::MAX,
+        )
+        .is_err());
     }
 
     #[tokio::test]
@@ -3637,23 +3802,21 @@ mod tests {
             .unwrap();
             assert!(first.entries.is_empty());
             assert!(first.truncated, "scan budget exhaustion must be explicit");
-            if let Some(cursor) = first.next_cursor {
-                let second = list_entries_page_with_filter(
-                    &op,
-                    "/",
-                    1,
-                    Some(cursor),
-                    recursive,
-                    44,
-                    |path| Ok(path == "z-allowed.txt"),
-                )
+            let cursor = first
+                .next_cursor
+                .expect("a scan-budget page must remain resumable");
+            let state = decode_page_cursor(&cursor, "/", recursive, 44, usize::MAX).unwrap();
+            assert_eq!(state.scanned, MIN_PAGE_SCAN_BUDGET);
+            assert!(state.position.as_deref().unwrap().starts_with("a-denied-"));
+            assert_cursor_hides_name(&cursor, "a-denied-");
+            let second =
+                list_entries_page_with_filter(&op, "/", 1, Some(cursor), recursive, 44, |path| {
+                    Ok(path == "z-allowed.txt")
+                })
                 .await
                 .unwrap();
-                assert_eq!(second.entries.len(), 1);
-                assert_eq!(second.entries[0].path, "z-allowed.txt");
-            } else {
-                assert!(first.truncated);
-            }
+            assert_eq!(second.entries.len(), 1);
+            assert_eq!(second.entries[0].path, "z-allowed.txt");
         }
     }
 
@@ -3976,6 +4139,28 @@ mod tests {
                 .unwrap(),
             b""
         );
+    }
+
+    #[tokio::test]
+    async fn preview_read_rejects_range_ignoring_stream_without_draining_it() {
+        let chunks_read = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut service = FlatSimService::new(
+            false,
+            std::collections::BTreeMap::from([("oversized.bin".into(), 16 * 1024)]),
+        );
+        service.capability.read = true;
+        service.ignored_range_chunks = Some(chunks_read.clone());
+        let op = Operator::from_parts(
+            opendal::OperationContext::default(),
+            Arc::new(service) as opendal::raw::Servicer,
+        );
+        assert!(read_file_range(&op, "oversized.bin", 3, 16).await.is_err());
+        assert_eq!(chunks_read.load(Ordering::SeqCst), 1);
+        chunks_read.store(0, Ordering::SeqCst);
+        assert!(read_range_bounded(&op, "oversized.bin", 3, 19, None)
+            .await
+            .is_err());
+        assert_eq!(chunks_read.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -4928,6 +5113,7 @@ mod tests {
         entries: std::collections::BTreeMap<String, u64>,
         info: opendal::raw::ServiceInfo,
         capability: opendal::Capability,
+        ignored_range_chunks: Option<Arc<std::sync::atomic::AtomicUsize>>,
     }
 
     impl std::fmt::Debug for FlatSimService {
@@ -4959,7 +5145,46 @@ mod tests {
                 entries,
                 info,
                 capability,
+                ignored_range_chunks: None,
             }
+        }
+    }
+
+    struct IgnoredRangeReader {
+        chunks_read: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    struct IgnoredRangeStream {
+        chunks_read: Arc<std::sync::atomic::AtomicUsize>,
+        remaining_chunks: usize,
+    }
+
+    impl opendal::raw::oio::StreamRead for IgnoredRangeReader {
+        async fn open(
+            &self,
+            _: opendal::BytesRange,
+        ) -> opendal::Result<(
+            opendal::raw::RpRead,
+            Box<dyn opendal::raw::oio::ReadStreamDyn>,
+        )> {
+            Ok((
+                opendal::raw::RpRead::default(),
+                Box::new(IgnoredRangeStream {
+                    chunks_read: self.chunks_read.clone(),
+                    remaining_chunks: 16,
+                }),
+            ))
+        }
+    }
+
+    impl opendal::raw::oio::ReadStream for IgnoredRangeStream {
+        async fn read(&mut self) -> opendal::Result<opendal::Buffer> {
+            if self.remaining_chunks == 0 {
+                return Ok(opendal::Buffer::new());
+            }
+            self.remaining_chunks -= 1;
+            self.chunks_read.fetch_add(1, Ordering::SeqCst);
+            Ok(opendal::Buffer::from(vec![0; 1024]))
         }
     }
 
@@ -5043,6 +5268,13 @@ mod tests {
             _: &str,
             _: opendal::raw::OpRead,
         ) -> opendal::Result<Self::Reader> {
+            if let Some(chunks_read) = &self.ignored_range_chunks {
+                return Ok(Box::new(opendal::raw::oio::StreamReader::new(
+                    IgnoredRangeReader {
+                        chunks_read: chunks_read.clone(),
+                    },
+                )));
+            }
             Err(opendal::Error::new(
                 opendal::ErrorKind::Unsupported,
                 "unsupported",

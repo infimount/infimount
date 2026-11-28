@@ -44,6 +44,13 @@ impl Default for McpByteLimits {
 }
 
 impl McpByteLimits {
+    /// Bound the serialized request before parsing, including JSON's worst-case
+    /// six-byte escaping of each base64 character and a bounded envelope.
+    pub fn max_request_bytes(&self) -> usize {
+        let write = self.max_write_bytes.min(MAX_MCP_WRITE_BYTES) as usize;
+        write.div_ceil(3) * 4 * 6 + 64 * 1024
+    }
+
     pub fn validate(&self) -> McpResult<()> {
         if !(1..=MAX_MCP_READ_BYTES).contains(&self.max_read_bytes)
             || !(1..=MAX_MCP_WRITE_BYTES).contains(&self.max_write_bytes)

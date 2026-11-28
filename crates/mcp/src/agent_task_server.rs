@@ -13,7 +13,8 @@ use crate::audit::{AuditDecision, AuditEvent, AuditStore};
 use crate::errors::{err, err_with_details, fail, McpError, McpErrorCode, McpResult};
 use crate::path::parse_mcp_path;
 use crate::policy::{
-    evaluate_storage_policy, normalize_policy_path, McpAccessMode, McpOperation, McpRuleSource,
+    evaluate_storage_policy, normalize_policy_path, McpAccessMode, McpOperation, McpRiskType,
+    McpRuleSource, PolicyDecision,
 };
 use crate::registry::{StorageRecord, StorageRegistry};
 use crate::server::{self, rmcp_tools_with_limits};
@@ -243,6 +244,22 @@ impl AgentTaskScope {
             ));
         }
 
+        // The native handoff approves only creates under this task's outputs/.
+        // It does not disable the workspace's confirmation policy or authorize
+        // another risk type. Request preparation below enforces create-only
+        // semantics before the shared filesystem handler is called.
+        if let PolicyDecision::RequireConfirmation { risk_type } = evaluation.decision {
+            if !matches!(access, ScopeAccess::Write)
+                || !matches!(operation, McpOperation::Write | McpOperation::Mkdir)
+                || risk_type != McpRiskType::Write
+            {
+                return Err(err(
+                    McpErrorCode::ERR_CONFIRMATION_REQUIRED,
+                    "operation is outside the native Agent Task create approval",
+                ));
+            }
+        }
+
         Ok((storage, parsed.normalized))
     }
 }
@@ -347,11 +364,31 @@ impl AgentTaskMcpServer {
         rmcp_tools_with_limits(self.ctx.byte_limits)
             .into_iter()
             .filter(|tool| self.enabled_tools.contains(tool.name.as_ref()))
+            .map(|mut tool| {
+                if matches!(tool.name.as_ref(), "write_file" | "mkdir") {
+                    let schema = std::sync::Arc::make_mut(&mut tool.input_schema);
+                    if let Some(properties) =
+                        schema.get_mut("properties").and_then(Value::as_object_mut)
+                    {
+                        properties.remove("confirmation_id");
+                        if tool.name == "write_file" {
+                            properties.insert(
+                                "overwrite".into(),
+                                json!({
+                                    "type": "boolean", "const": false, "default": false,
+                                    "description": "Agent Task writes only create new output files."
+                                }),
+                            );
+                        }
+                    }
+                }
+                tool
+            })
             .collect()
     }
 
     async fn dispatch_tool(&self, name: &str, arguments: Map<String, Value>) -> Value {
-        let raw = Value::Object(arguments);
+        let mut raw = Value::Object(arguments);
         let Some(path) = raw.get("path").and_then(Value::as_str) else {
             return error_value(err(
                 McpErrorCode::ERR_INVALID_PATH,
@@ -398,18 +435,21 @@ impl AgentTaskMcpServer {
             }
         };
 
-        // Calling the typed filesystem handlers directly is intentional here. The user's
-        // explicit Open in Codex action authorizes non-destructive writes only under the
-        // already-prepared outputs/ prefix. The normal storage policy is still evaluated by
-        // every filesystem handler; destructive and publishing tools are not exposed at all.
-        let result = match name {
-            "list_dir" => server::invoke_list_dir_json(&self.ctx, raw).await,
-            "stat_path" => server::invoke_stat_path_json(&self.ctx, raw).await,
-            "read_file" => server::invoke_read_file_json(&self.ctx, raw).await,
-            "search_paths" => server::invoke_search_paths_json(&self.ctx, raw).await,
-            "write_file" => server::invoke_write_file_json(&self.ctx, raw).await,
-            "mkdir" => server::invoke_mkdir_json(&self.ctx, raw).await,
-            _ => unreachable!("tool checked above"),
+        // The native Open action is advance approval for create-only outputs in
+        // this exact task. Never inherit ordinary write_file's overwrite default
+        // or let a caller supply a separate confirmation capability.
+        let prepared = prepare_task_mutation(name, &mut raw);
+        let result = match prepared {
+            Err(error) => error_value(error),
+            Ok(()) => match name {
+                "list_dir" => server::invoke_list_dir_json(&self.ctx, raw).await,
+                "stat_path" => server::invoke_stat_path_json(&self.ctx, raw).await,
+                "read_file" => server::invoke_read_file_json(&self.ctx, raw).await,
+                "search_paths" => server::invoke_search_paths_json(&self.ctx, raw).await,
+                "write_file" => server::invoke_write_file_json(&self.ctx, raw).await,
+                "mkdir" => server::invoke_mkdir_json(&self.ctx, raw).await,
+                _ => unreachable!("tool checked above"),
+            },
         };
         drop(configuration);
         self.audit_result(
@@ -478,6 +518,40 @@ impl AgentTaskMcpServer {
         }
         let _ = self.audit.append(event);
     }
+}
+
+fn prepare_task_mutation(name: &str, raw: &mut Value) -> McpResult<()> {
+    if !matches!(name, "write_file" | "mkdir") {
+        return Ok(());
+    }
+    let arguments = raw
+        .as_object_mut()
+        .expect("dispatch arguments are an object");
+    if arguments.contains_key("confirmation_id") {
+        return Err(err(
+            McpErrorCode::ERR_SESSION_FORBIDDEN,
+            "Agent Task requests cannot supply confirmation authority",
+        ));
+    }
+    if name == "write_file" {
+        match arguments.get("overwrite") {
+            None | Some(Value::Bool(false)) => {}
+            Some(Value::Bool(true)) => {
+                return Err(err(
+                    McpErrorCode::ERR_SESSION_FORBIDDEN,
+                    "Agent Task writes cannot overwrite existing output files",
+                ))
+            }
+            Some(_) => {
+                return Err(err(
+                    McpErrorCode::ERR_INVALID_PATH,
+                    "overwrite must be false for Agent Task writes",
+                ))
+            }
+        }
+        arguments.insert("overwrite".into(), json!(false));
+    }
+    Ok(())
 }
 
 impl ServerHandler for AgentTaskMcpServer {
@@ -572,7 +646,10 @@ pub async fn serve_agent_task_stdio_with_limits(
         .map_err(|error| std::io::Error::other(error.message))?;
     let (stdin, stdout) = rmcp::transport::stdio();
     let running = service
-        .serve((stdin, stdout))
+        .serve((
+            crate::runtime::BoundedStdioInput::new(stdin, byte_limits.max_request_bytes()),
+            stdout,
+        ))
         .await
         .map_err(rmcp::RmcpError::from)?;
     running.waiting().await.map_err(rmcp::RmcpError::from)?;
@@ -752,6 +829,122 @@ mod tests {
             .into_iter()
             .filter(|event| event.tool_name == "write_file" && event.path.as_deref() == Some(path))
             .collect()
+    }
+
+    #[tokio::test]
+    async fn native_task_create_approval_never_authorizes_overwrites_or_supplied_confirmations() {
+        let (dir, registry, scope) = fixture();
+        let root = dir.path().join("root");
+        let storage = registry.load_all().unwrap().remove(0);
+        assert_eq!(
+            evaluate_storage_policy(
+                &storage,
+                "workspace/tasks/task-1/outputs/new.bin",
+                McpOperation::Write,
+                false,
+                false,
+            )
+            .unwrap()
+            .decision,
+            PolicyDecision::RequireConfirmation {
+                risk_type: McpRiskType::Write
+            }
+        );
+        let audit = AuditStore::new(Some(dir.path().join("audit.json")));
+        let server = AgentTaskMcpServer::new(
+            registry.clone(),
+            ["list_dir", "stat_path", "read_file", "write_file", "mkdir"]
+                .map(str::to_owned)
+                .to_vec(),
+            scope,
+        )
+        .unwrap()
+        .with_audit_store(audit.clone());
+        let path = "/Workspace storage/workspace/tasks/task-1/outputs/new.bin";
+        let file = root.join("workspace/tasks/task-1/outputs/new.bin");
+        let mut request = base64_write_args(path, "/wAB");
+        request.remove("overwrite");
+
+        // Native Open remains the approval for this exact task's new outputs,
+        // including when the workspace's ordinary write confirmation is on.
+        let created = server.dispatch_tool("write_file", request.clone()).await;
+        assert_eq!(created["ok"], true, "{created}");
+        assert_eq!(std::fs::read(&file).unwrap(), [0xff, 0x00, 0x01]);
+
+        request.insert("content".into(), json!("AAAA"));
+        let collision = server.dispatch_tool("write_file", request.clone()).await;
+        assert_eq!(
+            collision["error"]["code"], "ERR_ALREADY_EXISTS",
+            "{collision}"
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), [0xff, 0x00, 0x01]);
+        for target in [
+            path,
+            "/Workspace storage/workspace/tasks/task-1/outputs/missing/new.bin",
+        ] {
+            let mut overwrite = base64_write_args(target, "AAAA");
+            overwrite.insert("overwrite".into(), json!(true));
+            overwrite.insert("create_parents".into(), json!(true));
+            let refused = server.dispatch_tool("write_file", overwrite).await;
+            assert_eq!(
+                refused["error"]["code"], "ERR_SESSION_FORBIDDEN",
+                "{refused}"
+            );
+        }
+        assert_eq!(std::fs::read(&file).unwrap(), [0xff, 0x00, 0x01]);
+        assert!(!root.join("workspace/tasks/task-1/outputs/missing").exists());
+
+        let fake_path = "/Workspace storage/workspace/tasks/task-1/outputs/fake.bin";
+        let mut fake = base64_write_args(fake_path, "/wAB");
+        fake.insert("confirmation_id".into(), json!("caller-provided-approval"));
+        assert_eq!(
+            server.dispatch_tool("write_file", fake).await["error"]["code"],
+            "ERR_SESSION_FORBIDDEN"
+        );
+        assert!(!root
+            .join("workspace/tasks/task-1/outputs/fake.bin")
+            .exists());
+
+        // The advance approval never replaces current workspace permissions.
+        let mut storage = registry.load_all().unwrap().remove(0);
+        storage
+            .mcp_policy
+            .denied_paths
+            .push("workspace/tasks/task-1/outputs/denied.bin".into());
+        registry.save_all_atomic(&[storage]).unwrap();
+        let denied = server
+            .dispatch_tool(
+                "write_file",
+                base64_write_args(
+                    "/Workspace storage/workspace/tasks/task-1/outputs/denied.bin",
+                    "/wAB",
+                ),
+            )
+            .await;
+        assert_eq!(denied["error"]["code"], "ERR_MCP_POLICY_DENIED", "{denied}");
+        assert!(!root
+            .join("workspace/tasks/task-1/outputs/denied.bin")
+            .exists());
+        assert!(audit_events_for(&audit, path)
+            .iter()
+            .any(|event| event.decision == AuditDecision::Denied
+                && event.error_code.as_deref() == Some("ERR_SESSION_FORBIDDEN")));
+        let write_tool = server
+            .tools()
+            .into_iter()
+            .find(|tool| tool.name == "write_file")
+            .unwrap();
+        assert_eq!(
+            write_tool.input_schema["properties"]["overwrite"]["default"],
+            false
+        );
+        assert_eq!(
+            write_tool.input_schema["properties"]["overwrite"]["const"],
+            false
+        );
+        assert!(write_tool.input_schema["properties"]
+            .get("confirmation_id")
+            .is_none());
     }
 
     #[tokio::test]

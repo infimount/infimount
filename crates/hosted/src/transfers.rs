@@ -9,7 +9,7 @@ use axum::http::{header, StatusCode};
 use axum::response::Response;
 use bytes::Bytes;
 use futures::{io::AsyncReadExt, StreamExt};
-use infimount_core::hosted_io::{StagedFile, STREAM_BUFFER_BYTES};
+use infimount_core::hosted_io::{PinnedReader, StagedFile, STREAM_BUFFER_BYTES};
 use infimount_mcp::McpOperation;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -18,7 +18,7 @@ use crate::auth::Principal;
 use crate::delegation::DelegatedIssuer;
 use crate::error::{HostedError, Result};
 use crate::storage::{
-    map_core, map_storage, validate_content_type, AuthorizedObject, ObjectIdentity, StoragePlane,
+    map_core, validate_content_type, AuthorizedObject, ObjectIdentity, StoragePlane,
 };
 
 #[derive(Clone)]
@@ -65,7 +65,7 @@ impl Drop for Reservation {
 struct GrantEntry {
     owner: String,
     expires: Instant,
-    expires_epoch: Option<u64>,
+    expires_epoch: u64,
     object: AuthorizedObject,
     state: Mutex<GrantState>,
     _reservation: Arc<Reservation>,
@@ -73,10 +73,7 @@ struct GrantEntry {
 
 impl GrantEntry {
     fn active(&self) -> bool {
-        self.expires > Instant::now()
-            && self
-                .expires_epoch
-                .is_none_or(|expiry| crate::now_epoch_seconds() < expiry)
+        self.expires > Instant::now() && crate::now_epoch_seconds() < self.expires_epoch
     }
 }
 
@@ -271,15 +268,24 @@ impl TransferManager {
         if ttl == 0 || ttl > max {
             return Err(HostedError::InvalidRequest);
         }
-        let now = std::time::SystemTime::now()
+        // Derive both clocks from one absolute deadline. Adding the rounded
+        // token lifetime to Instant::now() could otherwise extend authority
+        // beyond exp by the current fractional second.
+        let monotonic_now = Instant::now();
+        let now = std::time::SystemTime::now();
+        let expires_epoch = now
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| HostedError::Internal)?
-            .as_secs();
-        let ttl = ttl.min(principal.expires_at.saturating_sub(now));
-        if ttl == 0 {
+            .as_secs()
+            .saturating_add(ttl)
+            .min(principal.expires_at);
+        let remaining = (std::time::UNIX_EPOCH + Duration::from_secs(expires_epoch))
+            .duration_since(now)
+            .map_err(|_| HostedError::Unauthorized)?;
+        if remaining.is_zero() {
             return Err(HostedError::Unauthorized);
         }
-        Ok((Instant::now() + Duration::from_secs(ttl), ttl))
+        Ok((monotonic_now + remaining, expires_epoch))
     }
 
     fn lookup(&self, principal: &Principal, id: &str) -> Result<Arc<GrantEntry>> {
@@ -344,7 +350,7 @@ impl TransferManager {
         self.inner
             .storage
             .authorize(principal, path, McpOperation::Write)?;
-        let (expires, ttl) = self.expiry(principal, ttl_seconds)?;
+        let (expires, expires_epoch) = self.expiry(principal, ttl_seconds)?;
         let reservation = Arc::new(self.reserve(principal, size)?);
         let (object, mut stage) =
             self.inner
@@ -354,7 +360,7 @@ impl TransferManager {
         let id = self.insert(GrantEntry {
             owner: principal.owner_key(),
             expires,
-            expires_epoch: None,
+            expires_epoch,
             object,
             state: Mutex::new(GrantState::Upload {
                 stage: Some(stage),
@@ -366,7 +372,9 @@ impl TransferManager {
         })?;
         Ok(
             json!({"upload_id":id,"url":format!("{}/uploads/{id}",self.inner.storage.config().public_url.trim_end_matches('/')),
-            "method":"PUT","requires_authorization":true,"expires_seconds":ttl,"size_bytes":size,"sha256":sha256,"state":"created"}),
+            "method":"PUT","requires_authorization":true,
+            "expires_seconds":expires_epoch.saturating_sub(crate::now_epoch_seconds()),
+            "expires_at_unix_seconds":expires_epoch,"size_bytes":size,"sha256":sha256,"state":"created"}),
         )
     }
 
@@ -440,7 +448,7 @@ impl TransferManager {
                         .chunk_bytes
                         .min(STREAM_BUFFER_BYTES),
                 ) {
-                    if Instant::now() >= deadline {
+                    if !claim.entry.active() || Instant::now() >= deadline {
                         return Err(HostedError::Unavailable);
                     }
                     claim
@@ -459,6 +467,10 @@ impl TransferManager {
                 .finish(Some(&sha256))
                 .await
                 .map_err(map_core)?;
+            principal.ensure_live()?;
+            if !claim.entry.active() {
+                return Err(HostedError::NotFound);
+            }
             let bytes = claim.stage.as_ref().ok_or(HostedError::Internal)?.size();
             // Pending ready uploads keep quota but release the HTTP request
             // permits. No stage owns its GrantEntry, so there is no cycle.
@@ -528,15 +540,21 @@ impl TransferManager {
             stage: Some(stage),
             retained: false,
         };
-        if claim.entry.expires <= Instant::now() {
+        if !claim.entry.active() {
             return Err(HostedError::NotFound);
         }
+        // Storage rechecks authority during publication. A refreshed token
+        // must not replace the deadline of the token that issued this grant.
+        let commit_principal = Principal {
+            expires_at: principal.expires_at.min(claim.entry.expires_epoch),
+            ..principal.clone()
+        };
         let bytes = claim.stage.as_ref().ok_or(HostedError::Internal)?.size();
         let result = self
             .inner
             .storage
             .commit_stage(
-                principal,
+                &commit_principal,
                 &claim.entry.object,
                 claim.stage.as_mut().ok_or(HostedError::Internal)?,
                 content_type.as_deref(),
@@ -593,19 +611,7 @@ impl TransferManager {
         path: &str,
         ttl_seconds: Option<u64>,
     ) -> Result<Value> {
-        let (mut expires, ttl) = self.expiry(principal, ttl_seconds)?;
-        let expires_epoch = if self.inner.issuer.is_some() {
-            let epoch = crate::now_epoch_seconds()
-                .saturating_add(ttl)
-                .min(principal.expires_at);
-            let remaining = (std::time::UNIX_EPOCH + Duration::from_secs(epoch))
-                .duration_since(std::time::SystemTime::now())
-                .map_err(|_| HostedError::NotFound)?;
-            expires = expires.min(Instant::now() + remaining);
-            Some(epoch)
-        } else {
-            None
-        };
+        let (expires, expires_epoch) = self.expiry(principal, ttl_seconds)?;
         let source = self
             .inner
             .storage
@@ -651,7 +657,7 @@ impl TransferManager {
             .storage
             .check_identity(principal, &source.object, &source.identity, true)
             .await?;
-        if Instant::now() >= expires {
+        if Instant::now() >= expires || crate::now_epoch_seconds() >= expires_epoch {
             return Err(HostedError::NotFound);
         }
         let sha256 = stage.sha256().ok_or(HostedError::Internal)?.to_owned();
@@ -670,21 +676,14 @@ impl TransferManager {
             };
             let result = async {
                 let url = issuer
-                    .issue(
-                        &id,
-                        &redeem_url,
-                        expires_epoch.ok_or(HostedError::Internal)?,
-                        expires,
-                    )
+                    .issue(&id, &redeem_url, expires_epoch, expires)
                     .await?;
                 self.inner
                     .storage
                     .check_identity(principal, &source.object, &source.identity, true)
                     .await?;
                 principal.ensure_live()?;
-                if Instant::now() >= expires
-                    || expires_epoch.is_some_and(|epoch| crate::now_epoch_seconds() >= epoch)
-                {
+                if Instant::now() >= expires || crate::now_epoch_seconds() >= expires_epoch {
                     return Err(HostedError::NotFound);
                 }
                 Ok(url)
@@ -710,12 +709,12 @@ impl TransferManager {
             },
         )?;
         let mut result = json!({"download_id":id,"url":url,"delivery":delivery,
-            "requires_authorization":true,"single_use":true,"expires_seconds":ttl,"size_bytes":size,"sha256":sha256,"content_type":"application/octet-stream"});
-        if let Some(epoch) = expires_epoch {
+            "requires_authorization":true,"single_use":true,
+            "expires_seconds":expires_epoch.saturating_sub(crate::now_epoch_seconds()),
+            "expires_at_unix_seconds":expires_epoch,"size_bytes":size,"sha256":sha256,"content_type":"application/octet-stream"});
+        if self.inner.issuer.is_some() {
             result["redeem_url"] = json!(redeem_url);
             result["authorization_audience"] = json!(self.inner.storage.config().auth.audience);
-            result["expires_at_unix_seconds"] = json!(epoch);
-            result["expires_seconds"] = json!(epoch.saturating_sub(crate::now_epoch_seconds()));
         }
         Ok(result)
     }
@@ -761,13 +760,8 @@ impl TransferManager {
             .map_err(|_| HostedError::Internal)?
             .remove(id);
         let reader = stage
-            .operator()
-            .reader(stage.key())
-            .await
-            .map_err(map_storage)?
-            .into_futures_async_read(start..end)
-            .await
-            .map_err(map_storage)?;
+            .reader_with_retention(start, end, crate::transport::current_resource_lease())
+            .map_err(map_core)?;
         let state = DownloadState {
             reader,
             _stage: stage,
@@ -821,6 +815,10 @@ impl TransferManager {
             )
             .await
             .map_err(|_| public_io_error(HostedError::Unavailable))??;
+            state.principal.ensure_live().map_err(public_io_error)?;
+            if !state.entry.active() {
+                return Err(public_io_error(HostedError::NotFound));
+            }
             if count == 0 {
                 return Err(public_io_error(HostedError::Unavailable));
             }
@@ -868,7 +866,7 @@ impl TransferManager {
 }
 
 struct DownloadState {
-    reader: opendal::FuturesAsyncReader,
+    reader: PinnedReader,
     _stage: StagedFile,
     entry: Arc<GrantEntry>,
     storage: Arc<StoragePlane>,
@@ -1559,6 +1557,147 @@ mod tests {
                 .unwrap_err(),
             HostedError::NotFound
         );
+    }
+
+    #[test]
+    fn proxy_expiry_receipt_reports_lifetime_remaining_after_snapshot_work() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(2)
+            .build()
+            .unwrap()
+            .block_on(async {
+                let (root, _, manager, alice, _) = fixture();
+                let path = "/artifacts/users/alice/delayed-snapshot.bin";
+                std::fs::write(root.path().join("users/alice/delayed-snapshot.bin"), b"x").unwrap();
+
+                // Hold the actual filesystem worker pool until the grant's
+                // clock has started, so snapshot creation consumes known time.
+                // Dropping a sender also releases its worker on assertion failure.
+                let mut releases = Vec::new();
+                let mut workers = Vec::new();
+                for _ in 0..2 {
+                    let (release, wait) = std::sync::mpsc::channel();
+                    let (started, ready) = tokio::sync::oneshot::channel();
+                    workers.push(tokio::task::spawn_blocking(move || {
+                        let _ = started.send(());
+                        let _ = wait.recv();
+                    }));
+                    releases.push(release);
+                    ready.await.unwrap();
+                }
+                let mut pending = Box::pin(manager.create_download(&alice, path, Some(30)));
+                assert!(futures::poll!(pending.as_mut()).is_pending());
+                tokio::time::sleep(Duration::from_millis(1100)).await;
+                for release in releases {
+                    release.send(()).unwrap();
+                }
+                for worker in workers {
+                    worker.await.unwrap();
+                }
+                let receipt = tokio::time::timeout(Duration::from_secs(5), pending)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let remaining = receipt["expires_seconds"].as_u64().unwrap();
+                assert!(remaining > 0 && remaining < 30);
+                assert!(receipt["expires_at_unix_seconds"].as_u64().unwrap() <= alice.expires_at);
+            });
+    }
+
+    #[tokio::test]
+    async fn refreshed_identity_cannot_extend_upload_proxy_or_delegated_epoch_expiry() {
+        use crate::delegation::fixture::{MockIssuer, Mode};
+        let (root, storage, manager, mut alice, _) = fixture();
+        let issuer = MockIssuer::start(Mode::Valid, Duration::from_secs(1)).await;
+        let delegated = TransferManager::with_issuer(storage, Some(issuer.issuer.clone()));
+        alice.expires_at = crate::now_epoch_seconds() + 5;
+        let pending = manager
+            .create_upload(
+                &alice,
+                "/artifacts/users/alice/expired-put.bin",
+                1,
+                &sha(b"x"),
+                None,
+                Some(30),
+            )
+            .await
+            .unwrap();
+        let ready = manager
+            .create_upload(
+                &alice,
+                "/artifacts/users/alice/expired-commit.bin",
+                1,
+                &sha(b"x"),
+                None,
+                Some(30),
+            )
+            .await
+            .unwrap();
+        manager
+            .upload(&alice, &id(&ready, "upload_id"), Body::from("x"))
+            .await
+            .unwrap();
+        let path = "/artifacts/users/alice/expired-download.bin";
+        std::fs::write(root.path().join("users/alice/expired-download.bin"), b"x").unwrap();
+        let proxy = manager
+            .create_download(&alice, path, Some(30))
+            .await
+            .unwrap();
+        let platform = delegated
+            .create_download(&alice, path, Some(30))
+            .await
+            .unwrap();
+
+        // Keep the monotonic deadline live to exercise the absolute authority
+        // bound independently. This models the old fractional-second rounding
+        // error without depending on the scheduler hitting a subsecond window.
+        for grants in [&manager, &delegated] {
+            let mut entries = grants.inner.entries.lock().unwrap();
+            for entry in entries.values_mut() {
+                Arc::get_mut(entry).unwrap().expires = Instant::now() + Duration::from_secs(60);
+            }
+        }
+        let refreshed = Principal {
+            expires_at: alice.expires_at + 60,
+            ..alice.clone()
+        };
+        assert_eq!(refreshed.owner_key(), alice.owner_key());
+        let remaining = (std::time::UNIX_EPOCH + Duration::from_secs(alice.expires_at))
+            .duration_since(std::time::SystemTime::now())
+            .unwrap_or_default();
+        tokio::time::sleep(remaining + Duration::from_millis(25)).await;
+        refreshed.ensure_live().unwrap();
+
+        // Exercise every public redemption route before assertions, including
+        // the ready-upload path that would otherwise publish after expiration.
+        let put = manager
+            .upload(&refreshed, &id(&pending, "upload_id"), Body::from("x"))
+            .await;
+        let complete = manager
+            .complete_upload(&refreshed, &id(&ready, "upload_id"))
+            .await;
+        let proxy_get = manager
+            .download(&refreshed, &id(&proxy, "download_id"), None)
+            .await;
+        let delegated_get = delegated
+            .download(&refreshed, &id(&platform, "download_id"), None)
+            .await;
+        assert_eq!(put.unwrap_err(), HostedError::NotFound);
+        assert_eq!(complete.unwrap_err(), HostedError::NotFound);
+        assert_eq!(proxy_get.unwrap_err(), HostedError::NotFound);
+        assert_eq!(delegated_get.unwrap_err(), HostedError::NotFound);
+        assert!(!root.path().join("users/alice/expired-put.bin").exists());
+        assert!(!root.path().join("users/alice/expired-commit.bin").exists());
+        for receipt in [&pending, &ready, &proxy, &platform] {
+            assert_eq!(receipt["expires_at_unix_seconds"], alice.expires_at);
+        }
+        for grants in [&manager, &delegated] {
+            let budget = grants.inner.budget.lock().unwrap();
+            assert_eq!(budget.bytes, 0);
+            assert_eq!(budget.count, 0);
+            assert!(budget.owners.is_empty());
+        }
     }
 
     #[tokio::test]

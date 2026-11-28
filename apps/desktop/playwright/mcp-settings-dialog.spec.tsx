@@ -199,6 +199,12 @@ test("saves lower file byte limits without enabling Agent Access", async ({ moun
   await expect(page.getByRole("switch", { name: "Enable general Agent Access" })).not.toBeChecked();
   await expect(page.getByLabel("Maximum read bytes")).toHaveValue("131072");
   await expect(page.getByLabel("Maximum write bytes")).toHaveValue("262144");
+  // Filling and clicking controls can scroll the dialog. Capture the saved
+  // state from the same top-of-dialog position as the reviewed baseline.
+  const dialog = page.getByRole("dialog", { name: "Advanced MCP Settings" });
+  await dialog.evaluate((element) => { element.scrollTop = 0; });
+  await expect.poll(() => dialog.evaluate((element) => element.scrollTop)).toBe(0);
+  await expect(dialog.getByRole("heading", { name: "Advanced MCP Settings" })).toBeInViewport({ ratio: 1 });
   const screenshot = testInfo.outputPath("__snapshots__/mcp-byte-limits-saved.png");
   await page.screenshot({ path: screenshot, animations: "disabled" });
   await testInfo.attach("mcp-byte-limits-saved", { path: screenshot, contentType: "image/png" });
