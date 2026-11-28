@@ -36,11 +36,13 @@ import zipfile
 import zlib
 
 import boto3
+from botocore.exceptions import ClientError
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.x509.oid import NameOID
-from moto.server import ThreadedMotoServer
+from moto.server import DomainDispatcherApplication, MotoRequestHandler, create_backend_app
+from werkzeug.serving import make_server
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -69,6 +71,162 @@ def free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
+
+
+def bounded_fixture_call(action, description, timeout=10):
+    # Moto's start/event wait and stop/join have no built-in deadline. A failed
+    # bind must fail this qualification instead of hanging the CI worker.
+    failures = []
+
+    def run():
+        try:
+            action()
+        except BaseException as error:
+            failures.append(error)
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    assert not worker.is_alive(), f"{description} exceeded its fixture deadline"
+    if failures:
+        raise failures[0]
+
+
+def receive_headers(connection):
+    data = bytearray()
+    while b"\r\n\r\n" not in data:
+        chunk = connection.recv(4096)
+        assert chunk, "direct listener closed before sending HTTP headers"
+        data.extend(chunk)
+        assert len(data) <= 16 * 1024, "direct listener sent excessive HTTP headers"
+    head, prefix = bytes(data).split(b"\r\n\r\n", 1)
+    lines = head.decode("iso-8859-1").split("\r\n")
+    version, status, *_ = lines[0].split(" ")
+    assert version == "HTTP/1.1"
+    headers = dict(line.split(":", 1) for line in lines[1:])
+    return int(status), {name.lower(): value.strip() for name, value in headers.items()}, prefix
+
+
+def prove_staging_quota_recovered(fixture, token, timeout=10, grant_expiry=None):
+    # All 24 MiB must be simultaneously available again, before the 30-second
+    # grant deadline could hide a dropped-connection cleanup leak. Abort every
+    # partial attempt so probing itself cannot exhaust staging capacity.
+    deadline = time.monotonic() + timeout
+    if grant_expiry is not None:
+        deadline = min(deadline, time.monotonic() + grant_expiry - time.time() - 1)
+    while True:
+        reservations = []
+        available = True
+        try:
+            for size in (16 * 1024 * 1024, 8 * 1024 * 1024):
+                response = fixture.rpc(token, "tools/call", {"name": "create_upload", "arguments": {
+                    "path": ALICE + "/quota-probe-" + uuid.uuid4().hex, "size": size, "sha256": sha(b"x")}})
+                assert "error" not in response, "quota probe returned an unexpected JSON-RPC error"
+                result = response["result"]
+                if result.get("isError", False):
+                    assert result["structuredContent"] == {"error": "limit_exceeded"}, "quota probe failed for another reason"
+                    available = False
+                    break
+                reservations.append(result["structuredContent"])
+            if available:
+                denied = fixture.tool(token, "create_upload", {
+                    "path": ALICE + "/quota-probe-overflow", "size": 1, "sha256": sha(b"x")}, error=True)
+                assert denied == {"error": "limit_exceeded"}, "24 MiB did not exhaust the principal staging quota"
+                assert time.monotonic() < deadline, "staging quota recovered after its cancellation deadline"
+                assert grant_expiry is None or time.time() < grant_expiry, "grant expiry masked disconnect cleanup"
+                return
+        finally:
+            for reservation in reservations:
+                fixture.tool(token, "abort_upload", {"id": reservation["upload_id"]})
+        assert time.monotonic() < deadline, "staging quota did not recover after disconnect"
+        time.sleep(0.1)
+
+
+class S3Fixture:
+    def __init__(self):
+        self.host, self.port = "127.0.0.1", free_port()
+        self.app = DomainDispatcherApplication(create_backend_app)
+        self.server = self.thread = None
+        self.publications = []
+
+    def dispatch(self, environ, start_response):
+        query = urllib.parse.parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+        method = environ["REQUEST_METHOD"]
+        upload_id = query.get("uploadId", [None])[0]
+        operation = ("complete_multipart_upload" if method == "POST" and upload_id
+                     else "put_object" if method == "PUT" and not upload_id else None)
+        if operation is None:
+            return self.app(environ, start_response)
+        # Capture only the conditional-publication contract, never authorization
+        # headers, request bodies or credentials from signed requests.
+        publication = {"operation": operation, "method": method, "key": environ["PATH_INFO"],
+                       "upload_id": upload_id, "if_none_match": environ.get("HTTP_IF_NONE_MATCH"), "status": None}
+        self.publications.append(publication)
+
+        def capture(status, headers, exc_info=None):
+            publication["status"] = int(status.split(" ", 1)[0])
+            return start_response(status, headers, exc_info)
+
+        return self.app(environ, capture)
+
+    def start(self):
+        assert self.server is None, "S3 fixture is already running"
+        # Moto 5.2.6 is not concurrency-safe: its multipart existence check and
+        # publication race in separate server threads. Serialize emulator HTTP
+        # operations to model S3's atomic conditional-write primitive. Infimount
+        # requests still compete, and controls below prove this fixture permits
+        # overwrites unless the client actually sends the conditional header.
+        self.server = make_server(self.host, self.port, self.dispatch, threaded=False,
+                                  request_handler=MotoRequestHandler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        if self.server is not None:
+            self.server.shutdown()
+            self.server.server_close()
+            self.thread.join(timeout=5)
+            assert not self.thread.is_alive(), "S3 fixture server thread did not stop"
+            self.server = self.thread = None
+
+    def get_host_and_port(self):
+        return self.host, self.port
+
+
+def qualify_s3_conditions(client, bucket):
+    # Negative control: serving requests serially must not itself force a single
+    # winner. Two unconditional multipart completions can overwrite each other.
+    for conditional in (False, True):
+        key = "fixture-conditional-control" if conditional else "fixture-unconditional-control"
+        uploads = []
+        payloads = (b"first-fixture-control", b"second-fixture-control")
+        for payload in payloads:
+            upload_id = client.create_multipart_upload(Bucket=bucket, Key=key)["UploadId"]
+            part = client.upload_part(Bucket=bucket, Key=key, UploadId=upload_id, PartNumber=1, Body=payload)
+            uploads.append({"Bucket": bucket, "Key": key, "UploadId": upload_id,
+                            "MultipartUpload": {"Parts": [{"PartNumber": 1, "ETag": part["ETag"]}]}})
+        first = client.complete_multipart_upload(**uploads[0], **({"IfNoneMatch": "*"} if conditional else {}))
+        assert first["ResponseMetadata"]["HTTPStatusCode"] == 200
+        if conditional:
+            try:
+                client.complete_multipart_upload(**uploads[1], IfNoneMatch="*")
+            except ClientError as error:
+                assert error.response["ResponseMetadata"]["HTTPStatusCode"] == 412
+                assert error.response["Error"]["Code"] == "PreconditionFailed"
+            else:
+                raise AssertionError("S3 fixture ignored a multipart publication precondition")
+            finally:
+                client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=uploads[1]["UploadId"])
+        else:
+            second = client.complete_multipart_upload(**uploads[1])
+            assert second["ResponseMetadata"]["HTTPStatusCode"] == 200, "S3 fixture incorrectly forbids unconditional overwrite"
+        response = client.get_object(Bucket=bucket, Key=key)
+        try:
+            assert response["Body"].read() == payloads[0 if conditional else 1]
+        finally:
+            response["Body"].close()
+        client.delete_object(Bucket=bucket, Key=key)
+    assert not client.list_multipart_uploads(Bucket=bucket).get("Uploads"), "S3 fixture controls leaked multipart uploads"
 
 
 def make_tls(directory: Path) -> tuple[Path, Path, Path]:
@@ -421,17 +579,18 @@ def exercise(args, backend, report):
             record = config["storages"][0]["record"]
             record["config"]["root"] = "/data/artifacts" if args.image else str(data)
             config["limits"].update(inline_bytes=1024 * 1024, json_bytes=2 * 1024 * 1024,
-                                      transfer_bytes=16 * 1024 * 1024, principal_staging_bytes=16 * 1024 * 1024,
+                                      transfer_bytes=16 * 1024 * 1024, principal_staging_bytes=24 * 1024 * 1024,
                                       staging_bytes=32 * 1024 * 1024, max_grants_per_principal=4, grant_ttl_seconds=30)
             if backend == "s3":
-                moto = ThreadedMotoServer(ip_address="127.0.0.1", port=0, verbose=False)
-                moto.start()
+                moto = S3Fixture()
+                bounded_fixture_call(moto.start, "S3 fixture startup")
                 host, port = moto.get_host_and_port()
                 endpoint = f"http://{host}:{port}"
                 bucket = "process-" + uuid.uuid4().hex
                 s3 = boto3.client("s3", endpoint_url=endpoint, region_name="us-east-1",
                                   aws_access_key_id="synthetic-access-key", aws_secret_access_key=S3_SECRET)
                 s3.create_bucket(Bucket=bucket)
+                qualify_s3_conditions(s3, bucket)
                 record.update(backend="s3", config={"bucket": bucket, "region": "us-east-1", "endpoint": endpoint})
                 config["storages"][0].update(dedicated_local=False, credentials={
                     "accessKeyId": {"kind": "env", "name": "INFIMOUNT_QUALIFY_ACCESS_KEY"},
@@ -573,11 +732,7 @@ def exercise(args, backend, report):
             assert len(winners) == 1, "two concurrent create-only uploads must have exactly one winner"
             read = fixture.tool(alice, "read_file", {"path": race_path})
             assert base64.b64decode(read["content"], validate=True) == race_payloads[winners[0]]
-            reserved = fixture.tool(alice, "create_upload", {"path": ALICE + "/reserved", "size": 16 * 1024 * 1024, "sha256": sha(b"x")})
-            fixture.tool(alice, "create_upload", {"path": ALICE + "/quota", "size": 1, "sha256": sha(b"x")}, error=True)
-            fixture.tool(alice, "abort_upload", {"id": reserved["upload_id"]})
-            small = fixture.tool(alice, "create_upload", {"path": ALICE + "/quota-recovered", "size": 1, "sha256": sha(b"x")})
-            fixture.tool(alice, "abort_upload", {"id": small["upload_id"]})
+            prove_staging_quota_recovered(fixture, alice)
             link = fixture.tool(alice, "create_download", {"path": ALICE + "/chart.png", "ttl_seconds": 1})
             time.sleep(1.1)
             assert fixture.request("GET", link["url"], alice)[0] == 404
@@ -585,6 +740,122 @@ def exercise(args, backend, report):
             status, headers, body = fixture.request("GET", link["url"], alice, headers={"Range": "bytes=1-7"})
             assert status == 206 and len(body) == 7 and headers["content-range"].startswith("bytes 1-7/")
             report.append(f"{backend}: checksum failure, abort, concurrent create-only race, quota recovery, expiry and ranges")
+
+            large_payloads = (bytes(range(256)) * (9 * 1024 * 4) + b"first-large-writer",
+                              bytes(reversed(range(256))) * (9 * 1024 * 4) + b"second-large-writer")
+            large_path = ALICE + "/concurrent-large.bin"
+            large_uploads = [fixture.tool(alice, "create_upload", {
+                "path": large_path, "size": len(payload), "sha256": sha(payload)}) for payload in large_payloads]
+            for upload, payload in zip(large_uploads, large_payloads):
+                assert len(payload) > 9 * 1024 * 1024
+                assert fixture.request("PUT", upload["url"], alice, payload)[0] == 200
+            barrier = threading.Barrier(2, timeout=5)
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                completed = list(executor.map(finish, large_uploads))
+            winners = [index for index, response in enumerate(completed)
+                       if "error" not in response and not response.get("result", {}).get("isError", False)]
+            assert len(winners) == 1, "concurrent large create-only uploads must have exactly one winner"
+            loser = completed[1 - winners[0]]
+            assert loser.get("result", {}).get("structuredContent") == {"error": "conflict"}, "large race lost for an unrelated reason"
+            winner = large_payloads[winners[0]]
+            link = fixture.tool(alice, "create_download", {"path": large_path})
+            assert link["sha256"] == sha(winner)
+            status, _, downloaded = fixture.request("GET", link["url"], alice)
+            assert status == 200 and downloaded == winner, "large upload race changed the winning object's bytes"
+            if backend == "s3":
+                completions = [item for item in moto.publications if item["operation"] == "complete_multipart_upload"
+                               and item["key"] == f"/{bucket}/{large_path.removeprefix('/Artifacts/')}"]
+                assert len(completions) == 2 and len({item["upload_id"] for item in completions}) == 2, "both S3 uploads did not reach multipart completion"
+                assert all(item["if_none_match"] == "*" for item in completions), "production multipart completion omitted If-None-Match:*"
+                assert sorted(item["status"] for item in completions) == [200, 412], "S3 conditional multipart completion did not reject the loser"
+                etag = s3.head_object(Bucket=bucket, Key=large_path.removeprefix("/Artifacts/"))["ETag"].strip('"')
+                assert "-" in etag and int(etag.rsplit("-", 1)[1]) >= 2, "large S3 race did not exercise multipart completion"
+                assert not s3.list_multipart_uploads(Bucket=bucket).get("Uploads"), "large S3 race leaked an unfinished multipart upload"
+                report.append("s3: competing uploads above 9 MiB, recorded conditional headers and 412, exact winner bytes, no unfinished multipart uploads and fixture overwrite controls")
+            else:
+                report.append("local: competing uploads above 9 MiB, one conflict and one exact-byte winner")
+
+            # The TLS test proxy deliberately buffers, so cancellation must hit
+            # the real listener. Host and OAuth validation remain unchanged.
+            authority = urllib.parse.urlsplit(fixture.origin).netloc
+            partial_path = ALICE + "/disconnected-upload.bin"
+            upload = fixture.tool(alice, "create_upload", {
+                "path": partial_path, "size": len(winner), "sha256": sha(winner)})
+            with socket.create_connection(("127.0.0.1", fixture.backend_port), timeout=5) as connection:
+                request = (f"PUT {urllib.parse.urlsplit(upload['url']).path} HTTP/1.1\r\n"
+                           f"Host: {authority}\r\nAuthorization: Bearer {alice}\r\n"
+                           f"Content-Length: {len(winner)}\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n")
+                connection.sendall(request.encode("ascii"))
+                status, _, prefix = receive_headers(connection)
+                assert status == 100 and not prefix, "partial PUT was not accepted before disconnect"
+                connection.sendall(winner[:64 * 1024])
+                denied = fixture.tool(alice, "create_upload", {
+                    "path": ALICE + "/held-upload-quota", "size": 16 * 1024 * 1024, "sha256": sha(b"x")}, error=True)
+                assert denied == {"error": "limit_exceeded"}, "partial PUT did not retain its staging reservation"
+                assert time.time() + 2 < upload["expires_at_unix_seconds"], "partial PUT grant expired before disconnect"
+            prove_staging_quota_recovered(fixture, alice, grant_expiry=upload["expires_at_unix_seconds"])
+            missing = fixture.tool(alice, "stat_path", {"path": partial_path}, error=True)
+            assert missing == {"error": "not_found"}, "disconnected upload published a destination"
+            fixture.tool(alice, "complete_upload", {"id": upload["upload_id"]}, error=True)
+            assert fixture.request("PUT", upload["url"], alice, b"x")[0] == 404
+            assert time.time() < upload["expires_at_unix_seconds"], "expiry masked the disconnected PUT replay denial"
+
+            link = fixture.tool(alice, "create_download", {"path": large_path})
+            with socket.socket() as connection:
+                # Keep the receive window small enough that the full >9 MiB
+                # response cannot drain into kernel buffers before we close it.
+                connection.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+                connection.settimeout(5)
+                connection.connect(("127.0.0.1", fixture.backend_port))
+                request = (f"GET {urllib.parse.urlsplit(link['url']).path} HTTP/1.1\r\n"
+                           f"Host: {authority}\r\nAuthorization: Bearer {alice}\r\nConnection: close\r\n\r\n")
+                connection.sendall(request.encode("ascii"))
+                status, headers, prefix = receive_headers(connection)
+                assert status == 200 and int(headers["content-length"]) == len(winner)
+                while len(prefix) < 8192:
+                    chunk = connection.recv(8192 - len(prefix))
+                    assert chunk, "large download ended before its prefix"
+                    prefix += chunk
+                assert prefix == winner[:len(prefix)] and len(prefix) < len(winner)
+                denied = fixture.tool(alice, "create_upload", {
+                    "path": ALICE + "/held-download-quota", "size": 16 * 1024 * 1024, "sha256": sha(b"x")}, error=True)
+                assert denied == {"error": "limit_exceeded"}, "large GET completed before the intended disconnect"
+                assert time.time() + 2 < link["expires_at_unix_seconds"], "large GET grant expired before disconnect"
+            prove_staging_quota_recovered(fixture, alice, grant_expiry=link["expires_at_unix_seconds"])
+            assert fixture.request("GET", link["url"], alice)[0] == 404
+            assert time.time() < link["expires_at_unix_seconds"], "expiry masked the disconnected GET replay denial"
+            report.append(f"{backend}: direct-listener partial PUT/GET disconnects, full quota recovery, no partial destination or grant replay")
+
+            if backend == "s3":
+                process = service.process
+                original_endpoint = moto.get_host_and_port()
+
+                def await_readiness(expected):
+                    deadline = time.monotonic() + 15
+                    while True:
+                        assert service.process is process and process.poll() is None, "service restarted or exited during S3 outage"
+                        assert fixture.request("GET", "/health/live")[0] == 200, "storage outage changed process liveness"
+                        # Keep the independent JWKS cache live so this check
+                        # isolates the stopped S3 dependency, not token refresh.
+                        fixture.rpc(alice, "tools/list", {})
+                        actual = fixture.request("GET", "/health/ready")[0]
+                        assert actual in (200, 503), f"unexpected readiness HTTP {actual}"
+                        assert time.monotonic() < deadline, f"readiness did not become {expected} within its bound"
+                        if actual == expected:
+                            return
+                        time.sleep(0.2)
+
+                await_readiness(200)
+                try:
+                    bounded_fixture_call(moto.stop, "S3 fixture outage")
+                    await_readiness(503)
+                finally:
+                    bounded_fixture_call(moto.start, "S3 fixture recovery")
+                assert moto.get_host_and_port() == original_endpoint, "S3 fixture changed its configured endpoint"
+                await_readiness(200)
+                read = fixture.tool(alice, "read_file", {"path": ALICE + "/chart.png"})
+                assert base64.b64decode(read["content"], validate=True) == next(artifacts())[2], "S3 recovery lost the stored artifact"
+                report.append("s3: same-process backend outage, bounded readiness 503/200 recovery, live 200 and preserved artifact bytes")
 
             fixture.active_keys.append("rotated")
             rotated = fixture.token(kid="rotated")
@@ -672,7 +943,7 @@ def exercise(args, backend, report):
             cleanup = [service.stop, service.cleanup_image_staging] if service else []
             cleanup.append(fixture.close)
             if moto:
-                cleanup.append(moto.stop)
+                cleanup.append(lambda: bounded_fixture_call(moto.stop, "S3 fixture cleanup"))
             failures = []
             for action in cleanup:
                 try:
@@ -701,7 +972,7 @@ def main():
         for line in report[first:]:
             print("PASS " + line, flush=True)
     evidence = {"target": "native-image" if args.image else "production-binary", "passed": report,
-                "fixture_scope": "disposable localhost TLS/OAuth, confined local filesystem and Moto S3, no provider qualification"}
+                "fixture_scope": "disposable localhost TLS/OAuth, confined local filesystem and Moto S3 with serialized emulator HTTP operations because Moto is not concurrency-safe, recorded production preconditions and overwrite controls, no provider qualification"}
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps(evidence, indent=2) + "\n")

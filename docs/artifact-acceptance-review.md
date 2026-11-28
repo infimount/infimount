@@ -43,10 +43,10 @@ or tenant cannot access the artifact through another entry point.
 | Binary MCP I/O, #249 | Exact bytes, base64 validation, configured limits, collisions, MIME, approval and audit in ordinary and Agent Task dispatch | `crates/mcp/src/server.rs`, `agent_task_server.rs`, typed filesystem tests, native desktop and release-pilot gates | Existing hard ceilings remain. Unsupported MIME capabilities fail before creating a file. |
 | Request-local identity, #250 | Forged/expired/wrong issuer/wrong audience tokens, tenant/client substitutions, missing scope, JWKS rotation and stale-cache failure | `auth.rs` and `transport.rs` regressions, plus real signed OAuth tokens and a TLS JWKS endpoint in the process harness | Static server-owned grants intersect token scopes and policy. No claim-to-path interpolation, arbitrary delegation headers or ambient sessions. |
 | Every entry point preserves isolation | Read, list, stat, create, upload PUT, complete, abort, download, cursors and replay | Process harness covers two principals and two tenants on both local and S3 storage. Unit tests cover malformed headers, unpolled unauthenticated bodies and SDK bypass attempts. | Hosted destructive/admin operations are absent. Their absence is asserted, not treated as missing functionality. |
-| Headless service, #251 | Explicit configuration, independent process, real startup, health/readiness, secret references and non-root packaging | Production binary harness, native amd64/arm64 image harness, strict config tests and Kubernetes examples | One Linux replica. Ingress and external identity-provider provisioning remain deployment responsibilities. |
+| Headless service, #251 | Explicit configuration, independent process, real startup, health/readiness, secret references and non-root packaging | Production binary harness, native amd64/arm64 image harness, strict config tests and Kubernetes examples. The process harness stops and restores its S3 endpoint, requiring bounded readiness failure/recovery, unchanged liveness and preserved files in the same running service. | One Linux replica. Ingress and external identity-provider provisioning remain deployment responsibilities. |
 | Telemetry, #251 | Disabled mode ignores ambient OTEL configuration, enabled mode reaches a configured TLS collector, bounded fields and redaction | `telemetry.rs` and `metrics.rs` unit fixtures plus process-level OTLP collection and production audit-schema assertions | Fixed-cardinality metrics only. Audit identities are intentional audit fields and are not metric labels. |
 | Artifact delivery, #252 | Authorized byte equality, foreign-owner denial, expiry, single use, safe attachment headers, native and delegated modes | Transfer tests and process harness. Delegated presentation links use a separate TLS platform origin with its own session cookie and a server-side OAuth relay. Wrong/missing platform sessions fail. | Hosted links require the original identity. They are not anonymous share links. Native provider links retain their separately documented bearer-link semantics. |
-| Large transfers, #253 | Large binary upload, exact size/SHA-256, atomic create-only completion, ranged reads, abort, checksum failure, quota recovery, cancellation and restart | Transfer and confined-I/O tests, real Moto S3 multipart qualification, production 9 MiB ZIP upload/download through the real HTTP/MCP process | One authenticated PUT plus explicit completion. Resumable uploads and multiple replicas are outside the accepted implementation. |
+| Large transfers, #253 | Large binary upload, exact size/SHA-256, atomic create-only completion, ranged reads, abort, checksum failure, quota recovery, cancellation and restart | Transfer and confined-I/O tests, Moto S3 multipart qualification, production 9 MiB ZIP upload/download, competing uploads above 9 MiB and actual listener disconnects. S3 completion headers, conflict status, winning bytes and unfinished-upload cleanup are checked explicitly. | One authenticated PUT plus explicit completion. Resumable uploads and multiple replicas are outside the accepted implementation. The conditional-write fixture models the backend's atomic primitive, as detailed below. |
 | Governed Python API, #254 | Installed-wheel byte round trips, create-only writes, limits, scopes, policy, confirmation refusal, path aliases, reserved internals, audit and native S3 links | `python/tests/test_native.py`, `python/qualify_s3.py`, five native wheel targets tested on CPython 3.10 and 3.14, isolated source-archive rebuild | Trusted embedding application selects immutable configuration. The library does not isolate hostile same-process Python. |
 | Existing browser behavior | Storage-only onboarding, explicit Agent Access, browsing/preview, native approval and packaged sidecar behavior | Existing desktop CI, coverage, integration, hosted-pilot, release-pilot and installer-upgrade workflows remain required | No automatic hosted listener, storage exposure or telemetry activation is introduced. |
 | Release integrity | Exact source identity, native artifacts, inventory, checksums, provenance, immutable image promotion and post-release verification | Existing release/distribution scripts and their regression fixtures remain gates. The stronger image process test runs before archiving that image. | No claim of publication is made from a successful source build or configuration check. |
@@ -59,7 +59,7 @@ access tokens, starts the actual `serve --config` executable, and routes MCP and
 artifact traffic through a local TLS ingress fixture. It does not use a
 test-only authenticator or disable certificate validation.
 
-Each backend exercises six scenario groups:
+Each backend exercises eight scenario groups:
 
 1. Startup, health, metadata, exact tool allowlist and OAuth rejection cases.
 2. PNG, SVG, CSV, PDF and XLSX bytes plus a ZIP larger than the inline limit.
@@ -69,12 +69,26 @@ Each backend exercises six scenario groups:
    traversal, a non-dangling symlink escape, unsupported authority arguments and
    configured body/inline limits. The oversized-header test talks directly to
    the real upstream listener and requires rejection before sending any body.
-4. Incorrect checksums, abort, staging quota exhaustion/recovery, expiry and a
-   single-use byte-range download.
-5. Live JWKS rotation, disabled/enabled telemetry, invalidated grants after
+4. Incorrect checksums, abort, a small-object completion race, staging quota
+   exhaustion/recovery, expiry and a single-use byte-range download.
+5. Two different uploads above 9 MiB compete for the same destination. Exactly
+   one succeeds, the other returns a conflict, and an authenticated download
+   preserves every winning byte. S3 assertions verify the actual conditional
+   completion requests and absence of unfinished multipart uploads.
+6. Partial PUT and large GET clients disconnect from the actual listener. The
+   PUT must first receive `100 Continue`. The GET's small receive window and
+   quota assertion prove that the response is still in flight. Full staging
+   quota must recover before the original grant expires, partial uploads must
+   leave no destination, and both grants must reject replay.
+7. Live JWKS rotation, disabled/enabled telemetry, invalidated grants after
    restart, preserved committed files and a restarted policy revocation.
-6. Delegated issuer failure and wrong-origin cleanup, a working platform login
+8. Delegated issuer failure and wrong-origin cleanup, a working platform login
    relay, single-use redemption, exact bytes and production audit redaction.
+
+The S3 backend adds a ninth group: stop the dependency, observe readiness change
+from 200 to 503 within a bound while liveness remains 200, restore the same
+endpoint and verify readiness and stored bytes recover without restarting the
+service. Together these are 17 process scenario groups.
 
 Image mode uses the existing image's non-root user, read-only root, dropped
 capabilities and no-new-privileges. Host networking connects only to disposable
@@ -82,6 +96,36 @@ loopback fixtures. Temporary fixture storage is the only writable host mount.
 The same UID removes its private mode-0700 staging directory before host cleanup.
 This is a native packaged-process acceptance test, not a Kubernetes or external
 provider deployment test.
+
+### Conditional multipart evidence
+
+The added large-upload race exposed a limitation in threaded Moto 5.2.6. Two
+same-key multipart completions both succeeded. An independent direct-boto3
+reproducer, with Infimount and OpenDAL removed, returned two HTTP 200 responses
+in all three concurrent trials despite both requests carrying `If-None-Match:
+*`. Its sequential control returned 200 followed by 412. Moto checks for the
+existing object before assembling the parts and publishing it, without making
+that check and publication atomic. Its [official FAQ](https://docs.getmoto.org/en/latest/docs/faq.html)
+states that concurrent access is not supported.
+
+This differs from [Amazon S3's conditional-write contract](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html):
+the first conditional write to finish succeeds and later competing writes fail.
+The locked OpenDAL S3 implementation supplies the required condition on
+`CompleteMultipartUpload`. A simulator race is not evidence that Amazon S3 has
+the same defect, and it must not be concealed by changing production writes or
+accepting two winners. Live-provider concurrency remains a separate qualification
+boundary.
+
+The process fixture therefore serves Moto through its public WSGI application
+with one request handler at a time. This supplies the backend atomicity that
+the conditional-write protocol requires. Two production completion requests
+still compete. The harness records two distinct multipart IDs, verifies both
+actual `If-None-Match` headers, requires HTTP 200 and 412, checks the exact winner
+and confirms loser cleanup. Independent fixture controls require two
+unconditional completions to overwrite successfully and the second conditional
+completion to fail. Removing the production precondition would still fail the
+acceptance test. This is protocol qualification against a serialized synthetic
+backend, not live-provider concurrent-commit qualification.
 
 ## Evidence interpretation and release gates
 
@@ -113,7 +157,9 @@ paid S3-compatible provider is exercised here. Moto proves the controlled S3
 protocol scenarios only. Configuration, failure and policy tests are not
 performance or availability qualification.
 
-The prior release-preparation run also failed at a GitHub write step. The
+The prior release-preparation run also failed with HTTP 404 in its write-capable
+job. Its logs omit the failing endpoint, so the exact cause remains unverified.
+The job did receive contents/actions write permission. Independently, the
 repository restricts `v*` tag creation and the workflow token has no configured
 bypass. This review does not weaken that rule or retry publication. The
 publication route must be reconciled with repository policy after the code and
