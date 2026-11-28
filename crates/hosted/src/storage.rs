@@ -23,6 +23,15 @@ pub struct StoragePlane {
     config: Arc<HostedConfig>,
     storages: HashMap<String, Arc<HostedStorage>>,
     cursors: Mutex<HashMap<String, Cursor>>,
+    readiness_busy: Arc<AtomicBool>,
+}
+
+struct ReadinessProbe(Arc<AtomicBool>);
+
+impl Drop for ReadinessProbe {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 pub(crate) struct HostedStorage {
@@ -60,7 +69,17 @@ pub(crate) struct PreparedRead {
 }
 
 impl PreparedRead {
-    pub async fn reader(&self, offset: u64, end: u64) -> Result<opendal::FuturesAsyncReader> {
+    pub async fn reader(
+        &self,
+        offset: u64,
+        end: u64,
+    ) -> Result<Box<dyn futures::io::AsyncRead + Unpin + Send>> {
+        if let Some(pin) = &self._pin {
+            return Ok(Box::new(
+                pin.reader_with_retention(offset, end, crate::transport::current_resource_lease())
+                    .map_err(map_core)?,
+            ));
+        }
         let mut request = self.operator.reader_with(&self.key);
         if self.identity.local.is_none() {
             if let Some(version) = &self.identity.version {
@@ -77,12 +96,14 @@ impl PreparedRead {
                 return Err(HostedError::Unsupported);
             }
         }
-        request
-            .await
-            .map_err(map_storage)?
-            .into_futures_async_read(offset..end)
-            .await
-            .map_err(map_storage)
+        Ok(Box::new(
+            request
+                .await
+                .map_err(map_storage)?
+                .into_futures_async_read(offset..end)
+                .await
+                .map_err(map_storage)?,
+        ))
     }
 }
 
@@ -172,6 +193,7 @@ impl StoragePlane {
             config,
             storages,
             cursors: Mutex::new(HashMap::new()),
+            readiness_busy: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -180,13 +202,21 @@ impl StoragePlane {
     }
 
     pub async fn ready(&self) -> Result<()> {
+        // Public readiness timeouts must not queue additional filesystem work
+        // while an earlier non-cancellable metadata operation is still running.
+        self.readiness_busy
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| HostedError::Unavailable)?;
+        let probe = Arc::new(ReadinessProbe(self.readiness_busy.clone()));
         for storage in self.storages.values() {
             if storage.cleanup_failed.load(Ordering::Acquire) {
                 return Err(HostedError::Unavailable);
             }
             match &storage.backend {
                 Backend::Local(root) => {
-                    root.stat("").await.map_err(map_core)?;
+                    root.stat_with_retention("", Some(probe.clone()))
+                        .await
+                        .map_err(map_core)?;
                 }
                 Backend::Remote(op) => {
                     op.check().await.map_err(map_storage)?;
@@ -311,7 +341,7 @@ impl StoragePlane {
         let (entries, next_backend, next_offset, truncated) = match &object.storage.backend {
             Backend::Local(root) => {
                 let (entries, next) = root
-                    .list_page_with_filter(
+                    .list_page_with_filter_and_retention(
                         &object.relative,
                         old.as_ref().map_or(0, |cursor| cursor.offset),
                         limit as usize,
@@ -323,6 +353,7 @@ impl StoragePlane {
                             )
                             .is_ok()
                         },
+                        crate::transport::current_resource_lease(),
                     )
                     .await
                     .map_err(map_core)?;
@@ -396,7 +427,10 @@ impl StoragePlane {
     pub async fn stat(&self, principal: &Principal, path: &str) -> Result<Value> {
         let object = self.authorize(principal, path, McpOperation::Metadata)?;
         let entry = match &object.storage.backend {
-            Backend::Local(root) => root.stat(&object.relative).await.map_err(map_core)?,
+            Backend::Local(root) => root
+                .stat_with_retention(&object.relative, crate::transport::current_resource_lease())
+                .await
+                .map_err(map_core)?,
             Backend::Remote(op) => infimount_core::operations::stat_entry(op, &object.relative)
                 .await
                 .map_err(map_core)?,
@@ -429,7 +463,13 @@ impl StoragePlane {
             }
             Backend::Remote(op) => (op.clone(), object.relative.clone(), None, None),
         };
-        let metadata = operator.stat(&key).await.map_err(map_storage)?;
+        let metadata = match &pin {
+            Some(pin) => pin
+                .metadata_with_retention(crate::transport::current_resource_lease())
+                .await
+                .map_err(map_core)?,
+            None => operator.stat(&key).await.map_err(map_storage)?,
+        };
         if metadata.is_dir() {
             return Err(HostedError::InvalidRequest);
         }
@@ -546,7 +586,14 @@ impl StoragePlane {
                             prefix.push('/');
                         }
                         prefix.push_str(segment);
-                        if root.stat(&prefix).await.is_err() {
+                        if root
+                            .stat_with_retention(
+                                &prefix,
+                                crate::transport::current_resource_lease(),
+                            )
+                            .await
+                            .is_err()
+                        {
                             self.authorize(
                                 principal,
                                 &format!("/{}/{}", object.storage.record.name, prefix),

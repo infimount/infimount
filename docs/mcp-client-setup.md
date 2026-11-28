@@ -215,6 +215,18 @@ content-type checks run before an approval is queued. An approval binds the
 exact request, including metadata, and the active limits, so changing either
 invalidates it.
 
+HTTP requests and stdio frames also have a bound before JSON parsing. For file
+tools it is `6 × (4 × ceil(maxWriteBytes / 3)) + 64 KiB`, which accommodates
+base64 and its worst-case JSON escaping. Decoded file limits still apply.
+Oversized HTTP requests receive 413, including chunked requests. An oversized
+stdio frame closes that input without executing the request.
+
+An approval also binds storage identity, namespace, revision and policy for
+every source and destination. Retargeting storage or changing its policy
+invalidates a pending approval. Agent Task handoffs preapprove only new files
+and directories inside that task's output prefix. Task writes default to
+`overwrite: false` and reject an explicit overwrite or supplied confirmation ID.
+
 `write_file` accepts optional `content_type`, for example `image/png` or
 `text/plain; charset=utf-8`. It must be a valid ASCII media type of at most 255
 bytes. The backend must advertise OpenDAL `write_with_content_type`, and the

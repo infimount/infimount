@@ -313,7 +313,9 @@ impl Client {
 
     pub fn list(&self, path: &str, limit: u32, cursor: Option<String>) -> Result<String> {
         self.run(Operation::List, path, |relative| async move {
-            if !(1..=200).contains(&limit) || cursor.as_ref().is_some_and(|value| value.len() > 4096) {
+            if !(1..=200).contains(&limit)
+                || cursor.as_ref().is_some_and(|value| value.len() > operations::MAX_LIST_CURSOR_BYTES)
+            {
                 return Err(Error::LimitExceeded);
             }
             let filter_error = Cell::new(None);

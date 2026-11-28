@@ -290,7 +290,11 @@ pub fn canonical_relative(path: &str, allow_empty: bool) -> bool {
         && !path.contains(['\\', '%', ':'])
         && !path.chars().any(char::is_control)
         && path.split('/').all(|part| {
-            !part.is_empty() && part != "." && part != ".." && part != ".infimount-hosted-staging"
+            !part.is_empty()
+                && !matches!(
+                    part,
+                    "." | ".." | ".infimount-hosted-stage" | ".infimount-hosted-staging"
+                )
         })
 }
 

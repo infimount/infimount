@@ -16,6 +16,7 @@ indexmap = "2.13.0"
 keyring = { version = "=4.1.5", default-features = false, features = ["v1"] }
 age = { version = "=0.11.5", default-features = false, features = ["armor"] }
 age-core = "=0.11.0"
+chacha20poly1305 = "0.10.1"
 sha2 = "0.10"
 zeroize = "1.8"
 uuid = { version = "1", features = ["v4"] }

@@ -762,6 +762,7 @@ async fn protected_resource(State(state): State<HttpState>) -> Json<serde_json::
 async fn download(
     State(state): State<HttpState>,
     Extension(principal): Extension<Principal>,
+    Extension(lifetime): Extension<Arc<RequestLifetime>>,
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Response {
@@ -769,7 +770,10 @@ async fn download(
         Ok(range) => range,
         Err(error) => return error.into_response(),
     };
-    match state.transfers.download(&principal, &id, range).await {
+    match lifetime
+        .run(state.transfers.download(&principal, &id, range))
+        .await
+    {
         Ok(response) => response,
         Err(error) => error.into_response(),
     }
@@ -1328,6 +1332,130 @@ mod tests {
         assert!(current_resource_lease().is_none());
         retained.lock().unwrap().take();
         assert!(limiter.global().is_ok());
+    }
+
+    #[test]
+    fn cancelled_local_read_metadata_and_listing_keep_http_capacity_until_fs_completion() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(2)
+            .build()
+            .unwrap()
+            .block_on(async {
+                for operation in ["read", "stat", "list"] {
+                    let fixture = fixture(1, 1);
+                    let principal = test_support::authenticator()
+                        .verify(&token("alice"))
+                        .await
+                        .unwrap();
+                    let limiter = RequestLimiter::new(1, 1);
+                    let lease = HttpLease::new(
+                        limiter.global().unwrap(),
+                        Instant::now() + Duration::from_secs(60),
+                    );
+                    let lifetime = lease.lifetime.clone();
+                    let mut releases = Vec::new();
+                    let mut workers = Vec::new();
+                    for _ in 0..2 {
+                        let (release, wait) = std::sync::mpsc::channel();
+                        let (started, ready) = tokio::sync::oneshot::channel();
+                        workers.push(tokio::task::spawn_blocking(move || {
+                            let _ = started.send(());
+                            let _ = wait.recv();
+                        }));
+                        releases.push(release);
+                        ready.await.unwrap();
+                    }
+                    let storage = fixture.storage.clone();
+                    let mut pending = Box::pin(async move {
+                        lifetime
+                            .run(async {
+                                match operation {
+                                    "read" => {
+                                        storage
+                                            .read(&principal, "/files/alice/private.bin", 0, 4)
+                                            .await
+                                    }
+                                    "stat" => {
+                                        storage.stat(&principal, "/files/alice/private.bin").await
+                                    }
+                                    _ => storage.list(&principal, "/files/alice", 10, None).await,
+                                }
+                                .map(|_| ())
+                            })
+                            .await
+                    });
+                    assert!(futures::poll!(pending.as_mut()).is_pending());
+                    drop(lease);
+                    assert_eq!(pending.await, Err(HostedError::Unavailable));
+                    let retained_capacity = limiter.global().is_err();
+                    assert!(current_resource_lease().is_none());
+                    for release in releases {
+                        release.send(()).unwrap();
+                    }
+                    for worker in workers {
+                        worker.await.unwrap();
+                    }
+                    timeout(Duration::from_secs(2), async {
+                        while limiter.global().is_err() {
+                            tokio::task::yield_now().await;
+                        }
+                    })
+                    .await
+                    .unwrap();
+                    assert!(
+                        retained_capacity,
+                        "{operation} released capacity before queued filesystem work finished"
+                    );
+                }
+            });
+    }
+
+    #[test]
+    fn timed_out_readiness_cannot_accumulate_blocked_filesystem_probes() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(2)
+            .build()
+            .unwrap()
+            .block_on(async {
+                let fixture = fixture(1, 1);
+                let mut releases = Vec::new();
+                let mut workers = Vec::new();
+                for _ in 0..2 {
+                    let (release, wait) = std::sync::mpsc::channel();
+                    let (started, ready) = tokio::sync::oneshot::channel();
+                    workers.push(tokio::task::spawn_blocking(move || {
+                        let _ = started.send(());
+                        let _ = wait.recv();
+                    }));
+                    releases.push(release);
+                    ready.await.unwrap();
+                }
+                let mut first = Box::pin(fixture.storage.ready());
+                assert!(futures::poll!(first.as_mut()).is_pending());
+                drop(first);
+                let mut second = Box::pin(fixture.storage.ready());
+                let denied_without_new_io = matches!(
+                    futures::poll!(second.as_mut()),
+                    Poll::Ready(Err(HostedError::Unavailable))
+                );
+                drop(second);
+                for release in releases {
+                    release.send(()).unwrap();
+                }
+                for worker in workers {
+                    worker.await.unwrap();
+                }
+                timeout(Duration::from_secs(2), async {
+                    while fixture.storage.ready().await.is_err() {
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .unwrap();
+                assert!(denied_without_new_io);
+            });
     }
 
     #[tokio::test]

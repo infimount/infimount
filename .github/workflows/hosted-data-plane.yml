@@ -18,6 +18,7 @@ on:
       - "Cargo.lock"
       - "deploy/hosted/**"
       - "scripts/qualify-hosted-data-plane.py"
+      - "scripts/qualify-hosted-process.py"
       - "scripts/publish-hosted-images.sh"
       - "scripts/test-publish-hosted-images.py"
       - "docs/hosted-artifact-service.md"
@@ -32,6 +33,7 @@ on:
       - "Cargo.lock"
       - "deploy/hosted/**"
       - "scripts/qualify-hosted-data-plane.py"
+      - "scripts/qualify-hosted-process.py"
       - "scripts/publish-hosted-images.sh"
       - "scripts/test-publish-hosted-images.py"
       - "docs/hosted-artifact-service.md"
@@ -84,6 +86,15 @@ jobs:
         run: pip install 'moto[server,s3]==5.2.6'
       - name: Qualify S3 without cloud credentials
         run: python scripts/qualify-hosted-data-plane.py
+      - name: Exercise the production process through TLS and OAuth
+        run: |
+          cargo +1.94.0 build -p infimount_hosted --locked
+          python scripts/qualify-hosted-process.py --binary target/debug/infimount-hosted --report hosted-process-acceptance.json
+      - uses: actions/upload-artifact@v6
+        with:
+          name: hosted-process-acceptance
+          path: hosted-process-acceptance.json
+          if-no-files-found: error
       - name: Check example configurations without starting a listener
         run: |
           cargo +1.94.0 run -p infimount_hosted --locked -- check --config deploy/hosted/example-local.json
@@ -128,6 +139,22 @@ jobs:
             --security-opt=no-new-privileges \
             --mount type=bind,src="$PWD/deploy/hosted/example-local.json",dst=/run/hosted.json,readonly \
             "infimount-hosted:qualification-$IMAGE_ARCH" check --config /run/hosted.json
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install pinned disposable process fixtures
+        run: pip install 'moto[server,s3]==5.2.6'
+      - name: Exercise the exact native image through TLS and OAuth
+        env:
+          IMAGE_ARCH: ${{ matrix.arch }}
+        run: |
+          python scripts/qualify-hosted-process.py --image "infimount-hosted:qualification-$IMAGE_ARCH" \
+            --report "hosted-process-$IMAGE_ARCH.json"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: hosted-process-${{ matrix.arch }}
+          path: hosted-process-${{ matrix.arch }}.json
+          if-no-files-found: error
       - name: Preserve the exact qualified release image
         if: inputs.release_tag != ''
         env:

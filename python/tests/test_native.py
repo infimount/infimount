@@ -1,6 +1,7 @@
 """Exercise the installed native wheel, without mocking policy or storage I/O."""
 from __future__ import annotations
 
+import base64
 import copy
 import json
 import os
@@ -8,6 +9,7 @@ from pathlib import Path
 import pickle
 import select
 import signal
+import sys
 import tempfile
 import unittest
 import unicodedata
@@ -145,6 +147,61 @@ class NativeWheelTests(unittest.TestCase):
         with self.assertRaises(LimitExceeded):
             self.client.list("/Artifacts/allowed", limit=201)
 
+    def test_listing_cursors_do_not_disclose_filtered_filenames_when_decoded(self) -> None:
+        names = {f"confidential-cursor-fixture-{number}.bin" for number in range(4)}
+        for name in names:
+            (self.root / "allowed" / name).write_bytes(b"fixture")
+        # Exercise each exclusion so this test does not assume filesystem order.
+        # At least one exclusion lies between allowed results in a paged scan.
+        for denied in names:
+            config = copy.deepcopy(self.config)
+            config["policy"]["denied_paths"].append(f"allowed/{denied}")
+            client = self.make_client(config)
+            cursor = None
+            observed = set()
+            for _ in range(10):
+                page = client.list("/Artifacts/allowed", limit=1, cursor=cursor)
+                observed.update(entry["name"] for entry in page["entries"])
+                cursor = page["next_cursor"]
+                if cursor is None:
+                    break
+                self.assertNotIn(denied, cursor)
+                for component in cursor.split("."):
+                    try:
+                        decoded = base64.urlsafe_b64decode(component + "=" * (-len(component) % 4))
+                    except ValueError:
+                        continue
+                    self.assertNotIn(denied.encode(), decoded)
+            else:
+                self.fail("filtered pagination did not terminate")
+            self.assertEqual(observed, names - {denied})
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "regression exercises Linux long paths")
+    def test_generated_long_path_cursor_can_be_used_for_every_page(self) -> None:
+        directory = self.root / "allowed"
+        for number in range(30):
+            directory /= f"{number:03}" + "x" * 97
+            directory.mkdir()
+        names = {f"file-{number}-" + "y" * 93 for number in range(3)}
+        for name in names:
+            (directory / name).write_bytes(b"fixture")
+        path = "/Artifacts/" + directory.relative_to(self.root).as_posix()
+        self.assertLess(len(path), 4096)
+        observed = set()
+        cursor = None
+        maximum_cursor_bytes = 0
+        for _ in range(10):
+            page = self.client.list(path, limit=1, cursor=cursor)
+            observed.update(entry["name"] for entry in page["entries"])
+            cursor = page["next_cursor"]
+            if cursor is None:
+                break
+            maximum_cursor_bytes = max(maximum_cursor_bytes, len(cursor))
+        else:
+            self.fail("long-path pagination did not terminate")
+        self.assertGreater(maximum_cursor_bytes, 4096, "fixture must exercise the old Python cursor ceiling")
+        self.assertEqual(observed, names)
+
     def test_traversal_aliases_and_missing_parents_fail_before_creation(self) -> None:
         for path in ["/Artifacts/allowed/../outside/new.bin", "/Artifacts/allowed/%2e%2e/outside/new.bin", "/Artifacts/allowed\\..\\outside/new.bin", "/Artifacts/allowed/new.bin:stream"]:
             with self.subTest(path=path), self.assertRaises(InfimountError):
@@ -239,6 +296,33 @@ class NativeWheelTests(unittest.TestCase):
                     call()
         self.assertEqual(sentinel.read_bytes(), b"private execution evidence")
         self.assertFalse((protected / "new.bin").exists())
+
+    def test_hosted_staging_names_are_denied_under_a_broad_local_grant(self) -> None:
+        config = copy.deepcopy(self.config)
+        config["policy"] = {
+            "version": 2, "default_access": "read_write", "rules": [],
+            "denied_paths": [], "confirmation_rules": {"require_for_write": False},
+        }
+        client = self.make_client(config)
+        reserved = [".infimount-hosted-stage", ".infimount-hosted-staging"]
+        for name in reserved:
+            protected = self.root / name
+            protected.mkdir()
+            sentinel = protected / "private.bin"
+            sentinel.write_bytes(b"unpublished private staging")
+            path = f"/Artifacts/{name}"
+            for operation, call in [
+                ("read", lambda: client.read(f"{path}/private.bin")),
+                ("stat", lambda: client.stat(f"{path}/private.bin")),
+                ("list", lambda: client.list(path)),
+                ("write", lambda: client.write(f"{path}/new.bin", b"denied")),
+            ]:
+                with self.subTest(name=name, operation=operation), self.assertRaises(InvalidRequest):
+                    call()
+            self.assertEqual(sentinel.read_bytes(), b"unpublished private staging")
+            self.assertFalse((protected / "new.bin").exists())
+        names = {entry["name"] for entry in client.list("/Artifacts")["entries"]}
+        self.assertTrue(names.isdisjoint(reserved))
 
     def test_deletion_requires_scope_policy_and_file_target(self) -> None:
         (self.root / "allowed/remove.bin").write_bytes(b"remove")
